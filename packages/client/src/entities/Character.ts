@@ -242,7 +242,7 @@ export class CharacterEntity {
         targets: this.sprite,
         x: px,
         y: py,
-        duration: 250,
+        duration: 400,
         ease: 'Linear',
         onUpdate: () => {
           this.syncPositions();

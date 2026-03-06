@@ -10,7 +10,7 @@ import {
 } from '../map/MapGenerator';
 import { findPath } from '../map/Pathfinding';
 import { CommandInput } from '../systems/CommandInput';
-import { FirebaseSync } from '../network/FirebaseSync';
+import { FirebaseSync, SyncSnapshot, RemoteOrderPayload } from '../network/FirebaseSync';
 import { generateCharacterName, resetNames } from '../systems/NameGenerator';
 import {
   parseCommandWithGemini, GeminiParseResult,
@@ -19,13 +19,15 @@ import { SoundManager } from '../systems/SoundManager';
 import { MiniMap } from '../systems/MiniMap';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────
-const COMMAND_COOLDOWN = 4000;
+const COMMAND_COOLDOWN = 5000;
 const GAME_DURATION = 300;
-const RESPAWN_TIME = 30;
-const TICK_RATE = 500;
-const MOVE_TICK = 600;
+const RESPAWN_TIME = 20;
+const TICK_RATE = 750;
+const MOVE_TICK = 900;
 const BASE_VISION = 5;
 const PICKUP_RESPAWN = 25; // seconds
+const DOM_POINTS_TO_WIN = 200; // Domination: first to 200 points wins
+const DOM_POINTS_PER_TICK = 1; // Points earned per owned control point per second
 
 // ─── TYPES ────────────────────────────────────────────────────────
 
@@ -52,6 +54,7 @@ interface BattleSceneData {
   playerId: string;
   isLocal: boolean;
   picks: DraftPick[];
+  amPlayer1?: boolean;
 }
 
 export class BattleScene extends Phaser.Scene {
@@ -59,6 +62,7 @@ export class BattleScene extends Phaser.Scene {
   private playerId!: string;
   private isLocal!: boolean;
   private picks!: DraftPick[];
+  private isHost = true;
 
   private gameMap!: GameMap;
   private characters: Map<string, CharacterEntity> = new Map();
@@ -73,10 +77,12 @@ export class BattleScene extends Phaser.Scene {
   private commandCooldownRemaining = 0;
   private gameOver = false;
 
-  // CTF
+  // CTF / Domination
   private ctf!: CTFState;
   private flag1Sprite!: Phaser.GameObjects.Container;
   private flag2Sprite!: Phaser.GameObjects.Container;
+  private domScore1 = 0;
+  private domScore2 = 0;
 
   // Fog of war (3-state: unexplored / remembered / visible)
   private fogLayer!: Phaser.GameObjects.Graphics;
@@ -120,6 +126,10 @@ export class BattleScene extends Phaser.Scene {
   private switchGateLinks: SwitchGateLink[] = [];
   private activatedSwitches: Set<string> = new Set();
 
+  // Character selection for direct commands
+  private selectedCharId: string | null = null;
+  private selectedCharLabel!: Phaser.GameObjects.Text;
+
   // HUD elements (HTML)
   private commandLogEl!: HTMLElement;
   private statusBarEl!: HTMLElement;
@@ -142,6 +152,7 @@ export class BattleScene extends Phaser.Scene {
     this.playerId = data.playerId;
     this.isLocal = data.isLocal;
     this.picks = data.picks;
+    this.isHost = data.isLocal || (data.amPlayer1 ?? true);
   }
 
   create() {
@@ -162,7 +173,7 @@ export class BattleScene extends Phaser.Scene {
 
     this.renderMap();
     this.createCharacters();
-    this.initCTF();
+    this.initDomination();
     this.initControlPoints();
     this.spawnPickups();
     this.initFogOfWar();
@@ -191,20 +202,62 @@ export class BattleScene extends Phaser.Scene {
     this.commandInput.onCommand((rawText) => this.handleCommand(rawText));
     this.updateStatusBar();
 
-    this.characters.forEach((charEntity) => {
+    this.characters.forEach((charEntity, charId) => {
+      const char = this.charData.get(charId);
+      if (!char || char.owner !== this.playerId) return;
       charEntity.sprite.on('pointerdown', () => {
-        this.characters.forEach(c => c.deselect());
-        charEntity.select();
+        this.selectCharacter(charId);
       });
     });
 
-    this.startGameLoop();
+    // Selected character HUD label (fixed to camera)
+    this.selectedCharLabel = this.add.text(
+      this.cameras.main.width / 2, 10,
+      'Commanding: ALL',
+      {
+        fontSize: '13px',
+        color: '#FFD93D',
+        fontFamily: '"Nunito", sans-serif',
+        fontStyle: 'bold',
+        backgroundColor: '#00000088',
+        padding: { x: 8, y: 4 },
+      }
+    ).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100);
+
+    // Keyboard: Q/E or [/] to cycle, Escape to deselect
+    this.input.keyboard!.on('keydown-Q', () => this.cycleSelectedChar(-1));
+    this.input.keyboard!.on('keydown-E', () => this.cycleSelectedChar(1));
+    this.input.keyboard!.on('keydown-OPEN_BRACKET', () => this.cycleSelectedChar(-1));
+    this.input.keyboard!.on('keydown-CLOSED_BRACKET', () => this.cycleSelectedChar(1));
+    this.input.keyboard!.on('keydown-ESC', () => this.selectCharacter(null));
+
     this.cameras.main.fadeIn(500, 5, 5, 16);
 
-    if (!this.isLocal) {
-      this.firebase.onGameStateUpdate(this.gameId, (state) => {
-        this.applyServerState(state);
+    if (!this.isLocal && this.isHost) {
+      this.startGameLoop();
+      this.firebase.onRemoteOrders(this.gameId, (data) => {
+        if (data.playerId !== this.playerId) {
+          this.applyRemoteOrders(data.playerId, data.orders);
+          this.firebase.removeRemoteOrder(this.gameId, data.key);
+        }
       });
+      this.pushSyncState();
+    } else if (!this.isLocal && !this.isHost) {
+      this.firebase.onSyncState(this.gameId, (state) => {
+        this.applySyncState(state);
+      });
+      this.secondTimer = this.time.addEvent({
+        delay: 1000,
+        callback: () => {
+          if (!this.gameOver) {
+            this.gameTimeRemaining--;
+            this.updateTimerDisplay();
+          }
+        },
+        loop: true,
+      });
+    } else {
+      this.startGameLoop();
     }
   }
 
@@ -285,175 +338,36 @@ export class BattleScene extends Phaser.Scene {
     };
   }
 
-  // ─── CTF ────────────────────────────────────────────────────────
+  // ─── DOMINATION ─────────────────────────────────────────────────
 
-  private initCTF() {
+  private initDomination() {
+    this.domScore1 = 0;
+    this.domScore2 = 0;
     this.ctf = {
-      flag1: {
-        position: { ...this.gameMap.flagP1 },
-        homePosition: { ...this.gameMap.flagP1 },
-        carrier: null,
-        isHome: true,
-      },
-      flag2: {
-        position: { ...this.gameMap.flagP2 },
-        homePosition: { ...this.gameMap.flagP2 },
-        carrier: null,
-        isHome: true,
-      },
-      score1: 0,
-      score2: 0,
-      capturesNeeded: 1,
+      flag1: { position: { x: 0, y: 0 }, homePosition: { x: 0, y: 0 }, carrier: null, isHome: true },
+      flag2: { position: { x: 0, y: 0 }, homePosition: { x: 0, y: 0 }, carrier: null, isHome: true },
+      score1: 0, score2: 0, capturesNeeded: 999,
     };
-
-    this.flag1Sprite = this.createFlagSprite(this.gameMap.flagP1, 0x4444ff);
-    this.flag2Sprite = this.createFlagSprite(this.gameMap.flagP2, 0xff4444);
   }
 
-  private createFlagSprite(pos: Position, color: number): Phaser.GameObjects.Container {
-    const px = pos.x * TILE_SIZE + TILE_SIZE / 2;
-    const py = pos.y * TILE_SIZE + TILE_SIZE / 2;
-    const container = this.add.container(px, py);
-
-    const base = this.add.graphics();
-    base.fillStyle(color, 0.3);
-    base.fillCircle(0, 0, 12);
-    base.lineStyle(2, color, 0.6);
-    base.strokeCircle(0, 0, 12);
-    container.add(base);
-
-    const pole = this.add.graphics();
-    pole.lineStyle(2, 0xffffff);
-    pole.lineBetween(0, 4, 0, -14);
-    pole.fillStyle(color);
-    pole.fillTriangle(0, -14, 10, -10, 0, -6);
-    container.add(pole);
-
-    const glow = this.add.circle(0, 0, 16, color, 0.15);
-    container.add(glow);
-    this.tweens.add({
-      targets: glow,
-      alpha: { from: 0.1, to: 0.25 },
-      scaleX: { from: 1, to: 1.3 },
-      scaleY: { from: 1, to: 1.3 },
-      duration: 1500,
-      yoyo: true,
-      repeat: -1,
-    });
-
-    container.setDepth(8);
-    return container;
-  }
-
-  private updateFlagPositions() {
-    this.updateSingleFlag(this.ctf.flag1, this.flag1Sprite);
-    this.updateSingleFlag(this.ctf.flag2, this.flag2Sprite);
-
-    this.charData.forEach((char) => {
-      if (char.isDead) return;
-      const pos = char.position;
-      const isMine = char.owner === this.playerId;
-
-      const enemyFlag = isMine ? this.ctf.flag2 : this.ctf.flag1;
-      const ownFlag = isMine ? this.ctf.flag1 : this.ctf.flag2;
-      const enemyFlagSprite = isMine ? this.flag2Sprite : this.flag1Sprite;
-      const ownFlagSprite = isMine ? this.flag1Sprite : this.flag2Sprite;
-
-      if (!enemyFlag.carrier && !char.hasFlag
-        && pos.x === enemyFlag.position.x && pos.y === enemyFlag.position.y) {
-        enemyFlag.carrier = char.id;
-        enemyFlag.isHome = false;
-        char.hasFlag = true;
-        enemyFlagSprite.setVisible(false);
-        const entity = this.characters.get(char.id);
-        if (entity) entity.showFlagCarrier(true);
-        if (isMine || this.isLocal) this.showAnnouncement('FLAG PICKED UP!', '#FFD93D');
-        this.sound_.playFlagPickup();
-      }
-
-      if (char.hasFlag && ownFlag.isHome
-        && pos.x === ownFlag.homePosition.x && pos.y === ownFlag.homePosition.y) {
-        this.scoreCapture(char.owner);
-      }
-
-      if (!ownFlag.isHome && !ownFlag.carrier
-        && pos.x === ownFlag.position.x && pos.y === ownFlag.position.y) {
-        ownFlag.position = { ...ownFlag.homePosition };
-        ownFlag.isHome = true;
-        this.updateFlagSpritePos(ownFlagSprite, ownFlag.position);
-        ownFlagSprite.setVisible(true);
-        if (isMine || this.isLocal) this.showAnnouncement('FLAG RETURNED!', '#4488ff');
-      }
-    });
-  }
-
-  private updateSingleFlag(flag: typeof this.ctf.flag1, sprite: Phaser.GameObjects.Container) {
-    if (flag.carrier) {
-      const carrier = this.charData.get(flag.carrier);
-      if (carrier && !carrier.isDead) {
-        flag.position = { ...carrier.position };
-        sprite.setVisible(false);
-      } else {
-        flag.carrier = null;
-        if (carrier) carrier.hasFlag = false;
-        sprite.setVisible(true);
-        this.updateFlagSpritePos(sprite, flag.position);
-        this.showAnnouncement('FLAG DROPPED!', '#FFD93D');
-      }
+  private tickDominationScoring() {
+    let p1Points = 0;
+    let p2Points = 0;
+    for (const cp of this.controlPoints) {
+      if (cp.owner === 'player1') p1Points += DOM_POINTS_PER_TICK;
+      if (cp.owner === 'player2') p2Points += DOM_POINTS_PER_TICK;
     }
-  }
-
-  private scoreCapture(capturingPlayer: string) {
-    if (capturingPlayer === this.playerId) {
-      this.ctf.score1++;
-    } else {
-      this.ctf.score2++;
+    if (p1Points > 0 || p2Points > 0) {
+      this.domScore1 += p1Points;
+      this.domScore2 += p2Points;
+      this.updateScoreDisplay();
     }
 
-    this.resetFlags();
-    this.cameras.main.flash(500, 108, 99, 255);
-    this.sound_.playFlagCapture();
-    this.showAnnouncement(
-      capturingPlayer === this.playerId ? 'FLAG CAPTURED!' : 'ENEMY CAPTURED!',
-      capturingPlayer === this.playerId ? '#45E6B0' : '#FF6B6B'
-    );
-    this.updateScoreDisplay();
-
-    if (this.ctf.score1 >= this.ctf.capturesNeeded) {
-      this.endGame(this.playerId, 'flag_captured');
-    } else if (this.ctf.score2 >= this.ctf.capturesNeeded) {
-      this.endGame('opponent', 'flag_captured');
+    if (this.domScore1 >= DOM_POINTS_TO_WIN) {
+      this.endGame(this.playerId, 'domination');
+    } else if (this.domScore2 >= DOM_POINTS_TO_WIN) {
+      this.endGame('opponent', 'domination');
     }
-  }
-
-  private resetFlags() {
-    this.charData.forEach(c => {
-      if (c.hasFlag) {
-        c.hasFlag = false;
-        const entity = this.characters.get(c.id);
-        if (entity) entity.showFlagCarrier(false);
-      }
-    });
-
-    this.ctf.flag1 = {
-      position: { ...this.gameMap.flagP1 },
-      homePosition: { ...this.gameMap.flagP1 },
-      carrier: null, isHome: true,
-    };
-    this.ctf.flag2 = {
-      position: { ...this.gameMap.flagP2 },
-      homePosition: { ...this.gameMap.flagP2 },
-      carrier: null, isHome: true,
-    };
-
-    this.updateFlagSpritePos(this.flag1Sprite, this.ctf.flag1.position);
-    this.updateFlagSpritePos(this.flag2Sprite, this.ctf.flag2.position);
-    this.flag1Sprite.setVisible(true);
-    this.flag2Sprite.setVisible(true);
-  }
-
-  private updateFlagSpritePos(sprite: Phaser.GameObjects.Container, pos: Position) {
-    sprite.setPosition(pos.x * TILE_SIZE + TILE_SIZE / 2, pos.y * TILE_SIZE + TILE_SIZE / 2);
   }
 
   // ─── PICKUPS ────────────────────────────────────────────────────
@@ -671,10 +585,6 @@ export class BattleScene extends Phaser.Scene {
       entity.setFogVisible(visible);
     });
 
-    if (!this.ctf.flag2.carrier) {
-      const key = `${this.ctf.flag2.position.x},${this.ctf.flag2.position.y}`;
-      this.flag2Sprite.setVisible(this.visibleTiles.has(key));
-    }
 
     // Hide pickups in fog — only show if currently visible
     for (const pickup of this.pickups) {
@@ -759,9 +669,12 @@ export class BattleScene extends Phaser.Scene {
       }
     }
 
+    // Domination: score points for owned control points each second
+    this.tickDominationScoring();
+
     if (this.gameTimeRemaining <= 0) {
-      const winner = this.ctf.score1 > this.ctf.score2 ? this.playerId
-        : this.ctf.score2 > this.ctf.score1 ? 'opponent'
+      const winner = this.domScore1 > this.domScore2 ? this.playerId
+        : this.domScore2 > this.domScore1 ? 'opponent'
         : this.getHpLeader();
       this.endGame(winner, 'time_up');
     }
@@ -794,7 +707,6 @@ export class BattleScene extends Phaser.Scene {
       this.executeAutoActions(char);
     });
 
-    this.updateFlagPositions();
     this.checkPickupCollisions();
     this.updateControlPoints();
     this.updateFogOfWar();
@@ -811,6 +723,11 @@ export class BattleScene extends Phaser.Scene {
     this.updateMiniMap();
     this.updateStatusBar();
     this.updateAbilityPanel();
+
+    // Host pushes state to Firebase for the guest
+    if (!this.isLocal && this.isHost) {
+      this.pushSyncState();
+    }
   }
 
   private onMoveTick() {
@@ -1123,28 +1040,6 @@ export class BattleScene extends Phaser.Scene {
     const queue = this.orderQueues.get(char.id);
     if (queue) queue.length = 0;
 
-    if (char.hasFlag) {
-      char.hasFlag = false;
-      const entity = this.characters.get(char.id);
-      if (entity) entity.showFlagCarrier(false);
-
-      if (this.ctf.flag1.carrier === char.id) {
-        this.ctf.flag1.carrier = null;
-        this.ctf.flag1.position = { ...char.position };
-        this.ctf.flag1.isHome = false;
-        this.updateFlagSpritePos(this.flag1Sprite, this.ctf.flag1.position);
-        this.flag1Sprite.setVisible(true);
-      }
-      if (this.ctf.flag2.carrier === char.id) {
-        this.ctf.flag2.carrier = null;
-        this.ctf.flag2.position = { ...char.position };
-        this.ctf.flag2.isHome = false;
-        this.updateFlagSpritePos(this.flag2Sprite, this.ctf.flag2.position);
-        this.flag2Sprite.setVisible(true);
-      }
-      this.showAnnouncement('FLAG DROPPED!', '#FFD93D');
-    }
-
     const entity = this.characters.get(char.id);
     if (entity) entity.showRespawning(char.respawnTimer!);
   }
@@ -1282,24 +1177,36 @@ export class BattleScene extends Phaser.Scene {
     this.lastCommandTime = now;
     this.commandCooldownRemaining = COMMAND_COOLDOWN;
 
+    // If a character is selected, prefix their name so parsers know who to command
+    let commandText = rawText;
+    if (this.selectedCharId) {
+      const selChar = this.charData.get(this.selectedCharId);
+      if (selChar && !selChar.isDead) {
+        const hasNameRef = rawText.toLowerCase().includes(selChar.name.toLowerCase());
+        if (!hasNameRef) {
+          commandText = `${selChar.name}: ${rawText}`;
+        }
+      }
+    }
+
     this.addCommandLog('You', rawText, 'processing');
 
     try {
       if (this.hasGemini) {
         const result = await parseCommandWithGemini(
-          rawText, this.charData, this.playerId, MAP_WIDTH, MAP_HEIGHT, this.ctf,
+          commandText, this.charData, this.playerId, MAP_WIDTH, MAP_HEIGHT, this.ctf,
           this.controlPoints, this.gameMap.tiles,
         );
         this.applyParsedOrders(result);
         this.updateCommandLogResult(result.narration || 'Orders issued!');
       } else {
-        this.parseCommandLocally(rawText);
+        this.parseCommandLocally(commandText);
         this.updateCommandLogResult('Orders issued!');
       }
     } catch (err) {
       console.error('Command error:', err);
       try {
-        this.parseCommandLocally(rawText);
+        this.parseCommandLocally(commandText);
         this.updateCommandLogResult(this.hasGemini ? '(AI unavailable, used local parser)' : 'Orders issued!');
       } catch {
         this.updateCommandLogResult('Error: ' + (err as Error).message);
@@ -1478,17 +1385,18 @@ export class BattleScene extends Phaser.Scene {
     if (text.includes('center') || text.includes('middle')) {
       return { x: Math.floor(MAP_WIDTH / 2), y: Math.floor(MAP_HEIGHT / 2) };
     }
+    // Directional: go all the way to the edge so they keep walking until blocked
     if (text.includes('up') || text.includes('north')) {
-      return { x: char.position.x, y: Math.max(0, char.position.y - 8) };
+      return { x: char.position.x, y: 0 };
     }
     if (text.includes('down') || text.includes('south')) {
-      return { x: char.position.x, y: Math.min(MAP_HEIGHT - 1, char.position.y + 8) };
+      return { x: char.position.x, y: MAP_HEIGHT - 1 };
     }
     if (text.includes('left') || text.includes('west')) {
-      return { x: Math.max(0, char.position.x - 8), y: char.position.y };
+      return { x: 0, y: char.position.y };
     }
     if (text.includes('right') || text.includes('east')) {
-      return { x: Math.min(MAP_WIDTH - 1, char.position.x + 8), y: char.position.y };
+      return { x: MAP_WIDTH - 1, y: char.position.y };
     }
     if (text.includes('flank') && enemyChars.length > 0) {
       const nearest = this.findNearest(char.position, enemyChars);
@@ -1510,10 +1418,10 @@ export class BattleScene extends Phaser.Scene {
       if (enemyChars.length > 0) return this.findNearest(char.position, enemyChars).position;
     }
     if (text.includes('home') || text.includes('our base') || text.includes('my base')) {
-      return this.ctf.flag1.homePosition;
+      return this.gameMap.spawnP1[1];
     }
     if (text.includes('their base') || text.includes('enemy base')) {
-      return this.ctf.flag2.homePosition;
+      return this.gameMap.spawnP2[1];
     }
     const dir = char.position.x < MAP_WIDTH / 2 ? 1 : -1;
     return { x: char.position.x + dir * 8, y: char.position.y };
@@ -1527,7 +1435,21 @@ export class BattleScene extends Phaser.Scene {
       .filter(c => c.owner !== this.playerId && !c.isDead);
     if (myChars.length === 0) return;
 
-    const targetChars = this.resolveCharTargets(text, myChars);
+    // If a character is selected, commands go to them unless text explicitly names someone else
+    let targetChars: Character[];
+    if (this.selectedCharId) {
+      const selectedChar = this.charData.get(this.selectedCharId);
+      if (selectedChar && !selectedChar.isDead && selectedChar.owner === this.playerId) {
+        // Check if command explicitly references a different character
+        const explicitTargets = this.resolveCharTargets(text, myChars);
+        const explicitlyNamed = explicitTargets.length < myChars.length; // user named specific chars
+        targetChars = explicitlyNamed ? explicitTargets : [selectedChar];
+      } else {
+        targetChars = this.resolveCharTargets(text, myChars);
+      }
+    } else {
+      targetChars = this.resolveCharTargets(text, myChars);
+    }
     const affectedChars = new Set<string>();
 
     const setOrder = (char: Character, order: CharacterOrder) => {
@@ -1559,8 +1481,10 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
-    // ── Control point ──────────────────────────────────────────────
-    if (text.includes('control point') || text.includes('take the point') || text.includes('capture point')) {
+    // ── Capture / control point / take point ─────────────────────────
+    if (text.includes('control point') || text.includes('take the point') || text.includes('capture point')
+      || text.includes('capture') || text.includes('take point') || text.includes('go to point')
+      || text.includes('cap ')) {
       const unowned = this.controlPoints
         .filter(cp => cp.owner !== 'player1')
         .sort((a, b) => this.tileDist(targetChars[0].position, a.position) - this.tileDist(targetChars[0].position, b.position));
@@ -1570,17 +1494,12 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
-    // ── Bring it home / score / return flag ─────────────────────────
-    if (text.includes('bring it home') || text.includes('bring flag') || text.includes('score')
-      || text.includes('come home') || (text.includes('return') && text.includes('flag'))) {
-      for (const char of targetChars) setOrder(char, { type: 'move', targetPosition: this.ctf.flag1.homePosition });
+    // ── Go home / retreat to base ─────────────────────────────────
+    if (text.includes('bring it home') || text.includes('come home') || text.includes('go home')
+      || text.includes('return to base') || text.includes('go to base')) {
+      for (const char of targetChars) setOrder(char, { type: 'move', targetPosition: this.gameMap.spawnP1[1] });
       this.updateOrderLabels(affectedChars);
       return;
-    }
-
-    // ── CTF: grab flag / capture ───────────────────────────────────
-    if (text.includes('flag') || text.includes('capture') || text.includes('grab')) {
-      for (const char of targetChars) setOrder(char, { type: 'capture', targetPosition: this.ctf.flag2.position });
     }
     // ── Escort / protect / follow ally ─────────────────────────────
     else if (text.includes('escort') || text.includes('guard carrier')
@@ -1675,9 +1594,13 @@ export class BattleScene extends Phaser.Scene {
       || text.includes('fall back') || text.includes('disengage')) {
       for (const char of targetChars) setOrder(char, { type: 'retreat' });
     }
-    // ── Default: move toward enemy flag ────────────────────────────
+    // ── Default: move toward nearest unowned control point ──────────
     else {
-      for (const char of targetChars) setOrder(char, { type: 'move', targetPosition: this.ctf.flag2.position });
+      const unowned = this.controlPoints
+        .filter(cp => cp.owner !== 'player1')
+        .sort((a, b) => this.tileDist(targetChars[0].position, a.position) - this.tileDist(targetChars[0].position, b.position));
+      const targetCP = unowned[0] || this.controlPoints[1];
+      for (const char of targetChars) setOrder(char, { type: 'control', targetPosition: targetCP.position });
     }
 
     this.updateOrderLabels(affectedChars);
@@ -1981,7 +1904,7 @@ export class BattleScene extends Phaser.Scene {
       this.visibleTiles,
       friendly,
       enemies,
-      { pos1: this.ctf.flag1.position, pos2: this.ctf.flag2.position },
+      null,
       this.controlPoints,
       this.cameras.main,
     );
@@ -2027,6 +1950,49 @@ export class BattleScene extends Phaser.Scene {
       else oppHp += c.currentHp;
     });
     return myHp >= oppHp ? this.playerId : 'opponent';
+  }
+
+  // ─── NETWORK STUBS ────────────────────────────────────────────
+
+  private applyRemoteOrders(_playerId: string, _orders: any) {}
+  private pushSyncState() {}
+  private applySyncState(_state: any) {}
+
+  // ─── CHARACTER SELECTION ───────────────────────────────────────
+
+  private selectCharacter(charId: string | null) {
+    this.characters.forEach(c => c.deselect());
+    this.selectedCharId = charId;
+
+    if (charId) {
+      const entity = this.characters.get(charId);
+      const char = this.charData.get(charId);
+      if (entity && char) {
+        entity.select();
+        this.selectedCharLabel.setText(`Commanding: ${char.name} [Q/E cycle, Esc=all]`);
+        this.cameras.main.centerOn(entity.sprite.x, entity.sprite.y);
+      }
+    } else {
+      this.selectedCharLabel.setText('Commanding: ALL [Q/E cycle, click=select]');
+    }
+  }
+
+  private cycleSelectedChar(direction: number) {
+    const myCharIds = Array.from(this.charData.entries())
+      .filter(([, c]) => c.owner === this.playerId && !c.isDead)
+      .map(([id]) => id);
+    if (myCharIds.length === 0) return;
+
+    if (!this.selectedCharId) {
+      this.selectCharacter(direction > 0 ? myCharIds[0] : myCharIds[myCharIds.length - 1]);
+      return;
+    }
+
+    const idx = myCharIds.indexOf(this.selectedCharId);
+    let nextIdx = idx + direction;
+    if (nextIdx < 0) nextIdx = myCharIds.length - 1;
+    if (nextIdx >= myCharIds.length) nextIdx = 0;
+    this.selectCharacter(myCharIds[nextIdx]);
   }
 
   // ─── CAMERA ─────────────────────────────────────────────────────
@@ -2084,7 +2050,7 @@ export class BattleScene extends Phaser.Scene {
       fontStyle: 'bold',
     }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100);
 
-    this.objectiveText = this.add.text(width / 2, 50, 'CAPTURE THE FLAG', {
+    this.objectiveText = this.add.text(width / 2, 50, `DOMINATION — First to ${DOM_POINTS_TO_WIN}`, {
       fontSize: '11px',
       color: '#FF6B9D',
       fontFamily: '"Fredoka", sans-serif',
@@ -2115,7 +2081,7 @@ export class BattleScene extends Phaser.Scene {
       if (cp.owner === 'player2') return '[R]';
       return '[ ]';
     }).join(' ');
-    this.scoreText.setText(`${this.ctf.score1} - ${this.ctf.score2}  ${cpDots}`);
+    this.scoreText.setText(`${this.domScore1} - ${this.domScore2}  ${cpDots}`);
   }
 
   private updateCooldownDisplay() {
@@ -2186,7 +2152,7 @@ export class BattleScene extends Phaser.Scene {
     this.abilityPanelEl.style.display = 'none';
     this.commandInput.destroy();
 
-    const winText = reason === 'flag_captured' ? 'FLAG CAPTURED!' : 'TIME UP!';
+    const winText = reason === 'domination' ? 'DOMINATION!' : 'TIME UP!';
     this.showAnnouncement(winText, winner === this.playerId ? '#45E6B0' : '#FF6B6B');
 
     this.time.delayedCall(2000, () => {

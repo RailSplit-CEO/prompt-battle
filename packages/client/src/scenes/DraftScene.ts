@@ -1232,6 +1232,7 @@ export class DraftScene extends Phaser.Scene {
           playerId: this.playerId,
           isLocal: this.isLocal,
           picks: this.picks,
+          amPlayer1: this.amPlayer1,
         });
       });
     });

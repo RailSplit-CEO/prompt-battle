@@ -44,8 +44,8 @@ export type TileType =
   | 'bridge' | 'lava' | 'sand' | 'swamp' | 'flowers' | 'mushroom' | 'ruins'
   | 'gate_open' | 'gate_closed' | 'switch';
 
-export type GameMode = 'ctf';
-export type WinReason = 'flag_captured' | 'time_up' | 'elimination' | 'disconnect';
+export type GameMode = 'domination';
+export type WinReason = 'domination' | 'time_up' | 'elimination' | 'disconnect';
 
 export interface FlagState {
   position: Position;         // current position on map

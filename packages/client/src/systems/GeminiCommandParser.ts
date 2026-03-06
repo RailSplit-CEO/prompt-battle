@@ -54,17 +54,15 @@ function buildPrompt(
       `${c.isDead ? ' [DEAD]' : ''}`;
   }).join('\n');
 
-  const flagInfo = `
-CTF STATUS:
-- Your flag: Pos:(${ctf.flag1.position.x},${ctf.flag1.position.y}) ${ctf.flag1.isHome ? '[AT BASE]' : ctf.flag1.carrier ? '[STOLEN]' : '[DROPPED ON GROUND]'}
-- Enemy flag: Pos:(${ctf.flag2.position.x},${ctf.flag2.position.y}) ${ctf.flag2.isHome ? '[AT ENEMY BASE]' : ctf.flag2.carrier ? '[YOU HAVE IT]' : '[DROPPED ON GROUND]'}
-- Your flag home base: (${ctf.flag1.homePosition.x},${ctf.flag1.homePosition.y})
-- Enemy flag home base: (${ctf.flag2.homePosition.x},${ctf.flag2.homePosition.y})
-- Score: You ${ctf.score1} - ${ctf.score2} Enemy (first to ${ctf.capturesNeeded} wins)
-- To CAPTURE: Pick up enemy flag and bring it to YOUR flag's home base (your flag must be home).
-- To RETURN your flag: Walk over your dropped flag.`;
+  const modeInfo = `
+DOMINATION MODE:
+- There are 3 control points on the map. Hold them to score points every second.
+- First team to 200 points wins, or highest score when time runs out.
+- Score: You ${ctf.score1} - ${ctf.score2} Enemy
+- Capture points by standing within 2 tiles. Contested if both teams are near.
+- STRATEGY: Spread your team across multiple points. Holding more = scoring faster.`;
 
-  return `You are the AI command interpreter for "Prompt Battle", a real-time tactical CTF (Capture the Flag) game.
+  return `You are the AI command interpreter for "Prompt Battle", a real-time tactical DOMINATION game.
 The player speaks natural language commands to control their characters on a ${mapWidth}x${mapHeight} tile grid.
 This is REAL-TIME: characters continuously execute their last order until given a new one. Be smart about interpretation.
 
@@ -73,7 +71,7 @@ ${myList}
 
 ENEMY CHARACTERS (only visible ones shown):
 ${enemyList}
-${flagInfo}
+${modeInfo}
 
 TERRAIN (each character's current terrain shown above):
 - Water/Rock: Impassable.
@@ -97,11 +95,11 @@ ACTION TYPES:
 - "ability": Use a specific ability. Requires abilityId and targetCharacterId.
 - "defend": Hold position and fight any nearby enemies.
 - "retreat": Fall back toward spawn base.
-- "capture": Move toward enemy flag to pick it up. Requires targetPosition (enemy flag pos).
-- "escort": Follow and protect a specific ally. Requires targetCharacterId (the flag carrier).
+- "capture": Move toward a control point to capture it. Requires targetPosition (control point pos). Same as "control".
+- "escort": Follow and protect a specific ally. Requires targetCharacterId.
 - "patrol": Guard an area, pacing back and forth. Requires targetPosition.
 - "hold": Stop and do nothing.
-- "control": Move to and hold a control point. Requires targetPosition (the control point position). Use for "take the point", "capture point", etc.
+- "control": Move to and hold a control point. Requires targetPosition (the control point position). Use for "take the point", "capture", "cap", etc. THIS IS THE PRIMARY OBJECTIVE.
 
 MAP PICKUPS: Health potions (green, +35% HP), Speed boosts (yellow, 12s double speed), Damage boosts (red, 12s +50% dmg) spawn on the map. Characters auto-collect by walking over them.
 
@@ -119,9 +117,8 @@ COMPLEX COMMANDS:
 - "flank" = move to the side of the nearest enemy (perpendicular approach).
 - "behind" = move past the nearest enemy to get behind them.
 - "protect [ally]" or "follow [ally]" = escort that ally.
-- "score" / "bring it home" = carry the flag back to your base.
+- "cap A" / "take point" / "capture" = move to nearest unowned control point.
 - "attack weakest" / "attack strongest" = target by HP percentage.
-- "attack carrier" / "attack flag holder" = target the enemy carrying your flag.
 - Explicit coordinates: "move to 5,10" or "go 12 8".
 - "patrol center" = patrol around a position.
 - "disengage" / "fall back" = retreat.

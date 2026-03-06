@@ -1,7 +1,7 @@
 import { initializeApp, FirebaseApp } from 'firebase/app';
 import { getAuth, signInAnonymously, Auth, User } from 'firebase/auth';
 import { getDatabase, ref, set, get, push, onValue, onChildAdded, update, remove, Database, off } from 'firebase/database';
-import { DraftPick, Character, CommandResponse } from '@prompt-battle/shared';
+import { DraftPick, Character, CommandResponse, CharacterOrder, CTFState, ControlPoint } from '@prompt-battle/shared';
 
 const firebaseConfig = {
   apiKey: "AIzaSyAT4zIS0piAqGfW5ZTCWnbkQPzyLHNDRHY",
@@ -233,8 +233,63 @@ export class FirebaseSync {
     });
   }
 
+  // ─── ONLINE SYNC (Host-Authority Model) ─────────────────────
+
+  // Host pushes full game state snapshot
+  async pushSyncState(gameId: string, syncState: SyncSnapshot): Promise<void> {
+    await set(ref(this.db, `games/${gameId}/sync`), syncState);
+  }
+
+  // Guest listens for state snapshots from host
+  onSyncState(gameId: string, callback: (state: SyncSnapshot) => void) {
+    const syncRef = ref(this.db, `games/${gameId}/sync`);
+    onValue(syncRef, (snap) => {
+      const state = snap.val();
+      if (state) callback(state);
+    });
+    this.listeners.push({ ref: syncRef, unsub: () => off(syncRef) });
+  }
+
+  // Guest sends parsed orders to host
+  async sendRemoteOrders(gameId: string, playerId: string, orders: RemoteOrderPayload[]): Promise<void> {
+    const cmdRef = push(ref(this.db, `games/${gameId}/remoteOrders`));
+    await set(cmdRef, { playerId, orders, timestamp: Date.now() });
+  }
+
+  // Host listens for guest's orders
+  onRemoteOrders(gameId: string, callback: (data: { playerId: string; orders: RemoteOrderPayload[]; key: string }) => void) {
+    const ordersRef = ref(this.db, `games/${gameId}/remoteOrders`);
+    onChildAdded(ordersRef, (snap) => {
+      const data = snap.val();
+      if (data) callback({ ...data, key: snap.key! });
+    });
+    this.listeners.push({ ref: ordersRef, unsub: () => off(ordersRef) });
+  }
+
+  // Host cleans up processed orders
+  async removeRemoteOrder(gameId: string, key: string): Promise<void> {
+    await remove(ref(this.db, `games/${gameId}/remoteOrders/${key}`));
+  }
+
   cleanup() {
     this.listeners.forEach(l => l.unsub());
     this.listeners = [];
   }
+}
+
+export interface SyncSnapshot {
+  characters: Record<string, Character>;
+  ctf: CTFState;
+  timeRemaining: number;
+  controlPoints: ControlPoint[];
+  orderQueues: Record<string, CharacterOrder[]>;
+  gameOver?: boolean;
+  winner?: string;
+  winReason?: string;
+}
+
+export interface RemoteOrderPayload {
+  characterId: string;
+  order: CharacterOrder;
+  queued: boolean;
 }

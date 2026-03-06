@@ -53,7 +53,7 @@ export class MiniMap {
     visibleTiles: Set<string>,
     friendlyChars: { position: Position }[],
     enemyChars: { position: Position; visible: boolean }[],
-    flags: { pos1: Position; pos2: Position },
+    flags: { pos1: Position; pos2: Position } | null,
     controlPoints: ControlPoint[],
     camera: Phaser.Cameras.Scene2D.Camera,
   ) {
@@ -85,19 +85,21 @@ export class MiniMap {
       this.gfx.fillCircle(cx, cy, 3);
     }
 
-    // Flags
-    this.gfx.fillStyle(0x6CC4FF, 1);
-    this.gfx.fillTriangle(
-      flags.pos1.x * this.scaleX, flags.pos1.y * this.scaleY - 3,
-      flags.pos1.x * this.scaleX + 4, flags.pos1.y * this.scaleY,
-      flags.pos1.x * this.scaleX, flags.pos1.y * this.scaleY + 3,
-    );
-    this.gfx.fillStyle(0xFF6B6B, 1);
-    this.gfx.fillTriangle(
-      flags.pos2.x * this.scaleX, flags.pos2.y * this.scaleY - 3,
-      flags.pos2.x * this.scaleX + 4, flags.pos2.y * this.scaleY,
-      flags.pos2.x * this.scaleX, flags.pos2.y * this.scaleY + 3,
-    );
+    // Flags (only if provided)
+    if (flags) {
+      this.gfx.fillStyle(0x6CC4FF, 1);
+      this.gfx.fillTriangle(
+        flags.pos1.x * this.scaleX, flags.pos1.y * this.scaleY - 3,
+        flags.pos1.x * this.scaleX + 4, flags.pos1.y * this.scaleY,
+        flags.pos1.x * this.scaleX, flags.pos1.y * this.scaleY + 3,
+      );
+      this.gfx.fillStyle(0xFF6B6B, 1);
+      this.gfx.fillTriangle(
+        flags.pos2.x * this.scaleX, flags.pos2.y * this.scaleY - 3,
+        flags.pos2.x * this.scaleX + 4, flags.pos2.y * this.scaleY,
+        flags.pos2.x * this.scaleX, flags.pos2.y * this.scaleY + 3,
+      );
+    }
 
     // Characters
     for (const c of friendlyChars) {
