@@ -1,4 +1,4 @@
-import { Character, CLASSES, ANIMALS, Position, CTFState, ControlPoint, TileType } from '@prompt-battle/shared';
+import { Character, CLASSES, ANIMALS, Position, CTFState, ControlPoint, TileType, CONSUMABLES, ConsumableId, POI } from '@prompt-battle/shared';
 
 const GEMINI_API_KEY = (import.meta as any).env?.VITE_GEMINI_API_KEY || '';
 const GEMINI_MODEL = 'gemini-2.0-flash';
@@ -6,10 +6,12 @@ const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GE
 
 export interface ParsedGameAction {
   characterId: string;
-  type: 'move' | 'attack' | 'ability' | 'defend' | 'retreat' | 'hold' | 'capture' | 'escort' | 'patrol' | 'control';
+  type: 'move' | 'attack' | 'ability' | 'defend' | 'retreat' | 'hold' | 'capture' | 'escort' | 'patrol' | 'control'
+    | 'use_item' | 'scout' | 'loot' | 'build' | 'set_trap';
   targetCharacterId?: string;
   targetPosition?: Position;
   abilityId?: string;
+  itemId?: ConsumableId;
   queued?: boolean;
 }
 
@@ -27,6 +29,7 @@ function buildPrompt(
   ctf: CTFState,
   controlPoints: ControlPoint[],
   tiles: TileType[][],
+  pois: POI[] = [],
 ): string {
   const myList = myChars.map(c => {
     const cls = CLASSES[c.classId];
@@ -37,10 +40,13 @@ function buildPrompt(
       ? `ABILITY: ${ability.name}(id:${ability.id}) - ${ability.description} [range:${ability.range}, cd:${cd > 0 ? cd + 's' : 'READY'}]`
       : 'NO ABILITY';
     const terrain = tiles[c.position.y]?.[c.position.x] || 'grass';
-    return `  ID:"${c.id}" Name:"${c.name}" Class:${cls.name} Animal:${animal.name} ` +
+    const invStr = c.inventory.length > 0
+      ? `INVENTORY: [${c.inventory.map(i => CONSUMABLES[i].name).join(', ')}]`
+      : 'INVENTORY: empty';
+    return `  ID:"${c.id}" Name:"${c.name}" Class:${cls.name} Animal:${animal.name} Lv.${c.level} ` +
       `HP:${c.currentHp}/${c.stats.hp} Pos:(${c.position.x},${c.position.y}) Terrain:${terrain} ` +
       `ATK:${c.stats.attack} DEF:${c.stats.defense} SPD:${c.stats.speed} RNG:${c.stats.range} MAG:${c.stats.magic} ` +
-      `${abilityStr}` +
+      `${abilityStr} ${invStr}` +
       `${c.isDead ? ` [DEAD - respawns in ${c.respawnTimer ?? 0}s]` : ''}`;
   }).join('\n');
 
@@ -98,6 +104,21 @@ ACTION TYPES:
 - "patrol": Guard an area, pacing back and forth. Requires targetPosition.
 - "hold": Stop and do nothing.
 - "control": Move to and hold a control point. Requires targetPosition (the control point position). Use for "take the point", "capture", "cap", etc. THIS IS THE PRIMARY OBJECTIVE.
+- "use_item": Use a consumable from inventory. Requires itemId (the consumable type ID). Use when player says "use bomb", "drink potion", "throw bomb", "activate horn", etc.
+- "scout": Move to nearest lookout post and channel to reveal a large map area (10s channel). Rewards: vision + XP.
+- "loot": Move to nearest treasure cache and loot it (8s channel). Rewards: random consumable item + XP.
+- "build": Build a barricade at current position (6s channel). Creates an impassable wall that decays after 60s.
+- "set_trap": Set a hidden trap at current position (4s channel). Deals 25 damage + 3s stun to enemies who walk over it.
+
+POINTS OF INTEREST (POIs):
+${pois.filter(p => p.active).map(p => `- ${p.type}: Pos:(${p.position.x},${p.position.y}) ${p.type === 'treasure_cache' ? '[LOOT for consumable]' : p.type === 'lookout' ? '[SCOUT for vision]' : '[Stand to heal]'}`).join('\n')}
+
+LEVELING: Characters earn XP from kills (50), capturing CPs (40), looting caches (30), scouting (20). Levels 1-5, each level gives +8% all stats.
+
+INVENTORY: Each character can hold max 2 consumable items. Items are gained from looting treasure caches.
+Available consumables: Siege Bomb (40 AOE dmg), Smoke Bomb (3-tile fog), Battle Horn (team +30% dmg), Haste Elixir (2x speed 15s), Iron Skin (+40% def 20s), Vision Flare (reveal map 10s), Rally Banner (allies respawn 8s faster), Purge Scroll (destroy enemy barricades).
+
+HEALING WELLS: Stand on a healing well to passively regenerate HP each tick. No channeling needed - just go there!
 
 MAP PICKUPS: Health potions (green, +35% HP), Speed boosts (yellow, 12s double speed), Damage boosts (red, 12s +50% dmg) spawn on the map. Characters auto-collect by walking over them.
 
@@ -139,10 +160,11 @@ Respond with ONLY valid JSON (no markdown, no code blocks):
   "actions": [
     {
       "characterId": "<exact character ID>",
-      "type": "<move|attack|ability|defend|retreat|capture|escort|patrol|hold|control>",
+      "type": "<move|attack|ability|defend|retreat|capture|escort|patrol|hold|control|use_item|scout|loot|build|set_trap>",
       "targetCharacterId": "<ID if applicable>",
       "targetPosition": {"x": <number>, "y": <number>},
       "abilityId": "<ability id if applicable>",
+      "itemId": "<consumable id if use_item, e.g. siege_bomb, haste_elixir>",
       "queued": false
     }
   ],
@@ -159,6 +181,7 @@ export async function parseCommandWithGemini(
   ctf: CTFState,
   controlPoints: ControlPoint[] = [],
   tiles: TileType[][] = [],
+  pois: POI[] = [],
 ): Promise<GeminiParseResult> {
   const myChars = Array.from(allChars.values()).filter(c => c.owner === playerId && !c.isDead);
   const enemyChars = Array.from(allChars.values()).filter(c => c.owner !== playerId && !c.isDead);
@@ -167,7 +190,7 @@ export async function parseCommandWithGemini(
     throw new Error('GEMINI_API_KEY not set. Add VITE_GEMINI_API_KEY to your .env file.');
   }
 
-  const prompt = buildPrompt(rawText, myChars, enemyChars, mapWidth, mapHeight, ctf, controlPoints, tiles);
+  const prompt = buildPrompt(rawText, myChars, enemyChars, mapWidth, mapHeight, ctf, controlPoints, tiles, pois);
 
   const response = await fetch(GEMINI_URL + GEMINI_API_KEY, {
     method: 'POST',

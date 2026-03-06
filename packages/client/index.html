@@ -193,6 +193,31 @@
     }
     #status-bar .char-order { font-size: 10px; color: #FFD93D; font-weight: 600; }
     #status-bar .char-flag { color: #FFD93D; font-size: 10px; font-weight: 700; }
+    #status-bar .char-xp-row { display: flex; align-items: center; gap: 4px; margin: 1px 0; }
+    #status-bar .xp-bar {
+      flex: 1; height: 3px; background: rgba(0,0,0,0.4); border-radius: 2px; overflow: hidden;
+    }
+    #status-bar .xp-fill {
+      height: 100%; background: linear-gradient(90deg, #FFD93D, #FF9F43); border-radius: 2px;
+      transition: width 0.3s ease;
+    }
+    #status-bar .xp-text { font-size: 8px; color: #FFD93D; white-space: nowrap; }
+    #status-bar .char-inventory {
+      display: flex; gap: 3px; flex-wrap: wrap; margin: 1px 0;
+    }
+    #status-bar .inv-item {
+      font-size: 9px; color: #FF9F43; background: rgba(255,159,67,0.15);
+      padding: 1px 4px; border-radius: 3px; border: 1px solid rgba(255,159,67,0.3);
+      cursor: help;
+    }
+    #status-bar .char-channel { margin: 2px 0; }
+    #status-bar .channel-bar {
+      height: 4px; background: rgba(0,0,0,0.4); border-radius: 2px; overflow: hidden;
+    }
+    #status-bar .channel-fill {
+      height: 100%; background: linear-gradient(90deg, #6CC4FF, #45E6B0); border-radius: 2px;
+      transition: width 0.3s ease;
+    }
     .processing-indicator {
       color: #FFD93D;
       font-style: italic;
@@ -249,6 +274,20 @@
       background: rgba(255, 107, 157, 0.1);
       border-radius: 8px;
       font-size: 11px;
+    }
+    .ap-ability.selected {
+      background: rgba(201, 143, 255, 0.2);
+      border: 1px solid rgba(201, 143, 255, 0.4);
+    }
+    .ap-hotkey {
+      display: inline-block;
+      background: rgba(201, 143, 255, 0.4);
+      color: #fff;
+      font-size: 9px;
+      font-weight: 800;
+      padding: 1px 4px;
+      border-radius: 3px;
+      margin-right: 2px;
     }
     .ap-ability-name {
       color: #C98FFF;

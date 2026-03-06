@@ -2,11 +2,13 @@ import Phaser from 'phaser';
 import {
   DraftPick, Character, computeStats, CLASSES, ANIMALS,
   Position, CharacterOrder, CTFState, ControlPoint,
+  ConsumableId, CONSUMABLES, rollRandomConsumable,
+  POI, Barricade, Trap, XP_THRESHOLDS, LEVEL_STAT_BONUS,
 } from '@prompt-battle/shared';
 import { CharacterEntity } from '../entities/Character';
 import {
   generateMap, GameMap, MAP_WIDTH, MAP_HEIGHT, TILE_SIZE, isPassable,
-  SwitchGateLink,
+  SwitchGateLink, POIPlacement,
 } from '../map/MapGenerator';
 import { findPath } from '../map/Pathfinding';
 import { CommandInput } from '../systems/CommandInput';
@@ -29,6 +31,28 @@ const PICKUP_RESPAWN = 25; // seconds
 const DOM_POINTS_TO_WIN = 200; // Domination: first to 200 points wins
 const DOM_POINTS_PER_TICK = 1; // Points earned per owned control point per second
 const ATTACK_INTERVAL = 2000; // ms between auto-attacks per character
+const CENTER_CP_MULTIPLIER = 2;
+
+// Activity channel times (in game ticks, TICK_RATE = 750ms)
+const SCOUT_CHANNEL_TICKS = 13;   // ~10 seconds
+const LOOT_CHANNEL_TICKS = 11;    // ~8 seconds
+const BUILD_CHANNEL_TICKS = 8;    // ~6 seconds
+const TRAP_CHANNEL_TICKS = 5;     // ~4 seconds
+const UPGRADE_CP_TICKS = 11;      // ~8 seconds
+const CACHE_RESPAWN_TIME = 45;    // seconds
+const LOOKOUT_VISION_RADIUS = 12;
+const LOOKOUT_VISION_DURATION = 30; // seconds
+const WELL_HEAL_PER_TICK = 8;
+const BARRICADE_HP = 80;
+const BARRICADE_DECAY = 60;       // seconds
+const MAX_TRAPS_PER_TEAM = 3;
+const TRAP_DAMAGE = 25;
+const TRAP_STUN = 3;
+const MAX_INVENTORY = 2;
+const XP_KILL = 50;
+const XP_CAPTURE_CP = 40;
+const XP_LOOT_CACHE = 30;
+const XP_SCOUT = 20;
 
 // ─── TYPES ────────────────────────────────────────────────────────
 
@@ -64,6 +88,7 @@ export class BattleScene extends Phaser.Scene {
   private isLocal!: boolean;
   private picks!: DraftPick[];
   private isHost = true;
+  private opponentId = 'opponent';
 
   private gameMap!: GameMap;
   private characters: Map<string, CharacterEntity> = new Map();
@@ -128,6 +153,30 @@ export class BattleScene extends Phaser.Scene {
   private switchGateLinks: SwitchGateLink[] = [];
   private activatedSwitches: Set<string> = new Set();
 
+  // POIs (lookouts, wells, caches)
+  private pois: POI[] = [];
+  private poiSprites: Map<string, Phaser.GameObjects.Container> = new Map();
+  private poiInteractIndicators: Map<string, Phaser.GameObjects.Container> = new Map();
+
+  // Barricades & Traps
+  private barricades: Barricade[] = [];
+  private barricadeSprites: Map<string, Phaser.GameObjects.Sprite> = new Map();
+  private traps: Trap[] = [];
+  private trapSprites: Map<string, Phaser.GameObjects.Sprite> = new Map();
+
+  // Lookout vision zones (temporary revealed areas)
+  private lookoutVisionZones: { center: Position; radius: number; expiresAt: number }[] = [];
+
+  // Vision flare (reveals whole map temporarily)
+  private visionFlareUntil = 0;
+
+  // Smoke bombs (fog clouds)
+  private smokeClouds: { position: Position; radius: number; owner: string; expiresAt: number }[] = [];
+  private smokeSprites: Map<string, Phaser.GameObjects.Graphics> = new Map();
+
+  // Damage tracking for XP assists
+  private damageDealt: Map<string, Map<string, number>> = new Map(); // targetId -> Map<attackerId, damage>
+
   // Character selection for direct commands
   private selectedCharId: string | null = null;
   private selectedCharLabel!: Phaser.GameObjects.Text;
@@ -168,6 +217,10 @@ export class BattleScene extends Phaser.Scene {
 
     this.hasGemini = !!((import.meta as any).env?.VITE_GEMINI_API_KEY);
 
+    // Determine opponent's player ID from picks
+    const oppPick = this.picks.find(p => p.playerId !== this.playerId);
+    if (oppPick) this.opponentId = oppPick.playerId;
+
     const seed = this.isLocal
       ? Date.now()
       : this.gameId.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
@@ -178,6 +231,7 @@ export class BattleScene extends Phaser.Scene {
     this.initDomination();
     this.initControlPoints();
     this.spawnPickups();
+    this.initPOIs();
     this.initFogOfWar();
     this.pathGraphics = this.add.graphics().setDepth(4);
     this.miniMap = new MiniMap(this);
@@ -232,6 +286,11 @@ export class BattleScene extends Phaser.Scene {
     this.input.keyboard!.on('keydown-OPEN_BRACKET', () => this.cycleSelectedChar(-1));
     this.input.keyboard!.on('keydown-CLOSED_BRACKET', () => this.cycleSelectedChar(1));
     this.input.keyboard!.on('keydown-ESC', () => this.selectCharacter(null));
+
+    // Ability hotkeys: 1, 2, 3
+    this.input.keyboard!.on('keydown-ONE', () => this.useAbilityHotkey(0));
+    this.input.keyboard!.on('keydown-TWO', () => this.useAbilityHotkey(1));
+    this.input.keyboard!.on('keydown-THREE', () => this.useAbilityHotkey(2));
 
     this.cameras.main.fadeIn(500, 5, 5, 16);
 
@@ -291,8 +350,11 @@ export class BattleScene extends Phaser.Scene {
     const myPicks = this.picks.filter(p => p.playerId === this.playerId);
     const oppPicks = this.picks.filter(p => p.playerId !== this.playerId);
 
+    // For spawns, use actual game role (amPlayer1/isHost), not local perspective
+    const mySpawnIsP1 = this.isHost;
+
     myPicks.forEach((pick, i) => {
-      const charData = this.buildCharacter(pick, i, true);
+      const charData = this.buildCharacter(pick, i, mySpawnIsP1);
       this.charData.set(charData.id, charData);
       const entity = new CharacterEntity(this, charData, true);
       this.characters.set(charData.id, entity);
@@ -300,7 +362,7 @@ export class BattleScene extends Phaser.Scene {
     });
 
     oppPicks.forEach((pick, i) => {
-      const charData = this.buildCharacter(pick, i, false);
+      const charData = this.buildCharacter(pick, i, !mySpawnIsP1);
       this.charData.set(charData.id, charData);
       const entity = new CharacterEntity(this, charData, false);
       this.characters.set(charData.id, entity);
@@ -359,9 +421,11 @@ export class BattleScene extends Phaser.Scene {
   private tickDominationScoring() {
     let p1Points = 0;
     let p2Points = 0;
-    for (const cp of this.controlPoints) {
-      if (cp.owner === 'player1') p1Points += DOM_POINTS_PER_TICK;
-      if (cp.owner === 'player2') p2Points += DOM_POINTS_PER_TICK;
+    for (let i = 0; i < this.controlPoints.length; i++) {
+      const cp = this.controlPoints[i];
+      const mult = i === 1 ? CENTER_CP_MULTIPLIER : 1; // center CP worth 2x
+      if (cp.owner === 'player1') p1Points += DOM_POINTS_PER_TICK * mult;
+      if (cp.owner === 'player2') p2Points += DOM_POINTS_PER_TICK * mult;
     }
     if (p1Points > 0 || p2Points > 0) {
       this.domScore1 += p1Points;
@@ -372,7 +436,7 @@ export class BattleScene extends Phaser.Scene {
     if (this.domScore1 >= DOM_POINTS_TO_WIN) {
       this.endGame(this.playerId, 'domination');
     } else if (this.domScore2 >= DOM_POINTS_TO_WIN) {
-      this.endGame('opponent', 'domination');
+      this.endGame(this.opponentId, 'domination');
     }
   }
 
@@ -383,12 +447,14 @@ export class BattleScene extends Phaser.Scene {
     const cy = Math.floor(MAP_HEIGHT / 2);
 
     const defs: { type: Pickup['type']; pos: Position }[] = [
-      { type: 'health_potion', pos: { x: cx, y: cy - 4 } },
-      { type: 'health_potion', pos: { x: cx, y: cy + 4 } },
-      { type: 'speed_boost', pos: { x: cx - 8, y: cy } },
-      { type: 'speed_boost', pos: { x: cx + 8, y: cy } },
-      { type: 'damage_boost', pos: { x: cx - 5, y: cy - 7 } },
-      { type: 'damage_boost', pos: { x: cx + 5, y: cy + 7 } },
+      { type: 'health_potion', pos: { x: cx, y: cy - 8 } },
+      { type: 'health_potion', pos: { x: cx, y: cy + 8 } },
+      { type: 'health_potion', pos: { x: cx - 16, y: cy } },
+      { type: 'health_potion', pos: { x: cx + 16, y: cy } },
+      { type: 'speed_boost', pos: { x: cx - 12, y: cy - 10 } },
+      { type: 'speed_boost', pos: { x: cx + 12, y: cy + 10 } },
+      { type: 'damage_boost', pos: { x: cx - 10, y: cy + 12 } },
+      { type: 'damage_boost', pos: { x: cx + 10, y: cy - 12 } },
     ];
 
     for (let i = 0; i < defs.length; i++) {
@@ -495,6 +561,528 @@ export class BattleScene extends Phaser.Scene {
     this.updateStatusBar();
   }
 
+  // ─── POI SYSTEM (Lookouts, Wells, Caches) ──────────────────────
+
+  private initPOIs() {
+    let poiIdx = 0;
+    for (const placement of this.gameMap.poiPlacements) {
+      const poi: POI = {
+        id: `poi_${poiIdx++}`,
+        type: placement.type,
+        position: placement.position,
+        active: true,
+        respawnTimer: 0,
+        channelTime: placement.type === 'lookout' ? SCOUT_CHANNEL_TICKS
+          : placement.type === 'treasure_cache' ? LOOT_CHANNEL_TICKS : 0,
+      };
+      this.pois.push(poi);
+
+      const px = placement.position.x * TILE_SIZE + TILE_SIZE / 2;
+      const py = placement.position.y * TILE_SIZE + TILE_SIZE / 2;
+      const container = this.add.container(px, py).setDepth(6);
+
+      // POI sprite
+      const texKey = `poi_${placement.type}`;
+      const sprite = this.add.sprite(0, 0, texKey).setScale(0.9);
+      container.add(sprite);
+
+      // Label with reward info
+      const labelMap = {
+        lookout: 'SCOUT',
+        healing_well: 'HEAL',
+        treasure_cache: 'LOOT',
+      };
+      const rewardMap = {
+        lookout: '+Vision +20XP',
+        healing_well: '+HP/tick',
+        treasure_cache: '+Item +30XP',
+      };
+      const colorMap = {
+        lookout: '#FFD93D',
+        healing_well: '#45E6B0',
+        treasure_cache: '#FF9F43',
+      };
+      const label = this.add.text(0, 16, labelMap[placement.type], {
+        fontSize: '7px',
+        color: colorMap[placement.type],
+        fontFamily: '"Nunito", sans-serif',
+        fontStyle: 'bold',
+      }).setOrigin(0.5);
+      container.add(label);
+
+      const rewardLabel = this.add.text(0, 24, rewardMap[placement.type], {
+        fontSize: '6px',
+        color: '#cbb8ee',
+        fontFamily: '"Nunito", sans-serif',
+      }).setOrigin(0.5);
+      container.add(rewardLabel);
+
+      // Pulsing animation
+      this.tweens.add({
+        targets: sprite,
+        scaleX: { from: 0.85, to: 0.95 },
+        scaleY: { from: 0.85, to: 0.95 },
+        alpha: { from: 0.8, to: 1 },
+        duration: 1000,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+
+      this.poiSprites.set(poi.id, container);
+
+      // Interact indicator (shows when a character is nearby)
+      const interactMap = {
+        lookout: '>> SCOUT: Reveal map +20XP',
+        healing_well: '>> Stand here to heal',
+        treasure_cache: '>> LOOT: Random item +30XP',
+      };
+      const interactLabel = interactMap[placement.type];
+      const interactContainer = this.add.container(px, py - 26).setDepth(15).setVisible(false);
+      const interactBg = this.add.graphics();
+      interactBg.fillStyle(0x000000, 0.8);
+      interactBg.fillRoundedRect(-80, -10, 160, 20, 5);
+      interactContainer.add(interactBg);
+      const interactText = this.add.text(0, 0, interactLabel, {
+        fontSize: '8px', color: '#FFD93D',
+        fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
+      }).setOrigin(0.5);
+      interactContainer.add(interactText);
+      this.poiInteractIndicators.set(poi.id, interactContainer);
+    }
+  }
+
+  private updatePOIs() {
+    // Show interact indicators when ally is near a POI
+    for (const poi of this.pois) {
+      const indicator = this.poiInteractIndicators.get(poi.id);
+      if (!indicator) continue;
+
+      if (!poi.active) {
+        indicator.setVisible(false);
+        const sprite = this.poiSprites.get(poi.id);
+        if (sprite) sprite.setAlpha(0.3);
+        continue;
+      }
+
+      const sprite = this.poiSprites.get(poi.id);
+      if (sprite) sprite.setAlpha(1);
+
+      // Check if any allied character is adjacent
+      let allyNearby = false;
+      this.charData.forEach(char => {
+        if (char.owner !== this.playerId || char.isDead) return;
+        if (this.tileDist(char.position, poi.position) <= 1) {
+          allyNearby = true;
+        }
+      });
+
+      indicator.setVisible(allyNearby && poi.type !== 'healing_well'); // wells are passive
+    }
+
+    // Healing wells: passively heal characters standing on them
+    for (const poi of this.pois) {
+      if (poi.type !== 'healing_well' || !poi.active) continue;
+      this.charData.forEach(char => {
+        if (char.isDead) return;
+        if (char.position.x === poi.position.x && char.position.y === poi.position.y) {
+          if (char.currentHp < char.stats.hp) {
+            const heal = Math.min(WELL_HEAL_PER_TICK, char.stats.hp - char.currentHp);
+            char.currentHp += heal;
+            const entity = this.characters.get(char.id);
+            if (entity && heal > 0) entity.showHealing(heal);
+          }
+        }
+      });
+    }
+  }
+
+  private tickPOIRespawns() {
+    for (const poi of this.pois) {
+      if (!poi.active && poi.respawnTimer > 0) {
+        poi.respawnTimer--;
+        if (poi.respawnTimer <= 0) {
+          poi.active = true;
+        }
+      }
+    }
+  }
+
+  // ─── ACTIVITY CHANNELING ──────────────────────────────────────
+
+  private updateChanneling() {
+    this.charData.forEach(char => {
+      if (char.isDead || !char.channelActivity) return;
+
+      const activity = char.channelActivity;
+      const entity = this.characters.get(char.id);
+
+      // Check if still at the position
+      if (char.position.x !== activity.position.x || char.position.y !== activity.position.y) {
+        char.channelActivity = null;
+        if (entity) entity.setOrderText(char.currentOrder ? this.getOrderLabel(char.currentOrder) : 'idle');
+        return;
+      }
+
+      // Check if stunned = interrupt
+      if (char.effects.some(e => e.type === 'stun')) {
+        char.channelActivity = null;
+        if (entity) entity.setOrderText('STUNNED');
+        return;
+      }
+
+      // Tick channel
+      activity.ticksRemaining--;
+
+      // Show progress
+      if (entity) {
+        const totalTicks = this.getChannelTotal(activity.type);
+        const progress = Math.round(((totalTicks - activity.ticksRemaining) / totalTicks) * 100);
+        const timeLeft = Math.ceil(activity.ticksRemaining * TICK_RATE / 1000);
+        entity.setOrderText(`${activity.type.toUpperCase()} ${progress}% (${timeLeft}s)`);
+      }
+
+      if (activity.ticksRemaining <= 0) {
+        this.completeChannel(char, activity.type);
+        char.channelActivity = null;
+        char.currentOrder = null;
+        if (entity) entity.setOrderText('idle');
+      }
+    });
+  }
+
+  private getChannelTotal(type: string): number {
+    switch (type) {
+      case 'scout': return SCOUT_CHANNEL_TICKS;
+      case 'loot': return LOOT_CHANNEL_TICKS;
+      case 'build': return BUILD_CHANNEL_TICKS;
+      case 'trap': return TRAP_CHANNEL_TICKS;
+      case 'upgrade_cp': return UPGRADE_CP_TICKS;
+      default: return 10;
+    }
+  }
+
+  private completeChannel(char: Character, type: string) {
+    const entity = this.characters.get(char.id);
+    switch (type) {
+      case 'scout': {
+        // Grant vision in large radius for 30 seconds
+        this.lookoutVisionZones.push({
+          center: { ...char.position },
+          radius: LOOKOUT_VISION_RADIUS,
+          expiresAt: Date.now() + LOOKOUT_VISION_DURATION * 1000,
+        });
+        this.grantXP(char, XP_SCOUT);
+        this.addCommandLog('System', `${char.name} scouted! Vision revealed for ${LOOKOUT_VISION_DURATION}s`, 'activity');
+        this.showAnnouncement('LOOKOUT ACTIVATED', '#FFD93D');
+        break;
+      }
+      case 'loot': {
+        // Find the cache POI at this position
+        const poi = this.pois.find(p =>
+          p.type === 'treasure_cache' && p.active &&
+          p.position.x === char.position.x && p.position.y === char.position.y
+        );
+        if (poi) {
+          poi.active = false;
+          poi.respawnTimer = CACHE_RESPAWN_TIME;
+        }
+        // Roll random consumable
+        if (char.inventory.length < MAX_INVENTORY) {
+          const item = rollRandomConsumable();
+          char.inventory.push(item);
+          const def = CONSUMABLES[item];
+          this.grantXP(char, XP_LOOT_CACHE);
+          this.addCommandLog('System', `${char.name} looted: ${def.icon} ${def.name}!`, 'activity');
+          this.showAnnouncement(`LOOTED: ${def.name}`, '#FF9F43');
+        } else {
+          this.addCommandLog('System', `${char.name} inventory full! (max ${MAX_INVENTORY})`, 'warning');
+        }
+        break;
+      }
+      case 'build': {
+        const barricade: Barricade = {
+          id: `barricade_${Date.now()}`,
+          position: { ...char.position },
+          owner: char.owner,
+          hp: BARRICADE_HP,
+          maxHp: BARRICADE_HP,
+          decayTimer: BARRICADE_DECAY,
+        };
+        this.barricades.push(barricade);
+        this.createBarricadeSprite(barricade);
+        this.addCommandLog('System', `${char.name} built a barricade!`, 'activity');
+        break;
+      }
+      case 'trap': {
+        const teamTraps = this.traps.filter(t => t.owner === char.owner);
+        if (teamTraps.length >= MAX_TRAPS_PER_TEAM) {
+          // Remove oldest
+          const oldest = teamTraps[0];
+          this.traps = this.traps.filter(t => t.id !== oldest.id);
+          const spr = this.trapSprites.get(oldest.id);
+          if (spr) { spr.destroy(); this.trapSprites.delete(oldest.id); }
+        }
+        const trap: Trap = {
+          id: `trap_${Date.now()}`,
+          position: { ...char.position },
+          owner: char.owner,
+          damage: TRAP_DAMAGE,
+          stunDuration: TRAP_STUN,
+          visible: false,
+        };
+        this.traps.push(trap);
+        this.createTrapSprite(trap);
+        this.addCommandLog('System', `${char.name} set a trap!`, 'activity');
+        break;
+      }
+      case 'upgrade_cp': {
+        const cp = this.controlPoints.find(c =>
+          c.owner === (char.owner === this.playerId ? 'player1' : 'player2') &&
+          this.tileDist(char.position, c.position) <= 2
+        );
+        if (cp && !cp.upgraded) {
+          cp.upgraded = true;
+          cp.buff.value *= 1.5;
+          cp.buff.label = cp.buff.label + ' (UP)';
+          this.addCommandLog('System', `${char.name} upgraded control point! Buff increased.`, 'activity');
+          this.showAnnouncement('CP UPGRADED!', '#6CC4FF');
+        }
+        break;
+      }
+    }
+  }
+
+  private startChannel(char: Character, type: 'scout' | 'loot' | 'build' | 'trap' | 'upgrade_cp') {
+    char.channelActivity = {
+      type,
+      ticksRemaining: this.getChannelTotal(type),
+      position: { ...char.position },
+    };
+    char.path = []; // stop moving
+    const entity = this.characters.get(char.id);
+    if (entity) entity.setOrderText(`${type.toUpperCase()} 0%`);
+  }
+
+  // ─── BARRICADES & TRAPS ───────────────────────────────────────
+
+  private createBarricadeSprite(b: Barricade) {
+    const px = b.position.x * TILE_SIZE + TILE_SIZE / 2;
+    const py = b.position.y * TILE_SIZE + TILE_SIZE / 2;
+    const sprite = this.add.sprite(px, py, 'barricade').setDepth(8);
+    this.barricadeSprites.set(b.id, sprite);
+  }
+
+  private createTrapSprite(t: Trap) {
+    const px = t.position.x * TILE_SIZE + TILE_SIZE / 2;
+    const py = t.position.y * TILE_SIZE + TILE_SIZE / 2;
+    const sprite = this.add.sprite(px, py, 'trap').setDepth(3).setAlpha(0.4);
+    // Only visible to the trap owner
+    if (t.owner !== this.playerId) sprite.setVisible(false);
+    this.trapSprites.set(t.id, sprite);
+  }
+
+  private updateBarricadesAndTraps() {
+    // Barricade decay
+    for (let i = this.barricades.length - 1; i >= 0; i--) {
+      const b = this.barricades[i];
+      if (b.hp <= 0 || b.decayTimer <= 0) {
+        const spr = this.barricadeSprites.get(b.id);
+        if (spr) { spr.destroy(); this.barricadeSprites.delete(b.id); }
+        this.barricades.splice(i, 1);
+      }
+    }
+
+    // Trap triggers
+    this.charData.forEach(char => {
+      if (char.isDead) return;
+      for (let i = this.traps.length - 1; i >= 0; i--) {
+        const trap = this.traps[i];
+        if (trap.owner === char.owner) continue; // don't trigger own traps
+        if (char.position.x === trap.position.x && char.position.y === trap.position.y) {
+          // Trigger!
+          char.currentHp = Math.max(0, char.currentHp - trap.damage);
+          char.effects.push({ type: 'stun', duration: trap.stunDuration, value: 1 });
+          const entity = this.characters.get(char.id);
+          if (entity) {
+            entity.showDamage(trap.damage);
+            entity.setOrderText('TRAPPED!');
+          }
+          this.addCommandLog('System', `${char.name} triggered a trap! (-${trap.damage} HP, stunned ${trap.stunDuration}s)`, 'trap');
+          if (char.currentHp <= 0) this.killCharacter(char);
+          // Remove trap
+          const spr = this.trapSprites.get(trap.id);
+          if (spr) { spr.destroy(); this.trapSprites.delete(trap.id); }
+          this.traps.splice(i, 1);
+          break;
+        }
+      }
+    });
+  }
+
+  private tickBarricadeDecay() {
+    for (const b of this.barricades) {
+      b.decayTimer--;
+    }
+  }
+
+  // Returns true if position is blocked by a barricade
+  private isBarricadeAt(pos: Position): boolean {
+    return this.barricades.some(b => b.position.x === pos.x && b.position.y === pos.y && b.hp > 0);
+  }
+
+  // ─── LEVELING / XP ───────────────────────────────────────────
+
+  private grantXP(char: Character, amount: number) {
+    if (char.level >= 5) return; // max level
+    char.xp += amount;
+
+    const nextThreshold = XP_THRESHOLDS[char.level] ?? Infinity;
+    if (char.xp >= nextThreshold) {
+      char.level++;
+      this.applyLevelStats(char);
+      const entity = this.characters.get(char.id);
+      if (entity) {
+        this.showLevelUpVFX(entity);
+      }
+      this.addCommandLog('System', `${char.name} reached LEVEL ${char.level}!`, 'levelup');
+      this.showAnnouncement(`${char.name} LEVEL UP! (Lv.${char.level})`, '#FFD93D');
+    }
+  }
+
+  private applyLevelStats(char: Character) {
+    const bonus = 1 + (char.level - 1) * LEVEL_STAT_BONUS;
+    char.stats = {
+      hp: Math.round(char.baseStats.hp * bonus),
+      attack: Math.round(char.baseStats.attack * bonus),
+      defense: Math.round(char.baseStats.defense * bonus),
+      speed: Math.round(char.baseStats.speed * bonus),
+      range: char.baseStats.range, // range doesn't scale
+      magic: Math.round(char.baseStats.magic * bonus),
+    };
+    // Heal the HP difference from level up
+    const hpGain = char.stats.hp - char.baseStats.hp * (1 + (char.level - 2) * LEVEL_STAT_BONUS);
+    if (hpGain > 0) char.currentHp = Math.min(char.stats.hp, char.currentHp + Math.round(hpGain));
+  }
+
+  private showLevelUpVFX(entity: CharacterEntity) {
+    // Golden burst
+    const burst = this.add.circle(entity.sprite.x, entity.sprite.y, 4, 0xFFD93D, 0.8).setDepth(25);
+    this.tweens.add({
+      targets: burst,
+      scaleX: 4, scaleY: 4, alpha: 0,
+      duration: 500, ease: 'Cubic.easeOut',
+      onComplete: () => burst.destroy(),
+    });
+    // Stars
+    for (let i = 0; i < 6; i++) {
+      const angle = (Math.PI * 2 / 6) * i;
+      const star = this.add.text(
+        entity.sprite.x + Math.cos(angle) * 4,
+        entity.sprite.y + Math.sin(angle) * 4,
+        '\u2B50', { fontSize: '10px' }
+      ).setOrigin(0.5).setDepth(25);
+      this.tweens.add({
+        targets: star,
+        x: star.x + Math.cos(angle) * 20,
+        y: star.y + Math.sin(angle) * 20,
+        alpha: 0,
+        duration: 600, delay: 100,
+        onComplete: () => star.destroy(),
+      });
+    }
+  }
+
+  // ─── CONSUMABLE USE ───────────────────────────────────────────
+
+  private useConsumable(char: Character, itemId: ConsumableId) {
+    const idx = char.inventory.indexOf(itemId);
+    if (idx === -1) {
+      this.addCommandLog('System', `${char.name} doesn't have ${CONSUMABLES[itemId].name}!`, 'warning');
+      return;
+    }
+    char.inventory.splice(idx, 1);
+    const def = CONSUMABLES[itemId];
+    const entity = this.characters.get(char.id);
+
+    switch (itemId) {
+      case 'siege_bomb': {
+        // 40 AOE damage in 2-tile radius around character
+        this.charData.forEach(target => {
+          if (target.owner === char.owner || target.isDead) return;
+          if (this.tileDist(char.position, target.position) <= 2) {
+            target.currentHp = Math.max(0, target.currentHp - 40);
+            const te = this.characters.get(target.id);
+            if (te) te.showDamage(40);
+            if (target.currentHp <= 0) this.killCharacter(target);
+          }
+        });
+        // VFX: explosion
+        if (entity) {
+          const exp = this.add.circle(entity.sprite.x, entity.sprite.y, 8, 0xFF6B00, 0.8).setDepth(25);
+          this.tweens.add({ targets: exp, scaleX: 5, scaleY: 5, alpha: 0, duration: 400, onComplete: () => exp.destroy() });
+        }
+        break;
+      }
+      case 'smoke_bomb': {
+        this.smokeClouds.push({
+          position: { ...char.position },
+          radius: 3,
+          owner: char.owner,
+          expiresAt: Date.now() + 8000,
+        });
+        break;
+      }
+      case 'battle_horn': {
+        // All allies +30% damage for 12s
+        this.charData.forEach(ally => {
+          if (ally.owner === char.owner && !ally.isDead) {
+            ally.effects.push({ type: 'damage_boost', duration: 12, value: 1.3 });
+          }
+        });
+        this.showAnnouncement('BATTLE HORN! +30% DMG', '#FF9F43');
+        break;
+      }
+      case 'haste_elixir': {
+        char.effects.push({ type: 'speed_boost', duration: 15, value: 2 });
+        break;
+      }
+      case 'iron_skin': {
+        char.effects.push({ type: 'iron_skin', duration: 20, value: 1.4 });
+        break;
+      }
+      case 'vision_flare': {
+        this.visionFlareUntil = Date.now() + 10000;
+        this.showAnnouncement('VISION FLARE! Map revealed!', '#FFD93D');
+        break;
+      }
+      case 'rally_banner': {
+        this.charData.forEach(ally => {
+          if (ally.owner === char.owner && ally.isDead && (ally.respawnTimer ?? 0) > 8) {
+            ally.respawnTimer = Math.max(1, (ally.respawnTimer ?? 0) - 8);
+          }
+        });
+        this.showAnnouncement('RALLY! Respawns accelerated!', '#45E6B0');
+        break;
+      }
+      case 'purge_scroll': {
+        // Destroy enemy barricades within 5 tiles
+        for (let i = this.barricades.length - 1; i >= 0; i--) {
+          const b = this.barricades[i];
+          if (b.owner !== char.owner && this.tileDist(char.position, b.position) <= 5) {
+            const spr = this.barricadeSprites.get(b.id);
+            if (spr) { spr.destroy(); this.barricadeSprites.delete(b.id); }
+            this.barricades.splice(i, 1);
+          }
+        }
+        this.showAnnouncement('PURGE! Enemy barricades destroyed!', '#C98FFF');
+        break;
+      }
+    }
+
+    this.addCommandLog('System', `${char.name} used ${def.icon} ${def.name}!`, 'item');
+  }
+
   // ─── FOG OF WAR ─────────────────────────────────────────────────
 
   private initFogOfWar() {
@@ -508,24 +1096,50 @@ export class BattleScene extends Phaser.Scene {
   private updateFogOfWar() {
     this.visibleTiles.clear();
 
-    this.charData.forEach((char) => {
-      if (char.owner !== this.playerId || char.isDead) return;
-      const vision = char.visionRange ?? BASE_VISION;
-      const cx = char.position.x;
-      const cy = char.position.y;
+    // Vision flare: reveal everything
+    const now = Date.now();
+    if (this.visionFlareUntil > now) {
+      for (let y = 0; y < MAP_HEIGHT; y++) {
+        for (let x = 0; x < MAP_WIDTH; x++) {
+          this.visibleTiles.add(`${x},${y}`);
+        }
+      }
+    } else {
+      // Normal character vision
+      this.charData.forEach((char) => {
+        if (char.owner !== this.playerId || char.isDead) return;
+        const vision = char.visionRange ?? BASE_VISION;
+        const cx = char.position.x;
+        const cy = char.position.y;
 
-      for (let dy = -vision; dy <= vision; dy++) {
-        for (let dx = -vision; dx <= vision; dx++) {
-          if (dx * dx + dy * dy > vision * vision) continue;
-          const tx = cx + dx;
-          const ty = cy + dy;
-          if (tx < 0 || tx >= MAP_WIDTH || ty < 0 || ty >= MAP_HEIGHT) continue;
-          if (this.hasLineOfSight(cx, cy, tx, ty)) {
-            this.visibleTiles.add(`${tx},${ty}`);
+        for (let dy = -vision; dy <= vision; dy++) {
+          for (let dx = -vision; dx <= vision; dx++) {
+            if (dx * dx + dy * dy > vision * vision) continue;
+            const tx = cx + dx;
+            const ty = cy + dy;
+            if (tx < 0 || tx >= MAP_WIDTH || ty < 0 || ty >= MAP_HEIGHT) continue;
+            if (this.hasLineOfSight(cx, cy, tx, ty)) {
+              this.visibleTiles.add(`${tx},${ty}`);
+            }
+          }
+        }
+      });
+
+      // Lookout vision zones
+      this.lookoutVisionZones = this.lookoutVisionZones.filter(z => z.expiresAt > now);
+      for (const zone of this.lookoutVisionZones) {
+        for (let dy = -zone.radius; dy <= zone.radius; dy++) {
+          for (let dx = -zone.radius; dx <= zone.radius; dx++) {
+            if (dx * dx + dy * dy > zone.radius * zone.radius) continue;
+            const tx = zone.center.x + dx;
+            const ty = zone.center.y + dy;
+            if (tx >= 0 && tx < MAP_WIDTH && ty >= 0 && ty < MAP_HEIGHT) {
+              this.visibleTiles.add(`${tx},${ty}`);
+            }
           }
         }
       }
-    });
+    }
 
     // Mark newly visible tiles as explored and cache their current texture
     this.visibleTiles.forEach((key) => {
@@ -662,6 +1276,8 @@ export class BattleScene extends Phaser.Scene {
     });
 
     this.tickCooldowns();
+    this.tickPOIRespawns();
+    this.tickBarricadeDecay();
 
     // Tick pickup respawns
     for (const pickup of this.pickups) {
@@ -680,7 +1296,7 @@ export class BattleScene extends Phaser.Scene {
 
     if (this.gameTimeRemaining <= 0) {
       const winner = this.domScore1 > this.domScore2 ? this.playerId
-        : this.domScore2 > this.domScore1 ? 'opponent'
+        : this.domScore2 > this.domScore1 ? this.opponentId
         : this.getHpLeader();
       this.endGame(winner, 'time_up');
     }
@@ -714,6 +1330,9 @@ export class BattleScene extends Phaser.Scene {
     });
 
     this.checkPickupCollisions();
+    this.updatePOIs();
+    this.updateChanneling();
+    this.updateBarricadesAndTraps();
     this.updateControlPoints();
     this.updateFogOfWar();
 
@@ -907,11 +1526,45 @@ export class BattleScene extends Phaser.Scene {
       case 'control': {
         if (!order.targetPosition) return;
         if (this.tileDist(char.position, order.targetPosition) <= 1) {
-          // At the point - hold position (defend)
           return;
         }
         char.path = findPath(this.gameMap.tiles, char.position, order.targetPosition,
           char.stats.speed + 2, occupied);
+        break;
+      }
+      case 'scout': {
+        // Find nearest lookout
+        const lookout = this.pois
+          .filter(p => p.type === 'lookout' && p.active)
+          .sort((a, b) => this.tileDist(char.position, a.position) - this.tileDist(char.position, b.position))[0];
+        if (!lookout) { char.currentOrder = null; return; }
+        if (this.tileDist(char.position, lookout.position) <= 0) return; // at position, executeAutoActions handles channel
+        char.path = findPath(this.gameMap.tiles, char.position, lookout.position,
+          char.stats.speed + 2, occupied);
+        break;
+      }
+      case 'loot': {
+        // Find nearest active cache
+        const cache = this.pois
+          .filter(p => p.type === 'treasure_cache' && p.active)
+          .sort((a, b) => this.tileDist(char.position, a.position) - this.tileDist(char.position, b.position))[0];
+        if (!cache) { char.currentOrder = null; return; }
+        if (this.tileDist(char.position, cache.position) <= 0) return;
+        char.path = findPath(this.gameMap.tiles, char.position, cache.position,
+          char.stats.speed + 2, occupied);
+        break;
+      }
+      case 'build':
+      case 'set_trap': {
+        // Build/trap at target position or current position
+        if (order.targetPosition && this.tileDist(char.position, order.targetPosition) > 0) {
+          char.path = findPath(this.gameMap.tiles, char.position, order.targetPosition,
+            char.stats.speed + 2, occupied);
+        }
+        break;
+      }
+      case 'use_item': {
+        // Instant - handled in executeAutoActions
         break;
       }
     }
@@ -940,6 +1593,70 @@ export class BattleScene extends Phaser.Scene {
     if (char.isDead) return;
     // Stunned characters can't act
     if (char.effects.some(e => e.type === 'stun')) return;
+    // Skip if channeling
+    if (char.channelActivity) return;
+
+    // Handle activity orders
+    if (char.currentOrder) {
+      const order = char.currentOrder;
+
+      // Use item - instant
+      if (order.type === 'use_item' && order.itemId) {
+        this.useConsumable(char, order.itemId);
+        char.currentOrder = null;
+        return;
+      }
+
+      // Scout - at lookout position, start channeling
+      if (order.type === 'scout') {
+        const lookout = this.pois.find(p =>
+          p.type === 'lookout' && p.active &&
+          this.tileDist(char.position, p.position) <= 0
+        );
+        if (lookout) {
+          this.startChannel(char, 'scout');
+          return;
+        }
+      }
+
+      // Loot - at cache position, start channeling
+      if (order.type === 'loot') {
+        const cache = this.pois.find(p =>
+          p.type === 'treasure_cache' && p.active &&
+          this.tileDist(char.position, p.position) <= 0
+        );
+        if (cache) {
+          this.startChannel(char, 'loot');
+          return;
+        }
+      }
+
+      // Build - at any position, start channeling
+      if (order.type === 'build' && !char.channelActivity) {
+        this.startChannel(char, 'build');
+        return;
+      }
+
+      // Set trap - at any position, start channeling
+      if (order.type === 'set_trap' && !char.channelActivity) {
+        this.startChannel(char, 'trap');
+        return;
+      }
+
+      // Control order at owned CP - if CP already owned, try to upgrade
+      if (order.type === 'control' && order.targetPosition) {
+        const cp = this.controlPoints.find(c =>
+          c.position.x === order.targetPosition!.x &&
+          c.position.y === order.targetPosition!.y
+        );
+        if (cp && cp.owner === (char.owner === this.playerId ? 'player1' : 'player2')
+          && !(cp as any).upgraded
+          && this.tileDist(char.position, cp.position) <= 1) {
+          this.startChannel(char, 'upgrade_cp');
+          return;
+        }
+      }
+    }
 
     const enemies = Array.from(this.charData.values())
       .filter(c => c.owner !== char.owner && !c.isDead);
@@ -1038,19 +1755,25 @@ export class BattleScene extends Phaser.Scene {
     this.sound_.playAttackHit();
 
     if (target.currentHp <= 0) {
-      this.killCharacter(target);
+      this.killCharacter(target, attacker.id);
       this.sound_.playKill();
     }
   }
 
-  private killCharacter(char: Character) {
+  private killCharacter(char: Character, killerId?: string) {
     char.isDead = true;
     char.respawnTimer = RESPAWN_TIME;
     char.path = [];
     char.currentOrder = null;
-    // Clear order queue
+    char.channelActivity = null;
     const queue = this.orderQueues.get(char.id);
     if (queue) queue.length = 0;
+
+    // Grant XP to killer
+    if (killerId) {
+      const killer = this.charData.get(killerId);
+      if (killer) this.grantXP(killer, XP_KILL);
+    }
 
     const entity = this.characters.get(char.id);
     if (entity) entity.showRespawning(char.respawnTimer!);
@@ -1124,7 +1847,7 @@ export class BattleScene extends Phaser.Scene {
         if (targetEntity) targetEntity.showDamage(damage);
         this.showAbilityVFX(char, target, abilityId);
         if (target.currentHp <= 0) {
-          this.killCharacter(target);
+          this.killCharacter(target, char.id);
           this.sound_.playKill();
         }
 
@@ -1208,7 +1931,7 @@ export class BattleScene extends Phaser.Scene {
       if (this.hasGemini) {
         const result = await parseCommandWithGemini(
           commandText, this.charData, this.playerId, MAP_WIDTH, MAP_HEIGHT, this.ctf,
-          this.controlPoints, this.gameMap.tiles,
+          this.controlPoints, this.gameMap.tiles, this.pois,
         );
         orders = this.applyParsedOrders(result);
         this.updateCommandLogResult(result.narration || 'Orders issued!');
@@ -1249,6 +1972,7 @@ export class BattleScene extends Phaser.Scene {
         targetPosition: action.targetPosition,
         targetCharacterId: action.targetCharacterId,
         abilityId: action.abilityId,
+        itemId: action.itemId as ConsumableId | undefined,
       };
 
       // Queue if this char already got a primary order or if explicitly queued
@@ -1307,6 +2031,14 @@ export class BattleScene extends Phaser.Scene {
       case 'escort': return 'ESCORT';
       case 'patrol': return 'PATROL';
       case 'control': return 'CONTROL';
+      case 'scout': return 'SCOUT';
+      case 'loot': return 'LOOT';
+      case 'build': return 'BUILD';
+      case 'set_trap': return 'TRAP';
+      case 'use_item': {
+        if (order.itemId) return `USE ${CONSUMABLES[order.itemId].name}`;
+        return 'USE ITEM';
+      }
       default: return '';
     }
   }
@@ -1490,6 +2222,60 @@ export class BattleScene extends Phaser.Scene {
       affectedChars.add(char.id);
       partOrders.push({ characterId: char.id, order, queued });
     };
+
+    // ── Use consumable item ─────────────────────────────────────────
+    if (text.includes('use ') || text.includes('drink ') || text.includes('throw ') || text.includes('activate ')) {
+      for (const char of targetChars) {
+        // Try to match item name from inventory
+        for (const itemId of char.inventory) {
+          const def = CONSUMABLES[itemId];
+          if (text.includes(def.name.toLowerCase()) || text.includes(itemId.replace(/_/g, ' '))) {
+            setOrder(char, { type: 'use_item', itemId });
+            break;
+          }
+        }
+        // Fallback: use first item in inventory
+        if (!affectedChars.has(char.id) && char.inventory.length > 0) {
+          if (text.includes('potion') || text.includes('elixir') || text.includes('bomb')
+            || text.includes('horn') || text.includes('scroll') || text.includes('flare')
+            || text.includes('banner') || text.includes('item')) {
+            setOrder(char, { type: 'use_item', itemId: char.inventory[0] });
+          }
+        }
+      }
+      if (affectedChars.size > 0) {
+        this.updateOrderLabels(affectedChars);
+        return partOrders;
+      }
+    }
+
+    // ── Scout / lookout ───────────────────────────────────────────
+    if (text.includes('scout') || text.includes('lookout') || text.includes('watchtower')) {
+      for (const char of targetChars) setOrder(char, { type: 'scout' });
+      this.updateOrderLabels(affectedChars);
+      return partOrders;
+    }
+
+    // ── Loot / treasure / cache ──────────────────────────────────
+    if (text.includes('loot') || text.includes('treasure') || text.includes('cache') || text.includes('chest')) {
+      for (const char of targetChars) setOrder(char, { type: 'loot' });
+      this.updateOrderLabels(affectedChars);
+      return partOrders;
+    }
+
+    // ── Build barricade ──────────────────────────────────────────
+    if (text.includes('build') || text.includes('barricade') || text.includes('fortify')) {
+      for (const char of targetChars) setOrder(char, { type: 'build' });
+      this.updateOrderLabels(affectedChars);
+      return partOrders;
+    }
+
+    // ── Set trap ─────────────────────────────────────────────────
+    if (text.includes('trap') || text.includes('mine') || text.includes('snare')) {
+      for (const char of targetChars) setOrder(char, { type: 'set_trap' });
+      this.updateOrderLabels(affectedChars);
+      return partOrders;
+    }
 
     // ── Spread out / split up ──────────────────────────────────────
     if (text.includes('spread') || text.includes('split up') || text.includes('scatter')) {
@@ -1680,10 +2466,17 @@ export class BattleScene extends Phaser.Scene {
       fill.setData('fill', fill);
       container.add(fill);
 
-      const label = this.add.text(0, 18, cp.buff.label, {
+      const isCenterCP = i === 1;
+      const label = this.add.text(0, 16, cp.buff.label, {
         fontSize: '7px', color: '#ccc', fontFamily: 'monospace',
       }).setOrigin(0.5);
       container.add(label);
+
+      const rewardText = isCenterCP ? '2x Score +40XP' : '+Score +40XP';
+      const rewardLabel = this.add.text(0, 24, rewardText, {
+        fontSize: '6px', color: '#FFD93D', fontFamily: '"Nunito", sans-serif',
+      }).setOrigin(0.5);
+      container.add(rewardLabel);
 
       container.setDepth(7);
       container.setData('ring', ring);
@@ -1728,6 +2521,12 @@ export class BattleScene extends Phaser.Scene {
             cp.captureProgress = 100;
             this.sound_.playControlCapture();
             this.showAnnouncement(`POINT CAPTURED: ${cp.buff.label}`, '#4488ff');
+            // Grant XP to nearby allies
+            this.charData.forEach(c => {
+              if (c.owner === this.playerId && !c.isDead && this.tileDist(c.position, cp.position) <= 2) {
+                this.grantXP(c, XP_CAPTURE_CP);
+              }
+            });
           }
         }
       } else if (p2 > 0) {
@@ -1976,7 +2775,7 @@ export class BattleScene extends Phaser.Scene {
       if (c.owner === this.playerId) myHp += c.currentHp;
       else oppHp += c.currentHp;
     });
-    return myHp >= oppHp ? this.playerId : 'opponent';
+    return myHp >= oppHp ? this.playerId : this.opponentId;
   }
 
   // ─── CHARACTER SELECTION ───────────────────────────────────────
@@ -1990,12 +2789,13 @@ export class BattleScene extends Phaser.Scene {
       const char = this.charData.get(charId);
       if (entity && char) {
         entity.select();
-        this.selectedCharLabel.setText(`Commanding: ${char.name} [Q/E cycle, Esc=all]`);
+        this.selectedCharLabel.setText(`Commanding: ${char.name} [Q/E cycle, 1-3 abilities, Esc=all]`);
         this.cameras.main.centerOn(entity.sprite.x, entity.sprite.y);
       }
     } else {
       this.selectedCharLabel.setText('Commanding: ALL [Q/E cycle, click=select]');
     }
+    this.updateAbilityPanel();
   }
 
   private cycleSelectedChar(direction: number) {
@@ -2014,6 +2814,66 @@ export class BattleScene extends Phaser.Scene {
     if (nextIdx < 0) nextIdx = myCharIds.length - 1;
     if (nextIdx >= myCharIds.length) nextIdx = 0;
     this.selectCharacter(myCharIds[nextIdx]);
+  }
+
+  // ─── ABILITY HOTKEYS ─────────────────────────────────────────────
+
+  private useAbilityHotkey(index: number) {
+    if (!this.selectedCharId) return;
+    const char = this.charData.get(this.selectedCharId);
+    if (!char || char.isDead || char.owner !== this.playerId) return;
+
+    const cls = CLASSES[char.classId];
+    const ability = cls.abilities[index];
+    if (!ability) return;
+
+    // Check cooldown
+    const cd = char.cooldowns[ability.id] || 0;
+    if (cd > 0) {
+      this.showAnnouncement(`${ability.name} on cooldown (${cd}s)`, '#FFD93D');
+      return;
+    }
+
+    // Find target: healing → lowest HP ally, offensive → nearest visible enemy
+    let targetId: string | undefined;
+    if (ability.healing && !ability.damage) {
+      const allies = Array.from(this.charData.values())
+        .filter(c => c.owner === this.playerId && !c.isDead);
+      if (allies.length > 0) {
+        targetId = allies.reduce((a, b) =>
+          a.currentHp / a.stats.hp < b.currentHp / b.stats.hp ? a : b,
+        ).id;
+      }
+    } else {
+      const enemies = Array.from(this.charData.values())
+        .filter(c => c.owner !== this.playerId && !c.isDead);
+      const visible = enemies.filter(e => {
+        const entity = this.characters.get(e.id);
+        return entity && entity.fogVisible;
+      });
+      if (visible.length > 0) {
+        targetId = this.findNearest(char.position, visible).id;
+      } else if (enemies.length > 0) {
+        targetId = this.findNearest(char.position, enemies).id;
+      }
+    }
+
+    if (!targetId) return;
+
+    const order: CharacterOrder = {
+      type: 'ability',
+      abilityId: ability.id,
+      targetCharacterId: targetId,
+    };
+    char.currentOrder = order;
+    char.path = [];
+    const queue = this.orderQueues.get(char.id);
+    if (queue) queue.length = 0;
+
+    const entity = this.characters.get(char.id);
+    if (entity) entity.setOrderText(ability.name);
+
+    this.updateAbilityPanel();
   }
 
   // ─── CAMERA ─────────────────────────────────────────────────────
@@ -2097,12 +2957,15 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private updateScoreDisplay() {
+    const myTeam = this.isHost ? 'player1' : 'player2';
     const cpDots = this.controlPoints.map(cp => {
-      if (cp.owner === 'player1') return '[B]';
-      if (cp.owner === 'player2') return '[R]';
+      if (cp.owner === myTeam) return '[B]';
+      if (cp.owner && cp.owner !== myTeam) return '[R]';
       return '[ ]';
     }).join(' ');
-    this.scoreText.setText(`${this.domScore1} - ${this.domScore2}  ${cpDots}`);
+    const myScore = this.isHost ? this.domScore1 : this.domScore2;
+    const oppScore = this.isHost ? this.domScore2 : this.domScore1;
+    this.scoreText.setText(`${myScore} - ${oppScore}  ${cpDots}`);
   }
 
   private updateCooldownDisplay() {
@@ -2166,6 +3029,8 @@ export class BattleScene extends Phaser.Scene {
         timeRemaining: this.gameTimeRemaining,
         controlPoints: this.controlPoints,
         orderQueues,
+        domScore1: this.domScore1,
+        domScore2: this.domScore2,
         gameOver: true,
         winner,
         winReason: reason,
@@ -2243,8 +3108,9 @@ export class BattleScene extends Phaser.Scene {
       let card = `<div class="char-card ${side}${c.isDead ? ' dead' : ''}">`;
       card += `<div class="char-info">`;
 
-      // Row 1: name + class
+      // Row 1: name + class + level
       card += `<div class="char-name" style="color:${isAlly ? '#6CC4FF' : '#FF8EC8'}">${c.name}`;
+      card += ` <span style="color:#FFD93D;font-size:10px">Lv.${c.level}</span>`;
       card += `</div>`;
       card += `<div class="char-class">${cls.name}</div>`;
 
@@ -2257,12 +3123,35 @@ export class BattleScene extends Phaser.Scene {
         card += `<span class="hp-text">${c.currentHp}/${c.stats.hp}</span>`;
         card += `</div>`;
 
+        // Row 2.5: XP bar (allies only)
+        if (isAlly && c.level < 5) {
+          const xpNeeded = XP_THRESHOLDS[c.level] ?? 999;
+          const prevXp = XP_THRESHOLDS[c.level - 1] ?? 0;
+          const xpProgress = Math.min(100, ((c.xp - prevXp) / (xpNeeded - prevXp)) * 100);
+          card += `<div class="char-xp-row">`;
+          card += `<div class="xp-bar"><div class="xp-fill" style="width:${xpProgress}%"></div></div>`;
+          card += `<span class="xp-text">${c.xp}/${xpNeeded} XP</span>`;
+          card += `</div>`;
+        }
+
         // Row 3: ability + cooldown (allies only show full detail)
         if (ability) {
           card += `<div class="char-ability-row">`;
           card += `<span class="ability-name">${ability.name}</span>`;
           card += `<span class="ability-cd ${cd > 0 ? 'on-cd' : 'ready'}">${cd > 0 ? cd + 's' : 'READY'}</span>`;
           card += `</div>`;
+        }
+
+        // Row 3.5: Inventory (allies only)
+        if (isAlly && c.inventory.length > 0) {
+          card += `<div class="char-inventory">`;
+          c.inventory.forEach(itemId => {
+            const def = CONSUMABLES[itemId];
+            card += `<span class="inv-item" title="${def.name}: ${def.description}">${def.icon} ${def.name}</span>`;
+          });
+          card += `</div>`;
+        } else if (isAlly) {
+          card += `<div class="char-inventory"><span style="color:#666;font-size:9px">No items</span></div>`;
         }
 
         // Row 4: effects
@@ -2275,12 +3164,30 @@ export class BattleScene extends Phaser.Scene {
           card += `</div>`;
         }
 
-        // Row 5: current order (allies only)
+        // Row 5: current order + channel progress (allies only)
         if (isAlly) {
           const order = c.currentOrder;
           const queueLen = this.orderQueues.get(c.id)?.length || 0;
           const queueSuffix = queueLen > 0 ? ` +${queueLen}` : '';
-          const orderText = order ? this.getOrderLabel(order) : 'idle';
+          let orderText = order ? this.getOrderLabel(order) : 'idle';
+          // Channel progress bar
+          if (c.channelActivity) {
+            const total = this.getChannelTotal(c.channelActivity.type);
+            const progress = Math.round(((total - c.channelActivity.ticksRemaining) / total) * 100);
+            const timeLeft = Math.ceil(c.channelActivity.ticksRemaining * TICK_RATE / 1000);
+            const channelRewardMap: Record<string, string> = {
+              scout: 'Reveal map +20XP',
+              loot: 'Random item +30XP',
+              build: 'Barricade (60s)',
+              trap: 'Hidden trap (25dmg+stun)',
+              upgrade_cp: 'Buff x1.5',
+            };
+            const reward = channelRewardMap[c.channelActivity.type] || '';
+            orderText = `${c.channelActivity.type.toUpperCase()} ${progress}% (${timeLeft}s) → ${reward}`;
+            card += `<div class="char-channel">`;
+            card += `<div class="channel-bar"><div class="channel-fill" style="width:${progress}%"></div></div>`;
+            card += `</div>`;
+          }
           card += `<div class="char-order">${orderText}${queueSuffix}</div>`;
         }
       }
@@ -2311,15 +3218,16 @@ export class BattleScene extends Phaser.Scene {
       html += `<div class="ap-char-name">${c.name}</div>`;
       html += `<div class="ap-char-class">${cls.name} + ${animal.name}</div>`;
 
-      const ability = cls.abilities[0];
-      if (ability) {
+      const isSelected = c.id === this.selectedCharId;
+      cls.abilities.forEach((ability, i) => {
         const cd = c.cooldowns[ability.id] || 0;
-        html += `<div class="ap-ability">`;
-        html += `<div class="ap-ability-name">${ability.name}</div>`;
+        const hotkey = isSelected ? `<span class="ap-hotkey">[${i + 1}]</span> ` : '';
+        html += `<div class="ap-ability${isSelected ? ' selected' : ''}">`;
+        html += `<div class="ap-ability-name">${hotkey}${ability.name}</div>`;
         html += `<div class="ap-ability-desc">${ability.description}</div>`;
         html += `<div class="ap-ability-cd ${cd > 0 ? 'cooldown' : 'ready'}">${cd > 0 ? `CD: ${cd}s` : 'READY'}</div>`;
         html += `</div>`;
-      }
+      });
 
       const order = c.currentOrder;
       const queue = this.orderQueues.get(c.id) || [];
@@ -2423,6 +3331,8 @@ export class BattleScene extends Phaser.Scene {
       timeRemaining: this.gameTimeRemaining,
       controlPoints: this.controlPoints,
       orderQueues,
+      domScore1: this.domScore1,
+      domScore2: this.domScore2,
     };
     if (this.gameOver) {
       snapshot.gameOver = true;
@@ -2533,6 +3443,10 @@ export class BattleScene extends Phaser.Scene {
     if (state.controlPoints) {
       this.controlPoints = state.controlPoints;
     }
+
+    // Update domination scores
+    if (state.domScore1 !== undefined) this.domScore1 = state.domScore1;
+    if (state.domScore2 !== undefined) this.domScore2 = state.domScore2;
 
     // Update visuals
     this.updateScoreDisplay();

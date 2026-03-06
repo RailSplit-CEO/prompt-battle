@@ -194,6 +194,7 @@ export interface ControlPoint {
   captureProgress: number; // 0-100
   capturingTeam: 'player1' | 'player2' | null;
   buff: ControlPointBuff;
+  upgraded?: boolean;
 }
 
 export interface ActionResult {

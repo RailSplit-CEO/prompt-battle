@@ -283,6 +283,8 @@ export interface SyncSnapshot {
   timeRemaining: number;
   controlPoints: ControlPoint[];
   orderQueues: Record<string, CharacterOrder[]>;
+  domScore1: number;
+  domScore2: number;
   gameOver?: boolean;
   winner?: string;
   winReason?: string;

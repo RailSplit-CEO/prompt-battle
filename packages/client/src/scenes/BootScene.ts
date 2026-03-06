@@ -321,6 +321,76 @@ export class BootScene extends Phaser.Scene {
     cpGfx.strokeCircle(16, 16, 10);
     cpGfx.generateTexture('control_point', 32, 32);
     cpGfx.destroy();
+
+    // POI: Lookout post (yellow tower)
+    const lookoutGfx = this.add.graphics();
+    lookoutGfx.fillStyle(0x000000, 0.5);
+    lookoutGfx.fillRoundedRect(10, 4, 12, 24, 3);
+    lookoutGfx.fillStyle(0xB8860B);
+    lookoutGfx.fillRoundedRect(11, 5, 10, 22, 2);
+    lookoutGfx.fillStyle(0xFFD93D);
+    lookoutGfx.fillRect(13, 3, 6, 6); // top platform
+    lookoutGfx.fillStyle(0xffffff, 0.3);
+    lookoutGfx.fillRect(13, 3, 3, 3);
+    lookoutGfx.generateTexture('poi_lookout', 32, 32);
+    lookoutGfx.destroy();
+
+    // POI: Healing well (green pool)
+    const wellGfx = this.add.graphics();
+    wellGfx.fillStyle(0x555555);
+    wellGfx.fillCircle(16, 16, 14);
+    wellGfx.fillStyle(0x333333);
+    wellGfx.fillCircle(16, 16, 12);
+    wellGfx.fillStyle(0x22AA66, 0.8);
+    wellGfx.fillCircle(16, 16, 10);
+    wellGfx.fillStyle(0x45E6B0, 0.6);
+    wellGfx.fillCircle(16, 16, 7);
+    wellGfx.fillStyle(0xffffff, 0.3);
+    wellGfx.fillCircle(12, 12, 3);
+    wellGfx.generateTexture('poi_healing_well', 32, 32);
+    wellGfx.destroy();
+
+    // POI: Treasure cache (orange chest)
+    const cacheGfx = this.add.graphics();
+    cacheGfx.fillStyle(0x000000, 0.5);
+    cacheGfx.fillRoundedRect(6, 10, 20, 16, 3);
+    cacheGfx.fillStyle(0xB87333);
+    cacheGfx.fillRoundedRect(7, 11, 18, 14, 2);
+    cacheGfx.fillStyle(0xFF9F43);
+    cacheGfx.fillRoundedRect(8, 12, 16, 12, 2);
+    cacheGfx.fillStyle(0xFFD93D);
+    cacheGfx.fillRect(14, 14, 4, 4); // lock
+    cacheGfx.fillStyle(0xffffff, 0.25);
+    cacheGfx.fillRect(9, 13, 7, 3);
+    cacheGfx.generateTexture('poi_treasure_cache', 32, 32);
+    cacheGfx.destroy();
+
+    // Barricade texture (brown wall)
+    const barGfx = this.add.graphics();
+    barGfx.fillStyle(0x000000, 0.5);
+    barGfx.fillRoundedRect(2, 6, 28, 20, 3);
+    barGfx.fillStyle(0x8B4513);
+    barGfx.fillRoundedRect(3, 7, 26, 18, 2);
+    barGfx.fillStyle(0xA0522D);
+    barGfx.fillRect(5, 9, 22, 3);
+    barGfx.fillRect(5, 14, 22, 3);
+    barGfx.fillRect(5, 19, 22, 3);
+    barGfx.lineStyle(1, 0x654321, 0.5);
+    barGfx.lineBetween(10, 8, 10, 24);
+    barGfx.lineBetween(22, 8, 22, 24);
+    barGfx.generateTexture('barricade', 32, 32);
+    barGfx.destroy();
+
+    // Trap texture (red/grey spike)
+    const trapGfx = this.add.graphics();
+    trapGfx.fillStyle(0x888888, 0.6);
+    trapGfx.fillCircle(16, 16, 8);
+    trapGfx.fillStyle(0xFF4444, 0.5);
+    trapGfx.fillTriangle(16, 8, 12, 20, 20, 20);
+    trapGfx.fillStyle(0xffffff, 0.2);
+    trapGfx.fillCircle(14, 14, 2);
+    trapGfx.generateTexture('trap', 32, 32);
+    trapGfx.destroy();
   }
 
   private createTileTextures() {

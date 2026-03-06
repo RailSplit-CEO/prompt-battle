@@ -47,13 +47,18 @@ function createNoise2D(seed: number) {
   };
 }
 
-export const MAP_WIDTH = 40;
-export const MAP_HEIGHT = 30;
+export const MAP_WIDTH = 80;
+export const MAP_HEIGHT = 60;
 export const TILE_SIZE = 32;
 
 export interface SwitchGateLink {
   switchPos: Position;
   gatePositions: Position[];
+}
+
+export interface POIPlacement {
+  type: 'lookout' | 'healing_well' | 'treasure_cache';
+  position: Position;
 }
 
 export interface GameMap {
@@ -65,23 +70,38 @@ export interface GameMap {
   flagP2: Position;
   controlPointPositions: Position[];
   switchGateLinks: SwitchGateLink[];
+  poiPlacements: POIPlacement[];
 }
 
 export function generateMap(seed: number): GameMap {
   const noise = createNoise2D(seed);
   const noise2 = createNoise2D(seed + 1000);
   const noise3 = createNoise2D(seed + 2000);
-  const halfWidth = Math.ceil(MAP_WIDTH / 2);
+  // Different noise for right side = asymmetric terrain
+  const noiseR = createNoise2D(seed + 5000);
+  const noise2R = createNoise2D(seed + 6000);
+  const noise3R = createNoise2D(seed + 7000);
   const tiles: TileType[][] = [];
   const rng = mulberry32(seed + 3000);
+  const cx = Math.floor(MAP_WIDTH / 2);
 
-  // Generate left half with richer terrain
+  // Generate full map - left and right sides use different noise for asymmetry
   for (let y = 0; y < MAP_HEIGHT; y++) {
     tiles[y] = [];
-    for (let x = 0; x < halfWidth; x++) {
-      const elevation = noise(x * 0.15, y * 0.15);
-      const moisture = noise2(x * 0.12, y * 0.12);
-      const detail = noise3(x * 0.25, y * 0.25);
+    for (let x = 0; x < MAP_WIDTH; x++) {
+      // Use different noise sources for each side
+      const isLeft = x < cx;
+      const n1 = isLeft ? noise(x * 0.12, y * 0.12) : noiseR(x * 0.12, y * 0.12);
+      const n2 = isLeft ? noise2(x * 0.10, y * 0.10) : noise2R(x * 0.10, y * 0.10);
+      const n3 = isLeft ? noise3(x * 0.20, y * 0.20) : noise3R(x * 0.20, y * 0.20);
+
+      // Center danger gradient: more lava/rock near center
+      const distFromCenter = Math.abs(x - cx) / cx; // 0 at center, 1 at edges
+      const centerDanger = (1 - distFromCenter) * 0.15; // raises elevation near center
+
+      const elevation = n1 + centerDanger;
+      const moisture = n2;
+      const detail = n3;
 
       let tile: TileType;
 
@@ -107,33 +127,33 @@ export function generateMap(seed: number): GameMap {
     }
   }
 
-  // Mirror to right half
-  for (let y = 0; y < MAP_HEIGHT; y++) {
-    for (let x = halfWidth; x < MAP_WIDTH; x++) {
-      tiles[y][x] = tiles[y][MAP_WIDTH - 1 - x];
-    }
-  }
+  const cy = Math.floor(MAP_HEIGHT / 2);
 
-  // Carve lanes from spawn to center
-  carvePath(tiles, 3, MAP_HEIGHT / 2, halfWidth, MAP_HEIGHT / 2);           // mid lane
-  carvePath(tiles, 3, MAP_HEIGHT / 4, halfWidth, MAP_HEIGHT / 4);           // top lane
-  carvePath(tiles, 3, (3 * MAP_HEIGHT) / 4, halfWidth, (3 * MAP_HEIGHT) / 4); // bot lane
-  // Cross-lane connectors
-  carvePath(tiles, halfWidth / 2, MAP_HEIGHT / 4, halfWidth / 2, (3 * MAP_HEIGHT) / 4); // left vertical
-  // Mirror paths
-  for (let y = 0; y < MAP_HEIGHT; y++) {
-    for (let x = halfWidth; x < MAP_WIDTH; x++) {
-      if (tiles[y][MAP_WIDTH - 1 - x] === 'path') {
-        tiles[y][x] = 'path';
-      }
-    }
-  }
+  // Carve lanes - 3 horizontal + vertical connectors
+  carvePath(tiles, 4, cy, MAP_WIDTH - 5, cy);                           // mid lane
+  carvePath(tiles, 4, Math.floor(MAP_HEIGHT / 4), MAP_WIDTH - 5, Math.floor(MAP_HEIGHT / 4));  // top lane
+  carvePath(tiles, 4, Math.floor(3 * MAP_HEIGHT / 4), MAP_WIDTH - 5, Math.floor(3 * MAP_HEIGHT / 4)); // bot lane
+
+  // Vertical connectors on both sides
+  carvePath(tiles, Math.floor(MAP_WIDTH / 4), Math.floor(MAP_HEIGHT / 4),
+    Math.floor(MAP_WIDTH / 4), Math.floor(3 * MAP_HEIGHT / 4));
+  carvePath(tiles, Math.floor(3 * MAP_WIDTH / 4), Math.floor(MAP_HEIGHT / 4),
+    Math.floor(3 * MAP_WIDTH / 4), Math.floor(3 * MAP_HEIGHT / 4));
+
+  // Diagonal connectors for more pathing options
+  carvePath(tiles, Math.floor(MAP_WIDTH / 3), Math.floor(MAP_HEIGHT / 4),
+    cx, cy);
+  carvePath(tiles, Math.floor(2 * MAP_WIDTH / 3), Math.floor(MAP_HEIGHT / 4),
+    cx, cy);
+  carvePath(tiles, Math.floor(MAP_WIDTH / 3), Math.floor(3 * MAP_HEIGHT / 4),
+    cx, cy);
+  carvePath(tiles, Math.floor(2 * MAP_WIDTH / 3), Math.floor(3 * MAP_HEIGHT / 4),
+    cx, cy);
 
   // Place bridges over water/lava on paths
   for (let y = 0; y < MAP_HEIGHT; y++) {
     for (let x = 0; x < MAP_WIDTH; x++) {
       if (tiles[y][x] === 'path') continue;
-      // Check if this water/lava tile is between two path or passable tiles
       if (tiles[y][x] === 'water' || tiles[y][x] === 'lava') {
         const hasHorizNeighbors =
           x > 0 && x < MAP_WIDTH - 1 &&
@@ -149,20 +169,20 @@ export function generateMap(seed: number): GameMap {
     }
   }
 
-  // Flag positions
-  const flagP1: Position = { x: 4, y: Math.floor(MAP_HEIGHT / 2) };
-  const flagP2: Position = { x: MAP_WIDTH - 5, y: Math.floor(MAP_HEIGHT / 2) };
+  // Flag positions (legacy, not used in domination but kept for type compat)
+  const flagP1: Position = { x: 6, y: cy };
+  const flagP2: Position = { x: MAP_WIDTH - 7, y: cy };
 
-  // Spawn positions
+  // Spawn positions - spread vertically
   const spawnP1: Position[] = [
-    { x: 2, y: Math.floor(MAP_HEIGHT / 2) - 2 },
-    { x: 2, y: Math.floor(MAP_HEIGHT / 2) },
-    { x: 2, y: Math.floor(MAP_HEIGHT / 2) + 2 },
+    { x: 3, y: cy - 4 },
+    { x: 3, y: cy },
+    { x: 3, y: cy + 4 },
   ];
   const spawnP2: Position[] = [
-    { x: MAP_WIDTH - 3, y: Math.floor(MAP_HEIGHT / 2) - 2 },
-    { x: MAP_WIDTH - 3, y: Math.floor(MAP_HEIGHT / 2) },
-    { x: MAP_WIDTH - 3, y: Math.floor(MAP_HEIGHT / 2) + 2 },
+    { x: MAP_WIDTH - 4, y: cy - 4 },
+    { x: MAP_WIDTH - 4, y: cy },
+    { x: MAP_WIDTH - 4, y: cy + 4 },
   ];
 
   // Clear spawn and flag areas
@@ -182,23 +202,24 @@ export function generateMap(seed: number): GameMap {
   // Add wall features for strategic gameplay
   addWallFeatures(tiles, mulberry32(seed + 4000));
 
-  // Place switch-gate pairs (symmetric)
+  // Place switch-gate pairs
   const switchGateLinks = placeSwitchGates(tiles, rng);
 
   // Ensure connectivity
   ensureConnected(tiles, spawnP1[0], spawnP2[0]);
-  ensureConnected(tiles, spawnP1[0], { x: Math.floor(MAP_WIDTH / 2), y: Math.floor(MAP_HEIGHT / 2) });
+  ensureConnected(tiles, spawnP1[0], { x: cx, y: cy });
 
-  // Control point positions: left, center, right
+  // Control point positions: left, center (worth 2x), right
+  // Center CP in the middle, side CPs at 1/4 and 3/4
   const cpRaw: Position[] = [
-    { x: Math.floor(MAP_WIDTH / 4), y: Math.floor(MAP_HEIGHT / 2) },
-    { x: Math.floor(MAP_WIDTH / 2), y: Math.floor(MAP_HEIGHT / 2) },
-    { x: Math.floor((3 * MAP_WIDTH) / 4), y: Math.floor(MAP_HEIGHT / 2) },
+    { x: Math.floor(MAP_WIDTH / 4), y: cy },
+    { x: cx, y: cy },
+    { x: Math.floor(3 * MAP_WIDTH / 4), y: cy },
   ];
   const controlPointPositions = cpRaw.map(p => snapToPassable(tiles, p));
   for (const cp of controlPointPositions) {
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
         const nx = cp.x + dx;
         const ny = cp.y + dy;
         if (nx >= 0 && nx < MAP_WIDTH && ny >= 0 && ny < MAP_HEIGHT) {
@@ -210,7 +231,51 @@ export function generateMap(seed: number): GameMap {
     }
   }
 
-  return { tiles, seed, spawnP1, spawnP2, flagP1, flagP2, controlPointPositions, switchGateLinks };
+  // ─── POI Placement ─────────────────────────────────────────────
+  const poiPlacements: POIPlacement[] = [];
+
+  // Lookout posts: 2 on each side, elevated positions (near hills)
+  const lookoutCandidates = [
+    { x: Math.floor(MAP_WIDTH / 6), y: Math.floor(MAP_HEIGHT / 4) },
+    { x: Math.floor(MAP_WIDTH / 6), y: Math.floor(3 * MAP_HEIGHT / 4) },
+    { x: Math.floor(5 * MAP_WIDTH / 6), y: Math.floor(MAP_HEIGHT / 4) },
+    { x: Math.floor(5 * MAP_WIDTH / 6), y: Math.floor(3 * MAP_HEIGHT / 4) },
+  ];
+  for (const pos of lookoutCandidates) {
+    const snapped = snapToPassable(tiles, pos);
+    tiles[snapped.y][snapped.x] = 'hill'; // lookouts are on hills
+    poiPlacements.push({ type: 'lookout', position: snapped });
+  }
+
+  // Healing wells: 1 near each team's side, slightly forward
+  const wellCandidates = [
+    { x: Math.floor(MAP_WIDTH / 5), y: cy },
+    { x: Math.floor(4 * MAP_WIDTH / 5), y: cy },
+    { x: cx, y: Math.floor(MAP_HEIGHT / 5) },
+    { x: cx, y: Math.floor(4 * MAP_HEIGHT / 5) },
+  ];
+  for (const pos of wellCandidates) {
+    const snapped = snapToPassable(tiles, pos);
+    poiPlacements.push({ type: 'healing_well', position: snapped });
+  }
+
+  // Treasure caches: mostly center, some off to sides — risk/reward gradient
+  const cacheCandidates = [
+    // Center area (best loot, highest risk)
+    { x: cx - 3, y: cy - 5 },
+    { x: cx + 3, y: cy + 5 },
+    { x: cx, y: Math.floor(MAP_HEIGHT / 4) },
+    { x: cx, y: Math.floor(3 * MAP_HEIGHT / 4) },
+    // Off-center (still good, moderate risk)
+    { x: Math.floor(MAP_WIDTH / 3), y: cy - 8 },
+    { x: Math.floor(2 * MAP_WIDTH / 3), y: cy + 8 },
+  ];
+  for (const pos of cacheCandidates) {
+    const snapped = snapToPassable(tiles, pos);
+    poiPlacements.push({ type: 'treasure_cache', position: snapped });
+  }
+
+  return { tiles, seed, spawnP1, spawnP2, flagP1, flagP2, controlPointPositions, switchGateLinks, poiPlacements };
 }
 
 function placeSwitchGates(tiles: TileType[][], rng: () => number): SwitchGateLink[] {
@@ -218,41 +283,43 @@ function placeSwitchGates(tiles: TileType[][], rng: () => number): SwitchGateLin
   const cx = Math.floor(MAP_WIDTH / 2);
   const cy = Math.floor(MAP_HEIGHT / 2);
 
-  // Place 2-3 switch/gate pairs in strategic locations
   const candidates: { sw: Position; gates: Position[] }[] = [
-    // Switch near top lane, gates block a shortcut
     {
-      sw: { x: cx - 3, y: Math.floor(MAP_HEIGHT / 4) },
+      sw: { x: cx - 5, y: Math.floor(MAP_HEIGHT / 4) },
       gates: [
-        { x: cx, y: Math.floor(MAP_HEIGHT / 4) - 1 },
-        { x: cx, y: Math.floor(MAP_HEIGHT / 4) },
-        { x: cx, y: Math.floor(MAP_HEIGHT / 4) + 1 },
+        { x: cx - 2, y: Math.floor(MAP_HEIGHT / 4) - 1 },
+        { x: cx - 2, y: Math.floor(MAP_HEIGHT / 4) },
+        { x: cx - 2, y: Math.floor(MAP_HEIGHT / 4) + 1 },
       ],
     },
-    // Switch near bottom lane
     {
-      sw: { x: cx - 3, y: Math.floor((3 * MAP_HEIGHT) / 4) },
+      sw: { x: cx + 5, y: Math.floor(3 * MAP_HEIGHT / 4) },
       gates: [
-        { x: cx, y: Math.floor((3 * MAP_HEIGHT) / 4) - 1 },
-        { x: cx, y: Math.floor((3 * MAP_HEIGHT) / 4) },
-        { x: cx, y: Math.floor((3 * MAP_HEIGHT) / 4) + 1 },
+        { x: cx + 2, y: Math.floor(3 * MAP_HEIGHT / 4) - 1 },
+        { x: cx + 2, y: Math.floor(3 * MAP_HEIGHT / 4) },
+        { x: cx + 2, y: Math.floor(3 * MAP_HEIGHT / 4) + 1 },
       ],
     },
-    // Switch near center, gates block side path
     {
-      sw: { x: cx - 6, y: cy },
+      sw: { x: cx - 10, y: cy },
       gates: [
-        { x: cx - 4, y: cy - 2 },
-        { x: cx - 4, y: cy - 1 },
+        { x: cx - 7, y: cy - 2 },
+        { x: cx - 7, y: cy - 1 },
+      ],
+    },
+    {
+      sw: { x: cx + 10, y: cy },
+      gates: [
+        { x: cx + 7, y: cy + 1 },
+        { x: cx + 7, y: cy + 2 },
       ],
     },
   ];
 
   for (const c of candidates) {
-    if (rng() > 0.4) continue; // only place some
+    if (rng() > 0.5) continue;
     const { sw, gates } = c;
 
-    // Check bounds
     if (sw.x < 1 || sw.x >= MAP_WIDTH - 1 || sw.y < 1 || sw.y >= MAP_HEIGHT - 1) continue;
     let valid = true;
     for (const g of gates) {
@@ -265,16 +332,7 @@ function placeSwitchGates(tiles: TileType[][], rng: () => number): SwitchGateLin
       tiles[g.y][g.x] = 'gate_closed';
     }
 
-    // Mirror
-    const mSw: Position = { x: MAP_WIDTH - 1 - sw.x, y: sw.y };
-    const mGates = gates.map(g => ({ x: MAP_WIDTH - 1 - g.x, y: g.y }));
-    tiles[mSw.y][mSw.x] = 'switch';
-    for (const g of mGates) {
-      tiles[g.y][g.x] = 'gate_closed';
-    }
-
     links.push({ switchPos: sw, gatePositions: gates });
-    links.push({ switchPos: mSw, gatePositions: mGates });
   }
 
   return links;
@@ -284,31 +342,37 @@ function addWallFeatures(tiles: TileType[][], rng: () => number) {
   const cx = Math.floor(MAP_WIDTH / 2);
   const cy = Math.floor(MAP_HEIGHT / 2);
 
-  // Central horizontal barrier with gap
-  for (let x = cx - 7; x <= cx + 7; x++) {
-    if (Math.abs(x - cx) <= 1) continue;
+  // Central horizontal barrier with gaps
+  for (let x = cx - 12; x <= cx + 12; x++) {
+    if (Math.abs(x - cx) <= 2) continue; // gap in middle
     if (x >= 0 && x < MAP_WIDTH && tiles[cy][x] !== 'path') {
       tiles[cy][x] = rng() > 0.3 ? 'rock' : 'ruins';
     }
   }
 
-  // Partial vertical walls at 1/4 and 3/4 width
-  const quartX1 = Math.floor(MAP_WIDTH / 4);
-  const quartX2 = MAP_WIDTH - 1 - quartX1;
-  for (let y = cy - 4; y <= cy + 4; y++) {
-    if (Math.abs(y - cy) <= 1) continue;
-    if (y >= 0 && y < MAP_HEIGHT) {
-      if (tiles[y][quartX1] !== 'path') tiles[y][quartX1] = rng() > 0.5 ? 'rock' : 'ruins';
-      if (tiles[y][quartX2] !== 'path') tiles[y][quartX2] = rng() > 0.5 ? 'rock' : 'ruins';
+  // Partial vertical walls at strategic positions
+  const wallXs = [
+    Math.floor(MAP_WIDTH / 4),
+    Math.floor(3 * MAP_WIDTH / 4),
+    Math.floor(MAP_WIDTH / 3),
+    Math.floor(2 * MAP_WIDTH / 3),
+  ];
+  for (const wx of wallXs) {
+    for (let y = cy - 6; y <= cy + 6; y++) {
+      if (Math.abs(y - cy) <= 2) continue;
+      if (y >= 0 && y < MAP_HEIGHT && rng() > 0.4) {
+        if (tiles[y][wx] !== 'path') tiles[y][wx] = rng() > 0.5 ? 'rock' : 'ruins';
+      }
     }
   }
 
   // Cover walls at strategic positions (L-shapes)
   const coverSpots = [
-    { x: cx - 5, y: cy - 5 }, { x: cx + 5, y: cy - 5 },
-    { x: cx - 5, y: cy + 5 }, { x: cx + 5, y: cy + 5 },
-    { x: cx - 10, y: cy - 3 }, { x: cx + 10, y: cy - 3 },
-    { x: cx - 10, y: cy + 3 }, { x: cx + 10, y: cy + 3 },
+    { x: cx - 8, y: cy - 8 }, { x: cx + 8, y: cy - 8 },
+    { x: cx - 8, y: cy + 8 }, { x: cx + 8, y: cy + 8 },
+    { x: cx - 16, y: cy - 5 }, { x: cx + 16, y: cy - 5 },
+    { x: cx - 16, y: cy + 5 }, { x: cx + 16, y: cy + 5 },
+    { x: cx - 12, y: cy - 12 }, { x: cx + 12, y: cy + 12 },
   ];
 
   for (const pos of coverSpots) {
@@ -327,25 +391,22 @@ function addWallFeatures(tiles: TileType[][], rng: () => number) {
   }
 
   // Scattered walls
-  for (let i = 0; i < 8; i++) {
-    const wx = Math.floor(rng() * (MAP_WIDTH - 8)) + 4;
-    const wy = Math.floor(rng() * (MAP_HEIGHT - 8)) + 4;
-    if (wx < 6 || wx > MAP_WIDTH - 7) continue;
+  for (let i = 0; i < 16; i++) {
+    const wx = Math.floor(rng() * (MAP_WIDTH - 12)) + 6;
+    const wy = Math.floor(rng() * (MAP_HEIGHT - 12)) + 6;
+    if (wx < 8 || wx > MAP_WIDTH - 9) continue;
     if (tiles[wy][wx] !== 'grass' && tiles[wy][wx] !== 'flowers') continue;
     tiles[wy][wx] = 'rock';
-    const mx = MAP_WIDTH - 1 - wx;
-    if (tiles[wy][mx] === 'grass' || tiles[wy][mx] === 'flowers') tiles[wy][mx] = 'rock';
   }
 }
 
-// Helper: passable for bridge placement (not water/lava/rock/ruins)
 function isPassableTerrain(tile: TileType): boolean {
   return tile !== 'water' && tile !== 'lava' && tile !== 'rock' && tile !== 'ruins' && tile !== 'gate_closed';
 }
 
 function snapToPassable(tiles: TileType[][], pos: Position): Position {
   if (isPassable(tiles[pos.y]?.[pos.x])) return pos;
-  for (let r = 1; r <= 3; r++) {
+  for (let r = 1; r <= 5; r++) {
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
         const nx = pos.x + dx;

@@ -84,6 +84,9 @@ export class CharacterEntity {
   private respawnOverlay?: Phaser.GameObjects.Text;
   private scene: Phaser.Scene;
   private selectionRing?: Phaser.GameObjects.Sprite;
+  private selectionGlow?: Phaser.GameObjects.Graphics;
+  private glowTween?: Phaser.Tweens.Tween;
+  private micLabel?: Phaser.GameObjects.Text;
   private effectAuras: Map<string, Phaser.GameObjects.Graphics> = new Map();
   private isPlayer1: boolean;
   private _visible = true;
@@ -169,6 +172,8 @@ export class CharacterEntity {
     this.orderLabel.setAlpha(alpha);
     this.orderBg.setAlpha(alpha);
     if (this.flagIcon) this.flagIcon.setAlpha(alpha);
+    if (this.micLabel) this.micLabel.setAlpha(alpha);
+    if (this.selectionGlow) this.selectionGlow.setAlpha(visible ? 0.6 : 0);
   }
 
   get fogVisible() { return this._visible; }
@@ -270,6 +275,8 @@ export class CharacterEntity {
     this.orderLabel.setPosition(this.sprite.x, this.sprite.y - 28);
     this.drawOrderBg();
     if (this.selectionRing) this.selectionRing.setPosition(this.sprite.x, this.sprite.y);
+    if (this.selectionGlow?.visible) this.drawSelectionGlow();
+    if (this.micLabel?.visible) this.micLabel.setPosition(this.sprite.x + 16, this.sprite.y - 20);
     if (this.flagIcon) this.drawFlagIcon();
     if (this.respawnOverlay) this.respawnOverlay.setPosition(this.sprite.x, this.sprite.y);
   }
@@ -278,7 +285,9 @@ export class CharacterEntity {
     this.data = charData;
     this.healthBar.update(this.sprite.x, this.sprite.y, charData.currentHp);
     this.showFlagCarrier(!!charData.hasFlag);
-    this.nameLabel.setText(charData.name);
+    const classEmoji = CLASS_EMOJIS[charData.classId] ?? '';
+    const lvl = charData.level > 1 ? ` Lv${charData.level}` : '';
+    this.nameLabel.setText(`${classEmoji} ${charData.name}${lvl}`);
   }
 
   refreshVisuals() {
@@ -331,10 +340,52 @@ export class CharacterEntity {
       this.selectionRing.setDepth(9);
     }
     this.selectionRing.setVisible(true);
+
+    // Pulsing glow circle
+    if (!this.selectionGlow) {
+      this.selectionGlow = this.scene.add.graphics().setDepth(8);
+    }
+    this.selectionGlow.setVisible(true);
+    this.selectionGlow.setAlpha(0.6);
+    this.drawSelectionGlow();
+    if (this.glowTween) this.glowTween.destroy();
+    this.glowTween = this.scene.tweens.add({
+      targets: this.selectionGlow,
+      alpha: { from: 0.6, to: 0.15 },
+      duration: 800,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+
+    // Mic icon
+    if (!this.micLabel) {
+      this.micLabel = this.scene.add.text(
+        this.sprite.x + 16, this.sprite.y - 20, '\uD83C\uDF99\uFE0F', {
+          fontSize: '12px',
+        },
+      ).setOrigin(0.5).setDepth(14);
+    }
+    this.micLabel.setVisible(true);
+    this.micLabel.setPosition(this.sprite.x + 16, this.sprite.y - 20);
   }
 
   deselect() {
     if (this.selectionRing) this.selectionRing.setVisible(false);
+    if (this.selectionGlow) {
+      this.selectionGlow.setVisible(false);
+      if (this.glowTween) { this.glowTween.destroy(); this.glowTween = undefined; }
+    }
+    if (this.micLabel) this.micLabel.setVisible(false);
+  }
+
+  private drawSelectionGlow() {
+    if (!this.selectionGlow) return;
+    this.selectionGlow.clear();
+    this.selectionGlow.lineStyle(2.5, this.classColor, 1);
+    this.selectionGlow.strokeCircle(this.sprite.x, this.sprite.y, 20);
+    this.selectionGlow.lineStyle(1.5, 0xffffff, 0.3);
+    this.selectionGlow.strokeCircle(this.sprite.x, this.sprite.y, 22);
   }
 
   updateEffectAuras(effects: ActiveEffect[]) {
@@ -379,6 +430,9 @@ export class CharacterEntity {
     this.orderBg.destroy();
     this.emojiLabel.destroy();
     if (this.selectionRing) this.selectionRing.destroy();
+    if (this.selectionGlow) this.selectionGlow.destroy();
+    if (this.glowTween) this.glowTween.destroy();
+    if (this.micLabel) this.micLabel.destroy();
     if (this.flagIcon) this.flagIcon.destroy();
     if (this.respawnOverlay) this.respawnOverlay.destroy();
     for (const gfx of this.effectAuras.values()) gfx.destroy();
