@@ -24,6 +24,7 @@ import {
   parseCommandWithGemini, GeminiParseResult,
 } from '../systems/GeminiCommandParser';
 import { SoundManager } from '../systems/SoundManager';
+import { TtsService } from '../systems/TtsService';
 import { CharacterViewports } from '../systems/CharacterViewports';
 import { getGambitOrder, GambitContext } from '../systems/GambitAI';
 
@@ -155,6 +156,7 @@ export class BattleScene extends Phaser.Scene {
 
   // Sound
   private sound_: SoundManager = SoundManager.getInstance();
+  private tts: TtsService = new TtsService();
 
   // Character viewports
   private charViewports!: CharacterViewports;
@@ -3315,6 +3317,7 @@ export class BattleScene extends Phaser.Scene {
     const entity = this.characters.get(char.id);
     if (entity) {
       entity.showBark(text);
+      this.tts.speak(char.id, text);
     }
   }
 
@@ -4003,6 +4006,7 @@ export class BattleScene extends Phaser.Scene {
   private endGame(winner: string, reason: string) {
     if (this.gameOver) return;
     this.gameOver = true;
+    this.tts.stop();
 
     // Host: notify guest of game over
     if (!this.isLocal && this.isHost) {
@@ -4310,11 +4314,11 @@ export class BattleScene extends Phaser.Scene {
     this.statusBarEl.style.display = 'none';
     this.abilityPanelEl.style.display = 'none';
     this.commandInput?.destroy();
+    this.tts.destroy();
     if (this.gameTickTimer) this.gameTickTimer.destroy();
     if (this.moveTickTimer) this.moveTickTimer.destroy();
     if (this.secondTimer) this.secondTimer.destroy();
     if (this.charViewports) this.charViewports.destroy();
-    
   }
   // ─── ONLINE SYNC ──────────────────────────────────────────────
 
