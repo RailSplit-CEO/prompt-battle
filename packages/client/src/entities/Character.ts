@@ -1,7 +1,43 @@
 import Phaser from 'phaser';
-import { Character as CharData, Position, ActiveEffect } from '@prompt-battle/shared';
+import { Character as CharData, Position, ActiveEffect, ClassId, AnimalId } from '@prompt-battle/shared';
 import { HealthBar } from './HealthBar';
 import { TILE_SIZE } from '../map/MapGenerator';
+
+// Emoji maps
+const CLASS_EMOJIS: Record<ClassId, string> = {
+  warrior: '⚔️',
+  mage: '🔮',
+  archer: '🏹',
+  healer: '💚',
+  rogue: '🗡️',
+  paladin: '🛡️',
+  necromancer: '💀',
+  bard: '🎵',
+};
+
+const ANIMAL_EMOJIS: Record<string, string> = {
+  wolf: '🐺',
+  lion: '🦁',
+  turtle: '🐢',
+  elephant: '🐘',
+  cheetah: '🐆',
+  falcon: '🦅',
+  owl: '🦉',
+  phoenix: '🔥',
+  chameleon: '🦎',
+  spider: '🕷️',
+};
+
+const CLASS_COLORS: Record<ClassId, number> = {
+  warrior: 0xFF5555,
+  mage: 0x5577FF,
+  archer: 0x55CC55,
+  healer: 0xFFDD44,
+  rogue: 0xBB55FF,
+  paladin: 0xFFAA33,
+  necromancer: 0x8855BB,
+  bard: 0xFF69B4,
+};
 
 // Color per order type
 const ORDER_COLORS: Record<string, string> = {
@@ -25,9 +61,12 @@ function getOrderColor(text: string): string {
   for (const [key, color] of Object.entries(ORDER_COLORS)) {
     if (upper.startsWith(key)) return color;
   }
-  // Ability names (casting) - purple
   if (upper.length > 0 && upper !== 'IDLE') return '#C98FFF';
   return '#8B6DB0';
+}
+
+function numberToHex(color: number): string {
+  return '#' + color.toString(16).padStart(6, '0');
 }
 
 export class CharacterEntity {
@@ -40,6 +79,7 @@ export class CharacterEntity {
   private nameLabel: Phaser.GameObjects.Text;
   private orderLabel: Phaser.GameObjects.Text;
   private orderBg: Phaser.GameObjects.Graphics;
+  private emojiLabel: Phaser.GameObjects.Text;
   private flagIcon?: Phaser.GameObjects.Graphics;
   private respawnOverlay?: Phaser.GameObjects.Text;
   private scene: Phaser.Scene;
@@ -47,11 +87,13 @@ export class CharacterEntity {
   private effectAuras: Map<string, Phaser.GameObjects.Graphics> = new Map();
   private isPlayer1: boolean;
   private _visible = true;
+  private classColor: number;
 
   constructor(scene: Phaser.Scene, charData: CharData, isPlayer1: boolean) {
     this.scene = scene;
     this.data = charData;
     this.isPlayer1 = isPlayer1;
+    this.classColor = CLASS_COLORS[charData.classId] ?? 0xAAAAAA;
 
     const px = charData.position.x * TILE_SIZE + TILE_SIZE / 2;
     const py = charData.position.y * TILE_SIZE + TILE_SIZE / 2;
@@ -62,11 +104,20 @@ export class CharacterEntity {
     this.sprite.setData('charId', charData.id);
     this.sprite.setInteractive({ useHandCursor: true });
 
-    this.healthBar = new HealthBar(scene, px, py, charData.stats.hp);
+    // Emoji on the character model
+    const animalEmoji = ANIMAL_EMOJIS[charData.animalId] ?? '?';
+    this.emojiLabel = scene.add.text(px, py - 1, animalEmoji, {
+      fontSize: '14px',
+    }).setOrigin(0.5).setDepth(11);
+
+    // Health bar with class color
+    this.healthBar = new HealthBar(scene, px, py, charData.stats.hp, 30, this.classColor);
     this.healthBar.setDepth(11);
 
-    this.nameLabel = scene.add.text(px, py + 18, charData.name, {
-      fontSize: '10px',
+    // Class emoji + name below the character
+    const classEmoji = CLASS_EMOJIS[charData.classId] ?? '';
+    this.nameLabel = scene.add.text(px, py + 18, `${classEmoji} ${charData.name}`, {
+      fontSize: '9px',
       color: isPlayer1 ? '#6CC4FF' : '#FF8EC8',
       fontFamily: '"Nunito", sans-serif',
       fontStyle: 'bold',
@@ -112,6 +163,7 @@ export class CharacterEntity {
     this._visible = visible;
     const alpha = visible ? 1 : 0;
     this.sprite.setAlpha(alpha);
+    this.emojiLabel.setAlpha(alpha);
     this.healthBar.setVisible(visible);
     this.nameLabel.setAlpha(alpha);
     this.orderLabel.setAlpha(alpha);
@@ -156,6 +208,7 @@ export class CharacterEntity {
     this.respawnOverlay.setText(String(Math.ceil(secondsLeft)));
     this.respawnOverlay.setPosition(this.sprite.x, this.sprite.y);
     this.sprite.setAlpha(0.2);
+    this.emojiLabel.setAlpha(0.2);
     this.nameLabel.setAlpha(0.3);
     this.healthBar.setVisible(false);
     this.orderLabel.setText('DEAD');
@@ -169,6 +222,7 @@ export class CharacterEntity {
       this.respawnOverlay = undefined;
     }
     this.sprite.setAlpha(1);
+    this.emojiLabel.setAlpha(1);
     this.nameLabel.setAlpha(1);
     this.healthBar.setVisible(true);
     this.orderLabel.setText('');
@@ -211,6 +265,7 @@ export class CharacterEntity {
 
   private syncPositions() {
     this.healthBar.update(this.sprite.x, this.sprite.y, this.data.currentHp);
+    this.emojiLabel.setPosition(this.sprite.x, this.sprite.y - 1);
     this.nameLabel.setPosition(this.sprite.x, this.sprite.y + 18);
     this.orderLabel.setPosition(this.sprite.x, this.sprite.y - 28);
     this.drawOrderBg();
@@ -321,6 +376,7 @@ export class CharacterEntity {
     this.nameLabel.destroy();
     this.orderLabel.destroy();
     this.orderBg.destroy();
+    this.emojiLabel.destroy();
     if (this.selectionRing) this.selectionRing.destroy();
     if (this.flagIcon) this.flagIcon.destroy();
     if (this.respawnOverlay) this.respawnOverlay.destroy();

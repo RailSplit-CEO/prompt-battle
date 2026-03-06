@@ -6,12 +6,14 @@ export class HealthBar {
   private currentHp: number;
   private width: number;
   private _visible = true;
+  private classColor: number;
 
-  constructor(scene: Phaser.Scene, x: number, y: number, maxHp: number, width = 28) {
+  constructor(scene: Phaser.Scene, x: number, y: number, maxHp: number, width = 30, classColor = 0x45E6B0) {
     this.bar = scene.add.graphics();
     this.maxHp = maxHp;
     this.currentHp = maxHp;
     this.width = width;
+    this.classColor = classColor;
     this.draw(x, y);
   }
 
@@ -38,9 +40,9 @@ export class HealthBar {
     this.bar.fillStyle(0x2A1858, 1);
     this.bar.fillRoundedRect(barX, barY, this.width, 5, 3);
 
-    // Health fill
+    // Health fill - use class color when healthy, yellow when mid, red when low
     const ratio = Math.max(0, this.currentHp / this.maxHp);
-    const color = ratio > 0.5 ? 0x45E6B0 : ratio > 0.25 ? 0xFFD93D : 0xFF6B6B;
+    const color = ratio > 0.5 ? this.classColor : ratio > 0.25 ? 0xFFD93D : 0xFF6B6B;
     const fillW = this.width * ratio;
     if (fillW > 0) {
       this.bar.fillStyle(color);
