@@ -1,7 +1,7 @@
 import { Character, CLASSES, ANIMALS, Position, CTFState, ControlPoint, TileType, CONSUMABLES, ConsumableId, POI } from '@prompt-battle/shared';
 
 const GEMINI_API_KEY = (import.meta as any).env?.VITE_GEMINI_API_KEY || '';
-const GEMINI_MODEL = 'gemini-2.0-flash';
+const GEMINI_MODEL = 'gemini-2.5-flash-lite';
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=`;
 
 export interface ParsedGameAction {
@@ -198,7 +198,6 @@ export async function parseCommandWithGemini(
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
-        temperature: 0.1,
         maxOutputTokens: 1024,
         responseMimeType: 'application/json',
       },
