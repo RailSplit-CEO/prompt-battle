@@ -28,6 +28,7 @@ const BASE_VISION = 5;
 const PICKUP_RESPAWN = 25; // seconds
 const DOM_POINTS_TO_WIN = 200; // Domination: first to 200 points wins
 const DOM_POINTS_PER_TICK = 1; // Points earned per owned control point per second
+const ATTACK_INTERVAL = 2000; // ms between auto-attacks per character
 
 // ─── TYPES ────────────────────────────────────────────────────────
 
@@ -108,6 +109,7 @@ export class BattleScene extends Phaser.Scene {
   // Terrain mechanics
   private forestAmbushUsed: Set<string> = new Set(); // charId -> used
   private lastCharTile: Map<string, string> = new Map(); // charId -> "x,y"
+  private lastAttackTime: Map<string, number> = new Map(); // charId -> timestamp
 
   // Sound
   private sound_: SoundManager = SoundManager.getInstance();
@@ -325,11 +327,15 @@ export class BattleScene extends Phaser.Scene {
       animalId: pick.animalId,
       name,
       stats,
+      baseStats: { ...stats },
       currentHp: stats.hp,
       position: { ...spawns[index] },
       cooldowns: {},
       effects: [],
       isDead: false,
+      level: 1,
+      xp: 0,
+      inventory: [],
       respawnTimer: 0,
       currentOrder: null,
       path: [],
@@ -978,6 +984,12 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private resolveAutoAttack(attacker: Character, target: Character) {
+    // Attack cooldown: limit attack speed
+    const now = this.time.now;
+    const lastAtk = this.lastAttackTime.get(attacker.id) || 0;
+    if (now - lastAtk < ATTACK_INTERVAL) return;
+    this.lastAttackTime.set(attacker.id, now);
+
     const targetEntity = this.characters.get(target.id);
     if (!targetEntity) return;
 
@@ -1967,12 +1979,6 @@ export class BattleScene extends Phaser.Scene {
     return myHp >= oppHp ? this.playerId : 'opponent';
   }
 
-  // ─── NETWORK STUBS ────────────────────────────────────────────
-
-  private applyRemoteOrders(_playerId: string, _orders: any) {}
-  private pushSyncState() {}
-  private applySyncState(_state: any) {}
-
   // ─── CHARACTER SELECTION ───────────────────────────────────────
 
   private selectCharacter(charId: string | null) {
@@ -2144,18 +2150,27 @@ export class BattleScene extends Phaser.Scene {
 
   // ─── STATE ──────────────────────────────────────────────────────
 
-  private applyServerState(state: Record<string, Character>) {
-    for (const [id, charState] of Object.entries(state)) {
-      this.charData.set(id, charState);
-      const entity = this.characters.get(id);
-      if (entity) entity.updateFromState(charState);
-    }
-    this.updateStatusBar();
-  }
-
   private endGame(winner: string, reason: string) {
     if (this.gameOver) return;
     this.gameOver = true;
+
+    // Host: notify guest of game over
+    if (!this.isLocal && this.isHost) {
+      const characters: Record<string, Character> = {};
+      this.charData.forEach((ch, id) => { characters[id] = ch; });
+      const orderQueues: Record<string, CharacterOrder[]> = {};
+      this.orderQueues.forEach((q, id) => { orderQueues[id] = [...q]; });
+      this.firebase.pushSyncState(this.gameId, {
+        characters,
+        ctf: this.ctf,
+        timeRemaining: this.gameTimeRemaining,
+        controlPoints: this.controlPoints,
+        orderQueues,
+        gameOver: true,
+        winner,
+        winReason: reason,
+      });
+    }
 
     if (this.gameTickTimer) this.gameTickTimer.destroy();
     if (this.moveTickTimer) this.moveTickTimer.destroy();
@@ -2503,13 +2518,9 @@ export class BattleScene extends Phaser.Scene {
       }
     }
 
-    // Update CTF
+    // Update domination scores from server state
     if (state.ctf) {
       this.ctf = state.ctf;
-      this.updateFlagSpritePos(this.flag1Sprite, this.ctf.flag1.position);
-      this.updateFlagSpritePos(this.flag2Sprite, this.ctf.flag2.position);
-      this.flag1Sprite.setVisible(this.ctf.flag1.carrier === null);
-      this.flag2Sprite.setVisible(this.ctf.flag2.carrier === null);
     }
 
     // Update timer

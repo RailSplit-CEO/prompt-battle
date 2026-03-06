@@ -11,6 +11,21 @@ export interface ActiveEffect {
   value?: number;
 }
 
+// ─── Consumables ────────────────────────────────────────────────
+export type ConsumableId =
+  | 'siege_bomb' | 'smoke_bomb' | 'battle_horn'
+  | 'haste_elixir' | 'iron_skin' | 'vision_flare'
+  | 'rally_banner' | 'purge_scroll';
+
+export interface ConsumableDefinition {
+  id: ConsumableId;
+  name: string;
+  description: string;
+  icon: string;
+  category: 'combat' | 'strategic' | 'personal';
+}
+
+// ─── Character ──────────────────────────────────────────────────
 export interface Character {
   id: string;
   owner: string;
@@ -18,11 +33,23 @@ export interface Character {
   animalId: AnimalId;
   name: string;
   stats: Stats;
+  baseStats: Stats;      // stats before level scaling
   currentHp: number;
   position: Position;
   cooldowns: Record<string, number>;
   effects: ActiveEffect[];
   isDead: boolean;
+  // Leveling
+  level: number;          // 1-5
+  xp: number;            // current XP
+  // Inventory
+  inventory: ConsumableId[];  // max 2 slots
+  // Activity channeling
+  channelActivity?: {
+    type: 'scout' | 'loot' | 'build' | 'trap' | 'upgrade_cp';
+    ticksRemaining: number;
+    position: Position;
+  } | null;
   // Optional real-time fields
   respawnTimer?: number;
   currentOrder?: CharacterOrder | null;
@@ -32,11 +59,18 @@ export interface Character {
 }
 
 export interface CharacterOrder {
-  type: 'move' | 'attack' | 'ability' | 'defend' | 'retreat' | 'capture' | 'hold' | 'escort' | 'patrol' | 'control';
+  type: 'move' | 'attack' | 'ability' | 'defend' | 'retreat' | 'capture' | 'hold'
+    | 'escort' | 'patrol' | 'control'
+    | 'use_item' | 'scout' | 'loot' | 'build' | 'set_trap';
   targetPosition?: Position;
   targetCharacterId?: string;
   abilityId?: string;
+  itemId?: ConsumableId;
 }
+
+// ─── XP / Leveling ──────────────────────────────────────────────
+export const XP_THRESHOLDS = [0, 100, 250, 450, 700]; // XP needed for levels 1-5
+export const LEVEL_STAT_BONUS = 0.08; // +8% all stats per level
 
 export type GameStatus = 'waiting' | 'drafting' | 'playing' | 'finished';
 export type TileType =
@@ -115,7 +149,37 @@ export interface ResolvedAction {
   result?: ActionResult;
 }
 
-export type ActionType = 'move' | 'attack' | 'ability' | 'defend' | 'retreat' | 'hold' | 'capture' | 'escort' | 'patrol' | 'control';
+export type ActionType = 'move' | 'attack' | 'ability' | 'defend' | 'retreat' | 'hold' | 'capture' | 'escort' | 'patrol' | 'control'
+  | 'use_item' | 'scout' | 'loot' | 'build' | 'set_trap';
+
+// ─── Points of Interest ─────────────────────────────────────────
+export interface POI {
+  id: string;
+  type: 'lookout' | 'healing_well' | 'treasure_cache';
+  position: Position;
+  active: boolean;
+  respawnTimer: number;        // seconds until respawn (caches only)
+  channelTime: number;         // ticks to complete channel
+  upgraded?: boolean;          // for CP upgrades
+}
+
+export interface Barricade {
+  id: string;
+  position: Position;
+  owner: string;               // player who built it
+  hp: number;                  // destructible, 80 HP
+  maxHp: number;
+  decayTimer: number;          // seconds until decay
+}
+
+export interface Trap {
+  id: string;
+  position: Position;
+  owner: string;
+  damage: number;
+  stunDuration: number;
+  visible: boolean;            // only visible to owner
+}
 
 export interface ControlPointBuff {
   type: 'speed' | 'damage' | 'defense';
