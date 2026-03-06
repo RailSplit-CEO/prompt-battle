@@ -26,27 +26,27 @@ const ARCHETYPE_COLORS: Record<string, number> = {
 };
 
 const CLASS_ICONS: Record<string, string> = {
-  warrior: 'WR',
-  mage: 'MG',
-  archer: 'AR',
-  healer: 'HL',
-  rogue: 'RG',
-  paladin: 'PL',
-  necromancer: 'NC',
-  bard: 'BD',
+  warrior: '⚔️',
+  mage: '🔮',
+  archer: '🏹',
+  healer: '💚',
+  rogue: '🗡️',
+  paladin: '🛡️',
+  necromancer: '💀',
+  bard: '🎵',
 };
 
 const ANIMAL_ICONS: Record<string, string> = {
-  wolf: 'Wf',
-  lion: 'Ln',
-  turtle: 'Tu',
-  elephant: 'El',
-  cheetah: 'Ch',
-  falcon: 'Fc',
-  owl: 'Ow',
-  phoenix: 'Px',
-  chameleon: 'Cm',
-  spider: 'Sp',
+  wolf: '🐺',
+  lion: '🦁',
+  turtle: '🐢',
+  elephant: '🐘',
+  cheetah: '🐆',
+  falcon: '🦅',
+  owl: '🦉',
+  phoenix: '🔥',
+  chameleon: '🦎',
+  spider: '🕷️',
 };
 
 export class DraftScene extends Phaser.Scene {
@@ -242,12 +242,12 @@ export class DraftScene extends Phaser.Scene {
     // ─── HEADER ──────────────────────────────────────────────────
     this.add.rectangle(width / 2, 0, width, 80, 0x1B1040, 0.92).setOrigin(0.5, 0);
 
-    this.add.text(contentCenterX, 20, 'DRAFT PHASE', {
-      fontSize: '30px',
+    this.add.text(contentCenterX, 18, '🌟 DRAFT PHASE 🌟', {
+      fontSize: '32px',
       color: '#FF6B9D',
       fontFamily: '"Fredoka", sans-serif',
       fontStyle: 'bold',
-      letterSpacing: 4,
+      letterSpacing: 5,
     }).setOrigin(0.5, 0);
 
     this.infoText = this.add.text(contentCenterX, 54, 'Select a class and animal', {
@@ -272,15 +272,15 @@ export class DraftScene extends Phaser.Scene {
 
     // ─── CLASS CARDS ─────────────────────────────────────────────
     const classIds = Object.keys(CLASSES) as ClassId[];
-    const cardW = 160;
-    const cardH = 180;
-    const cardGap = 12;
+    const cardW = 190;
+    const cardH = 220;
+    const cardGap = 14;
     const classGridW = 4 * cardW + 3 * cardGap;
     const classStartX = contentCenterX - classGridW / 2 + cardW / 2;
     const classY = 130;
 
-    this.add.text(classStartX - cardW / 2, classY - 22, 'CLASSES', {
-      fontSize: '12px',
+    this.add.text(classStartX - cardW / 2, classY - 24, '⚔️  CLASSES', {
+      fontSize: '14px',
       color: '#FF6B9D',
       fontFamily: '"Fredoka", sans-serif',
       letterSpacing: 3,
@@ -307,15 +307,15 @@ export class DraftScene extends Phaser.Scene {
 
     // ─── ANIMAL CARDS ────────────────────────────────────────────
     const animalIds = Object.keys(ANIMALS) as AnimalId[];
-    const smallW = 125;
-    const smallH = 140;
-    const smallGap = 10;
+    const smallW = 145;
+    const smallH = 168;
+    const smallGap = 12;
     const animalGridW = 5 * smallW + 4 * smallGap;
     const animalStartX = contentCenterX - animalGridW / 2 + smallW / 2;
     const animalYBase = classY + Math.ceil(classIds.length / 4) * (cardH + cardGap) + 20;
 
-    this.add.text(animalStartX - smallW / 2, animalYBase - 22, 'ANIMALS', {
-      fontSize: '12px',
+    this.add.text(animalStartX - smallW / 2, animalYBase - 24, '🐾  ANIMALS', {
+      fontSize: '14px',
       color: '#FFD93D',
       fontFamily: '"Fredoka", sans-serif',
       letterSpacing: 3,
@@ -400,28 +400,28 @@ export class DraftScene extends Phaser.Scene {
 
     // Card background
     const bg = this.add.graphics();
-    bg.fillStyle(0x231250, 1);
-    bg.fillRoundedRect(-w / 2, -h / 2, w, h, 10);
-    bg.lineStyle(1, 0x3D2070, 1);
-    bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 10);
+    bg.fillStyle(0x2A1555, 1);
+    bg.fillRoundedRect(-w / 2, -h / 2, w, h, 14);
+    bg.lineStyle(2, 0x4A2880, 0.8);
+    bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 14);
     container.add(bg);
 
     // Role color accent line at top
     const accent = this.add.graphics();
     accent.fillStyle(roleColor, 0.7);
-    accent.fillRoundedRect(-w / 2 + 3, -h / 2 + 3, w - 6, 4, 2);
+    accent.fillRoundedRect(-w / 2 + 4, -h / 2 + 4, w - 8, 5, 3);
     container.add(accent);
 
-    // Class icon (large letters in circle)
+    // Class icon (emoji in circle)
     const iconBg = this.add.graphics();
-    iconBg.fillStyle(roleColor, 0.15);
-    iconBg.fillCircle(0, -h / 2 + 50, 28);
-    iconBg.lineStyle(2, roleColor, 0.3);
-    iconBg.strokeCircle(0, -h / 2 + 50, 28);
+    iconBg.fillStyle(roleColor, 0.18);
+    iconBg.fillCircle(0, -h / 2 + 55, 36);
+    iconBg.lineStyle(2, roleColor, 0.35);
+    iconBg.strokeCircle(0, -h / 2 + 55, 36);
     container.add(iconBg);
 
-    const iconText = this.add.text(0, -h / 2 + 50, CLASS_ICONS[id] || id[0].toUpperCase(), {
-      fontSize: '22px',
+    const iconText = this.add.text(0, -h / 2 + 55, CLASS_ICONS[id] || id[0].toUpperCase(), {
+      fontSize: '32px',
       color: '#' + roleColor.toString(16).padStart(6, '0'),
       fontFamily: '"Fredoka", sans-serif',
       fontStyle: 'bold',
@@ -429,8 +429,8 @@ export class DraftScene extends Phaser.Scene {
     container.add(iconText);
 
     // Class name
-    const name = this.add.text(0, -h / 2 + 90, cls.name.toUpperCase(), {
-      fontSize: '15px',
+    const name = this.add.text(0, -h / 2 + 100, cls.name.toUpperCase(), {
+      fontSize: '16px',
       color: '#f0e8ff',
       fontFamily: '"Nunito", sans-serif',
       fontStyle: 'bold',
@@ -440,10 +440,10 @@ export class DraftScene extends Phaser.Scene {
     // Role tag
     const roleBg = this.add.graphics();
     roleBg.fillStyle(roleColor, 0.14);
-    roleBg.fillRoundedRect(-28, -h / 2 + 102, 56, 18, 5);
+    roleBg.fillRoundedRect(-32, -h / 2 + 115, 64, 20, 6);
     container.add(roleBg);
 
-    const roleText = this.add.text(0, -h / 2 + 111, cls.role.toUpperCase(), {
+    const roleText = this.add.text(0, -h / 2 + 125, cls.role.toUpperCase(), {
       fontSize: '10px',
       color: '#' + roleColor.toString(16).padStart(6, '0'),
       fontFamily: '"Nunito", sans-serif',
@@ -455,7 +455,7 @@ export class DraftScene extends Phaser.Scene {
     // Ability name preview
     const ability = cls.abilities[0];
     if (ability) {
-      const abilityText = this.add.text(0, -h / 2 + 132, ability.name, {
+      const abilityText = this.add.text(0, -h / 2 + 148, ability.name, {
         fontSize: '10px',
         color: '#C98FFF',
         fontFamily: '"Nunito", sans-serif',
@@ -467,22 +467,22 @@ export class DraftScene extends Phaser.Scene {
     // Mini stat bars
     const stats = cls.baseStats;
     const maxStat = 150;
-    const barY = -h / 2 + 148;
+    const barY = -h / 2 + 168;
     const barNames = ['HP', 'ATK', 'DEF', 'SPD'];
     const barValues = [stats.hp, stats.attack, stats.defense, stats.speed];
     const barColors = [0x45E6B0, 0xFF6B6B, 0x6CC4FF, 0x45E6B0];
 
     barNames.forEach((stat, i) => {
-      const by = barY + i * 14;
+      const by = barY + i * 15;
       const label = this.add.text(-w / 2 + 14, by, stat, {
-        fontSize: '9px', color: '#7B5EA0', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
+        fontSize: '10px', color: '#9B7EC0', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
       }).setOrigin(0, 0.5);
       container.add(label);
 
-      const barBg = this.add.rectangle(-w / 2 + 46, by, w - 66, 5, 0x2A1858).setOrigin(0, 0.5);
+      const barBg = this.add.rectangle(-w / 2 + 48, by, w - 68, 6, 0x2A1858).setOrigin(0, 0.5);
       container.add(barBg);
 
-      const barFill = this.add.rectangle(-w / 2 + 46, by, (barValues[i] / maxStat) * (w - 66), 5, barColors[i], 0.7)
+      const barFill = this.add.rectangle(-w / 2 + 48, by, (barValues[i] / maxStat) * (w - 68), 6, barColors[i], 0.75)
         .setOrigin(0, 0.5);
       container.add(barFill);
     });
@@ -503,10 +503,10 @@ export class DraftScene extends Phaser.Scene {
       if (!container.getData('selected')) {
         this.tweens.add({ targets: container, scaleX: 1.05, scaleY: 1.05, duration: 150, ease: 'Back.easeOut' });
         bg.clear();
-        bg.fillStyle(0x2E1860, 1);
-        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 10);
-        bg.lineStyle(2, 0xFF6B9D, 0.5);
-        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 10);
+        bg.fillStyle(0x352068, 1);
+        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 14);
+        bg.lineStyle(2, 0xFF6B9D, 0.6);
+        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 14);
       }
     });
 
@@ -515,10 +515,10 @@ export class DraftScene extends Phaser.Scene {
       if (!container.getData('selected')) {
         this.tweens.add({ targets: container, scaleX: 1, scaleY: 1, duration: 150 });
         bg.clear();
-        bg.fillStyle(0x231250, 1);
-        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 10);
-        bg.lineStyle(1, 0x3D2070, 1);
-        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 10);
+        bg.fillStyle(0x2A1555, 1);
+        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 14);
+        bg.lineStyle(2, 0x4A2880, 0.8);
+        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 14);
       }
     });
 
@@ -543,28 +543,28 @@ export class DraftScene extends Phaser.Scene {
     const container = this.add.container(x, y);
 
     const bg = this.add.graphics();
-    bg.fillStyle(0x231250, 1);
-    bg.fillRoundedRect(-w / 2, -h / 2, w, h, 8);
-    bg.lineStyle(1, 0x3D2070, 1);
-    bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 8);
+    bg.fillStyle(0x2A1555, 1);
+    bg.fillRoundedRect(-w / 2, -h / 2, w, h, 12);
+    bg.lineStyle(2, 0x4A2880, 0.8);
+    bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 12);
     container.add(bg);
 
     // Archetype accent
     const accent = this.add.graphics();
     accent.fillStyle(archColor, 0.6);
-    accent.fillRoundedRect(-w / 2 + 3, -h / 2 + 3, w - 6, 3, 1);
+    accent.fillRoundedRect(-w / 2 + 4, -h / 2 + 4, w - 8, 4, 2);
     container.add(accent);
 
-    // Animal icon
+    // Animal icon (emoji in circle)
     const iconBg = this.add.graphics();
-    iconBg.fillStyle(archColor, 0.12);
-    iconBg.fillCircle(0, -h / 2 + 38, 22);
-    iconBg.lineStyle(1, archColor, 0.3);
-    iconBg.strokeCircle(0, -h / 2 + 38, 22);
+    iconBg.fillStyle(archColor, 0.15);
+    iconBg.fillCircle(0, -h / 2 + 44, 30);
+    iconBg.lineStyle(2, archColor, 0.35);
+    iconBg.strokeCircle(0, -h / 2 + 44, 30);
     container.add(iconBg);
 
-    const iconText = this.add.text(0, -h / 2 + 38, ANIMAL_ICONS[id] || id[0].toUpperCase(), {
-      fontSize: '16px',
+    const iconText = this.add.text(0, -h / 2 + 44, ANIMAL_ICONS[id] || id[0].toUpperCase(), {
+      fontSize: '26px',
       color: '#' + archColor.toString(16).padStart(6, '0'),
       fontFamily: '"Fredoka", sans-serif',
       fontStyle: 'bold',
@@ -572,8 +572,8 @@ export class DraftScene extends Phaser.Scene {
     container.add(iconText);
 
     // Animal name
-    const name = this.add.text(0, -h / 2 + 70, animal.name.toUpperCase(), {
-      fontSize: '13px',
+    const name = this.add.text(0, -h / 2 + 82, animal.name.toUpperCase(), {
+      fontSize: '14px',
       color: '#f0e8ff',
       fontFamily: '"Nunito", sans-serif',
       fontStyle: 'bold',
@@ -583,10 +583,10 @@ export class DraftScene extends Phaser.Scene {
     // Archetype tag
     const archBg = this.add.graphics();
     archBg.fillStyle(archColor, 0.12);
-    archBg.fillRoundedRect(-30, -h / 2 + 80, 60, 16, 4);
+    archBg.fillRoundedRect(-34, -h / 2 + 95, 68, 18, 5);
     container.add(archBg);
 
-    const archText = this.add.text(0, -h / 2 + 88, animal.archetype.toUpperCase(), {
+    const archText = this.add.text(0, -h / 2 + 104, animal.archetype.toUpperCase(), {
       fontSize: '9px',
       color: '#' + archColor.toString(16).padStart(6, '0'),
       fontFamily: '"Nunito", sans-serif',
@@ -596,8 +596,8 @@ export class DraftScene extends Phaser.Scene {
     container.add(archText);
 
     // Passive preview
-    const passiveText = this.add.text(0, -h / 2 + 108, animal.passive.name, {
-      fontSize: '9px',
+    const passiveText = this.add.text(0, -h / 2 + 124, animal.passive.name, {
+      fontSize: '10px',
       color: '#FFD93D',
       fontFamily: '"Nunito", sans-serif',
       fontStyle: 'bold',
@@ -614,8 +614,8 @@ export class DraftScene extends Phaser.Scene {
     if (mods.hp > 1) modParts.push(`HP+`);
 
     if (modParts.length > 0) {
-      const modText = this.add.text(0, -h / 2 + 124, modParts.join(' '), {
-        fontSize: '8px',
+      const modText = this.add.text(0, -h / 2 + 144, modParts.join(' '), {
+        fontSize: '9px',
         color: '#' + archColor.toString(16).padStart(6, '0'),
         fontFamily: '"Nunito", sans-serif',
       }).setOrigin(0.5).setAlpha(0.7);
@@ -638,10 +638,10 @@ export class DraftScene extends Phaser.Scene {
       if (!container.getData('selected')) {
         this.tweens.add({ targets: container, scaleX: 1.06, scaleY: 1.06, duration: 150, ease: 'Back.easeOut' });
         bg.clear();
-        bg.fillStyle(0x2E1860, 1);
-        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 8);
-        bg.lineStyle(2, archColor, 0.5);
-        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 8);
+        bg.fillStyle(0x352068, 1);
+        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 12);
+        bg.lineStyle(2, archColor, 0.6);
+        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 12);
       }
     });
 
@@ -650,10 +650,10 @@ export class DraftScene extends Phaser.Scene {
       if (!container.getData('selected')) {
         this.tweens.add({ targets: container, scaleX: 1, scaleY: 1, duration: 150 });
         bg.clear();
-        bg.fillStyle(0x231250, 1);
-        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 8);
-        bg.lineStyle(1, 0x3D2070, 1);
-        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 8);
+        bg.fillStyle(0x2A1555, 1);
+        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 12);
+        bg.lineStyle(2, 0x4A2880, 0.8);
+        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 12);
       }
     });
 
@@ -751,10 +751,10 @@ export class DraftScene extends Phaser.Scene {
       // Panel background
       const panelW = 260;
       const panelBg = this.add.graphics();
-      panelBg.fillStyle(0x1B1040, 0.95);
-      panelBg.fillRoundedRect(0, 0, panelW, 420, 10);
-      panelBg.lineStyle(1, 0x3D2070, 0.6);
-      panelBg.strokeRoundedRect(0, 0, panelW, 420, 10);
+      panelBg.fillStyle(0x1E1048, 0.95);
+      panelBg.fillRoundedRect(0, 0, panelW, 420, 14);
+      panelBg.lineStyle(2, 0x4A2880, 0.6);
+      panelBg.strokeRoundedRect(0, 0, panelW, 420, 14);
       this.statsPanel.add(panelBg);
 
       // Combo title
@@ -885,19 +885,19 @@ export class DraftScene extends Phaser.Scene {
 
   private createConfirmButton(x: number, y: number): Phaser.GameObjects.Container {
     const container = this.add.container(x, y);
-    const w = 260, h = 50;
+    const w = 280, h = 54;
 
     const bg = this.add.graphics();
     bg.fillStyle(0x2A1858, 0.8);
-    bg.fillRoundedRect(-w / 2, -h / 2, w, h, 8);
-    bg.lineStyle(1, 0x3D2070, 0.5);
-    bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 8);
+    bg.fillRoundedRect(-w / 2, -h / 2, w, h, 16);
+    bg.lineStyle(2, 0x4A2880, 0.5);
+    bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 16);
     container.add(bg);
 
-    const text = this.add.text(0, 0, 'CONFIRM PICK', {
-      fontSize: '16px',
+    const text = this.add.text(0, 0, '✨ CONFIRM PICK ✨', {
+      fontSize: '17px',
       color: '#7B5EA0',
-      fontFamily: '"Nunito", sans-serif',
+      fontFamily: '"Fredoka", sans-serif',
       fontStyle: 'bold',
       letterSpacing: 3,
     }).setOrigin(0.5);
@@ -935,20 +935,20 @@ export class DraftScene extends Phaser.Scene {
     this.confirmBtnEnabled = enabled;
     const bg = this.confirmBtn.getData('bg') as Phaser.GameObjects.Graphics;
     const text = this.confirmBtn.getData('text') as Phaser.GameObjects.Text;
-    const w = 260, h = 50;
+    const w = 280, h = 54;
 
     bg.clear();
     if (enabled) {
       bg.fillStyle(0xFF6B9D, 0.3);
-      bg.fillRoundedRect(-w / 2, -h / 2, w, h, 8);
-      bg.lineStyle(2, 0xFF6B9D, 0.7);
-      bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 8);
+      bg.fillRoundedRect(-w / 2, -h / 2, w, h, 16);
+      bg.lineStyle(2, 0xFF6B9D, 0.8);
+      bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 16);
       text.setColor('#fff');
     } else {
       bg.fillStyle(0x2A1858, 0.8);
-      bg.fillRoundedRect(-w / 2, -h / 2, w, h, 8);
-      bg.lineStyle(1, 0x3D2070, 0.5);
-      bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 8);
+      bg.fillRoundedRect(-w / 2, -h / 2, w, h, 16);
+      bg.lineStyle(2, 0x4A2880, 0.5);
+      bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 16);
       text.setColor('#7B5EA0');
     }
   }
@@ -966,19 +966,19 @@ export class DraftScene extends Phaser.Scene {
       if (cid === id) {
         container.setData('selected', true);
         bg.clear();
-        bg.fillStyle(0x2A1858, 1);
-        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 10);
-        bg.lineStyle(2, 0xFF6B9D, 0.9);
-        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 10);
+        bg.fillStyle(0x352068, 1);
+        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 14);
+        bg.lineStyle(3, 0xFF6B9D, 0.9);
+        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 14);
         this.tweens.add({ targets: container, scaleX: 1.05, scaleY: 1.05, duration: 150 });
       } else {
         container.setData('selected', false);
         if (!this.usedClasses.has(cid)) {
           bg.clear();
-          bg.fillStyle(0x231250, 1);
-          bg.fillRoundedRect(-w / 2, -h / 2, w, h, 10);
-          bg.lineStyle(1, 0x3D2070, 1);
-          bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 10);
+          bg.fillStyle(0x2A1555, 1);
+          bg.fillRoundedRect(-w / 2, -h / 2, w, h, 14);
+          bg.lineStyle(2, 0x4A2880, 0.8);
+          bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 14);
         }
         this.tweens.add({ targets: container, scaleX: 1, scaleY: 1, duration: 150 });
       }
@@ -998,18 +998,18 @@ export class DraftScene extends Phaser.Scene {
       if (aid === id) {
         container.setData('selected', true);
         bg.clear();
-        bg.fillStyle(0x2A1858, 1);
-        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 8);
-        bg.lineStyle(2, archColor, 0.8);
-        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 8);
+        bg.fillStyle(0x352068, 1);
+        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 12);
+        bg.lineStyle(3, archColor, 0.9);
+        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 12);
         this.tweens.add({ targets: container, scaleX: 1.06, scaleY: 1.06, duration: 150 });
       } else {
         container.setData('selected', false);
         bg.clear();
-        bg.fillStyle(0x231250, 1);
-        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 8);
-        bg.lineStyle(1, 0x3D2070, 1);
-        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 8);
+        bg.fillStyle(0x2A1555, 1);
+        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 12);
+        bg.lineStyle(2, 0x4A2880, 0.8);
+        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 12);
         this.tweens.add({ targets: container, scaleX: 1, scaleY: 1, duration: 150 });
       }
     });
@@ -1100,10 +1100,10 @@ export class DraftScene extends Phaser.Scene {
       container.setData('selected', false);
       if (!this.usedClasses.has(cid)) {
         bg.clear();
-        bg.fillStyle(0x231250, 1);
-        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 10);
-        bg.lineStyle(1, 0x3D2070, 1);
-        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 10);
+        bg.fillStyle(0x2A1555, 1);
+        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 14);
+        bg.lineStyle(2, 0x4A2880, 0.8);
+        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 14);
         this.tweens.add({ targets: container, scaleX: 1, scaleY: 1, duration: 150 });
       }
     });
@@ -1113,10 +1113,10 @@ export class DraftScene extends Phaser.Scene {
       const h = container.getData('h') as number;
       container.setData('selected', false);
       bg.clear();
-      bg.fillStyle(0x231250, 1);
-      bg.fillRoundedRect(-w / 2, -h / 2, w, h, 8);
-      bg.lineStyle(1, 0x3D2070, 1);
-      bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 8);
+      bg.fillStyle(0x2A1555, 1);
+      bg.fillRoundedRect(-w / 2, -h / 2, w, h, 12);
+      bg.lineStyle(2, 0x4A2880, 0.8);
+      bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 12);
       this.tweens.add({ targets: container, scaleX: 1, scaleY: 1, duration: 150 });
     });
     this.statsPanel.setAlpha(0);
@@ -1132,7 +1132,7 @@ export class DraftScene extends Phaser.Scene {
         container.setData('disabled', true);
         bg.clear();
         bg.fillStyle(0x150A30, 0.5);
-        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 10);
+        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 14);
         container.setAlpha(0.3);
       }
     });
