@@ -115,10 +115,10 @@ export class CharacterEntity {
     this.sprite.setData('charId', charData.id);
     this.sprite.setInteractive({ useHandCursor: true });
 
-    // Animal emoji on the character (animals ARE the characters)
+    // Animal emoji on the character (animals ARE the characters) — big and prominent
     const animalEmoji = ANIMAL_EMOJIS[charData.animalId] ?? CLASS_EMOJIS[charData.classId] ?? '?';
     this.emojiLabel = scene.add.text(px, py - 1, animalEmoji, {
-      fontSize: '14px',
+      fontSize: '22px',
     }).setOrigin(0.5).setDepth(11);
 
     // Health bar with class color
@@ -133,6 +133,9 @@ export class CharacterEntity {
       color: isPlayer1 ? '#6CC4FF' : '#FF8EC8',
       fontFamily: '"Nunito", sans-serif',
       fontStyle: 'bold',
+      shadow: { offsetX: 1, offsetY: 1, color: '#000', blur: 3, fill: true, stroke: true },
+      backgroundColor: 'rgba(0,0,0,0.35)',
+      padding: { x: 2, y: 1 },
     });
     this.nameLabel.setOrigin(0.5, 0);
     this.nameLabel.setDepth(11);
@@ -142,10 +145,11 @@ export class CharacterEntity {
     this.orderBg.setDepth(11);
 
     this.orderLabel = scene.add.text(px, py - 28, '', {
-      fontSize: '10px',
+      fontSize: '11px',
       color: '#FFD93D',
       fontFamily: '"Nunito", sans-serif',
       fontStyle: 'bold',
+      shadow: { offsetX: 1, offsetY: 1, color: '#000', blur: 2, fill: true, stroke: true },
     });
     this.orderLabel.setOrigin(0.5, 1);
     this.orderLabel.setDepth(12);
@@ -184,20 +188,24 @@ export class CharacterEntity {
     }).setOrigin(0.5);
     const w = textObj.width + 10;
     const h = textObj.height + 6;
-    bg.fillStyle(0x000000, 0.75);
-    bg.fillRoundedRect(-w / 2, -h / 2, w, h, 4);
+    bg.fillStyle(0x000000, 0.85);
+    bg.fillRoundedRect(-w / 2, -h / 2, w, h, 5);
     // Speech bubble tail
     bg.fillTriangle(0, h / 2, -4, h / 2 + 6, 4, h / 2);
 
     container.add(bg);
     container.add(textObj);
 
-    // Fade in
+    // Scale + fade in
     container.setAlpha(0);
+    container.setScale(0.8);
     this.scene.tweens.add({
       targets: container,
       alpha: 1,
-      duration: 200,
+      scaleX: 1,
+      scaleY: 1,
+      duration: 150,
+      ease: 'Back.easeOut',
     });
 
     this.barkBubble = container;
@@ -227,7 +235,7 @@ export class CharacterEntity {
     const h = this.orderLabel.height + 2;
     const x = this.orderLabel.x - w / 2;
     const y = this.orderLabel.y - h;
-    this.orderBg.fillStyle(0x000000, 0.6);
+    this.orderBg.fillStyle(0x000000, 0.8);
     this.orderBg.fillRoundedRect(x, y, w, h, 3);
   }
 
@@ -243,7 +251,7 @@ export class CharacterEntity {
     this.orderBg.setAlpha(alpha);
     if (this.flagIcon) this.flagIcon.setAlpha(alpha);
     if (this.micLabel) this.micLabel.setAlpha(alpha);
-    if (this.selectionGlow) this.selectionGlow.setAlpha(visible ? 0.6 : 0);
+    if (this.selectionGlow) this.selectionGlow.setAlpha(visible ? 0.7 : 0);
     if (this.barkBubble) this.barkBubble.setAlpha(alpha);
   }
 
@@ -275,17 +283,21 @@ export class CharacterEntity {
   showRespawning(secondsLeft: number) {
     if (!this.respawnOverlay) {
       this.respawnOverlay = this.scene.add.text(this.sprite.x, this.sprite.y, '', {
-        fontSize: '14px',
+        fontSize: '16px',
         color: '#FF6B6B',
         fontFamily: '"Fredoka", sans-serif',
         fontStyle: 'bold',
+        shadow: { offsetX: 1, offsetY: 1, color: '#000', blur: 3, fill: true, stroke: true },
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        padding: { x: 4, y: 2 },
       }).setOrigin(0.5).setDepth(15);
     }
-    this.respawnOverlay.setText(String(Math.ceil(secondsLeft)));
+    const secs = Math.ceil(secondsLeft);
+    this.respawnOverlay.setText(`\u2620 ${secs}`);
     this.respawnOverlay.setPosition(this.sprite.x, this.sprite.y);
-    this.sprite.setAlpha(0.2);
-    this.emojiLabel.setAlpha(0.2);
-    this.nameLabel.setAlpha(0.3);
+    this.sprite.setAlpha(0.15);
+    this.emojiLabel.setAlpha(0.15);
+    this.nameLabel.setAlpha(0.25);
     this.healthBar.setVisible(false);
     this.orderLabel.setText('DEAD');
     this.orderLabel.setColor('#FF6B6B');
@@ -435,13 +447,13 @@ export class CharacterEntity {
       this.selectionGlow = this.scene.add.graphics().setDepth(8);
     }
     this.selectionGlow.setVisible(true);
-    this.selectionGlow.setAlpha(0.6);
+    this.selectionGlow.setAlpha(0.7);
     this.drawSelectionGlow();
     if (this.glowTween) this.glowTween.destroy();
     this.glowTween = this.scene.tweens.add({
       targets: this.selectionGlow,
-      alpha: { from: 0.6, to: 0.15 },
-      duration: 800,
+      alpha: { from: 0.7, to: 0.2 },
+      duration: 900,
       yoyo: true,
       repeat: -1,
       ease: 'Sine.easeInOut',
@@ -470,10 +482,11 @@ export class CharacterEntity {
   private drawSelectionGlow() {
     if (!this.selectionGlow) return;
     this.selectionGlow.clear();
-    this.selectionGlow.lineStyle(2.5, this.classColor, 1);
-    this.selectionGlow.strokeCircle(this.sprite.x, this.sprite.y, 20);
-    this.selectionGlow.lineStyle(1.5, 0xffffff, 0.3);
+    // Big, bright glow so selected character is unmistakable
+    this.selectionGlow.lineStyle(5, this.classColor, 1);
     this.selectionGlow.strokeCircle(this.sprite.x, this.sprite.y, 22);
+    this.selectionGlow.lineStyle(2.5, 0xffffff, 0.5);
+    this.selectionGlow.strokeCircle(this.sprite.x, this.sprite.y, 26);
   }
 
   updateEffectAuras(effects: ActiveEffect[]) {

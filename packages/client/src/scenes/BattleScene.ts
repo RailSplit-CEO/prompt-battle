@@ -26,7 +26,7 @@ import { CharacterViewports } from '../systems/CharacterViewports';
 import { getGambitOrder, GambitContext } from '../systems/GambitAI';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────
-const COMMAND_COOLDOWN = 10000;
+const COMMAND_COOLDOWN = 0;
 const GAME_DURATION = 300;
 const RESPAWN_TIME = 20;
 const TICK_RATE = 750;
@@ -319,8 +319,14 @@ export class BattleScene extends Phaser.Scene {
     this.characters.forEach((charEntity, charId) => {
       const char = this.charData.get(charId);
       if (!char || char.owner !== this.playerId) return;
+      // Double-click to select (single click felt too easy to accidentally trigger)
+      let lastClickTime = 0;
       charEntity.sprite.on('pointerdown', () => {
-        this.selectHeroByCharId(charId);
+        const now = Date.now();
+        if (now - lastClickTime < 400) {
+          this.selectHeroByCharId(charId);
+        }
+        lastClickTime = now;
       });
     });
 
@@ -503,17 +509,17 @@ export class BattleScene extends Phaser.Scene {
       'OBJECTIVE: Capture & hold control points',
       'First to 200 points wins!',
       '',
-      'Each hero has an animal companion!',
-      'They fight alongside you automatically.',
+      'Each hero has an animal type that',
+      'modifies their stats & abilities.',
       '',
       'Click anywhere to start...',
     ];
 
     const text = this.add.text(width / 2, height / 2 - 130, lines.join('\n'), {
-      fontSize: '14px',
+      fontSize: '15px',
       color: '#E8E8F0',
       fontFamily: '"Nunito", sans-serif',
-      lineSpacing: 6,
+      lineSpacing: 8,
       align: 'center',
     }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(301);
 
@@ -2743,7 +2749,7 @@ export class BattleScene extends Phaser.Scene {
     }
 
     // ── Set trap ─────────────────────────────────────────────────
-    if (text.includes('trap') || text.includes('mine') || text.includes('snare')) {
+    if (text.includes('trap') || text.includes('snare')) {
       for (const char of targetChars) setOrder(char, { type: 'set_trap' });
       this.updateOrderLabels(affectedChars);
       return partOrders;
@@ -3746,7 +3752,7 @@ export class BattleScene extends Phaser.Scene {
       color: '#FFD93D',
       fontFamily: '"Fredoka", sans-serif',
       fontStyle: 'bold',
-      backgroundColor: '#1a1a2e',
+      backgroundColor: '#1a1a2eDD',
       padding: { x: 10, y: 5 },
     }).setScrollFactor(0).setDepth(100);
 
@@ -4001,7 +4007,7 @@ export class BattleScene extends Phaser.Scene {
     // Update gold display
     const gold = Math.floor(this.getMyGold());
     const income = Math.floor(this.isHost ? this.economy.player1.income : this.economy.player2.income);
-    this.goldText.setText(`💰 ${gold} (+${income}/s)`);
+    this.goldText.setText(`\u2B25 ${gold} (+${income}/s)`);
 
     // Update phase display with descriptive name
     const phaseColors = ['#45E6B0', '#45E6B0', '#FFD93D', '#FF9F43', '#FF6B6B'];
@@ -4014,10 +4020,10 @@ export class BattleScene extends Phaser.Scene {
       if (hero) {
         const cls = CLASSES[hero.classId];
         const hpPct = Math.round((hero.currentHp / hero.stats.hp) * 100);
-        this.activeHeroText.setText(`COMMANDING: ${hero.name} (${cls?.name || hero.classId}) HP:${hpPct}% [Tab=switch]`);
+        this.activeHeroText.setText(`\u258E COMMANDING: ${hero.name} (${cls?.name || hero.classId}) HP:${hpPct}% [Tab]`);
       }
     } else {
-      this.activeHeroText.setText('[1/2/3] to select a hero');
+      this.activeHeroText.setText('\u258E [1/2/3] to select a hero');
     }
 
     // Update HTML hero bar
@@ -4027,9 +4033,9 @@ export class BattleScene extends Phaser.Scene {
   private updateScoreDisplay() {
     const myTeam = this.isHost ? 'player1' : 'player2';
     const cpDots = this.controlPoints.map(cp => {
-      if (cp.owner === myTeam) return '[B]';
-      if (cp.owner && cp.owner !== myTeam) return '[R]';
-      return '[ ]';
+      if (cp.owner === myTeam) return '\u25CF';
+      if (cp.owner && cp.owner !== myTeam) return '\u25CF';
+      return '\u25CB';
     }).join(' ');
     const myScore = this.isHost ? this.domScore1 : this.domScore2;
     const oppScore = this.isHost ? this.domScore2 : this.domScore1;
@@ -4037,28 +4043,19 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private updateCooldownDisplay() {
-    const { width, height } = this.cameras.main;
     this.cooldownBar.clear();
-
-    if (this.commandCooldownRemaining > 0) {
-      const progress = this.commandCooldownRemaining / COMMAND_COOLDOWN;
-      this.cooldownBar.fillStyle(0xFFD93D, 0.3);
-      this.cooldownBar.fillRect(width / 2 - 150, height - 78, 300 * progress, 4);
-      this.cooldownText.setText(`COOLDOWN ${Math.ceil(this.commandCooldownRemaining / 1000)}s`);
-      this.cooldownText.setColor('#FFD93D');
-    } else {
-      this.cooldownText.setText('READY');
-      this.cooldownText.setColor('#45E6B0');
-    }
+    this.cooldownText.setText('');
   }
 
   private showAnnouncement(text: string, color: string) {
     const { width, height } = this.cameras.main;
     const announce = this.add.text(width / 2, height / 2 - 40, text, {
-      fontSize: '28px',
+      fontSize: '30px',
       color,
       fontFamily: '"Fredoka", sans-serif',
       fontStyle: 'bold',
+      backgroundColor: '#0D0A18CC',
+      padding: { x: 20, y: 8 },
     }).setOrigin(0.5).setScrollFactor(0).setDepth(200).setAlpha(0);
 
     this.tweens.add({
@@ -4121,7 +4118,14 @@ export class BattleScene extends Phaser.Scene {
     this.time.delayedCall(2000, () => {
       this.cameras.main.fadeOut(500, 5, 5, 16);
       this.cameras.main.once('camerafadeoutcomplete', () => {
-        this.scene.start('ResultScene', { winner, playerId: this.playerId, isLocal: this.isLocal });
+        const myScore = this.isHost ? this.domScore1 : this.domScore2;
+        const oppScore = this.isHost ? this.domScore2 : this.domScore1;
+        this.scene.start('ResultScene', {
+          winner,
+          playerId: this.playerId,
+          isLocal: this.isLocal,
+          score: `${myScore} - ${oppScore}`,
+        });
       });
     });
   }

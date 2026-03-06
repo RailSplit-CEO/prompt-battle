@@ -40,6 +40,8 @@
       width: 100%;
       padding: 8px 16px;
       background: rgba(27, 16, 64, 0.96);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
       border-top: 3px solid #FF6B9D;
       display: none;
       pointer-events: all;
@@ -60,7 +62,7 @@
       border: 3px solid #3D2070;
       border-radius: 12px;
       cursor: pointer;
-      transition: all 0.15s;
+      transition: all 0.2s ease;
       min-width: 180px;
       position: relative;
     }
@@ -68,9 +70,18 @@
     .hero-slot.active {
       border-color: #FFD93D;
       background: rgba(255,217,61,0.12);
-      box-shadow: 0 0 12px rgba(255,217,61,0.3);
+      box-shadow: 0 0 12px rgba(255,217,61,0.3), inset 0 0 12px rgba(255,217,61,0.08);
     }
-    .hero-slot.dead { opacity: 0.35; pointer-events: none; }
+    .hero-slot.dead {
+      opacity: 0.45;
+      pointer-events: none;
+      background: rgba(255, 80, 80, 0.08);
+      border-color: rgba(255, 80, 80, 0.3);
+    }
+    .hero-slot.dead .hero-name {
+      text-decoration: line-through;
+      color: #FF6B6B;
+    }
     .hero-slot .hotkey {
       position: absolute;
       top: -8px;
@@ -96,6 +107,7 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
     }
     .hero-slot .hero-class { font-size: 10px; color: #8B6DB0; }
     .hero-slot .hero-companion { font-size: 10px; color: #C98FFF; }
@@ -133,10 +145,13 @@
       border-radius: 10px;
       cursor: pointer;
       pointer-events: all;
-      transition: all 0.15s;
+      transition: all 0.2s ease;
       min-width: 120px;
     }
     .ability-btn:hover { border-color: #C98FFF; background: rgba(201, 143, 255, 0.2); }
+    .ability-btn:not(.on-cooldown) {
+      animation: ability-pulse 2.5s ease-in-out infinite;
+    }
     .ability-btn.on-cooldown { opacity: 0.5; cursor: default; }
     .ability-btn .ability-key {
       background: rgba(201, 143, 255, 0.5);
@@ -148,7 +163,7 @@
       font-family: 'Fredoka', sans-serif;
     }
     .ability-btn .ability-name { font-size: 11px; color: #C98FFF; font-weight: 700; }
-    .ability-btn .ability-cd { font-size: 10px; font-weight: 700; margin-left: auto; }
+    .ability-btn .ability-cd { font-size: 11px; font-weight: 800; margin-left: auto; }
     .ability-btn .ability-cd.ready { color: #45E6B0; }
     .ability-btn .ability-cd.cooldown { color: #FF9F43; }
 
@@ -166,7 +181,7 @@
     }
     .voice-section.listening {
       border-color: #FF6B6B;
-      background: rgba(255,107,107,0.12);
+      background: rgba(255,70,70,0.2);
       box-shadow: 0 0 16px rgba(255,107,107,0.3);
       animation: voice-pulse 0.8s infinite;
     }
@@ -188,9 +203,9 @@
       color: #FFD93D;
       font-weight: 600;
       max-width: 250px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      white-space: normal;
+      word-wrap: break-word;
+      line-height: 1.3;
     }
 
     /* ─── COMMAND LOG ──────────────────────────────────── */
@@ -198,8 +213,8 @@
       position: absolute;
       bottom: 120px;
       left: 16px;
-      width: 320px;
-      max-height: 160px;
+      width: 350px;
+      max-height: 180px;
       overflow-y: auto;
       background: rgba(27, 16, 64, 0.88);
       border: 2px solid #3D2070;
@@ -209,15 +224,20 @@
       pointer-events: all;
       display: none;
       z-index: 20;
+      scrollbar-gutter: stable;
+      mask-image: linear-gradient(to bottom, transparent 0%, #000 15%, #000 100%);
+      -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 15%, #000 100%);
     }
     #command-log .log-entry {
       margin-bottom: 4px;
-      padding: 3px 0;
+      padding: 5px 8px;
       border-bottom: 1px solid #2A1858;
+      border-left: 2px solid rgba(201, 143, 255, 0.3);
+      transition: background 0.2s ease;
     }
     #command-log .log-entry .player { color: #6CC4FF; font-weight: 700; }
     #command-log .log-entry .text { color: #cbb8ee; }
-    #command-log .log-entry .result { color: #45E6B0; font-size: 11px; }
+    #command-log .log-entry .result { color: #5DFFC4; font-size: 11px; font-weight: 600; }
 
     /* ─── STATUS BAR ──────────────────────────────────── */
     #status-bar {
@@ -227,6 +247,8 @@
       width: 100%;
       padding: 8px 12px;
       background: rgba(27, 16, 64, 0.92);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
       border-bottom: 2px solid #3D2070;
       display: none;
       pointer-events: all;
@@ -246,14 +268,14 @@
       border-radius: 10px;
       background: rgba(255,255,255,0.06);
       border: 2px solid #3D2070;
-      min-width: 200px;
-      transition: opacity 0.3s;
+      min-width: 170px;
+      transition: all 0.2s ease;
     }
     #status-bar .char-card.dead { opacity: 0.4; }
     #status-bar .char-card.ally { border-left: 3px solid #6CC4FF; }
     #status-bar .char-card.enemy { border-left: 3px solid #FF6B6B; }
     #status-bar .char-info { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
-    #status-bar .char-name { font-weight: 700; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #status-bar .char-name { font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     #status-bar .char-class { font-size: 10px; color: #8B6DB0; }
     #status-bar .char-hp-row { display: flex; align-items: center; gap: 6px; }
     #status-bar .hp-bar {
@@ -335,6 +357,7 @@
       font-family: 'Nunito', sans-serif;
       max-height: calc(100vh - 180px);
       overflow-y: auto;
+      scrollbar-gutter: stable;
     }
     #ability-panel h3 {
       font-size: 12px;
@@ -386,6 +409,37 @@
     .ap-order-current { color: #FFD93D; font-weight: 700; }
     .ap-order-queued { color: #8B6DB0; font-size: 10px; padding-left: 8px; }
     .ap-effects { margin-top: 2px; font-size: 10px; }
+
+    /* ─── CUSTOM SCROLLBARS ────────────────────────────── */
+    #command-log::-webkit-scrollbar,
+    #ability-panel::-webkit-scrollbar {
+      width: 5px;
+    }
+    #command-log::-webkit-scrollbar-track,
+    #ability-panel::-webkit-scrollbar-track {
+      background: rgba(42, 24, 88, 0.4);
+      border-radius: 3px;
+    }
+    #command-log::-webkit-scrollbar-thumb,
+    #ability-panel::-webkit-scrollbar-thumb {
+      background: rgba(201, 143, 255, 0.35);
+      border-radius: 3px;
+    }
+    #command-log::-webkit-scrollbar-thumb:hover,
+    #ability-panel::-webkit-scrollbar-thumb:hover {
+      background: rgba(201, 143, 255, 0.55);
+    }
+    #command-log,
+    #ability-panel {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(201, 143, 255, 0.35) rgba(42, 24, 88, 0.4);
+    }
+
+    /* ─── PULSE ANIMATION (ability ready) ─────────────── */
+    @keyframes ability-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(201, 143, 255, 0); }
+      50% { box-shadow: 0 0 8px 2px rgba(201, 143, 255, 0.25); }
+    }
   </style>
 </head>
 <body>

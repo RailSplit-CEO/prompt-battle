@@ -19,8 +19,16 @@ export class MenuScene extends Phaser.Scene {
     // Floating colorful shapes (stars, circles)
     this.createFloatingShapes(width, height);
 
+    // Vertical centering: derive positions from title Y
+    const titleY = height * 0.22;
+    const subtitleY = titleY + 58;
+    const lineY = subtitleY + 22;
+    const playBtnY = lineY + 90;
+    const localBtnY = playBtnY + 82;
+    const statusY = localBtnY + 68;
+
     // Title shadow (offset behind main title for cartoon depth)
-    this.add.text(width / 2 + 4, 124, 'PROMPT BATTLE', {
+    this.add.text(width / 2 + 4, titleY + 4, 'PROMPT BATTLE', {
       fontSize: '60px',
       color: '#0D0825',
       fontFamily: '"Fredoka", sans-serif',
@@ -28,7 +36,7 @@ export class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5).setAlpha(0.6);
 
     // Main title
-    const title = this.add.text(width / 2, 120, 'PROMPT BATTLE', {
+    const title = this.add.text(width / 2, titleY, 'PROMPT BATTLE', {
       fontSize: '60px',
       color: '#FF6B9D',
       fontFamily: '"Fredoka", sans-serif',
@@ -47,7 +55,7 @@ export class MenuScene extends Phaser.Scene {
     // Title bounce loop
     this.tweens.add({
       targets: title,
-      y: { from: 120, to: 126 },
+      y: { from: titleY, to: titleY + 6 },
       duration: 2000,
       yoyo: true,
       repeat: -1,
@@ -55,7 +63,7 @@ export class MenuScene extends Phaser.Scene {
     });
 
     // Subtitle
-    const subtitle = this.add.text(width / 2, 178, 'COMMAND YOUR ARMY WITH WORDS!', {
+    const subtitle = this.add.text(width / 2, subtitleY, 'COMMAND YOUR ARMY WITH WORDS!', {
       fontSize: '15px',
       color: '#FFD93D',
       fontFamily: '"Nunito", sans-serif',
@@ -73,17 +81,17 @@ export class MenuScene extends Phaser.Scene {
     // Decorative line - bright and fun
     const line = this.add.graphics();
     line.lineStyle(3, 0xFFD93D, 0.5);
-    line.lineBetween(width / 2 - 100, 200, width / 2 + 100, 200);
+    line.lineBetween(width / 2 - 100, lineY, width / 2 + 100, lineY);
     // Dots at ends
     line.fillStyle(0xFFD93D, 0.7);
-    line.fillCircle(width / 2 - 104, 200, 4);
-    line.fillCircle(width / 2 + 104, 200, 4);
+    line.fillCircle(width / 2 - 104, lineY, 4);
+    line.fillCircle(width / 2 + 104, lineY, 4);
     line.setAlpha(0);
     this.tweens.add({ targets: line, alpha: 1, duration: 600, delay: 600 });
 
     // BUTTONS
     const playBtn = this.createCartoonButton(
-      width / 2, 290, 300, 62, 'FIND MATCH', 0xFF6B9D, true
+      width / 2, playBtnY, 300, 62, 'FIND MATCH', 0xFF6B9D, true
     );
     playBtn.container.setAlpha(0).setScale(0.5);
     this.tweens.add({
@@ -94,7 +102,7 @@ export class MenuScene extends Phaser.Scene {
     playBtn.zone.on('pointerdown', () => this.findMatch());
 
     const localBtn = this.createCartoonButton(
-      width / 2, 372, 300, 62, 'LOCAL TEST', 0x6CC4FF, false
+      width / 2, localBtnY, 300, 62, 'LOCAL TEST', 0x6CC4FF, false
     );
     localBtn.container.setAlpha(0).setScale(0.5);
     this.tweens.add({
@@ -104,16 +112,29 @@ export class MenuScene extends Phaser.Scene {
     });
     localBtn.zone.on('pointerdown', () => this.startLocalTest());
 
+    // Keyboard shortcut hint
+    const shortcutHint = this.add.text(width / 2, localBtnY + 44, 'Press ENTER to find match', {
+      fontSize: '12px',
+      color: '#8B6DB0',
+      fontFamily: '"Nunito", sans-serif',
+      fontStyle: '600',
+    }).setOrigin(0.5).setAlpha(0);
+    this.tweens.add({ targets: shortcutHint, alpha: 0.6, duration: 600, delay: 1000 });
+
+    // ENTER key listener
+    this.input.keyboard!.on('keydown-ENTER', () => this.findMatch());
+
     // Status text
-    this.statusText = this.add.text(width / 2, 440, '', {
+    this.statusText = this.add.text(width / 2, statusY, '', {
       fontSize: '16px',
       color: '#FFD93D',
       fontFamily: '"Nunito", sans-serif',
       fontStyle: 'bold',
     }).setOrigin(0.5);
 
-    // HOW TO PLAY
-    const howToPlay = this.add.container(width / 2, height - 120);
+    // HOW TO PLAY — positioned relative to buttons
+    const howToPlayY = statusY + 50;
+    const howToPlay = this.add.container(width / 2, howToPlayY);
 
     const howTitle = this.add.text(0, 0, 'HOW TO PLAY', {
       fontSize: '13px',
@@ -126,7 +147,7 @@ export class MenuScene extends Phaser.Scene {
     const steps = [
       { icon: '1', text: 'Draft 3 characters (class + animal combo)' },
       { icon: '2', text: 'Type or speak commands to control them' },
-      { icon: '3', text: 'Defeat all enemy characters to win!' },
+      { icon: '3', text: 'Capture & hold control points to win!' },
     ];
 
     steps.forEach((step, i) => {
@@ -155,9 +176,9 @@ export class MenuScene extends Phaser.Scene {
     this.tweens.add({ targets: howToPlay, alpha: 1, duration: 800, delay: 1200 });
 
     // Version
-    this.add.text(width / 2, height - 16, 'v0.1.0  |  Phaser 3 + Firebase + Gemini', {
+    this.add.text(width / 2, height - 20, 'v0.1.0  |  Phaser 3 + Firebase + Gemini', {
       fontSize: '11px',
-      color: '#3D2070',
+      color: '#6B4DB0',
       fontFamily: '"Nunito", sans-serif',
     }).setOrigin(0.5);
   }
@@ -323,10 +344,22 @@ export class MenuScene extends Phaser.Scene {
         loop: true,
       });
 
+      // Pulsing alpha on searching status
+      const pulseTween = this.tweens.add({
+        targets: this.statusText,
+        alpha: { from: 1, to: 0.5 },
+        duration: 800,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+
       this.matchmaking = new Matchmaking(firebase);
       const matchResult = await this.matchmaking.joinQueue();
 
       dotTimer.destroy();
+      pulseTween.stop();
+      this.statusText.setAlpha(1);
 
       if (matchResult.gameId) {
         this.statusText.setText('Match found!');

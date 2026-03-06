@@ -274,18 +274,48 @@ export class DraftScene extends Phaser.Scene {
     const classIds = Object.keys(CLASSES) as ClassId[];
     const animalIds = Object.keys(ANIMALS) as AnimalId[];
 
-    // Responsive card sizes — fit everything in viewport
-    const maxGridW = Math.min(width - 40, 900);
+    // Card sizing — leave room for stats panel on the right
+    const maxGridW = Math.min(width - 300, 900);
     const classCols = 4;
-    const classGap = 8;
-    const cardW = Math.min(140, Math.floor((maxGridW - (classCols - 1) * classGap) / classCols));
-    const cardH = Math.min(105, Math.floor(cardW * 0.75));
+    const classGap = 12;
+    const cardW = Math.min(150, Math.floor((maxGridW - (classCols - 1) * classGap) / classCols));
+    const cardH = Math.min(120, Math.floor(cardW * 0.78));
     const classGridW = classCols * cardW + (classCols - 1) * classGap;
     const classStartX = width / 2 - classGridW / 2 + cardW / 2;
-    const classY0 = 82;
 
-    this.add.text(classStartX - cardW / 2, classY0 - 15, '⚔️  PICK A CLASS', {
-      fontSize: '11px',
+    const animalCols = 5;
+    const animalGap = 10;
+    const smallW = Math.min(130, Math.floor((maxGridW - (animalCols - 1) * animalGap) / animalCols));
+    const smallH = Math.min(105, Math.floor(smallW * 0.78));
+    const animalGridW = animalCols * smallW + (animalCols - 1) * animalGap;
+    const animalStartX = width / 2 - animalGridW / 2 + smallW / 2;
+
+    const classRows = Math.ceil(classIds.length / classCols);
+    const animalRows = Math.ceil(animalIds.length / animalCols);
+    const classGridH = classRows * cardH + (classRows - 1) * classGap;
+    const animalGridH = animalRows * smallH + (animalRows - 1) * animalGap;
+
+    // Compute vertical layout — distribute content with proper spacing
+    const labelGap = 22;     // space from section label to first card row
+    const sectionGap = 30;   // space between class grid bottom and animal label
+    const confirmGap = 24;   // space before confirm button
+    const confirmH = 44;
+    const totalContentH = labelGap + classGridH + sectionGap + labelGap + animalGridH + confirmGap + confirmH;
+
+    // Content starts below header+timeline (which ends ~y=88)
+    const contentTop = 96;
+    const contentBottom = height - 24;
+    const extraSpace = Math.max(0, (contentBottom - contentTop) - totalContentH);
+    const topPad = Math.floor(extraSpace * 0.22);
+
+    const classLabelY = contentTop + topPad;
+    const classY0 = classLabelY + labelGap;
+    const animalLabelY = classY0 + classGridH + sectionGap;
+    const animalY0 = animalLabelY + labelGap;
+    const animalBottomY = animalY0 + animalGridH;
+
+    this.add.text(classStartX - cardW / 2, classLabelY, '⚔️  PICK A CLASS', {
+      fontSize: '12px',
       color: '#FF6B9D',
       fontFamily: '"Fredoka", sans-serif',
       letterSpacing: 3,
@@ -310,19 +340,8 @@ export class DraftScene extends Phaser.Scene {
       });
     });
 
-    const classRows = Math.ceil(classIds.length / classCols);
-    const animalY0 = classY0 + classRows * (cardH + classGap) + 18;
-
-    // Animal cards
-    const animalCols = 5;
-    const animalGap = 6;
-    const smallW = Math.min(120, Math.floor((maxGridW - (animalCols - 1) * animalGap) / animalCols));
-    const smallH = Math.min(90, Math.floor(smallW * 0.75));
-    const animalGridW = animalCols * smallW + (animalCols - 1) * animalGap;
-    const animalStartX = width / 2 - animalGridW / 2 + smallW / 2;
-
-    this.animalLabel = this.add.text(animalStartX - smallW / 2, animalY0 - 15, '🐾  PICK AN ANIMAL', {
-      fontSize: '11px',
+    this.animalLabel = this.add.text(animalStartX - smallW / 2, animalLabelY, '🐾  PICK AN ANIMAL', {
+      fontSize: '12px',
       color: '#FFD93D',
       fontFamily: '"Fredoka", sans-serif',
       letterSpacing: 3,
@@ -347,16 +366,13 @@ export class DraftScene extends Phaser.Scene {
       });
     });
 
-    const animalRows = Math.ceil(animalIds.length / animalCols);
-    const animalBottomY = animalY0 + animalRows * (smallH + animalGap);
-
     // ─── STATS PREVIEW PANEL (right side, shown when both selected) ───
     const statsPanelW = 240;
-    this.statsPanel = this.add.container(width - statsPanelW - 10, classY0);
+    this.statsPanel = this.add.container(width - statsPanelW - 16, classY0);
     this.statsPanel.setAlpha(0);
 
     // ─── CONFIRM BUTTON ──────────────────────────────────────────
-    const confirmY = Math.min(animalBottomY + 8, height - 50);
+    const confirmY = Math.min(animalBottomY + confirmGap, height - 50);
     this.confirmBtn = this.createConfirmButton(width / 2, confirmY);
     this.confirmBtn.setAlpha(0).setScale(0.9);
     this.tweens.add({
@@ -391,7 +407,6 @@ export class DraftScene extends Phaser.Scene {
       });
     }
 
-    console.log('[Draft] UI built. Screen:', width, 'x', height, 'Cards fit:', animalBottomY < height);
   }
 
   // ─── CARD CREATION ──────────────────────────────────────────────
@@ -579,7 +594,6 @@ export class DraftScene extends Phaser.Scene {
 
     zone.on('pointerdown', () => {
       if (container.getData('disabled')) return;
-      console.log('[Draft] Animal clicked:', id, 'disabled:', container.getData('disabled'), 'usedAnimals:', [...this.usedAnimals]);
       this.selectAnimal(id);
     });
 
@@ -816,7 +830,6 @@ export class DraftScene extends Phaser.Scene {
   private selectClass(id: ClassId) {
     if (this.draftFinished) return;
     if (this.usedClasses.has(id)) return;
-    console.log('[Draft] Class selected:', id);
     this.selectedClass = id;
 
     this.classCards.forEach((container, cid) => {
@@ -869,7 +882,6 @@ export class DraftScene extends Phaser.Scene {
   private selectAnimal(id: AnimalId) {
     if (this.draftFinished) return;
     if (this.usedAnimals.has(id)) return;
-    console.log('[Draft] Animal selected:', id);
     this.selectedAnimal = id;
 
     // Stop the hint flash
@@ -911,15 +923,10 @@ export class DraftScene extends Phaser.Scene {
 
   private confirmPick() {
     if (this.draftFinished) return;
-    console.log('[Draft] confirmPick called: class=' + this.selectedClass + ' animal=' + this.selectedAnimal +
-      ' pickIndex=' + this.currentPickIndex + ' myPicks=' + this.myPickCount + ' isMyTurn=' + this.isMyTurn());
-    if (!this.selectedClass || !this.selectedAnimal) {
-      console.log('[Draft] Confirm BLOCKED: need both class and animal');
-      return;
-    }
-    if (!this.isMyTurn()) { console.log('[Draft] Confirm BLOCKED: not my turn'); return; }
-    if (this.usedClasses.has(this.selectedClass)) { console.log('[Draft] Confirm BLOCKED: class already used'); return; }
-    if (this.usedAnimals.has(this.selectedAnimal)) { console.log('[Draft] Confirm BLOCKED: animal already used'); return; }
+    if (!this.selectedClass || !this.selectedAnimal) return;
+    if (!this.isMyTurn()) return;
+    if (this.usedClasses.has(this.selectedClass)) return;
+    if (this.usedAnimals.has(this.selectedAnimal)) return;
 
     const pick: DraftPick = {
       playerId: this.playerId,
@@ -1023,9 +1030,6 @@ export class DraftScene extends Phaser.Scene {
   }
 
   private updateState() {
-    console.log('[Draft] updateState: pickIndex=' + this.currentPickIndex + ' myPicks=' + this.myPickCount +
-      ' isMyTurn=' + this.isMyTurn() + ' usedClasses=' + [...this.usedClasses] + ' usedAnimals=' + [...this.usedAnimals]);
-
     // Grey out used classes
     this.classCards.forEach((container, cid) => {
       if (this.usedClasses.has(cid)) {
@@ -1130,12 +1134,10 @@ export class DraftScene extends Phaser.Scene {
   }
 
   private autoPickForSelf() {
-    console.log('[Draft] AUTO-PICK triggered! timeLeft was 0, pickIndex=' + this.currentPickIndex);
     const available = Object.keys(CLASSES).filter(c => !this.usedClasses.has(c));
     const animals = Object.keys(ANIMALS).filter(a => !this.usedAnimals.has(a));
     this.selectedClass = available[0] as ClassId;
     this.selectedAnimal = animals[Math.floor(Math.random() * animals.length)] as AnimalId;
-    console.log('[Draft] AUTO-PICK chose: class=' + this.selectedClass + ' animal=' + this.selectedAnimal);
     this.confirmPick();
   }
 
@@ -1144,8 +1146,6 @@ export class DraftScene extends Phaser.Scene {
   private finishDraft() {
     if (this.draftFinished) return;
     this.draftFinished = true;
-    console.log('[Draft] FINISHING DRAFT. Total picks:', this.picks.length, 'My picks:', this.myPickCount);
-
     if (this.timerEvent) this.timerEvent.destroy();
     if (this.activeSlotTween) this.activeSlotTween.stop();
 
