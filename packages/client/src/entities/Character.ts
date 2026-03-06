@@ -278,6 +278,7 @@ export class CharacterEntity {
     this.data = charData;
     this.healthBar.update(this.sprite.x, this.sprite.y, charData.currentHp);
     this.showFlagCarrier(!!charData.hasFlag);
+    this.nameLabel.setText(charData.name);
   }
 
   refreshVisuals() {

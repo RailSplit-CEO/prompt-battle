@@ -1191,23 +1191,31 @@ export class BattleScene extends Phaser.Scene {
 
     this.addCommandLog('You', rawText, 'processing');
 
+    let orders: RemoteOrderPayload[] = [];
     try {
       if (this.hasGemini) {
         const result = await parseCommandWithGemini(
           commandText, this.charData, this.playerId, MAP_WIDTH, MAP_HEIGHT, this.ctf,
           this.controlPoints, this.gameMap.tiles,
         );
-        this.applyParsedOrders(result);
+        orders = this.applyParsedOrders(result);
         this.updateCommandLogResult(result.narration || 'Orders issued!');
       } else {
-        this.parseCommandLocally(commandText);
+        orders = this.parseCommandLocally(commandText);
         this.updateCommandLogResult('Orders issued!');
+      }
+      // Guest: send parsed orders to host via Firebase
+      if (!this.isLocal && !this.isHost && orders.length > 0) {
+        this.firebase.sendRemoteOrders(this.gameId, this.playerId, orders);
       }
     } catch (err) {
       console.error('Command error:', err);
       try {
-        this.parseCommandLocally(commandText);
+        const fallbackOrders = this.parseCommandLocally(commandText);
         this.updateCommandLogResult(this.hasGemini ? '(AI unavailable, used local parser)' : 'Orders issued!');
+        if (!this.isLocal && !this.isHost && fallbackOrders.length > 0) {
+          this.firebase.sendRemoteOrders(this.gameId, this.playerId, fallbackOrders);
+        }
       } catch {
         this.updateCommandLogResult('Error: ' + (err as Error).message);
       }
@@ -1216,8 +1224,9 @@ export class BattleScene extends Phaser.Scene {
     this.updateCooldownDisplay();
   }
 
-  private applyParsedOrders(result: GeminiParseResult) {
+  private applyParsedOrders(result: GeminiParseResult): RemoteOrderPayload[] {
     const seenChars = new Set<string>();
+    const collectedOrders: RemoteOrderPayload[] = [];
 
     for (const action of result.actions) {
       const char = this.charData.get(action.characterId);
@@ -1236,10 +1245,14 @@ export class BattleScene extends Phaser.Scene {
 
       if (isQueued) {
         const queue = this.orderQueues.get(char.id);
-        if (queue && queue.length < 3) queue.push(order);
+        if (queue && queue.length < 3) {
+          queue.push(order);
+          collectedOrders.push({ characterId: char.id, order, queued: true });
+        }
       } else {
         char.currentOrder = order;
         char.path = [];
+        collectedOrders.push({ characterId: char.id, order, queued: false });
         // Clear old queue
         const queue = this.orderQueues.get(char.id);
         if (queue) queue.length = 0;
@@ -1256,6 +1269,7 @@ export class BattleScene extends Phaser.Scene {
         }
       }
     }
+    return collectedOrders;
   }
 
   private getOrderLabel(order: CharacterOrder): string {
@@ -1287,15 +1301,17 @@ export class BattleScene extends Phaser.Scene {
 
   // ─── LOCAL PARSER ───────────────────────────────────────────────
 
-  private parseCommandLocally(rawText: string) {
+  private parseCommandLocally(rawText: string): RemoteOrderPayload[] {
+    const collectedOrders: RemoteOrderPayload[] = [];
     const thenParts = rawText.split(/\s+then\s+/i);
     for (let partIdx = 0; partIdx < thenParts.length; partIdx++) {
       const isQueued = partIdx > 0;
       const clauses = this.splitClauses(thenParts[partIdx]);
       for (const clause of clauses) {
-        this.parseCommandPart(clause.trim(), isQueued);
+        collectedOrders.push(...this.parseCommandPart(clause.trim(), isQueued));
       }
     }
+    return collectedOrders;
   }
 
   private splitClauses(text: string): string[] {
@@ -1364,10 +1380,6 @@ export class BattleScene extends Phaser.Scene {
     if (text.includes('strongest') || text.includes('highest') || text.includes('strong')) {
       return enemyChars.reduce((a, b) => a.currentHp / a.stats.hp > b.currentHp / b.stats.hp ? a : b);
     }
-    if (text.includes('carrier') || text.includes('flag holder')) {
-      const carrier = enemyChars.find(c => c.hasFlag);
-      if (carrier) return carrier;
-    }
     if (text.includes('nearest') || text.includes('closest')) {
       return this.findNearest(attackerPos, enemyChars);
     }
@@ -1427,13 +1439,13 @@ export class BattleScene extends Phaser.Scene {
     return { x: char.position.x + dir * 8, y: char.position.y };
   }
 
-  private parseCommandPart(rawText: string, queued: boolean) {
+  private parseCommandPart(rawText: string, queued: boolean): RemoteOrderPayload[] {
     const text = rawText.toLowerCase();
     const myChars = Array.from(this.charData.values())
       .filter(c => c.owner === this.playerId && !c.isDead);
     const enemyChars = Array.from(this.charData.values())
       .filter(c => c.owner !== this.playerId && !c.isDead);
-    if (myChars.length === 0) return;
+    if (myChars.length === 0) return [];
 
     // If a character is selected, commands go to them unless text explicitly names someone else
     let targetChars: Character[];
@@ -1452,6 +1464,7 @@ export class BattleScene extends Phaser.Scene {
     }
     const affectedChars = new Set<string>();
 
+    const partOrders: RemoteOrderPayload[] = [];
     const setOrder = (char: Character, order: CharacterOrder) => {
       if (queued) {
         const queue = this.orderQueues.get(char.id);
@@ -1463,6 +1476,7 @@ export class BattleScene extends Phaser.Scene {
         if (q) q.length = 0;
       }
       affectedChars.add(char.id);
+      partOrders.push({ characterId: char.id, order, queued });
     };
 
     // ── Spread out / split up ──────────────────────────────────────
@@ -1478,7 +1492,7 @@ export class BattleScene extends Phaser.Scene {
         }});
       });
       this.updateOrderLabels(affectedChars);
-      return;
+      return partOrders;
     }
 
     // ── Capture / control point / take point ─────────────────────────
@@ -1491,7 +1505,7 @@ export class BattleScene extends Phaser.Scene {
       const targetCP = unowned[0] || this.controlPoints[1];
       for (const char of targetChars) setOrder(char, { type: 'control', targetPosition: targetCP.position });
       this.updateOrderLabels(affectedChars);
-      return;
+      return partOrders;
     }
 
     // ── Go home / retreat to base ─────────────────────────────────
@@ -1499,7 +1513,7 @@ export class BattleScene extends Phaser.Scene {
       || text.includes('return to base') || text.includes('go to base')) {
       for (const char of targetChars) setOrder(char, { type: 'move', targetPosition: this.gameMap.spawnP1[1] });
       this.updateOrderLabels(affectedChars);
-      return;
+      return partOrders;
     }
     // ── Escort / protect / follow ally ─────────────────────────────
     else if (text.includes('escort') || text.includes('guard carrier')
@@ -1515,7 +1529,7 @@ export class BattleScene extends Phaser.Scene {
           break;
         }
       }
-      if (!escortTarget) escortTarget = myChars.find(c => c.hasFlag);
+      if (!escortTarget) escortTarget = myChars[0]; // default to first ally
       if (escortTarget) {
         for (const char of targetChars) {
           if (char.id !== escortTarget.id) setOrder(char, { type: 'escort', targetCharacterId: escortTarget.id });
@@ -1604,6 +1618,7 @@ export class BattleScene extends Phaser.Scene {
     }
 
     this.updateOrderLabels(affectedChars);
+    return partOrders;
   }
 
   private updateOrderLabels(charIds: Set<string>) {
@@ -2215,7 +2230,6 @@ export class BattleScene extends Phaser.Scene {
 
       // Row 1: name + class
       card += `<div class="char-name" style="color:${isAlly ? '#6CC4FF' : '#FF8EC8'}">${c.name}`;
-      if (c.hasFlag) card += ` <span class="char-flag">FLAG</span>`;
       card += `</div>`;
       card += `<div class="char-class">${cls.name}</div>`;
 
@@ -2377,4 +2391,146 @@ export class BattleScene extends Phaser.Scene {
     if (this.secondTimer) this.secondTimer.destroy();
     if (this.miniMap) this.miniMap.destroy();
   }
+  // ─── ONLINE SYNC ──────────────────────────────────────────────
+
+  private pushSyncState() {
+    const characters: Record<string, Character> = {};
+    this.charData.forEach((char, id) => {
+      characters[id] = char;
+    });
+    const orderQueues: Record<string, CharacterOrder[]> = {};
+    this.orderQueues.forEach((queue, id) => {
+      orderQueues[id] = [...queue];
+    });
+    const snapshot: SyncSnapshot = {
+      characters,
+      ctf: this.ctf,
+      timeRemaining: this.gameTimeRemaining,
+      controlPoints: this.controlPoints,
+      orderQueues,
+    };
+    if (this.gameOver) {
+      snapshot.gameOver = true;
+    }
+    this.firebase.pushSyncState(this.gameId, snapshot).catch(err => {
+      console.error('[Sync] Failed to push state:', err);
+    });
+  }
+
+  private applyRemoteOrders(playerId: string, orders: RemoteOrderPayload[]) {
+    const affectedChars = new Set<string>();
+    for (const o of orders) {
+      const char = this.charData.get(o.characterId);
+      if (!char || char.isDead || char.owner !== playerId) continue;
+
+      if (o.queued) {
+        const queue = this.orderQueues.get(char.id);
+        if (queue && queue.length < 3) queue.push(o.order);
+      } else {
+        char.currentOrder = o.order;
+        char.path = [];
+        const q = this.orderQueues.get(char.id);
+        if (q) q.length = 0;
+      }
+      affectedChars.add(char.id);
+    }
+
+    // Update visuals
+    for (const id of affectedChars) {
+      const char = this.charData.get(id);
+      const entity = this.characters.get(id);
+      if (entity && char?.currentOrder) {
+        const queueLen = this.orderQueues.get(id)?.length || 0;
+        const label = this.getOrderLabel(char.currentOrder) + (queueLen > 0 ? ' (+' + queueLen + ')' : '');
+        entity.setOrderText(label);
+      }
+    }
+    this.addCommandLog('Opponent', 'issued orders', 'success');
+  }
+
+  private applySyncState(state: SyncSnapshot) {
+    // Check for game over from host
+    if (state.gameOver && state.winner) {
+      this.endGame(state.winner, state.winReason || 'unknown');
+      return;
+    }
+
+    // Update characters
+    for (const [id, charState] of Object.entries(state.characters)) {
+      const prev = this.charData.get(id);
+      this.charData.set(id, charState);
+
+      const entity = this.characters.get(id);
+      if (!entity) continue;
+
+      // Update name (host may have different generated names)
+      entity.updateFromState(charState);
+      entity.updateEffectAuras(charState.effects);
+
+      // Animate position changes
+      const prevPos = prev?.position;
+      if (prevPos && (prevPos.x !== charState.position.x || prevPos.y !== charState.position.y)) {
+        entity.data.position = charState.position;
+        if (!entity.isMoving) {
+          entity.stepToTile(charState.position.x, charState.position.y);
+        }
+      } else {
+        entity.snapToPosition();
+      }
+
+      // Order text
+      if (charState.currentOrder) {
+        entity.setOrderText(this.getOrderLabel(charState.currentOrder));
+      } else {
+        entity.setOrderText('idle');
+      }
+
+      // Respawn visuals
+      if (charState.isDead) {
+        entity.showRespawning(charState.respawnTimer ?? 0);
+      } else if (prev?.isDead && !charState.isDead) {
+        entity.hideRespawn();
+      }
+
+      // Flag carrier
+      entity.showFlagCarrier(!!charState.hasFlag);
+    }
+
+    // Update order queues
+    if (state.orderQueues) {
+      for (const [id, queue] of Object.entries(state.orderQueues)) {
+        this.orderQueues.set(id, [...queue]);
+      }
+    }
+
+    // Update CTF
+    if (state.ctf) {
+      this.ctf = state.ctf;
+      this.updateFlagSpritePos(this.flag1Sprite, this.ctf.flag1.position);
+      this.updateFlagSpritePos(this.flag2Sprite, this.ctf.flag2.position);
+      this.flag1Sprite.setVisible(this.ctf.flag1.carrier === null);
+      this.flag2Sprite.setVisible(this.ctf.flag2.carrier === null);
+    }
+
+    // Update timer
+    if (state.timeRemaining !== undefined) {
+      this.gameTimeRemaining = state.timeRemaining;
+      this.updateTimerDisplay();
+    }
+
+    // Update control points
+    if (state.controlPoints) {
+      this.controlPoints = state.controlPoints;
+    }
+
+    // Update visuals
+    this.updateScoreDisplay();
+    this.updateFogOfWar();
+    this.updateMiniMap();
+    this.updateStatusBar();
+    this.updateAbilityPanel();
+    this.renderPaths();
+  }
+
+
 }

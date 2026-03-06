@@ -36,21 +36,19 @@ function buildPrompt(
     const abilityStr = ability
       ? `ABILITY: ${ability.name}(id:${ability.id}) - ${ability.description} [range:${ability.range}, cd:${cd > 0 ? cd + 's' : 'READY'}]`
       : 'NO ABILITY';
-    const flag = c.hasFlag ? ' [CARRYING FLAG]' : '';
     const terrain = tiles[c.position.y]?.[c.position.x] || 'grass';
     return `  ID:"${c.id}" Name:"${c.name}" Class:${cls.name} Animal:${animal.name} ` +
       `HP:${c.currentHp}/${c.stats.hp} Pos:(${c.position.x},${c.position.y}) Terrain:${terrain} ` +
       `ATK:${c.stats.attack} DEF:${c.stats.defense} SPD:${c.stats.speed} RNG:${c.stats.range} MAG:${c.stats.magic} ` +
-      `${abilityStr}${flag}` +
+      `${abilityStr}` +
       `${c.isDead ? ` [DEAD - respawns in ${c.respawnTimer ?? 0}s]` : ''}`;
   }).join('\n');
 
   const enemyList = enemyChars.map(c => {
     const cls = CLASSES[c.classId];
     const animal = ANIMALS[c.animalId];
-    const flag = c.hasFlag ? ' [CARRYING FLAG]' : '';
     return `  ID:"${c.id}" Name:"${c.name}" Class:${cls.name} Animal:${animal.name} ` +
-      `HP:${c.currentHp}/${c.stats.hp} Pos:(${c.position.x},${c.position.y})${flag}` +
+      `HP:${c.currentHp}/${c.stats.hp} Pos:(${c.position.x},${c.position.y})` +
       `${c.isDead ? ' [DEAD]' : ''}`;
   }).join('\n');
 
@@ -124,13 +122,13 @@ COMPLEX COMMANDS:
 - "disengage" / "fall back" = retreat.
 
 RULES:
-- Interpret the player's intent HEAVILY. If they say "go get their flag", that means capture. If they say "bring it home", that means move to your flag base.
+- Interpret the player's intent HEAVILY. If they say "take the point" or "capture", that means control the nearest unowned point.
 - A single command can issue DIFFERENT orders to DIFFERENT characters. Parse each clause independently.
 - If the player names a character by class, animal, or name, command THAT character.
 - "all" or "everyone" means all alive characters.
 - If ambiguous, pick the most logical character for the task.
 - NEVER ask for clarification. Always produce valid actions.
-- Be SMART: if someone has the flag, suggest they head home. If the enemy has your flag, suggest attacking the carrier.
+- Be SMART: prioritize capturing unowned control points. Defend owned ones. Attack enemies contesting your points.
 - For directional moves: up=y-6, down=y+6, left=x-6, right=x+6, forward=toward map center.
 - Only include alive characters in actions.
 
