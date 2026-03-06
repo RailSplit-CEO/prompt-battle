@@ -18,7 +18,7 @@ import {
   parseCommandWithGemini, GeminiParseResult,
 } from '../systems/GeminiCommandParser';
 import { SoundManager } from '../systems/SoundManager';
-import { MiniMap } from '../systems/MiniMap';
+import { CharacterViewports } from '../systems/CharacterViewports';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────
 const COMMAND_COOLDOWN = 5000;
@@ -90,6 +90,12 @@ export class BattleScene extends Phaser.Scene {
   private isHost = true;
   private opponentId = 'opponent';
 
+  /** Team tag used in control-point ownership, etc. */
+  private get myTeam(): string { return this.isHost ? 'player1' : 'player2'; }
+  private get enemyTeam(): string { return this.isHost ? 'player2' : 'player1'; }
+  private get mySpawns(): Position[] { return this.isHost ? this.gameMap.spawnP1 : this.gameMap.spawnP2; }
+  private get enemySpawns(): Position[] { return this.isHost ? this.gameMap.spawnP2 : this.gameMap.spawnP1; }
+
   private gameMap!: GameMap;
   private characters: Map<string, CharacterEntity> = new Map();
   private charData: Map<string, Character> = new Map();
@@ -101,6 +107,7 @@ export class BattleScene extends Phaser.Scene {
   private gameTimeRemaining = GAME_DURATION;
   private lastCommandTime = 0;
   private commandCooldownRemaining = 0;
+  private pendingCommands: string[] = [];
   private gameOver = false;
 
   // CTF / Domination
@@ -139,8 +146,8 @@ export class BattleScene extends Phaser.Scene {
   // Sound
   private sound_: SoundManager = SoundManager.getInstance();
 
-  // Mini-map
-  private miniMap!: MiniMap;
+  // Character viewports (replaces minimap)
+  private charViewports!: CharacterViewports;
 
   // Path visualization
   private pathGraphics!: Phaser.GameObjects.Graphics;
@@ -234,13 +241,14 @@ export class BattleScene extends Phaser.Scene {
     this.initPOIs();
     this.initFogOfWar();
     this.pathGraphics = this.add.graphics().setDepth(4);
-    this.miniMap = new MiniMap(this);
 
     const worldWidth = MAP_WIDTH * TILE_SIZE;
     const worldHeight = MAP_HEIGHT * TILE_SIZE;
     this.cameras.main.setBounds(0, 0, worldWidth, worldHeight);
     this.cameras.main.centerOn(worldWidth / 2, worldHeight / 2);
     this.setupCameraControls();
+
+    this.charViewports = new CharacterViewports(this, this.playerId);
 
     // HUD (HTML)
     this.commandBarEl = document.getElementById('command-bar')!;
@@ -269,7 +277,7 @@ export class BattleScene extends Phaser.Scene {
     // Selected character HUD label (fixed to camera)
     this.selectedCharLabel = this.add.text(
       this.cameras.main.width / 2, 10,
-      'Commanding: ALL',
+      'Commanding: ALL [Space=talk]',
       {
         fontSize: '13px',
         color: '#FFD93D',
@@ -1345,7 +1353,7 @@ export class BattleScene extends Phaser.Scene {
     });
 
     this.renderPaths();
-    this.updateMiniMap();
+    this.updateCharViewports();
     this.updateStatusBar();
     this.updateAbilityPanel();
 
@@ -1903,15 +1911,6 @@ export class BattleScene extends Phaser.Scene {
   private async handleCommand(rawText: string) {
     if (this.gameOver) return;
 
-    const now = Date.now();
-    if (now - this.lastCommandTime < COMMAND_COOLDOWN) {
-      const remaining = Math.ceil((COMMAND_COOLDOWN - (now - this.lastCommandTime)) / 1000);
-      this.addCommandLog('System', `Cooldown: ${remaining}s remaining`, 'cooldown');
-      return;
-    }
-    this.lastCommandTime = now;
-    this.commandCooldownRemaining = COMMAND_COOLDOWN;
-
     // If a character is selected, prefix their name so parsers know who to command
     let commandText = rawText;
     if (this.selectedCharId) {
@@ -1924,7 +1923,23 @@ export class BattleScene extends Phaser.Scene {
       }
     }
 
-    this.addCommandLog('You', rawText, 'processing');
+    const now = Date.now();
+    if (now - this.lastCommandTime < COMMAND_COOLDOWN) {
+      // Queue command for when cooldown expires
+      this.pendingCommands.push(commandText);
+      const remaining = Math.ceil((COMMAND_COOLDOWN - (now - this.lastCommandTime)) / 1000);
+      this.addCommandLog('You', `${rawText} (queued, ${remaining}s)`, 'queued');
+      return;
+    }
+
+    this.executeCommands(commandText);
+  }
+
+  private async executeCommands(commandText: string) {
+    this.lastCommandTime = Date.now();
+    this.commandCooldownRemaining = COMMAND_COOLDOWN;
+
+    this.addCommandLog('You', commandText, 'processing');
 
     let orders: RemoteOrderPayload[] = [];
     try {
@@ -1947,7 +1962,12 @@ export class BattleScene extends Phaser.Scene {
       console.error('Command error:', err);
       try {
         const fallbackOrders = this.parseCommandLocally(commandText);
-        this.updateCommandLogResult(this.hasGemini ? '(AI unavailable, used local parser)' : 'Orders issued!');
+        if (this.hasGemini) {
+          console.warn('[AI] Gemini failed, falling back to local parser:', (err as Error).message);
+          this.updateCommandLogResult(`(AI error: ${(err as Error).message.slice(0, 60)} — used local parser)`);
+        } else {
+          this.updateCommandLogResult('Orders issued!');
+        }
         if (!this.isLocal && !this.isHost && fallbackOrders.length > 0) {
           this.firebase.sendRemoteOrders(this.gameId, this.playerId, fallbackOrders);
         }
@@ -2174,10 +2194,10 @@ export class BattleScene extends Phaser.Scene {
       if (enemyChars.length > 0) return this.findNearest(char.position, enemyChars).position;
     }
     if (text.includes('home') || text.includes('our base') || text.includes('my base')) {
-      return this.gameMap.spawnP1[1];
+      return this.mySpawns[1];
     }
     if (text.includes('their base') || text.includes('enemy base')) {
-      return this.gameMap.spawnP2[1];
+      return this.enemySpawns[1];
     }
     const dir = char.position.x < MAP_WIDTH / 2 ? 1 : -1;
     return { x: char.position.x + dir * 8, y: char.position.y };
@@ -2298,7 +2318,7 @@ export class BattleScene extends Phaser.Scene {
       || text.includes('capture') || text.includes('take point') || text.includes('go to point')
       || text.includes('cap ')) {
       const unowned = this.controlPoints
-        .filter(cp => cp.owner !== 'player1')
+        .filter(cp => cp.owner !== this.myTeam)
         .sort((a, b) => this.tileDist(targetChars[0].position, a.position) - this.tileDist(targetChars[0].position, b.position));
       const targetCP = unowned[0] || this.controlPoints[1];
       for (const char of targetChars) setOrder(char, { type: 'control', targetPosition: targetCP.position });
@@ -2309,7 +2329,7 @@ export class BattleScene extends Phaser.Scene {
     // ── Go home / retreat to base ─────────────────────────────────
     if (text.includes('bring it home') || text.includes('come home') || text.includes('go home')
       || text.includes('return to base') || text.includes('go to base')) {
-      for (const char of targetChars) setOrder(char, { type: 'move', targetPosition: this.gameMap.spawnP1[1] });
+      for (const char of targetChars) setOrder(char, { type: 'move', targetPosition: this.mySpawns[1] });
       this.updateOrderLabels(affectedChars);
       return partOrders;
     }
@@ -2409,7 +2429,7 @@ export class BattleScene extends Phaser.Scene {
     // ── Default: move toward nearest unowned control point ──────────
     else {
       const unowned = this.controlPoints
-        .filter(cp => cp.owner !== 'player1')
+        .filter(cp => cp.owner !== this.myTeam)
         .sort((a, b) => this.tileDist(targetChars[0].position, a.position) - this.tileDist(targetChars[0].position, b.position));
       const targetCP = unowned[0] || this.controlPoints[1];
       for (const char of targetChars) setOrder(char, { type: 'control', targetPosition: targetCP.position });
@@ -2515,7 +2535,7 @@ export class BattleScene extends Phaser.Scene {
           // Already owned, maintain
         } else {
           cp.capturingTeam = 'player1';
-          cp.captureProgress = Math.min(100, cp.captureProgress + 10);
+          cp.captureProgress = Math.min(100, cp.captureProgress + 3);
           if (cp.captureProgress >= 100) {
             cp.owner = 'player1';
             cp.captureProgress = 100;
@@ -2534,7 +2554,7 @@ export class BattleScene extends Phaser.Scene {
           // Already owned, maintain
         } else {
           cp.capturingTeam = 'player2';
-          cp.captureProgress = Math.min(100, cp.captureProgress + 10);
+          cp.captureProgress = Math.min(100, cp.captureProgress + 3);
           if (cp.captureProgress >= 100) {
             cp.owner = 'player2';
             cp.captureProgress = 100;
@@ -2545,7 +2565,7 @@ export class BattleScene extends Phaser.Scene {
       } else {
         // Empty - decay
         if (cp.captureProgress > 0 && !cp.owner) {
-          cp.captureProgress = Math.max(0, cp.captureProgress - 5);
+          cp.captureProgress = Math.max(0, cp.captureProgress - 2);
           if (cp.captureProgress === 0) cp.capturingTeam = null;
         }
       }
@@ -2713,27 +2733,10 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
-  // ─── MINI-MAP ─────────────────────────────────────────────────────
+  // ─── CHARACTER VIEWPORTS ──────────────────────────────────────────
 
-  private updateMiniMap() {
-    const friendly = Array.from(this.charData.values())
-      .filter(c => c.owner === this.playerId && !c.isDead);
-    const enemies = Array.from(this.charData.values())
-      .filter(c => c.owner !== this.playerId && !c.isDead)
-      .map(c => ({
-        position: c.position,
-        visible: this.characters.get(c.id)?.fogVisible ?? false,
-      }));
-
-    this.miniMap.update(
-      this.gameMap.tiles,
-      this.visibleTiles,
-      friendly,
-      enemies,
-      null,
-      this.controlPoints,
-      this.cameras.main,
-    );
+  private updateCharViewports() {
+    this.charViewports.update(this.charData, this.characters);
   }
 
   // ─── UTILITIES ──────────────────────────────────────────────────
@@ -2873,6 +2876,13 @@ export class BattleScene extends Phaser.Scene {
     const entity = this.characters.get(char.id);
     if (entity) entity.setOrderText(ability.name);
 
+    // Guest: send the order to the host
+    if (!this.isLocal && !this.isHost) {
+      this.firebase.sendRemoteOrders(this.gameId, this.playerId, [
+        { characterId: char.id, order, queued: false },
+      ]);
+    }
+
     this.updateAbilityPanel();
   }
 
@@ -2887,18 +2897,52 @@ export class BattleScene extends Phaser.Scene {
       right: this.input.keyboard!.addKey('D'),
     };
 
+    const EDGE_THRESHOLD = 30; // pixels from screen edge to trigger scroll
+    const EDGE_SPEED = 14;
+    const KEY_SPEED = 12;
+
+    const commandInput = document.getElementById('command-input') as HTMLInputElement;
+
     this.events.on('update', () => {
       const cam = this.cameras.main;
-      const speed = 12;
-      if (cursors.left.isDown || wasd.left.isDown) cam.scrollX -= speed;
-      if (cursors.right.isDown || wasd.right.isDown) cam.scrollX += speed;
-      if (cursors.up.isDown || wasd.up.isDown) cam.scrollY -= speed;
-      if (cursors.down.isDown || wasd.down.isDown) cam.scrollY += speed;
+
+      // Skip keyboard panning when the text input is focused
+      const inputFocused = document.activeElement === commandInput;
+
+      // Keyboard panning (arrows always work, WASD only when not typing)
+      const wDown = !inputFocused && wasd.up.isDown;
+      const sDown = !inputFocused && wasd.down.isDown;
+      const aDown = !inputFocused && wasd.left.isDown;
+      const dDown = !inputFocused && wasd.right.isDown;
+      if (cursors.left.isDown || aDown) cam.scrollX -= KEY_SPEED;
+      if (cursors.right.isDown || dDown) cam.scrollX += KEY_SPEED;
+      if (cursors.up.isDown || wDown) cam.scrollY -= KEY_SPEED;
+      if (cursors.down.isDown || sDown) cam.scrollY += KEY_SPEED;
+
+      // Edge-of-screen panning (League style)
+      const pointer = this.input.activePointer;
+      const mx = pointer.x;
+      const my = pointer.y;
+      const w = this.scale.width;
+      const h = this.scale.height;
+
+      if (mx <= EDGE_THRESHOLD) cam.scrollX -= EDGE_SPEED * (1 - mx / EDGE_THRESHOLD);
+      if (mx >= w - EDGE_THRESHOLD) cam.scrollX += EDGE_SPEED * (1 - (w - mx) / EDGE_THRESHOLD);
+      if (my <= EDGE_THRESHOLD) cam.scrollY -= EDGE_SPEED * (1 - my / EDGE_THRESHOLD);
+      if (my >= h - EDGE_THRESHOLD) cam.scrollY += EDGE_SPEED * (1 - (h - my) / EDGE_THRESHOLD);
     });
 
     let dragStartX = 0, dragStartY = 0;
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (p.rightButtonDown()) { dragStartX = p.x; dragStartY = p.y; }
+      // Left-click on a character viewport → snap main camera there
+      if (p.leftButtonDown() && this.charViewports) {
+        const snapTo = this.charViewports.handleClick(p.x, p.y);
+        if (snapTo) {
+          const entity = this.characters.get(snapTo);
+          if (entity) this.cameras.main.centerOn(entity.sprite.x, entity.sprite.y);
+        }
+      }
     });
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
       if (p.rightButtonDown()) {
@@ -3299,6 +3343,12 @@ export class BattleScene extends Phaser.Scene {
       this.updateCooldownDisplay();
       if (prev > 0 && this.commandCooldownRemaining === 0) {
         this.sound_.playCommandReady();
+        // Flush any commands queued during cooldown as one combined call
+        if (this.pendingCommands.length > 0) {
+          const combined = this.pendingCommands.join(', ');
+          this.pendingCommands = [];
+          this.executeCommands(combined);
+        }
       }
     }
   }
@@ -3312,7 +3362,7 @@ export class BattleScene extends Phaser.Scene {
     if (this.gameTickTimer) this.gameTickTimer.destroy();
     if (this.moveTickTimer) this.moveTickTimer.destroy();
     if (this.secondTimer) this.secondTimer.destroy();
-    if (this.miniMap) this.miniMap.destroy();
+    if (this.charViewports) this.charViewports.destroy();
   }
   // ─── ONLINE SYNC ──────────────────────────────────────────────
 
@@ -3442,6 +3492,30 @@ export class BattleScene extends Phaser.Scene {
     // Update control points
     if (state.controlPoints) {
       this.controlPoints = state.controlPoints;
+      // Update CP visuals for guest
+      for (const cp of this.controlPoints) {
+        const container = this.cpSprites.get(cp.id);
+        if (!container) continue;
+        const ring = container.getData('ring') as Phaser.GameObjects.Graphics;
+        if (ring && cp.owner) {
+          ring.clear();
+          const ownerColor = cp.owner === 'player1' ? 0x4444ff : 0xff4444;
+          ring.lineStyle(2, ownerColor, 0.8);
+          ring.strokeCircle(0, 0, 14);
+        }
+        const fillGfx = container.getData('fillGfx') as Phaser.GameObjects.Graphics;
+        if (fillGfx) {
+          fillGfx.clear();
+          if (cp.captureProgress > 0) {
+            const color = cp.capturingTeam === 'player1' ? 0x4444ff :
+              cp.capturingTeam === 'player2' ? 0xff4444 : 0xffffff;
+            fillGfx.fillStyle(color, 0.4);
+            const angle = (cp.captureProgress / 100) * Math.PI * 2;
+            fillGfx.slice(0, 0, 10, 0, angle, false);
+            fillGfx.fillPath();
+          }
+        }
+      }
     }
 
     // Update domination scores
@@ -3451,7 +3525,7 @@ export class BattleScene extends Phaser.Scene {
     // Update visuals
     this.updateScoreDisplay();
     this.updateFogOfWar();
-    this.updateMiniMap();
+    this.updateCharViewports();
     this.updateStatusBar();
     this.updateAbilityPanel();
     this.renderPaths();

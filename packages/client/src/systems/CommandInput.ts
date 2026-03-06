@@ -92,7 +92,7 @@ export class CommandInput {
 
     this.recognition = recognition;
 
-    // Push-to-talk
+    // Push-to-talk (button)
     this.voiceBtn.addEventListener('mousedown', () => this.startListening());
     this.voiceBtn.addEventListener('mouseup', () => {
       if (this.isListening) {
@@ -104,7 +104,26 @@ export class CommandInput {
         this.recognition?.stop();
       }
     });
+
+    // Push-to-talk keyboard hotkey (Space) — hold to talk, release to send
+    window.addEventListener('keydown', this.onKeyDown);
+    window.addEventListener('keyup', this.onKeyUp);
   }
+
+  private onKeyDown = (e: KeyboardEvent) => {
+    if (e.code !== 'Space') return;
+    if (document.activeElement === this.inputEl) return; // don't hijack typing
+    e.preventDefault();
+    this.startListening();
+  };
+
+  private onKeyUp = (e: KeyboardEvent) => {
+    if (e.code !== 'Space') return;
+    if (document.activeElement === this.inputEl) return;
+    if (this.isListening) {
+      this.recognition?.stop();
+    }
+  };
 
   private startListening() {
     if (this.isListening) return;
@@ -124,5 +143,7 @@ export class CommandInput {
     if (this.recognition) {
       this.recognition.abort();
     }
+    window.removeEventListener('keydown', this.onKeyDown);
+    window.removeEventListener('keyup', this.onKeyUp);
   }
 }

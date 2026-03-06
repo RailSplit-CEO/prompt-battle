@@ -247,8 +247,8 @@ export class CharacterEntity {
         targets: this.sprite,
         x: px,
         y: py,
-        duration: 400,
-        ease: 'Linear',
+        duration: 820,
+        ease: 'Sine.easeInOut',
         onUpdate: () => {
           this.syncPositions();
         },
