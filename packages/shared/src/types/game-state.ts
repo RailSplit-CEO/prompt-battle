@@ -83,7 +83,7 @@ export type GameStatus = 'waiting' | 'drafting' | 'playing' | 'finished';
 export type TileType =
   | 'grass' | 'forest' | 'water' | 'rock' | 'hill' | 'bush' | 'path'
   | 'bridge' | 'lava' | 'sand' | 'swamp' | 'flowers' | 'mushroom' | 'ruins'
-  | 'gate_open' | 'gate_closed' | 'switch';
+  | 'gate_open' | 'gate_closed' | 'switch' | 'capture_point';
 
 export type GameMode = 'domination';
 export type WinReason = 'domination' | 'time_up' | 'elimination' | 'disconnect';
@@ -197,9 +197,11 @@ export interface ControlPointBuff {
 
 export interface ControlPoint {
   id: string;
+  name: string;
   position: Position;
+  radius: number;            // tile radius of the capture zone
   owner: 'player1' | 'player2' | null;
-  captureProgress: number; // 0-100
+  captureProgress: number;   // 0-100
   capturingTeam: 'player1' | 'player2' | null;
   buff: ControlPointBuff;
   upgraded?: boolean;

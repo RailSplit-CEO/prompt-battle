@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Map Viewer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #1a1a2e; color: #eee; font-family: monospace; overflow: auto; }
+    #info { position: fixed; top: 8px; left: 8px; background: rgba(0,0,0,0.7); padding: 8px 12px; border-radius: 4px; font-size: 12px; z-index: 10; }
+    #tooltip { position: fixed; background: rgba(0,0,0,0.85); padding: 6px 10px; border-radius: 4px; font-size: 11px; pointer-events: none; display: none; z-index: 20; }
+    #legend { position: fixed; top: 8px; right: 8px; background: rgba(0,0,0,0.7); padding: 8px 12px; border-radius: 4px; font-size: 11px; z-index: 10; max-height: 90vh; overflow-y: auto; }
+    .legend-item { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+    .legend-swatch { width: 14px; height: 14px; border: 1px solid #555; }
+    canvas { display: block; margin: 40px auto; }
+  </style>
+</head>
+<body>
+  <div id="info">Loading...</div>
+  <div id="tooltip"></div>
+  <div id="legend"></div>
+  <canvas id="map"></canvas>
+  <script type="module" src="./src/map/map-viewer.ts"></script>
+</body>
+</html>

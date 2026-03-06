@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Map Editor</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', sans-serif; display: flex; height: 100vh; overflow: hidden; user-select: none; }
+
+    /* Sidebar */
+    #sidebar { width: 220px; background: #16213e; display: flex; flex-direction: column; border-right: 1px solid #333; }
+    #sidebar h2 { padding: 12px; font-size: 14px; border-bottom: 1px solid #333; background: #0f3460; text-align: center; }
+    .section-title { font-size: 11px; color: #888; padding: 8px 10px 4px; text-transform: uppercase; letter-spacing: 1px; }
+
+    .tool-group { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 8px 8px; }
+    .tool-btn {
+      width: 36px; height: 36px; border: 2px solid #333; border-radius: 6px;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      font-size: 10px; font-weight: bold; transition: all 0.15s;
+      position: relative;
+    }
+    .tool-btn:hover { border-color: #FFD700; transform: scale(1.1); }
+    .tool-btn.active { border-color: #FFD700; box-shadow: 0 0 8px rgba(255,215,0,0.4); }
+    .tool-btn .tooltip {
+      display: none; position: absolute; left: 42px; top: 50%; transform: translateY(-50%);
+      background: #000; padding: 4px 8px; border-radius: 4px; font-size: 11px; white-space: nowrap; z-index: 100;
+    }
+    .tool-btn:hover .tooltip { display: block; }
+
+    /* Marker tools */
+    .marker-group { padding: 4px 8px 8px; }
+    .marker-btn {
+      display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 4px;
+      cursor: pointer; font-size: 12px; margin: 2px 0; transition: background 0.15s;
+    }
+    .marker-btn:hover { background: rgba(255,255,255,0.08); }
+    .marker-btn.active { background: rgba(255,215,0,0.15); border-left: 3px solid #FFD700; }
+    .marker-dot { width: 14px; height: 14px; border-radius: 50%; border: 1px solid #555; }
+
+    /* Controls */
+    #controls { padding: 8px; border-top: 1px solid #333; margin-top: auto; }
+    #controls button {
+      width: 100%; padding: 8px; margin: 3px 0; border: none; border-radius: 6px;
+      cursor: pointer; font-weight: bold; font-size: 12px; transition: all 0.15s;
+    }
+    #controls button:hover { filter: brightness(1.15); }
+    #btn-save { background: #27ae60; color: #fff; }
+    #btn-clear { background: #c0392b; color: #fff; }
+    #btn-mirror { background: #2980b9; color: #fff; }
+    #btn-export { background: #8e44ad; color: #fff; }
+
+    /* Canvas area */
+    #canvas-wrap {
+      flex: 1; overflow: auto; display: flex; align-items: center; justify-content: center;
+      background: #111; position: relative;
+    }
+    canvas { cursor: crosshair; }
+
+    /* Tooltip */
+    #tooltip {
+      position: fixed; background: rgba(0,0,0,0.9); padding: 6px 10px; border-radius: 4px;
+      font-size: 11px; pointer-events: none; display: none; z-index: 20;
+    }
+
+    /* CP editor modal */
+    #cp-modal {
+      display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      background: #16213e; border: 1px solid #444; border-radius: 8px; padding: 16px;
+      z-index: 50; min-width: 280px;
+    }
+    #cp-modal h3 { margin-bottom: 10px; font-size: 14px; }
+    #cp-modal label { display: block; font-size: 12px; margin: 6px 0 2px; color: #aaa; }
+    #cp-modal input, #cp-modal select { width: 100%; padding: 6px; border: 1px solid #444; border-radius: 4px; background: #222; color: #eee; font-size: 12px; }
+    #cp-modal .modal-btns { display: flex; gap: 8px; margin-top: 12px; }
+    #cp-modal .modal-btns button { flex: 1; padding: 8px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+    #cp-ok { background: #27ae60; color: #fff; }
+    #cp-cancel { background: #555; color: #fff; }
+    #cp-delete { background: #c0392b; color: #fff; }
+    #overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 40; }
+
+    /* Mirror toggles */
+    .mirror-toggles { padding: 2px 10px 8px; }
+    .mirror-opt { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 0; cursor: pointer; }
+    .mirror-opt:hover { color: #FFD700; }
+    .mirror-opt input { accent-color: #FFD700; }
+    .mirror-icon { font-size: 14px; width: 16px; text-align: center; color: #888; }
+
+    /* Brush size */
+    .brush-row { display: flex; align-items: center; gap: 6px; padding: 4px 10px; font-size: 12px; }
+    .brush-row input { width: 60px; }
+
+    /* Zoom */
+    #zoom-info { position: fixed; bottom: 8px; right: 8px; background: rgba(0,0,0,0.7); padding: 4px 10px; border-radius: 4px; font-size: 11px; z-index: 10; }
+  </style>
+</head>
+<body>
+  <div id="sidebar">
+    <h2>Map Editor</h2>
+
+    <div class="section-title">Terrain</div>
+    <div class="tool-group" id="tile-tools"></div>
+
+    <div class="brush-row">
+      Brush: <input type="range" id="brush-size" min="1" max="8" value="1">
+      <span id="brush-label">1</span>
+    </div>
+
+    <div class="section-title">Markers</div>
+    <div class="marker-group" id="marker-tools"></div>
+
+    <div class="section-title">Mirror Axes</div>
+    <div class="mirror-toggles">
+      <label class="mirror-opt"><input type="checkbox" id="chk-mirror-rot"> <span class="mirror-icon">↻</span> 180° Rotation (LoL-style)</label>
+      <label class="mirror-opt"><input type="checkbox" id="chk-mirror-h"> <span class="mirror-icon">─</span> Horizontal</label>
+      <label class="mirror-opt"><input type="checkbox" id="chk-mirror-v"> <span class="mirror-icon">│</span> Vertical</label>
+      <label class="mirror-opt"><input type="checkbox" id="chk-mirror-d1"> <span class="mirror-icon">╲</span> Diagonal ╲</label>
+      <label class="mirror-opt"><input type="checkbox" id="chk-mirror-d2"> <span class="mirror-icon">╱</span> Diagonal ╱</label>
+    </div>
+
+    <div id="controls">
+      <button id="btn-mirror">Mirror Map (4-way)</button>
+      <button id="btn-save">Save to JSON</button>
+      <button id="btn-export">Copy JSON</button>
+      <button id="btn-clear">Clear All</button>
+    </div>
+  </div>
+
+  <div id="canvas-wrap">
+    <canvas id="map"></canvas>
+  </div>
+
+  <div id="tooltip"></div>
+  <div id="zoom-info">Scroll to zoom | Right-click drag to pan | Hold Space + drag to pan</div>
+
+  <div id="overlay"></div>
+  <div id="cp-modal">
+    <h3>Edit Control Point</h3>
+    <label>Name</label><input id="cp-name" type="text">
+    <label>Radius (tiles)</label><input id="cp-radius" type="number" min="1" max="10" value="4">
+    <label>Buff Type</label>
+    <select id="cp-buff-type"><option value="speed">Speed</option><option value="damage">Damage</option><option value="defense">Defense</option></select>
+    <label>Buff Value</label><input id="cp-buff-value" type="number" step="0.05" min="1" max="2" value="1.1">
+    <div class="modal-btns">
+      <button id="cp-delete">Delete</button>
+      <button id="cp-cancel">Cancel</button>
+      <button id="cp-ok">Save</button>
+    </div>
+  </div>
+
+  <script type="module" src="./src/map/map-editor.ts"></script>
+</body>
+</html>

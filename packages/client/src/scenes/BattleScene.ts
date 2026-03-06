@@ -12,8 +12,10 @@ import {
 import { CharacterEntity } from '../entities/Character';
 import {
   generateMap, GameMap, MAP_WIDTH, MAP_HEIGHT, TILE_SIZE, isPassable,
-  SwitchGateLink, POIPlacement,
+  SwitchGateLink, POIPlacement, ControlPointDef,
 } from '../map/MapGenerator';
+import { loadMapFromDef } from '../map/MapLoader';
+import defaultMapDef from '../map/maps/default.json';
 import { findPath } from '../map/Pathfinding';
 import { CommandInput } from '../systems/CommandInput';
 import { FirebaseSync, SyncSnapshot, RemoteOrderPayload } from '../network/FirebaseSync';
@@ -127,11 +129,9 @@ export class BattleScene extends Phaser.Scene {
   private domScore1 = 0;
   private domScore2 = 0;
 
-  // Fog of war (3-state: unexplored / remembered / visible)
+  // Fog of war (single-state: 30% darkness on non-visible tiles)
   private fogLayer!: Phaser.GameObjects.Graphics;
   private visibleTiles: Set<string> = new Set();
-  private exploredTiles: Set<string> = new Set();
-  private rememberedTileTextures: Map<string, string> = new Map(); // key -> last seen texture name
 
   // Pickups
   private pickups: Pickup[] = [];
@@ -275,7 +275,7 @@ export class BattleScene extends Phaser.Scene {
     const seed = this.isLocal
       ? Date.now()
       : this.gameId.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-    this.gameMap = generateMap(seed);
+    this.gameMap = loadMapFromDef(defaultMapDef as any);
 
     this.renderMap();
     this.createCharacters();
@@ -582,6 +582,9 @@ export class BattleScene extends Phaser.Scene {
   // ─── PICKUPS ────────────────────────────────────────────────────
 
   private spawnPickups() {
+    // Skip hardcoded pickups if using a custom map definition (no POIs = no pickups)
+    if (this.gameMap.controlPointDefs && this.gameMap.poiPlacements.length === 0) return;
+
     const cx = Math.floor(MAP_WIDTH / 2);
     const cy = Math.floor(MAP_HEIGHT / 2);
 
@@ -1326,8 +1329,6 @@ export class BattleScene extends Phaser.Scene {
   private initFogOfWar() {
     this.fogLayer = this.add.graphics();
     this.fogLayer.setDepth(50);
-    this.exploredTiles.clear();
-    this.rememberedTileTextures.clear();
     this.updateFogOfWar();
   }
 
@@ -1379,55 +1380,23 @@ export class BattleScene extends Phaser.Scene {
       }
     }
 
-    // Mark newly visible tiles as explored and cache their current texture
-    this.visibleTiles.forEach((key) => {
-      this.exploredTiles.add(key);
-      const [xs, ys] = key.split(',');
-      const x = parseInt(xs), y = parseInt(ys);
-      const tile = this.gameMap.tiles[y]?.[x];
-      if (tile) {
-        this.rememberedTileTextures.set(key, `tile_${tile}`);
-      }
-    });
-
-    // Draw fog overlay
+    // Draw fog overlay — all tiles always visible, 30% darkness on non-visible
     this.fogLayer.clear();
     for (let y = 0; y < MAP_HEIGHT; y++) {
       for (let x = 0; x < MAP_WIDTH; x++) {
         const key = `${x},${y}`;
-        const px = x * TILE_SIZE;
-        const py = y * TILE_SIZE;
 
-        if (this.visibleTiles.has(key)) {
-          // Currently visible — show real tile, no overlay
-          if (this.tileSprites[y]?.[x]) {
-            this.tileSprites[y][x].setTexture(`tile_${this.gameMap.tiles[y][x]}`);
-            this.tileSprites[y][x].setVisible(true);
-          }
-        } else if (this.exploredTiles.has(key)) {
-          // Previously seen — show last-known texture with dark hazy overlay
-          if (this.tileSprites[y]?.[x]) {
-            const remembered = this.rememberedTileTextures.get(key);
-            if (remembered) {
-              this.tileSprites[y][x].setTexture(remembered);
-            }
-            this.tileSprites[y][x].setVisible(true);
-          }
-          this.fogLayer.fillStyle(0x111111, 0.40);
-          this.fogLayer.fillRect(px, py, TILE_SIZE, TILE_SIZE);
-        } else {
-          // Never explored — dark base with subtle zone hints
-          if (this.tileSprites[y]?.[x]) {
-            this.tileSprites[y][x].setVisible(false);
-          }
-          this.fogLayer.fillStyle(0x222222, 1.0);
-          this.fogLayer.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+        if (this.tileSprites[y]?.[x]) {
+          this.tileSprites[y][x].setTexture(`tile_${this.gameMap.tiles[y][x]}`);
+          this.tileSprites[y][x].setVisible(true);
+        }
+
+        if (!this.visibleTiles.has(key)) {
+          this.fogLayer.fillStyle(0x000000, 0.30);
+          this.fogLayer.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
         }
       }
     }
-
-    // Draw zone hints over deep fog: base zones + control point zones
-    this.drawDeepFogHints();
 
     // Enemy visibility — only show if currently visible (not in remembered/hazy)
     this.characters.forEach((entity, id) => {
@@ -1467,62 +1436,6 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
-  /** Draws subtle zone markers over the deep (unexplored) fog so players can navigate */
-  private drawDeepFogHints() {
-    const isDeepFog = (x: number, y: number) => {
-      const key = `${x},${y}`;
-      return !this.visibleTiles.has(key) && !this.exploredTiles.has(key);
-    };
-
-    // Base zone hints (faint colored glow)
-    const drawBaseHint = (spawns: Position[], color: number) => {
-      if (spawns.length === 0) return;
-      const cx = spawns.reduce((s, p) => s + p.x, 0) / spawns.length;
-      const cy = spawns.reduce((s, p) => s + p.y, 0) / spawns.length;
-      const radius = 5;
-      for (let dy = -radius; dy <= radius; dy++) {
-        for (let dx = -radius; dx <= radius; dx++) {
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist > radius) continue;
-          const tx = Math.round(cx + dx);
-          const ty = Math.round(cy + dy);
-          if (tx < 0 || tx >= MAP_WIDTH || ty < 0 || ty >= MAP_HEIGHT) continue;
-          if (!isDeepFog(tx, ty)) continue;
-          const alpha = 0.12 * (1 - dist / radius);
-          this.fogLayer.fillStyle(color, alpha);
-          this.fogLayer.fillRect(tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-        }
-      }
-    };
-
-    drawBaseHint(this.mySpawns, 0x6CC4FF);
-    drawBaseHint(this.enemySpawns, 0xFF6B6B);
-
-    // Control point zone hints (golden diamond glow)
-    const CP_RADIUS = 4;
-    for (const cp of this.controlPoints) {
-      for (let dy = -CP_RADIUS; dy <= CP_RADIUS; dy++) {
-        for (let dx = -CP_RADIUS; dx <= CP_RADIUS; dx++) {
-          const dist = Math.abs(dx) + Math.abs(dy); // diamond shape
-          if (dist > CP_RADIUS) continue;
-          const tx = cp.position.x + dx;
-          const ty = cp.position.y + dy;
-          if (tx < 0 || tx >= MAP_WIDTH || ty < 0 || ty >= MAP_HEIGHT) continue;
-          if (!isDeepFog(tx, ty)) continue;
-          const alpha = 0.15 * (1 - dist / CP_RADIUS);
-          this.fogLayer.fillStyle(0xFFD93D, alpha);
-          this.fogLayer.fillRect(tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-        }
-      }
-      // Small center marker for CP in deep fog
-      if (isDeepFog(cp.position.x, cp.position.y)) {
-        this.fogLayer.fillStyle(0xFFD93D, 0.3);
-        const cx = cp.position.x * TILE_SIZE + TILE_SIZE / 2;
-        const cy = cp.position.y * TILE_SIZE + TILE_SIZE / 2;
-        this.fogLayer.fillCircle(cx, cy, TILE_SIZE * 0.6);
-      }
-    }
-  }
 
   private hasLineOfSight(x1: number, y1: number, x2: number, y2: number): boolean {
     const dx = Math.abs(x2 - x1);
@@ -2910,21 +2823,25 @@ export class BattleScene extends Phaser.Scene {
   // ─── CONTROL POINTS ────────────────────────────────────────────
 
   private initControlPoints() {
+    const defs = this.gameMap.controlPointDefs;
     const positions = this.gameMap.controlPointPositions;
-    const buffs = [
+    const defaultBuffs = [
       { type: 'speed' as const, value: 1.1, label: '+10% Speed' },
       { type: 'damage' as const, value: 1.15, label: '+15% Damage' },
       { type: 'defense' as const, value: 1.1, label: '+10% Defense' },
     ];
 
     for (let i = 0; i < positions.length; i++) {
+      const def = defs?.[i];
       const cp: ControlPoint = {
-        id: `cp_${i}`,
+        id: def?.id || `cp_${i}`,
+        name: def?.name || `Point ${String.fromCharCode(65 + i)}`,
         position: positions[i],
+        radius: def?.radius || 2,
         owner: null,
         captureProgress: 0,
         capturingTeam: null,
-        buff: buffs[i],
+        buff: def?.buff || defaultBuffs[i],
       };
       this.controlPoints.push(cp);
 
@@ -2933,9 +2850,10 @@ export class BattleScene extends Phaser.Scene {
       const py = positions[i].y * TILE_SIZE + TILE_SIZE / 2;
       const container = this.add.container(px, py);
 
+      const ringRadius = (cp.radius || 2) * TILE_SIZE / 2;
       const ring = this.add.graphics();
       ring.lineStyle(2, 0xffffff, 0.5);
-      ring.strokeCircle(0, 0, 14);
+      ring.strokeCircle(0, 0, ringRadius);
       container.add(ring);
 
       const fill = this.add.graphics();
@@ -2943,6 +2861,10 @@ export class BattleScene extends Phaser.Scene {
       container.add(fill);
 
       const isCenterCP = i === 1;
+      const nameLabel = this.add.text(0, -18, cp.name, {
+        fontSize: '8px', color: '#fff', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
+      }).setOrigin(0.5);
+      container.add(nameLabel);
       const label = this.add.text(0, 16, cp.buff.label, {
         fontSize: '7px', color: '#ccc', fontFamily: 'monospace',
       }).setOrigin(0.5);
@@ -2975,7 +2897,7 @@ export class BattleScene extends Phaser.Scene {
       const nearby: Record<string, number> = { player1: 0, player2: 0 };
       this.charData.forEach(char => {
         if (char.isDead) return;
-        if (this.tileDist(char.position, cp.position) <= 2) {
+        if (this.tileDist(char.position, cp.position) <= (cp.radius || 2)) {
           const team = char.owner === this.playerId ? 'player1' : 'player2';
           nearby[team]++;
         }

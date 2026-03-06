@@ -107,6 +107,7 @@ export class BootScene extends Phaser.Scene {
       gate_open: 0xCCBB88,
       gate_closed: 0x777777,
       switch: 0xFFDD44,
+      capture_point: 0xE8C44A,
     };
 
     for (const [name, color] of Object.entries(tileColors)) {
@@ -658,5 +659,15 @@ export class BootScene extends Phaser.Scene {
       gfx.lineStyle(1.5, 0x666677, 0.5); gfx.strokeRoundedRect(4, 4, 24, 24, 4);
       gfx.lineStyle(1, 0x666677, 0.3); gfx.strokeRect(0, 0, S, S);
     }, 'switch');
+
+    // ── CAPTURE POINT ──
+    g((gfx) => {
+      gfx.fillStyle(0xE8C44A); gfx.fillRect(0, 0, S, S);
+      gfx.fillStyle(0xD4B040, 0.6); gfx.fillCircle(16, 16, 12);
+      gfx.fillStyle(0xF0D060, 0.4); gfx.fillCircle(16, 16, 8);
+      gfx.fillStyle(0xFFE880, 0.3); gfx.fillCircle(16, 16, 4);
+      gfx.lineStyle(1.5, 0xC09830, 0.6); gfx.strokeCircle(16, 16, 12);
+      gfx.lineStyle(1, 0xB08820, 0.3); gfx.strokeRect(0, 0, S, S);
+    }, 'capture_point');
   }
 }

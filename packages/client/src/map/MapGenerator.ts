@@ -48,7 +48,7 @@ function createNoise2D(seed: number) {
 }
 
 export const MAP_WIDTH = 80;
-export const MAP_HEIGHT = 60;
+export const MAP_HEIGHT = 80;
 export const TILE_SIZE = 32;
 
 export interface SwitchGateLink {
@@ -62,6 +62,14 @@ export interface POIPlacement {
   activatePhase?: MapPhase;
 }
 
+export interface ControlPointDef {
+  id: string;
+  name: string;
+  position: Position;
+  radius: number;
+  buff: { type: 'speed' | 'damage' | 'defense'; value: number; label: string };
+}
+
 export interface GameMap {
   tiles: TileType[][];
   seed: number;
@@ -70,6 +78,7 @@ export interface GameMap {
   flagP1: Position;
   flagP2: Position;
   controlPointPositions: Position[];
+  controlPointDefs?: ControlPointDef[];
   switchGateLinks: SwitchGateLink[];
   poiPlacements: POIPlacement[];
   zones: MapZone[];
@@ -576,6 +585,7 @@ export function getMovementCost(tile: TileType): number {
   switch (tile) {
     case 'path': return 0.5;
     case 'bridge': return 0.6;
+    case 'capture_point': return 0.7;
     case 'forest': return 2;
     case 'bush': return 1.5;
     case 'hill': return 1.5;

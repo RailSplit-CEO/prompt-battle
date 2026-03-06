@@ -1,0 +1,250 @@
+{
+  "name": "King's Valley",
+  "description": "Created with Map Editor",
+  "width": 80,
+  "height": 80,
+  "legend": {
+    ".": "grass",
+    "F": "forest",
+    "W": "water",
+    "R": "rock",
+    "H": "hill",
+    "B": "bush",
+    "P": "path",
+    "b": "bridge",
+    "L": "lava",
+    "S": "sand",
+    "~": "swamp",
+    "*": "flowers",
+    "m": "mushroom",
+    "U": "ruins",
+    "G": "gate_closed",
+    "O": "gate_open",
+    "X": "switch",
+    "C": "capture_point"
+  },
+  "terrain": [
+    ".RRRRRRRRR..........RRRRRRRRRRRR................................................",
+    "...RRRRRRR............RRRRRRRR..........RRRR....................................",
+    ".....RRRR.............RRRRRRRR........RRRRR.SSS.................................",
+    ".......................RRRRRR........RRRRR.SSSSS................................",
+    "........................RRRR........RRRRR.SSSSSSSSSSSSSSSSSSSSSSSSSSSSS.........",
+    "........................RRRR........RRRRR.SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS....",
+    "........................RRRR..........RRR.SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS....",
+    ".........SSSSS...........RR............RRR.SSSSS...................SSSSSSSSS....",
+    "........SSSSSSS..........RR............RRRR.SSS.................SSSSSSSSSSS.....",
+    ".......SSSSSSSSS......................RRRRRR..................SSSSSSSSS.SSS.....",
+    ".......SSSSSSSSS.......................RRR...................SSSSSSSS...SSS.....",
+    ".......SSSSSSSSSR..........................................SSSSSSSS.....SSS.....",
+    ".......SSSSSSSSSRR..........WWWWW........................SSSSSSSS.......SSS.....",
+    ".......SSSSSSSSSRR.......WWWWWWWW......................SSSSSSSS.........SSS.....",
+    ".......SSSSSSSSRRR......WWWWWWWWW...................SSSSSSSSSS..........SSS.....",
+    ".......SSSSSSSRRR...........WWWW..................SSSSSSSSSS............SSS.....",
+    ".......SSS.RRRRRR................................SSSSSSSS...............SSS.....",
+    "......SSSS.RRRRRR..............................SSSSSSSS.................SSS.....",
+    "......SSSS..RRRR..............................SSSSSSS.........RRRR......SSS.....",
+    "......SSSS....RR.............................SSSSSS..........RRRRRR.....SSS.....",
+    "......SSS..................................SSSSSSS.............RRRR.....SSS.....",
+    "......SSS................................SSSSSSSS................RRR....SSS.....",
+    "......SSS..............................SSSSSSSS...................RR....SSS.....",
+    "......SSS.............................SSSSSSSS....................RRR...SSS.....",
+    "......SSS.............RR............SSSSSSSS......................RRR...SSS.....",
+    "......SSS............RRR...........SSSSSSS.........................RR...SSS.....",
+    "......SSS...........RRRR..........SSSSSSS..........................R....SSS.....",
+    "......SSS..........RRRR..........SSSSSS.................................SSS.....",
+    "......SSS..........RRRR.........SSSSSS..................................SSS.....",
+    "......SSS..........RRRR.....SSSSSSSSS...................................SSS.....",
+    "......SSS..........RRR....SSSSSSSSSS....................................SSS.....",
+    "......SSS..........RRR...SSSSSSSSSS.....................................SSS.....",
+    "......SSS..........RRR...SSSSSSSSSS.....................................SSS.....",
+    "......SSS.........RRRR..SSSSSSSSSSS.....................................SSS.....",
+    "......SSS.........RRRR..SSSSSSSSSSS.....................................SSS.....",
+    "......SSS.........RRRR..SSSSSSSSSSS..........RRRRRRRRRR.................SSS.....",
+    ".....SSSS.........RRRR...SSSSSSSSS.........RRRRRRRRRRRRRRR..............SSS.....",
+    ".....SSSS.........RRRR...SSSSSSSSS......RRRRRRRRRRRRRRRRRRR.............SSS.....",
+    ".....SSSS..........RRRR...SSSSSSS.......RRRRRRRR.....RRRRRRR............SSS.....",
+    ".....SSS...........RRRRR....SSS......RRRRRRRRR.........RRRRRR...........SSS.....",
+    ".....SSS...........RRRRRR.........RRRRRRRRR......SSS....RRRRR...........SSS.....",
+    ".....SSS............RRRRRRR.....RRRRRRRR.......SSSSSSS...RRRR..........SSSS.....",
+    ".....SSS.............RRRRRRRRRRRRRRRRRRR......SSSSSSSSS...RRRR.........SSSS.....",
+    ".....SSS..............RRRRRRRRRRRRRRR.........SSSSSSSSS...RRRR.........SSSS.....",
+    ".....SSS.................RRRRRRRRRR..........SSSSSSSSSSS..RRRR.........SSS......",
+    ".....SSS.....................................SSSSSSSSSSS..RRRR.........SSS......",
+    ".....SSS.....................................SSSSSSSSSSS..RRRR.........SSS......",
+    ".....SSS.....................................SSSSSSSSSS...RRR..........SSS......",
+    ".....SSS.....................................SSSSSSSSSS...RRR..........SSS......",
+    ".....SSS....................................SSSSSSSSSS....RRR..........SSS......",
+    ".....SSS...................................SSSSSSSSS.....RRRR..........SSS......",
+    ".....SSS..................................SSSSSS.........RRRR..........SSS......",
+    ".....SSS.................................SSSSSS..........RRRR..........SSS......",
+    ".....SSS....R..........................SSSSSSS..........RRRR...........SSS......",
+    ".....SSS...RR.........................SSSSSSS...........RRR............SSS......",
+    ".....SSS...RRR......................SSSSSSSS............RR.............SSS......",
+    ".....SSS...RRR....................SSSSSSSS.............................SSS......",
+    ".....SSS....RR...................SSSSSSSS..............................SSS......",
+    ".....SSS....RRR................SSSSSSSS................................SSS......",
+    ".....SSS.....RRRR.............SSSSSSS..................................SSS......",
+    ".....SSS.....RRRRRR..........SSSSSS.............................RR....SSSS......",
+    ".....SSS......RRRR.........SSSSSSS..............................RRRR..SSSS......",
+    ".....SSS.................SSSSSSSS..............................RRRRRR.SSSS......",
+    ".....SSS...............SSSSSSSS................................RRRRRR.SSS.......",
+    ".....SSS............SSSSSSSSSS..................WWWW...........RRRSSSSSSS.......",
+    ".....SSS..........SSSSSSSSSS...................WWWWWWWWW......RRRSSSSSSSS.......",
+    ".....SSS.........SSSSSSSS......................WWWWWWWW.......RRSSSSSSSSS.......",
+    ".....SSS.......SSSSSSSS........................WWWWW..........RRSSSSSSSSS.......",
+    ".....SSS.....SSSSSSSS..........................................RSSSSSSSSS.......",
+    ".....SSS...SSSSSSSS...................RRR.......................SSSSSSSSS.......",
+    ".....SSS.SSSSSSSSS..................RRRRRR......................SSSSSSSSS.......",
+    ".....SSSSSSSSSSS.................SSS.RRRR............RR..........SSSSSSS........",
+    "....SSSSSSSSS...................SSSSS.RRR............RR...........SSSSS.........",
+    "....SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS.RRR..........RRRR........................",
+    "....SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS.RRRRR........RRRR........................",
+    ".........SSSSSSSSSSSSSSSSSSSSSSSSSSSSS.RRRRR........RRRR........................",
+    "................................SSSSS.RRRRR........RRRRRR.......................",
+    ".................................SSS.RRRRR........RRRRRRRR.............RRRR.....",
+    "....................................RRRR..........RRRRRRRR............RRRRRRR...",
+    "................................................RRRRRRRRRRRR..........RRRRRRRRR."
+  ],
+  "useProcedural": false,
+  "seed": 42,
+  "spawns": {
+    "player1": [
+      {
+        "x": 3,
+        "y": 74
+      },
+      {
+        "x": 3,
+        "y": 76
+      },
+      {
+        "x": 5,
+        "y": 74
+      },
+      {
+        "x": 5,
+        "y": 76
+      },
+      {
+        "x": 7,
+        "y": 75
+      }
+    ],
+    "player2": [
+      {
+        "x": 76,
+        "y": 3
+      },
+      {
+        "x": 76,
+        "y": 5
+      },
+      {
+        "x": 74,
+        "y": 3
+      },
+      {
+        "x": 74,
+        "y": 5
+      },
+      {
+        "x": 72,
+        "y": 4
+      }
+    ]
+  },
+  "flags": {
+    "player1": {
+      "x": -1,
+      "y": -1
+    },
+    "player2": {
+      "x": -1,
+      "y": -1
+    }
+  },
+  "controlPoints": [
+    {
+      "id": "cp_1772834414692",
+      "name": "D",
+      "x": 68,
+      "y": 68,
+      "radius": 4,
+      "buff": {
+        "type": "damage",
+        "value": 1.15,
+        "label": "+15% Damage"
+      }
+    },
+    {
+      "id": "cp_1772834448098",
+      "name": "C",
+      "x": 50,
+      "y": 45,
+      "radius": 5,
+      "buff": {
+        "type": "damage",
+        "value": 1.15,
+        "label": "+15% Damage"
+      }
+    },
+    {
+      "id": "cp_1772834470258",
+      "name": "B",
+      "x": 29,
+      "y": 34,
+      "radius": 5,
+      "buff": {
+        "type": "damage",
+        "value": 1.15,
+        "label": "+15% Damage"
+      }
+    },
+    {
+      "id": "cp_1772834525809",
+      "name": "L",
+      "x": 45,
+      "y": 5,
+      "radius": 3,
+      "buff": {
+        "type": "damage",
+        "value": 1.15,
+        "label": "+15% Damage"
+      }
+    },
+    {
+      "id": "cp_1772834923769",
+      "name": "M",
+      "x": 34,
+      "y": 74,
+      "radius": 3,
+      "buff": {
+        "type": "damage",
+        "value": 1.15,
+        "label": "+15% Damage"
+      }
+    },
+    {
+      "id": "cp_1772834966593",
+      "name": "A",
+      "x": 11,
+      "y": 11,
+      "radius": 4,
+      "buff": {
+        "type": "damage",
+        "value": 1.15,
+        "label": "+15% Damage"
+      }
+    }
+  ],
+  "mines": [],
+  "towerSites": [],
+  "scoutingPosts": [],
+  "neutralCamps": [],
+  "pois": [],
+  "lanes": [],
+  "connectors": [],
+  "switchGates": [],
+  "wallFeatures": {},
+  "zones": []
+}
