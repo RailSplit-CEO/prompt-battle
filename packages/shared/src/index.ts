@@ -5,3 +5,4 @@ export * from './data/classes';
 export * from './data/animals';
 export * from './data/abilities';
 export * from './data/consumables';
+export * from './data/barks';

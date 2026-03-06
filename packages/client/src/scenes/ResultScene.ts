@@ -4,6 +4,7 @@ interface ResultData {
   winner: string;
   playerId: string;
   isLocal: boolean;
+  score?: string;
 }
 
 export class ResultScene extends Phaser.Scene {
@@ -133,6 +134,23 @@ export class ResultScene extends Phaser.Scene {
       delay: 700,
     });
 
+    // Score display (if provided)
+    if (data.score) {
+      const scoreText = this.add.text(width / 2, height / 2 + 30, data.score, {
+        fontSize: '16px',
+        color: '#FFD93D',
+        fontFamily: '"Nunito", sans-serif',
+        fontStyle: 'bold',
+      }).setOrigin(0.5).setAlpha(0);
+
+      this.tweens.add({
+        targets: scoreText,
+        alpha: 1,
+        duration: 600,
+        delay: 900,
+      });
+    }
+
     // Decorative line
     const lineGfx = this.add.graphics();
     lineGfx.lineStyle(3, accentColor, 0.4);
@@ -213,25 +231,52 @@ export class ResultScene extends Phaser.Scene {
     });
 
     // Back to menu hint
-    const backText = this.add.text(width / 2, height / 2 + 140, 'or press ESC to return to menu', {
+    const backText = this.add.text(width / 2, height / 2 + 140, 'Press SPACE or ESC to return to menu', {
       fontSize: '12px',
-      color: '#4A2580',
+      color: '#8B6DB0',
       fontFamily: '"Nunito", sans-serif',
       fontStyle: '600',
     }).setOrigin(0.5).setAlpha(0);
 
     this.tweens.add({ targets: backText, alpha: 0.7, duration: 600, delay: 1200 });
 
-    this.input.keyboard!.on('keydown-ESC', () => {
+    const returnToMenu = () => {
       this.cameras.main.fadeOut(400, 27, 16, 64);
       this.cameras.main.once('camerafadeoutcomplete', () => {
         this.scene.start('MenuScene');
       });
-    });
+    };
+
+    this.input.keyboard!.on('keydown-ESC', returnToMenu);
+    this.input.keyboard!.on('keydown-SPACE', returnToMenu);
 
     // Flash effect on victory
     if (won) {
       this.cameras.main.flash(600, 69, 230, 176, false);
+
+      // Sparkle burst on victory (after title appears)
+      this.time.delayedCall(1200, () => {
+        const sparkleColors = [0xFFD93D, 0xFFE066, 0xFFC107, 0xFFAB00, 0xFFD93D, 0xFFE066, 0xFFC107, 0xFFAB00];
+        for (let i = 0; i < 8; i++) {
+          const angle = (i / 8) * Math.PI * 2;
+          const star = this.add.star(
+            width / 2, height / 2 - 70,
+            5, 2, 5,
+            sparkleColors[i], 1
+          );
+          this.tweens.add({
+            targets: star,
+            x: width / 2 + Math.cos(angle) * 120,
+            y: height / 2 - 70 + Math.sin(angle) * 80,
+            alpha: 0,
+            scaleX: 0.3,
+            scaleY: 0.3,
+            duration: 800,
+            ease: 'Power2',
+            onComplete: () => star.destroy(),
+          });
+        }
+      });
     }
   }
 

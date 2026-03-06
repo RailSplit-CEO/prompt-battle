@@ -4,27 +4,16 @@ type CommandCallback = (rawText: string) => void;
 
 export class CommandInput {
   private scene: Phaser.Scene;
-  private gameId: string;
-  private playerId: string;
-  private isLocal: boolean;
   private callback?: CommandCallback;
-  private inputEl: HTMLInputElement;
-  private voiceBtn: HTMLButtonElement;
-  private sendBtn: HTMLButtonElement;
-  private recognition?: SpeechRecognition;
+  private recognition?: any;
   private isListening = false;
+  private transcriptEl: HTMLElement | null = null;
+  private voiceLabelEl: HTMLElement | null = null;
+  private voiceSectionEl: HTMLElement | null = null;
+  private spaceKey?: Phaser.Input.Keyboard.Key;
 
-  constructor(scene: Phaser.Scene, gameId: string, playerId: string, isLocal: boolean) {
+  constructor(scene: Phaser.Scene, _gameId: string, _playerId: string, _isLocal: boolean) {
     this.scene = scene;
-    this.gameId = gameId;
-    this.playerId = playerId;
-    this.isLocal = isLocal;
-
-    this.inputEl = document.getElementById('command-input') as HTMLInputElement;
-    this.voiceBtn = document.getElementById('voice-btn') as HTMLButtonElement;
-    this.sendBtn = document.getElementById('send-btn') as HTMLButtonElement;
-
-    this.setupTextInput();
     this.setupVoiceInput();
   }
 
@@ -32,31 +21,15 @@ export class CommandInput {
     this.callback = callback;
   }
 
-  private setupTextInput() {
-    const submit = () => {
-      const text = this.inputEl.value.trim();
-      if (text && this.callback) {
-        this.callback(text);
-        this.inputEl.value = '';
-      }
-    };
-
-    this.inputEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        submit();
-      }
-      // Prevent game keys from firing while typing
-      e.stopPropagation();
-    });
-
-    this.sendBtn.addEventListener('click', submit);
-  }
-
   private setupVoiceInput() {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      this.voiceBtn.style.display = 'none';
+      // Hide voice section if no speech support
+      const section = document.querySelector('.voice-section') as HTMLElement;
+      if (section) {
+        const label = section.querySelector('.voice-label') as HTMLElement;
+        if (label) label.textContent = 'No speech support in this browser';
+      }
       return;
     }
 
@@ -65,24 +38,25 @@ export class CommandInput {
     recognition.interimResults = true;
     recognition.lang = 'en-US';
 
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
+    recognition.onresult = (event: any) => {
       let transcript = '';
       for (let i = 0; i < event.results.length; i++) {
         transcript += event.results[i][0].transcript;
       }
 
-      this.inputEl.value = transcript;
+      // Show live transcript in hero bar
+      this.updateTranscript(transcript);
 
       if (event.results[event.results.length - 1].isFinal) {
         if (transcript.trim() && this.callback) {
           this.callback(transcript.trim());
-          this.inputEl.value = '';
         }
         this.stopListening();
       }
     };
 
-    recognition.onerror = () => {
+    recognition.onerror = (e: any) => {
+      console.warn('[Voice] error:', e.error);
       this.stopListening();
     };
 
@@ -92,58 +66,71 @@ export class CommandInput {
 
     this.recognition = recognition;
 
-    // Push-to-talk (button)
-    this.voiceBtn.addEventListener('mousedown', () => this.startListening());
-    this.voiceBtn.addEventListener('mouseup', () => {
+    // Use Phaser's keyboard system for Space (no conflicts)
+    this.spaceKey = this.scene.input.keyboard!.addKey('SPACE');
+    this.spaceKey.on('down', () => {
+      this.startListening();
+    });
+    this.spaceKey.on('up', () => {
       if (this.isListening) {
         this.recognition?.stop();
       }
     });
-    this.voiceBtn.addEventListener('mouseleave', () => {
-      if (this.isListening) {
-        this.recognition?.stop();
-      }
-    });
-
-    // Push-to-talk keyboard hotkey (Space) — hold to talk, release to send
-    window.addEventListener('keydown', this.onKeyDown);
-    window.addEventListener('keyup', this.onKeyUp);
   }
 
-  private onKeyDown = (e: KeyboardEvent) => {
-    if (e.code !== 'Space') return;
-    if (document.activeElement === this.inputEl) return; // don't hijack typing
-    e.preventDefault();
-    this.startListening();
-  };
-
-  private onKeyUp = (e: KeyboardEvent) => {
-    if (e.code !== 'Space') return;
-    if (document.activeElement === this.inputEl) return;
-    if (this.isListening) {
-      this.recognition?.stop();
+  private getElements() {
+    if (!this.voiceSectionEl) {
+      this.voiceSectionEl = document.querySelector('.voice-section');
     }
-  };
+    if (!this.voiceLabelEl) {
+      this.voiceLabelEl = document.querySelector('.voice-section .voice-label');
+    }
+    if (!this.transcriptEl) {
+      this.transcriptEl = document.getElementById('voice-transcript');
+    }
+  }
 
   private startListening() {
     if (this.isListening) return;
     this.isListening = true;
-    this.voiceBtn.classList.add('listening');
-    this.inputEl.placeholder = 'Listening...';
-    this.recognition?.start();
+    this.getElements();
+    if (this.voiceSectionEl) this.voiceSectionEl.classList.add('listening');
+    if (this.voiceLabelEl) this.voiceLabelEl.textContent = '🔴 Listening...';
+    if (this.transcriptEl) this.transcriptEl.textContent = '';
+    try {
+      this.recognition?.start();
+    } catch (e) {
+      // Already started
+    }
   }
 
   private stopListening() {
+    if (!this.isListening) return;
     this.isListening = false;
-    this.voiceBtn.classList.remove('listening');
-    this.inputEl.placeholder = "Type a command... (e.g., 'Send my warrior to attack the enemy mage')";
+    this.getElements();
+    if (this.voiceSectionEl) this.voiceSectionEl.classList.remove('listening');
+    if (this.voiceLabelEl) this.voiceLabelEl.textContent = 'Hold [Space] to speak';
+    // Clear transcript after a short delay so user can see what was sent
+    setTimeout(() => {
+      if (!this.isListening && this.transcriptEl) {
+        this.transcriptEl.textContent = '';
+      }
+    }, 3000);
+  }
+
+  private updateTranscript(text: string) {
+    this.getElements();
+    if (this.transcriptEl) {
+      this.transcriptEl.textContent = text;
+    }
   }
 
   destroy() {
     if (this.recognition) {
       this.recognition.abort();
     }
-    window.removeEventListener('keydown', this.onKeyDown);
-    window.removeEventListener('keyup', this.onKeyUp);
+    if (this.spaceKey) {
+      this.spaceKey.removeAllListeners();
+    }
   }
 }

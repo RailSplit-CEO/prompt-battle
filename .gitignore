@@ -10,3 +10,4 @@ dist/
 packages/shared/dist/
 packages/functions/dist/
 .firebase/
+reference-repos/

@@ -7,6 +7,7 @@ export class BootScene extends Phaser.Scene {
 
   preload() {
     this.createPlaceholderTextures();
+    this.createTileTextures();
     this.createUITextures();
 
     const { width, height } = this.cameras.main;
@@ -183,28 +184,22 @@ export class BootScene extends Phaser.Scene {
     }
 
     const selGfx = this.add.graphics();
-    selGfx.lineStyle(3, 0xFFD93D, 1);
-    selGfx.strokeCircle(16, 16, 14);
-    selGfx.lineStyle(1, 0xffffff, 0.4);
-    selGfx.strokeCircle(16, 16, 12);
-    selGfx.generateTexture('selection_ring', 32, 32);
+    // Large bright selection indicator
+    selGfx.lineStyle(4, 0xFFD93D, 1);
+    selGfx.strokeCircle(20, 20, 18);
+    selGfx.lineStyle(2, 0xffffff, 0.6);
+    selGfx.strokeCircle(20, 20, 15);
+    selGfx.generateTexture('selection_ring', 40, 40);
     selGfx.destroy();
   }
 
   private createCharTexture(key: string, bodyColor: number, outlineColor: number) {
     const gfx = this.add.graphics();
-    // Thick black cartoon outline
-    gfx.fillStyle(0x000000);
-    gfx.fillCircle(16, 16, 15);
-    // Team color ring
-    gfx.fillStyle(outlineColor);
-    gfx.fillCircle(16, 16, 13);
-    // Body color
-    gfx.fillStyle(bodyColor);
-    gfx.fillCircle(16, 16, 11);
-    // Cartoon highlight/shine
-    gfx.fillStyle(0xffffff, 0.35);
-    gfx.fillCircle(12, 11, 5);
+    // Subtle team-colored disc behind the emoji icon
+    gfx.fillStyle(outlineColor, 0.5);
+    gfx.fillCircle(16, 16, 14);
+    gfx.fillStyle(bodyColor, 0.35);
+    gfx.fillCircle(16, 16, 12);
     gfx.generateTexture(key, 32, 32);
     gfx.destroy();
   }
