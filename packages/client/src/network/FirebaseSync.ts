@@ -1,6 +1,6 @@
 import { initializeApp, FirebaseApp } from 'firebase/app';
 import { getAuth, signInAnonymously, Auth, User } from 'firebase/auth';
-import { getDatabase, ref, set, get, push, onValue, update, remove, Database, off } from 'firebase/database';
+import { getDatabase, ref, set, get, push, onValue, onChildAdded, update, remove, Database, off } from 'firebase/database';
 import { DraftPick, Character, CommandResponse } from '@prompt-battle/shared';
 
 const firebaseConfig = {
@@ -162,6 +162,12 @@ export class FirebaseSync {
     return gameId;
   }
 
+  // Game meta
+  async getGameMeta(gameId: string): Promise<{ player1: string; player2: string; mapSeed: number }> {
+    const snap = await get(ref(this.db, `games/${gameId}/meta`));
+    return snap.val();
+  }
+
   // Draft
   async submitDraftPick(gameId: string, pick: DraftPick): Promise<void> {
     const pickRef = push(ref(this.db, `games/${gameId}/draft/picks`));
@@ -170,13 +176,9 @@ export class FirebaseSync {
 
   onDraftPick(gameId: string, callback: (pick: DraftPick) => void) {
     const picksRef = ref(this.db, `games/${gameId}/draft/picks`);
-    const unsub = onValue(picksRef, (snap) => {
-      const picks = snap.val();
-      if (picks) {
-        const pickArray = Object.values(picks) as DraftPick[];
-        const latest = pickArray[pickArray.length - 1];
-        callback(latest);
-      }
+    onChildAdded(picksRef, (snap) => {
+      const pick = snap.val() as DraftPick;
+      if (pick) callback(pick);
     });
     this.listeners.push({ ref: picksRef, unsub: () => off(picksRef) });
   }

@@ -54,6 +54,7 @@ export class DraftScene extends Phaser.Scene {
   private playerId!: string;
   private isLocal!: boolean;
   private firebase!: FirebaseSync;
+  private amPlayer1 = true;
 
   private selectedClass: ClassId | null = null;
   private selectedAnimal: AnimalId | null = null;
@@ -61,6 +62,8 @@ export class DraftScene extends Phaser.Scene {
   private myPickCount = 0;
   private pickOrder!: string[];
   private currentPickIndex = 0;
+  private processedPickIds = new Set<number>();
+  private draftStarted = false;
 
   private classCards: Map<string, Phaser.GameObjects.Container> = new Map();
   private animalCards: Map<string, Phaser.GameObjects.Container> = new Map();
@@ -93,9 +96,137 @@ export class DraftScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor('#1B1040');
     this.cameras.main.fadeIn(500, 27, 16, 64);
 
-    const p1 = this.playerId;
-    const p2 = this.isLocal ? 'player2_local' : 'opponent';
+    if (this.isLocal) {
+      const p1 = this.playerId;
+      const p2 = 'player2_local';
+      this.pickOrder = [p1, p2, p2, p1, p1, p2];
+      this.amPlayer1 = true;
+      this.draftStarted = true;
+      this.buildDraftUI();
+    } else {
+      this.showCoinFlip();
+    }
+  }
+
+  private async showCoinFlip() {
+    const { width, height } = this.cameras.main;
+
+    // Fetch game meta to know who is player1
+    const meta = await this.firebase.getGameMeta(this.gameId);
+    this.amPlayer1 = meta.player1 === this.playerId;
+    const p1 = meta.player1;
+    const p2 = meta.player2;
     this.pickOrder = [p1, p2, p2, p1, p1, p2];
+
+    // Coin flip overlay
+    const overlay = this.add.rectangle(width / 2, height / 2, width, height, 0x1B1040, 1).setDepth(100);
+
+    // Coin circle
+    const coinGfx = this.add.graphics().setDepth(101);
+    const coinRadius = 70;
+    const coinX = width / 2;
+    const coinY = height / 2 - 30;
+
+    // Coin text (flips between P1/P2)
+    const coinLabel = this.add.text(coinX, coinY, '', {
+      fontSize: '36px',
+      color: '#FFD93D',
+      fontFamily: '"Fredoka", sans-serif',
+      fontStyle: 'bold',
+    }).setOrigin(0.5).setDepth(102);
+
+    const resultText = this.add.text(width / 2, coinY + 110, '', {
+      fontSize: '22px',
+      color: '#fff',
+      fontFamily: '"Fredoka", sans-serif',
+      fontStyle: 'bold',
+    }).setOrigin(0.5).setDepth(102).setAlpha(0);
+
+    const subText = this.add.text(width / 2, coinY + 145, '', {
+      fontSize: '14px',
+      color: '#cbb8ee',
+      fontFamily: '"Nunito", sans-serif',
+    }).setOrigin(0.5).setDepth(102).setAlpha(0);
+
+    // Title
+    const flipTitle = this.add.text(width / 2, coinY - 120, 'COIN FLIP', {
+      fontSize: '20px',
+      color: '#FF6B9D',
+      fontFamily: '"Fredoka", sans-serif',
+      fontStyle: 'bold',
+      letterSpacing: 4,
+    }).setOrigin(0.5).setDepth(102);
+
+    // Animate the coin flip
+    let flipCount = 0;
+    const totalFlips = 16;
+    const drawCoin = (label: string, color: number) => {
+      coinGfx.clear();
+      coinGfx.fillStyle(color, 0.25);
+      coinGfx.fillCircle(coinX, coinY, coinRadius);
+      coinGfx.lineStyle(3, color, 0.8);
+      coinGfx.strokeCircle(coinX, coinY, coinRadius);
+      coinLabel.setText(label);
+    };
+
+    const flipTimer = this.time.addEvent({
+      delay: 80,
+      callback: () => {
+        flipCount++;
+        const showP1 = flipCount % 2 === 0;
+        drawCoin(showP1 ? 'P1' : 'P2', showP1 ? 0x6CC4FF : 0xFF6B6B);
+
+        // Squash/stretch for spin effect
+        this.tweens.add({
+          targets: [coinGfx, coinLabel],
+          scaleX: { from: 0.3, to: 1 },
+          duration: 70,
+          ease: 'Sine.easeOut',
+        });
+
+        if (flipCount >= totalFlips) {
+          flipTimer.destroy();
+          // Land on the actual result
+          const iFirst = this.amPlayer1;
+          drawCoin(iFirst ? 'P1' : 'P2', iFirst ? 0x6CC4FF : 0xFF6B6B);
+
+          // Flash
+          this.cameras.main.flash(200, 255, 217, 61, false);
+
+          // Show result
+          resultText.setText(iFirst ? 'YOU PICK FIRST!' : 'OPPONENT PICKS FIRST');
+          resultText.setColor(iFirst ? '#45E6B0' : '#FF8EC8');
+          subText.setText(iFirst ? 'Choose your class and animal' : 'Wait for opponent to pick...');
+
+          this.tweens.add({ targets: resultText, alpha: 1, duration: 400, delay: 200 });
+          this.tweens.add({ targets: subText, alpha: 1, duration: 400, delay: 400 });
+
+          // Transition to draft UI
+          this.time.delayedCall(2200, () => {
+            this.tweens.add({
+              targets: [overlay, coinGfx, coinLabel, resultText, subText, flipTitle],
+              alpha: 0,
+              duration: 500,
+              onComplete: () => {
+                overlay.destroy();
+                coinGfx.destroy();
+                coinLabel.destroy();
+                resultText.destroy();
+                subText.destroy();
+                flipTitle.destroy();
+                this.draftStarted = true;
+                this.buildDraftUI();
+              },
+            });
+          });
+        }
+      },
+      loop: true,
+    });
+  }
+
+  private buildDraftUI() {
+    const { width, height } = this.cameras.main;
 
     // ─── BACKGROUND GRID ─────────────────────────────────────────
     const gridGfx = this.add.graphics();
@@ -227,15 +358,23 @@ export class DraftScene extends Phaser.Scene {
     this.updateState();
     this.startTimer();
 
-    // Listen for opponent picks in online mode
+    // Listen for all picks in online mode (onChildAdded fires once per pick)
     if (!this.isLocal) {
       this.firebase.onDraftPick(this.gameId, (pick: DraftPick) => {
+        // Skip picks we already know about (our own or already processed)
+        if (this.processedPickIds.has(pick.pickOrder)) return;
+        this.processedPickIds.add(pick.pickOrder);
+
         if (pick.playerId !== this.playerId) {
           this.picks.push(pick);
           this.currentPickIndex++;
           this.usedClasses.add(pick.classId);
           this.animatePickSlot(pick);
           this.updateState();
+
+          if (this.currentPickIndex >= 6) {
+            this.finishDraft();
+          }
         }
       });
     }
@@ -886,12 +1025,13 @@ export class DraftScene extends Phaser.Scene {
     if (this.usedClasses.has(this.selectedClass)) return;
 
     const pick: DraftPick = {
-      playerId: this.pickOrder[this.currentPickIndex],
+      playerId: this.playerId,
       classId: this.selectedClass,
       animalId: this.selectedAnimal,
       pickOrder: this.currentPickIndex,
     };
 
+    this.processedPickIds.add(pick.pickOrder);
     this.picks.push(pick);
     this.usedClasses.add(this.selectedClass);
     this.animatePickSlot(pick);
