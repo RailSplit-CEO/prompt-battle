@@ -57,6 +57,7 @@ export interface AnimalDefinition {
   name: string;
   archetype: AnimalArchetype;
   statModifiers: Stats;
+  vision: number;
   passive: {
     name: string;
     description: string;

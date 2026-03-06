@@ -78,9 +78,11 @@ export class BattleScene extends Phaser.Scene {
   private flag1Sprite!: Phaser.GameObjects.Container;
   private flag2Sprite!: Phaser.GameObjects.Container;
 
-  // Fog of war
+  // Fog of war (3-state: unexplored / remembered / visible)
   private fogLayer!: Phaser.GameObjects.Graphics;
   private visibleTiles: Set<string> = new Set();
+  private exploredTiles: Set<string> = new Set();
+  private rememberedTileTextures: Map<string, string> = new Map(); // key -> last seen texture name
 
   // Pickups
   private pickups: Pickup[] = [];
@@ -258,13 +260,10 @@ export class BattleScene extends Phaser.Scene {
     const spawns = isPlayer1 ? this.gameMap.spawnP1 : this.gameMap.spawnP2;
     const name = generateCharacterName();
 
-    let visionRange = BASE_VISION;
-    if (pick.classId === 'archer' || pick.animalId === 'falcon' || pick.animalId === 'owl') {
-      visionRange = 7;
-    }
-    if (pick.classId === 'rogue' || pick.animalId === 'spider') {
-      visionRange = 6;
-    }
+    let visionRange = animal.vision ?? BASE_VISION;
+    // Class bonuses
+    if (pick.classId === 'archer') visionRange += 1;
+    if (pick.classId === 'rogue') visionRange += 1;
 
     return {
       id: `${pick.playerId}_${pick.classId}_${index}`,
@@ -581,6 +580,8 @@ export class BattleScene extends Phaser.Scene {
   private initFogOfWar() {
     this.fogLayer = this.add.graphics();
     this.fogLayer.setDepth(50);
+    this.exploredTiles.clear();
+    this.rememberedTileTextures.clear();
     this.updateFogOfWar();
   }
 
@@ -606,22 +607,60 @@ export class BattleScene extends Phaser.Scene {
       }
     });
 
+    // Mark newly visible tiles as explored and cache their current texture
+    this.visibleTiles.forEach((key) => {
+      this.exploredTiles.add(key);
+      const [xs, ys] = key.split(',');
+      const x = parseInt(xs), y = parseInt(ys);
+      const tile = this.gameMap.tiles[y]?.[x];
+      if (tile) {
+        this.rememberedTileTextures.set(key, `tile_${tile}`);
+      }
+    });
+
+    // Draw fog overlay
     this.fogLayer.clear();
-    this.fogLayer.fillStyle(0x1B1040, 0.85);
     for (let y = 0; y < MAP_HEIGHT; y++) {
       for (let x = 0; x < MAP_WIDTH; x++) {
-        if (!this.visibleTiles.has(`${x},${y}`)) {
-          this.fogLayer.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+        const key = `${x},${y}`;
+        const px = x * TILE_SIZE;
+        const py = y * TILE_SIZE;
+
+        if (this.visibleTiles.has(key)) {
+          // Currently visible — show real tile, no overlay
+          if (this.tileSprites[y]?.[x]) {
+            this.tileSprites[y][x].setTexture(`tile_${this.gameMap.tiles[y][x]}`);
+            this.tileSprites[y][x].setVisible(true);
+          }
+        } else if (this.exploredTiles.has(key)) {
+          // Previously seen — show last-known texture with dark hazy overlay
+          if (this.tileSprites[y]?.[x]) {
+            const remembered = this.rememberedTileTextures.get(key);
+            if (remembered) {
+              this.tileSprites[y][x].setTexture(remembered);
+            }
+            this.tileSprites[y][x].setVisible(true);
+          }
+          this.fogLayer.fillStyle(0x111111, 0.40);
+          this.fogLayer.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+        } else {
+          // Never explored — solid grey, hide tile texture
+          if (this.tileSprites[y]?.[x]) {
+            this.tileSprites[y][x].setVisible(false);
+          }
+          this.fogLayer.fillStyle(0x444444, 1.0);
+          this.fogLayer.fillRect(px, py, TILE_SIZE, TILE_SIZE);
         }
       }
     }
 
+    // Enemy visibility — only show if currently visible (not in remembered/hazy)
     this.characters.forEach((entity, id) => {
       const char = this.charData.get(id);
       if (!char || char.owner === this.playerId) return;
       const key = `${char.position.x},${char.position.y}`;
       let visible = this.visibleTiles.has(key);
-      // Bush concealment: enemies on bush tiles are invisible unless a friendly is within 1 tile (Manhattan)
+      // Bush concealment: enemies on bush tiles are invisible unless a friendly is within 1 tile
       if (visible && this.gameMap.tiles[char.position.y]?.[char.position.x] === 'bush') {
         const friendlyNearby = Array.from(this.charData.values()).some(f =>
           f.owner === this.playerId && !f.isDead &&
@@ -637,7 +676,7 @@ export class BattleScene extends Phaser.Scene {
       this.flag2Sprite.setVisible(this.visibleTiles.has(key));
     }
 
-    // Hide pickups in fog
+    // Hide pickups in fog — only show if currently visible
     for (const pickup of this.pickups) {
       if (!pickup.active) continue;
       const key = `${pickup.position.x},${pickup.position.y}`;
@@ -661,7 +700,8 @@ export class BattleScene extends Phaser.Scene {
       if (e2 < dx) { err += dx; cy += sy; }
       if (cx === x2 && cy === y2) break;
       if (cx >= 0 && cx < MAP_WIDTH && cy >= 0 && cy < MAP_HEIGHT) {
-        if (this.gameMap.tiles[cy][cx] === 'rock') return false;
+        const t = this.gameMap.tiles[cy][cx];
+        if (t === 'rock' || t === 'ruins' || t === 'gate_closed') return false;
       }
     }
     return true;
