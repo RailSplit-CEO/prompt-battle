@@ -102,6 +102,9 @@ export class BootScene extends Phaser.Scene {
         gfx.fillCircle(16, 12, 8);
         gfx.fillStyle(0x3a6a2a);
         gfx.fillCircle(16, 14, 6);
+        // Shield indicator (ambush bonus)
+        gfx.lineStyle(1, 0xffffff, 0.15);
+        gfx.strokeCircle(26, 6, 4);
       } else if (name === 'water') {
         gfx.lineStyle(1, 0x4488cc, 0.4);
         gfx.lineBetween(4, 16, 28, 16);
@@ -119,10 +122,6 @@ export class BootScene extends Phaser.Scene {
         gfx.lineBetween(16, 8, 16, 14);
         gfx.lineBetween(16, 8, 13, 11);
         gfx.lineBetween(16, 8, 19, 11);
-      } else if (name === 'forest') {
-        // Shield indicator (ambush bonus)
-        gfx.lineStyle(1, 0xffffff, 0.15);
-        gfx.strokeCircle(26, 6, 4);
       } else if (name === 'bush') {
         gfx.fillStyle(0x5a9a4a);
         gfx.fillCircle(10, 20, 6);

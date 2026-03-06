@@ -1,4 +1,4 @@
-import { Character, CLASSES, ANIMALS, Position, CTFState } from '@prompt-battle/shared';
+import { Character, CLASSES, ANIMALS, Position, CTFState, ControlPoint, TileType } from '@prompt-battle/shared';
 
 const GEMINI_API_KEY = (import.meta as any).env?.VITE_GEMINI_API_KEY || '';
 const GEMINI_MODEL = 'gemini-2.0-flash';
@@ -6,7 +6,7 @@ const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GE
 
 export interface ParsedGameAction {
   characterId: string;
-  type: 'move' | 'attack' | 'ability' | 'defend' | 'retreat' | 'hold' | 'capture' | 'escort' | 'patrol';
+  type: 'move' | 'attack' | 'ability' | 'defend' | 'retreat' | 'hold' | 'capture' | 'escort' | 'patrol' | 'control';
   targetCharacterId?: string;
   targetPosition?: Position;
   abilityId?: string;
@@ -24,7 +24,9 @@ function buildPrompt(
   enemyChars: Character[],
   mapWidth: number,
   mapHeight: number,
-  ctf: CTFState
+  ctf: CTFState,
+  controlPoints: ControlPoint[],
+  tiles: TileType[][],
 ): string {
   const myList = myChars.map(c => {
     const cls = CLASSES[c.classId];
@@ -35,8 +37,9 @@ function buildPrompt(
       ? `ABILITY: ${ability.name}(id:${ability.id}) - ${ability.description} [range:${ability.range}, cd:${cd > 0 ? cd + 's' : 'READY'}]`
       : 'NO ABILITY';
     const flag = c.hasFlag ? ' [CARRYING FLAG]' : '';
+    const terrain = tiles[c.position.y]?.[c.position.x] || 'grass';
     return `  ID:"${c.id}" Name:"${c.name}" Class:${cls.name} Animal:${animal.name} ` +
-      `HP:${c.currentHp}/${c.stats.hp} Pos:(${c.position.x},${c.position.y}) ` +
+      `HP:${c.currentHp}/${c.stats.hp} Pos:(${c.position.x},${c.position.y}) Terrain:${terrain} ` +
       `ATK:${c.stats.attack} DEF:${c.stats.defense} SPD:${c.stats.speed} RNG:${c.stats.range} MAG:${c.stats.magic} ` +
       `${abilityStr}${flag}` +
       `${c.isDead ? ` [DEAD - respawns in ${c.respawnTimer ?? 0}s]` : ''}`;
@@ -72,7 +75,21 @@ ENEMY CHARACTERS (only visible ones shown):
 ${enemyList}
 ${flagInfo}
 
-TERRAIN: Water and Rock are impassable. Forest slows movement + gives cover (-15% dmg taken). Hills give +25% damage. Bush gives concealment. Path is fast.
+TERRAIN (each character's current terrain shown above):
+- Water/Rock: Impassable.
+- Forest: Slows movement 2x. Cover (-15% dmg taken). AMBUSH: First attack from forest = +30% bonus damage (resets when moving to new tile). Position units in forests for a strong first strike.
+- Hill: +25% damage dealt. Ranged units (range >= 2) on hills get +1 range. Great for archers.
+- Bush: Concealment - enemies on bush tiles are invisible unless you have a unit within 1 tile. -10% dmg taken. Use bushes for stealth positioning.
+- Path: Fast movement (0.5x cost). Good for rapid repositioning.
+- Water penalty: Fireball/fire abilities deal -20% damage if target is adjacent to water.
+TACTICAL TIPS: Position ranged units on hills for range+damage. Use forests for ambush attacks. Hide units in bushes to surprise enemies. Avoid fire near water.
+
+CONTROL POINTS (secondary objective - capture for team buffs):
+${controlPoints.map(cp => {
+  const owner = cp.owner === 'player1' ? 'YOU' : cp.owner === 'player2' ? 'ENEMY' : 'NEUTRAL';
+  return `- ${cp.id}: Pos:(${cp.position.x},${cp.position.y}) Owner:${owner} Progress:${cp.captureProgress}% Buff:${cp.buff.label}`;
+}).join('\n')}
+- Stand within 2 tiles of a point to capture it (~5s). Contested if both teams present.
 
 ACTION TYPES:
 - "move": Move toward a position. Requires targetPosition {x, y}. Character keeps moving until arrival.
@@ -84,6 +101,7 @@ ACTION TYPES:
 - "escort": Follow and protect a specific ally. Requires targetCharacterId (the flag carrier).
 - "patrol": Guard an area, pacing back and forth. Requires targetPosition.
 - "hold": Stop and do nothing.
+- "control": Move to and hold a control point. Requires targetPosition (the control point position). Use for "take the point", "capture point", etc.
 
 MAP PICKUPS: Health potions (green, +35% HP), Speed boosts (yellow, 12s double speed), Damage boosts (red, 12s +50% dmg) spawn on the map. Characters auto-collect by walking over them.
 
@@ -110,7 +128,7 @@ Respond with ONLY valid JSON (no markdown, no code blocks):
   "actions": [
     {
       "characterId": "<exact character ID>",
-      "type": "<move|attack|ability|defend|retreat|capture|escort|patrol|hold>",
+      "type": "<move|attack|ability|defend|retreat|capture|escort|patrol|hold|control>",
       "targetCharacterId": "<ID if applicable>",
       "targetPosition": {"x": <number>, "y": <number>},
       "abilityId": "<ability id if applicable>",
@@ -127,7 +145,9 @@ export async function parseCommandWithGemini(
   playerId: string,
   mapWidth: number,
   mapHeight: number,
-  ctf: CTFState
+  ctf: CTFState,
+  controlPoints: ControlPoint[] = [],
+  tiles: TileType[][] = [],
 ): Promise<GeminiParseResult> {
   const myChars = Array.from(allChars.values()).filter(c => c.owner === playerId && !c.isDead);
   const enemyChars = Array.from(allChars.values()).filter(c => c.owner !== playerId && !c.isDead);
@@ -136,7 +156,7 @@ export async function parseCommandWithGemini(
     throw new Error('GEMINI_API_KEY not set. Add VITE_GEMINI_API_KEY to your .env file.');
   }
 
-  const prompt = buildPrompt(rawText, myChars, enemyChars, mapWidth, mapHeight, ctf);
+  const prompt = buildPrompt(rawText, myChars, enemyChars, mapWidth, mapHeight, ctf, controlPoints, tiles);
 
   const response = await fetch(GEMINI_URL + GEMINI_API_KEY, {
     method: 'POST',

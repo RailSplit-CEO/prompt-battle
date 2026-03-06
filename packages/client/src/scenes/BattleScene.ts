@@ -1196,7 +1196,8 @@ export class BattleScene extends Phaser.Scene {
     try {
       if (this.hasGemini) {
         const result = await parseCommandWithGemini(
-          rawText, this.charData, this.playerId, MAP_WIDTH, MAP_HEIGHT, this.ctf
+          rawText, this.charData, this.playerId, MAP_WIDTH, MAP_HEIGHT, this.ctf,
+          this.controlPoints, this.gameMap.tiles,
         );
         this.applyParsedOrders(result);
         this.updateCommandLogResult(result.narration || 'Orders issued!');
@@ -2137,9 +2138,13 @@ export class BattleScene extends Phaser.Scene {
 
   update() {
     if (this.commandCooldownRemaining > 0) {
+      const prev = this.commandCooldownRemaining;
       this.commandCooldownRemaining = Math.max(0,
         (this.lastCommandTime + COMMAND_COOLDOWN) - Date.now());
       this.updateCooldownDisplay();
+      if (prev > 0 && this.commandCooldownRemaining === 0) {
+        this.sound_.playCommandReady();
+      }
     }
   }
 
@@ -2152,5 +2157,6 @@ export class BattleScene extends Phaser.Scene {
     if (this.gameTickTimer) this.gameTickTimer.destroy();
     if (this.moveTickTimer) this.moveTickTimer.destroy();
     if (this.secondTimer) this.secondTimer.destroy();
+    if (this.miniMap) this.miniMap.destroy();
   }
 }
