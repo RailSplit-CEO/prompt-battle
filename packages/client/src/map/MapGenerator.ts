@@ -51,43 +51,56 @@ export const MAP_WIDTH = 40;
 export const MAP_HEIGHT = 30;
 export const TILE_SIZE = 32;
 
+export interface SwitchGateLink {
+  switchPos: Position;
+  gatePositions: Position[];
+}
+
 export interface GameMap {
   tiles: TileType[][];
   seed: number;
   spawnP1: Position[];
   spawnP2: Position[];
-  flagP1: Position;   // where P1's flag sits
-  flagP2: Position;   // where P2's flag sits
+  flagP1: Position;
+  flagP2: Position;
   controlPointPositions: Position[];
+  switchGateLinks: SwitchGateLink[];
 }
 
 export function generateMap(seed: number): GameMap {
   const noise = createNoise2D(seed);
   const noise2 = createNoise2D(seed + 1000);
+  const noise3 = createNoise2D(seed + 2000);
   const halfWidth = Math.ceil(MAP_WIDTH / 2);
   const tiles: TileType[][] = [];
+  const rng = mulberry32(seed + 3000);
 
-  // Generate left half
+  // Generate left half with richer terrain
   for (let y = 0; y < MAP_HEIGHT; y++) {
     tiles[y] = [];
     for (let x = 0; x < halfWidth; x++) {
       const elevation = noise(x * 0.15, y * 0.15);
       const moisture = noise2(x * 0.12, y * 0.12);
+      const detail = noise3(x * 0.25, y * 0.25);
 
       let tile: TileType;
 
-      if (elevation < -0.35) {
-        tile = 'water';
-      } else if (elevation < -0.15) {
-        tile = moisture > 0.2 ? 'bush' : 'grass';
-      } else if (elevation < 0.2) {
-        tile = 'grass';
-      } else if (elevation < 0.4) {
+      if (elevation < -0.4) {
+        tile = moisture < -0.3 ? 'lava' : 'water';
+      } else if (elevation < -0.2) {
+        if (moisture > 0.3) tile = 'swamp';
+        else if (moisture > 0.1) tile = 'bush';
+        else tile = 'sand';
+      } else if (elevation < 0.15) {
+        if (detail > 0.5) tile = 'flowers';
+        else if (detail < -0.4 && moisture > 0) tile = 'mushroom';
+        else tile = 'grass';
+      } else if (elevation < 0.35) {
         tile = moisture > 0 ? 'forest' : 'grass';
-      } else if (elevation < 0.6) {
+      } else if (elevation < 0.55) {
         tile = 'hill';
       } else {
-        tile = 'rock';
+        tile = rng() > 0.3 ? 'rock' : 'ruins';
       }
 
       tiles[y][x] = tile;
@@ -101,10 +114,12 @@ export function generateMap(seed: number): GameMap {
     }
   }
 
-  // Carve paths from spawn to center
-  carvePath(tiles, 3, MAP_HEIGHT / 2, halfWidth, MAP_HEIGHT / 2);
-  carvePath(tiles, 3, MAP_HEIGHT / 4, halfWidth, MAP_HEIGHT / 2);
-  carvePath(tiles, 3, (3 * MAP_HEIGHT) / 4, halfWidth, MAP_HEIGHT / 2);
+  // Carve lanes from spawn to center
+  carvePath(tiles, 3, MAP_HEIGHT / 2, halfWidth, MAP_HEIGHT / 2);           // mid lane
+  carvePath(tiles, 3, MAP_HEIGHT / 4, halfWidth, MAP_HEIGHT / 4);           // top lane
+  carvePath(tiles, 3, (3 * MAP_HEIGHT) / 4, halfWidth, (3 * MAP_HEIGHT) / 4); // bot lane
+  // Cross-lane connectors
+  carvePath(tiles, halfWidth / 2, MAP_HEIGHT / 4, halfWidth / 2, (3 * MAP_HEIGHT) / 4); // left vertical
   // Mirror paths
   for (let y = 0; y < MAP_HEIGHT; y++) {
     for (let x = halfWidth; x < MAP_WIDTH; x++) {
@@ -114,11 +129,31 @@ export function generateMap(seed: number): GameMap {
     }
   }
 
-  // Flag positions - centered vertically, near each base
+  // Place bridges over water/lava on paths
+  for (let y = 0; y < MAP_HEIGHT; y++) {
+    for (let x = 0; x < MAP_WIDTH; x++) {
+      if (tiles[y][x] === 'path') continue;
+      // Check if this water/lava tile is between two path or passable tiles
+      if (tiles[y][x] === 'water' || tiles[y][x] === 'lava') {
+        const hasHorizNeighbors =
+          x > 0 && x < MAP_WIDTH - 1 &&
+          isPassableTerrain(tiles[y][x - 1]) && isPassableTerrain(tiles[y][x + 1]);
+        const hasVertNeighbors =
+          y > 0 && y < MAP_HEIGHT - 1 &&
+          isPassableTerrain(tiles[y - 1][x]) && isPassableTerrain(tiles[y + 1][x]);
+
+        if ((hasHorizNeighbors || hasVertNeighbors) && rng() > 0.7) {
+          tiles[y][x] = 'bridge';
+        }
+      }
+    }
+  }
+
+  // Flag positions
   const flagP1: Position = { x: 4, y: Math.floor(MAP_HEIGHT / 2) };
   const flagP2: Position = { x: MAP_WIDTH - 5, y: Math.floor(MAP_HEIGHT / 2) };
 
-  // Spawn positions (around flag area)
+  // Spawn positions
   const spawnP1: Position[] = [
     { x: 2, y: Math.floor(MAP_HEIGHT / 2) - 2 },
     { x: 2, y: Math.floor(MAP_HEIGHT / 2) },
@@ -145,9 +180,12 @@ export function generateMap(seed: number): GameMap {
   }
 
   // Add wall features for strategic gameplay
-  addWallFeatures(tiles, mulberry32(seed + 2000));
+  addWallFeatures(tiles, mulberry32(seed + 4000));
 
-  // Ensure connected after walls
+  // Place switch-gate pairs (symmetric)
+  const switchGateLinks = placeSwitchGates(tiles, rng);
+
+  // Ensure connectivity
   ensureConnected(tiles, spawnP1[0], spawnP2[0]);
   ensureConnected(tiles, spawnP1[0], { x: Math.floor(MAP_WIDTH / 2), y: Math.floor(MAP_HEIGHT / 2) });
 
@@ -158,14 +196,13 @@ export function generateMap(seed: number): GameMap {
     { x: Math.floor((3 * MAP_WIDTH) / 4), y: Math.floor(MAP_HEIGHT / 2) },
   ];
   const controlPointPositions = cpRaw.map(p => snapToPassable(tiles, p));
-  // Clear surrounding terrain to grass
   for (const cp of controlPointPositions) {
     for (let dy = -1; dy <= 1; dy++) {
       for (let dx = -1; dx <= 1; dx++) {
         const nx = cp.x + dx;
         const ny = cp.y + dy;
         if (nx >= 0 && nx < MAP_WIDTH && ny >= 0 && ny < MAP_HEIGHT) {
-          if (tiles[ny][nx] === 'water' || tiles[ny][nx] === 'rock') {
+          if (!isPassable(tiles[ny][nx])) {
             tiles[ny][nx] = 'grass';
           }
         }
@@ -173,18 +210,85 @@ export function generateMap(seed: number): GameMap {
     }
   }
 
-  return { tiles, seed, spawnP1, spawnP2, flagP1, flagP2, controlPointPositions };
+  return { tiles, seed, spawnP1, spawnP2, flagP1, flagP2, controlPointPositions, switchGateLinks };
+}
+
+function placeSwitchGates(tiles: TileType[][], rng: () => number): SwitchGateLink[] {
+  const links: SwitchGateLink[] = [];
+  const cx = Math.floor(MAP_WIDTH / 2);
+  const cy = Math.floor(MAP_HEIGHT / 2);
+
+  // Place 2-3 switch/gate pairs in strategic locations
+  const candidates: { sw: Position; gates: Position[] }[] = [
+    // Switch near top lane, gates block a shortcut
+    {
+      sw: { x: cx - 3, y: Math.floor(MAP_HEIGHT / 4) },
+      gates: [
+        { x: cx, y: Math.floor(MAP_HEIGHT / 4) - 1 },
+        { x: cx, y: Math.floor(MAP_HEIGHT / 4) },
+        { x: cx, y: Math.floor(MAP_HEIGHT / 4) + 1 },
+      ],
+    },
+    // Switch near bottom lane
+    {
+      sw: { x: cx - 3, y: Math.floor((3 * MAP_HEIGHT) / 4) },
+      gates: [
+        { x: cx, y: Math.floor((3 * MAP_HEIGHT) / 4) - 1 },
+        { x: cx, y: Math.floor((3 * MAP_HEIGHT) / 4) },
+        { x: cx, y: Math.floor((3 * MAP_HEIGHT) / 4) + 1 },
+      ],
+    },
+    // Switch near center, gates block side path
+    {
+      sw: { x: cx - 6, y: cy },
+      gates: [
+        { x: cx - 4, y: cy - 2 },
+        { x: cx - 4, y: cy - 1 },
+      ],
+    },
+  ];
+
+  for (const c of candidates) {
+    if (rng() > 0.4) continue; // only place some
+    const { sw, gates } = c;
+
+    // Check bounds
+    if (sw.x < 1 || sw.x >= MAP_WIDTH - 1 || sw.y < 1 || sw.y >= MAP_HEIGHT - 1) continue;
+    let valid = true;
+    for (const g of gates) {
+      if (g.x < 0 || g.x >= MAP_WIDTH || g.y < 0 || g.y >= MAP_HEIGHT) { valid = false; break; }
+    }
+    if (!valid) continue;
+
+    tiles[sw.y][sw.x] = 'switch';
+    for (const g of gates) {
+      tiles[g.y][g.x] = 'gate_closed';
+    }
+
+    // Mirror
+    const mSw: Position = { x: MAP_WIDTH - 1 - sw.x, y: sw.y };
+    const mGates = gates.map(g => ({ x: MAP_WIDTH - 1 - g.x, y: g.y }));
+    tiles[mSw.y][mSw.x] = 'switch';
+    for (const g of mGates) {
+      tiles[g.y][g.x] = 'gate_closed';
+    }
+
+    links.push({ switchPos: sw, gatePositions: gates });
+    links.push({ switchPos: mSw, gatePositions: mGates });
+  }
+
+  return links;
 }
 
 function addWallFeatures(tiles: TileType[][], rng: () => number) {
   const cx = Math.floor(MAP_WIDTH / 2);
   const cy = Math.floor(MAP_HEIGHT / 2);
 
-  // Central horizontal barrier with a gap in the middle
+  // Central horizontal barrier with gap
   for (let x = cx - 7; x <= cx + 7; x++) {
-    if (Math.abs(x - cx) <= 1) continue; // gap
+    if (Math.abs(x - cx) <= 1) continue;
     if (x >= 0 && x < MAP_WIDTH && tiles[cy][x] !== 'path') {
-      tiles[cy][x] = 'rock';
+      tiles[cy][x] = rng() > 0.3 ? 'rock' : 'ruins';
     }
   }
 
@@ -192,14 +296,14 @@ function addWallFeatures(tiles: TileType[][], rng: () => number) {
   const quartX1 = Math.floor(MAP_WIDTH / 4);
   const quartX2 = MAP_WIDTH - 1 - quartX1;
   for (let y = cy - 4; y <= cy + 4; y++) {
-    if (Math.abs(y - cy) <= 1) continue; // gap
+    if (Math.abs(y - cy) <= 1) continue;
     if (y >= 0 && y < MAP_HEIGHT) {
-      if (tiles[y][quartX1] !== 'path') tiles[y][quartX1] = 'rock';
-      if (tiles[y][quartX2] !== 'path') tiles[y][quartX2] = 'rock';
+      if (tiles[y][quartX1] !== 'path') tiles[y][quartX1] = rng() > 0.5 ? 'rock' : 'ruins';
+      if (tiles[y][quartX2] !== 'path') tiles[y][quartX2] = rng() > 0.5 ? 'rock' : 'ruins';
     }
   }
 
-  // Small cover walls at strategic positions (L-shapes)
+  // Cover walls at strategic positions (L-shapes)
   const coverSpots = [
     { x: cx - 5, y: cy - 5 }, { x: cx + 5, y: cy - 5 },
     { x: cx - 5, y: cy + 5 }, { x: cx + 5, y: cy + 5 },
@@ -210,8 +314,7 @@ function addWallFeatures(tiles: TileType[][], rng: () => number) {
   for (const pos of coverSpots) {
     if (pos.x >= 1 && pos.x < MAP_WIDTH - 1 && pos.y >= 1 && pos.y < MAP_HEIGHT - 1) {
       if (tiles[pos.y][pos.x] === 'path') continue;
-      tiles[pos.y][pos.x] = 'rock';
-      // Add 1 adjacent rock for an L-shape
+      tiles[pos.y][pos.x] = rng() > 0.4 ? 'rock' : 'ruins';
       if (rng() > 0.5) {
         if (pos.y + 1 < MAP_HEIGHT && tiles[pos.y + 1][pos.x] !== 'path') tiles[pos.y + 1][pos.x] = 'rock';
       } else {
@@ -223,18 +326,21 @@ function addWallFeatures(tiles: TileType[][], rng: () => number) {
     }
   }
 
-  // Extra scattered small walls for complexity
+  // Scattered walls
   for (let i = 0; i < 8; i++) {
     const wx = Math.floor(rng() * (MAP_WIDTH - 8)) + 4;
     const wy = Math.floor(rng() * (MAP_HEIGHT - 8)) + 4;
-    // Don't place near spawns
     if (wx < 6 || wx > MAP_WIDTH - 7) continue;
-    if (tiles[wy][wx] !== 'grass') continue;
+    if (tiles[wy][wx] !== 'grass' && tiles[wy][wx] !== 'flowers') continue;
     tiles[wy][wx] = 'rock';
-    // Mirror
     const mx = MAP_WIDTH - 1 - wx;
-    if (tiles[wy][mx] === 'grass') tiles[wy][mx] = 'rock';
+    if (tiles[wy][mx] === 'grass' || tiles[wy][mx] === 'flowers') tiles[wy][mx] = 'rock';
   }
+}
+
+// Helper: passable for bridge placement (not water/lava/rock/ruins)
+function isPassableTerrain(tile: TileType): boolean {
+  return tile !== 'water' && tile !== 'lava' && tile !== 'rock' && tile !== 'ruins' && tile !== 'gate_closed';
 }
 
 function snapToPassable(tiles: TileType[][], pos: Position): Position {
@@ -285,7 +391,7 @@ function ensureConnected(tiles: TileType[][], start: Position, end: Position) {
       const ny = pos.y + dy;
       const key = `${nx},${ny}`;
       if (nx >= 0 && nx < MAP_WIDTH && ny >= 0 && ny < MAP_HEIGHT
-          && !visited.has(key) && tiles[ny][nx] !== 'water' && tiles[ny][nx] !== 'rock') {
+          && !visited.has(key) && isPassable(tiles[ny][nx])) {
         visited.add(key);
         queue.push({ x: nx, y: ny });
       }
@@ -296,15 +402,22 @@ function ensureConnected(tiles: TileType[][], start: Position, end: Position) {
 }
 
 export function isPassable(tile: TileType): boolean {
-  return tile !== 'water' && tile !== 'rock';
+  return tile !== 'water' && tile !== 'rock' && tile !== 'lava' && tile !== 'ruins' && tile !== 'gate_closed';
 }
 
 export function getMovementCost(tile: TileType): number {
   switch (tile) {
     case 'path': return 0.5;
+    case 'bridge': return 0.6;
     case 'forest': return 2;
     case 'bush': return 1.5;
     case 'hill': return 1.5;
+    case 'sand': return 1.3;
+    case 'swamp': return 2.5;
+    case 'mushroom': return 1.2;
+    case 'flowers': return 0.9;
+    case 'switch': return 0.8;
+    case 'gate_open': return 0.5;
     default: return 1;
   }
 }

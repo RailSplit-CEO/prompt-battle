@@ -6,6 +6,7 @@ import {
 import { CharacterEntity } from '../entities/Character';
 import {
   generateMap, GameMap, MAP_WIDTH, MAP_HEIGHT, TILE_SIZE, isPassable,
+  SwitchGateLink,
 } from '../map/MapGenerator';
 import { findPath } from '../map/Pathfinding';
 import { CommandInput } from '../systems/CommandInput';
@@ -111,6 +112,11 @@ export class BattleScene extends Phaser.Scene {
 
   // Map rendering
   private tileLayer!: Phaser.GameObjects.Group;
+  private tileSprites: Phaser.GameObjects.Sprite[][] = [];
+
+  // Switch/gate system
+  private switchGateLinks: SwitchGateLink[] = [];
+  private activatedSwitches: Set<string> = new Set();
 
   // HUD elements (HTML)
   private commandLogEl!: HTMLElement;
@@ -204,7 +210,9 @@ export class BattleScene extends Phaser.Scene {
 
   private renderMap() {
     this.tileLayer = this.add.group();
+    this.tileSprites = [];
     for (let y = 0; y < MAP_HEIGHT; y++) {
+      this.tileSprites[y] = [];
       for (let x = 0; x < MAP_WIDTH; x++) {
         const tile = this.gameMap.tiles[y][x];
         const sprite = this.add.sprite(
@@ -214,8 +222,10 @@ export class BattleScene extends Phaser.Scene {
         );
         sprite.setDepth(0);
         this.tileLayer.add(sprite);
+        this.tileSprites[y][x] = sprite;
       }
     }
+    this.switchGateLinks = this.gameMap.switchGateLinks;
   }
 
   // ─── CHARACTER CREATION ─────────────────────────────────────────
@@ -358,7 +368,7 @@ export class BattleScene extends Phaser.Scene {
         enemyFlagSprite.setVisible(false);
         const entity = this.characters.get(char.id);
         if (entity) entity.showFlagCarrier(true);
-        if (isMine || this.isLocal) this.showAnnouncement('FLAG PICKED UP!', '#ffaa44');
+        if (isMine || this.isLocal) this.showAnnouncement('FLAG PICKED UP!', '#FFD93D');
         this.sound_.playFlagPickup();
       }
 
@@ -389,7 +399,7 @@ export class BattleScene extends Phaser.Scene {
         if (carrier) carrier.hasFlag = false;
         sprite.setVisible(true);
         this.updateFlagSpritePos(sprite, flag.position);
-        this.showAnnouncement('FLAG DROPPED!', '#ffaa44');
+        this.showAnnouncement('FLAG DROPPED!', '#FFD93D');
       }
     }
   }
@@ -406,7 +416,7 @@ export class BattleScene extends Phaser.Scene {
     this.sound_.playFlagCapture();
     this.showAnnouncement(
       capturingPlayer === this.playerId ? 'FLAG CAPTURED!' : 'ENEMY CAPTURED!',
-      capturingPlayer === this.playerId ? '#44ff88' : '#ff4444'
+      capturingPlayer === this.playerId ? '#45E6B0' : '#FF6B6B'
     );
     this.updateScoreDisplay();
 
@@ -493,7 +503,7 @@ export class BattleScene extends Phaser.Scene {
         health_potion: 'HP', speed_boost: 'SPD', damage_boost: 'DMG',
       };
       const colorMap: Record<string, string> = {
-        health_potion: '#44cc44', speed_boost: '#ffcc00', damage_boost: '#ff4444',
+        health_potion: '#45E6B0', speed_boost: '#FFD93D', damage_boost: '#FF6B6B',
       };
 
       const label = this.add.text(px, py + 18, labelMap[defs[i].type], {
@@ -597,7 +607,7 @@ export class BattleScene extends Phaser.Scene {
     });
 
     this.fogLayer.clear();
-    this.fogLayer.fillStyle(0x050510, 0.85);
+    this.fogLayer.fillStyle(0x1B1040, 0.85);
     for (let y = 0; y < MAP_HEIGHT; y++) {
       for (let x = 0; x < MAP_WIDTH; x++) {
         if (!this.visibleTiles.has(`${x},${y}`)) {
@@ -782,6 +792,12 @@ export class BattleScene extends Phaser.Scene {
       }
       this.lastCharTile.set(id, tileKey);
 
+      // Check if character stepped on a switch
+      const currentTile = this.gameMap.tiles[char.position.y]?.[char.position.x];
+      if (currentTile === 'switch') {
+        this.triggerSwitch(char.position);
+      }
+
       // Speed boost: double move (move twice per tick)
       const cpBuffs = this.getTeamBuffs(char.owner);
       const hasSpeedBoost = char.effects.some(e => e.type === 'speed_boost') || cpBuffs.speed > 1;
@@ -817,6 +833,41 @@ export class BattleScene extends Phaser.Scene {
         });
       }
     });
+  }
+
+  // ─── SWITCH / GATE SYSTEM ──────────────────────────────────────
+
+  private triggerSwitch(pos: Position) {
+    const key = `${pos.x},${pos.y}`;
+    if (this.activatedSwitches.has(key)) return; // debounce
+    this.activatedSwitches.add(key);
+    this.time.delayedCall(2000, () => this.activatedSwitches.delete(key));
+
+    for (const link of this.switchGateLinks) {
+      if (link.switchPos.x === pos.x && link.switchPos.y === pos.y) {
+        for (const gp of link.gatePositions) {
+          const current = this.gameMap.tiles[gp.y]?.[gp.x];
+          if (current === 'gate_closed') {
+            this.gameMap.tiles[gp.y][gp.x] = 'gate_open';
+          } else if (current === 'gate_open') {
+            this.gameMap.tiles[gp.y][gp.x] = 'gate_closed';
+          }
+          // Update sprite texture
+          if (this.tileSprites[gp.y]?.[gp.x]) {
+            this.tileSprites[gp.y][gp.x].setTexture(`tile_${this.gameMap.tiles[gp.y][gp.x]}`);
+          }
+        }
+        // Visual feedback on switch
+        const wx = pos.x * TILE_SIZE + TILE_SIZE / 2;
+        const wy = pos.y * TILE_SIZE + TILE_SIZE / 2;
+        const flash = this.add.circle(wx, wy, 16, 0xFFAA33, 0.5).setDepth(5);
+        this.tweens.add({
+          targets: flash, alpha: 0, scale: 2, duration: 400,
+          onComplete: () => flash.destroy(),
+        });
+        break;
+      }
+    }
   }
 
   // ─── ORDER EXECUTION ───────────────────────────────────────────
@@ -1051,7 +1102,7 @@ export class BattleScene extends Phaser.Scene {
         this.updateFlagSpritePos(this.flag2Sprite, this.ctf.flag2.position);
         this.flag2Sprite.setVisible(true);
       }
-      this.showAnnouncement('FLAG DROPPED!', '#ffaa44');
+      this.showAnnouncement('FLAG DROPPED!', '#FFD93D');
     }
 
     const entity = this.characters.get(char.id);
@@ -1166,7 +1217,7 @@ export class BattleScene extends Phaser.Scene {
     switch (effect.type) {
       case 'stun':
         target.effects.push({ type: 'stun', duration: effect.duration, value: 1 });
-        this.showAnnouncement(`${target.name} STUNNED!`, '#ffaa44');
+        this.showAnnouncement(`${target.name} STUNNED!`, '#FFD93D');
         break;
       case 'slow':
         target.effects.push({ type: 'slow', duration: effect.duration, value: effect.factor || 0.5 });
@@ -1290,13 +1341,142 @@ export class BattleScene extends Phaser.Scene {
   // ─── LOCAL PARSER ───────────────────────────────────────────────
 
   private parseCommandLocally(rawText: string) {
-    // Split on "then" for command queuing
-    const parts = rawText.split(/\s+then\s+/i);
-
-    for (let partIdx = 0; partIdx < parts.length; partIdx++) {
+    const thenParts = rawText.split(/\s+then\s+/i);
+    for (let partIdx = 0; partIdx < thenParts.length; partIdx++) {
       const isQueued = partIdx > 0;
-      this.parseCommandPart(parts[partIdx], isQueued);
+      const clauses = this.splitClauses(thenParts[partIdx]);
+      for (const clause of clauses) {
+        this.parseCommandPart(clause.trim(), isQueued);
+      }
     }
+  }
+
+  private splitClauses(text: string): string[] {
+    const parts = text.split(/\s*,\s*/);
+    const myChars = Array.from(this.charData.values())
+      .filter(c => c.owner === this.playerId && !c.isDead);
+    const charTokens = new Set<string>();
+    for (const char of myChars) {
+      charTokens.add(CLASSES[char.classId].name.toLowerCase());
+      charTokens.add(ANIMALS[char.animalId].name.toLowerCase());
+      for (const w of char.name.toLowerCase().split(/\s+/)) {
+        if (w.length > 2) charTokens.add(w);
+      }
+    }
+    charTokens.add('all');
+    charTokens.add('everyone');
+    charTokens.add('my');
+    charTokens.add('the');
+
+    const result: string[] = [];
+    for (const part of parts) {
+      const andPattern = /\s+and\s+/gi;
+      let match;
+      let lastIdx = 0;
+      const splits: string[] = [];
+      while ((match = andPattern.exec(part)) !== null) {
+        const after = part.slice(match.index + match[0].length).toLowerCase().trim();
+        const firstWord = after.split(/\s+/)[0];
+        if (charTokens.has(firstWord)) {
+          splits.push(part.slice(lastIdx, match.index));
+          lastIdx = match.index + match[0].length;
+        }
+      }
+      splits.push(part.slice(lastIdx));
+      result.push(...splits.filter(s => s.trim().length > 0));
+    }
+    return result.length > 0 ? result : [text];
+  }
+
+  private resolveCharTargets(text: string, myChars: Character[]): Character[] {
+    if (text.includes('all') || text.includes('everyone')) return myChars;
+    const matched: Character[] = [];
+    for (const char of myChars) {
+      const cls = CLASSES[char.classId].name.toLowerCase();
+      const animal = ANIMALS[char.animalId].name.toLowerCase();
+      const name = char.name.toLowerCase();
+      if (text.includes(cls) || text.includes(animal) || text.includes(name)) {
+        matched.push(char);
+      }
+    }
+    return matched.length > 0 ? matched : myChars;
+  }
+
+  private resolveEnemyTarget(text: string, attackerPos: Position, enemyChars: Character[]): Character | undefined {
+    if (enemyChars.length === 0) return undefined;
+    for (const enemy of enemyChars) {
+      if (text.includes(CLASSES[enemy.classId].name.toLowerCase())
+        || text.includes(ANIMALS[enemy.animalId].name.toLowerCase())
+        || text.includes(enemy.name.toLowerCase())) {
+        return enemy;
+      }
+    }
+    if (text.includes('weakest') || text.includes('lowest') || text.includes('weak')) {
+      return enemyChars.reduce((a, b) => a.currentHp / a.stats.hp < b.currentHp / b.stats.hp ? a : b);
+    }
+    if (text.includes('strongest') || text.includes('highest') || text.includes('strong')) {
+      return enemyChars.reduce((a, b) => a.currentHp / a.stats.hp > b.currentHp / b.stats.hp ? a : b);
+    }
+    if (text.includes('carrier') || text.includes('flag holder')) {
+      const carrier = enemyChars.find(c => c.hasFlag);
+      if (carrier) return carrier;
+    }
+    if (text.includes('nearest') || text.includes('closest')) {
+      return this.findNearest(attackerPos, enemyChars);
+    }
+    return enemyChars[0];
+  }
+
+  private parseMoveTarget(text: string, char: Character, enemyChars: Character[]): Position {
+    const coordMatch = text.match(/(?:to\s+)?(\d{1,2})\s*[,\s]\s*(\d{1,2})/);
+    if (coordMatch) {
+      return {
+        x: Phaser.Math.Clamp(parseInt(coordMatch[1]), 0, MAP_WIDTH - 1),
+        y: Phaser.Math.Clamp(parseInt(coordMatch[2]), 0, MAP_HEIGHT - 1),
+      };
+    }
+    if (text.includes('center') || text.includes('middle')) {
+      return { x: Math.floor(MAP_WIDTH / 2), y: Math.floor(MAP_HEIGHT / 2) };
+    }
+    if (text.includes('up') || text.includes('north')) {
+      return { x: char.position.x, y: Math.max(0, char.position.y - 8) };
+    }
+    if (text.includes('down') || text.includes('south')) {
+      return { x: char.position.x, y: Math.min(MAP_HEIGHT - 1, char.position.y + 8) };
+    }
+    if (text.includes('left') || text.includes('west')) {
+      return { x: Math.max(0, char.position.x - 8), y: char.position.y };
+    }
+    if (text.includes('right') || text.includes('east')) {
+      return { x: Math.min(MAP_WIDTH - 1, char.position.x + 8), y: char.position.y };
+    }
+    if (text.includes('flank') && enemyChars.length > 0) {
+      const nearest = this.findNearest(char.position, enemyChars);
+      const dx = char.position.x - nearest.position.x;
+      return dx >= 0
+        ? { x: Math.min(MAP_WIDTH - 1, nearest.position.x + 5), y: nearest.position.y }
+        : { x: Math.max(0, nearest.position.x - 5), y: nearest.position.y };
+    }
+    if (text.includes('behind') && enemyChars.length > 0) {
+      const nearest = this.findNearest(char.position, enemyChars);
+      const dx = nearest.position.x - char.position.x;
+      const dy = nearest.position.y - char.position.y;
+      return {
+        x: Phaser.Math.Clamp(nearest.position.x + Math.sign(dx) * 3, 0, MAP_WIDTH - 1),
+        y: Phaser.Math.Clamp(nearest.position.y + Math.sign(dy) * 3, 0, MAP_HEIGHT - 1),
+      };
+    }
+    if (text.includes('enemy') || text.includes('opponent')) {
+      if (enemyChars.length > 0) return this.findNearest(char.position, enemyChars).position;
+    }
+    if (text.includes('home') || text.includes('our base') || text.includes('my base')) {
+      return this.ctf.flag1.homePosition;
+    }
+    if (text.includes('their base') || text.includes('enemy base')) {
+      return this.ctf.flag2.homePosition;
+    }
+    const dir = char.position.x < MAP_WIDTH / 2 ? 1 : -1;
+    return { x: char.position.x + dir * 8, y: char.position.y };
   }
 
   private parseCommandPart(rawText: string, queued: boolean) {
@@ -1305,22 +1485,10 @@ export class BattleScene extends Phaser.Scene {
       .filter(c => c.owner === this.playerId && !c.isDead);
     const enemyChars = Array.from(this.charData.values())
       .filter(c => c.owner !== this.playerId && !c.isDead);
-
     if (myChars.length === 0) return;
 
-    let targetChars = myChars;
-    for (const char of myChars) {
-      const cls = CLASSES[char.classId];
-      const animal = ANIMALS[char.animalId];
-      if (text.includes(cls.name.toLowerCase()) || text.includes(animal.name.toLowerCase())
-          || text.includes(char.name.toLowerCase())) {
-        targetChars = [char];
-        break;
-      }
-    }
-    if (text.includes('all') || text.includes('everyone')) {
-      targetChars = myChars;
-    }
+    const targetChars = this.resolveCharTargets(text, myChars);
+    const affectedChars = new Set<string>();
 
     const setOrder = (char: Character, order: CharacterOrder) => {
       if (queued) {
@@ -1332,62 +1500,86 @@ export class BattleScene extends Phaser.Scene {
         const q = this.orderQueues.get(char.id);
         if (q) q.length = 0;
       }
+      affectedChars.add(char.id);
     };
 
-    // Control point commands
-    if (text.includes('control point') || text.includes('take the point') || text.includes('capture point')) {
-      // Find nearest uncaptured point
-      const unowned = this.controlPoints
-        .filter(cp => cp.owner !== 'player1')
-        .sort((a, b) => this.tileDist(targetChars[0].position, a.position) - this.tileDist(targetChars[0].position, b.position));
-      const targetCP = unowned[0] || this.controlPoints[1]; // default center
-      for (const char of targetChars) {
-        setOrder(char, { type: 'control', targetPosition: targetCP.position });
-      }
-      for (const char of targetChars) {
-        const entity = this.characters.get(char.id);
-        if (entity && char.currentOrder) entity.setOrderText(this.getOrderLabel(char.currentOrder));
-      }
+    // ── Spread out / split up ──────────────────────────────────────
+    if (text.includes('spread') || text.includes('split up') || text.includes('scatter')) {
+      const cx = targetChars.reduce((s, c) => s + c.position.x, 0) / targetChars.length;
+      const cy = targetChars.reduce((s, c) => s + c.position.y, 0) / targetChars.length;
+      const angleStep = (Math.PI * 2) / targetChars.length;
+      targetChars.forEach((char, i) => {
+        const angle = angleStep * i;
+        setOrder(char, { type: 'move', targetPosition: {
+          x: Phaser.Math.Clamp(Math.round(cx + Math.cos(angle) * 6), 0, MAP_WIDTH - 1),
+          y: Phaser.Math.Clamp(Math.round(cy + Math.sin(angle) * 6), 0, MAP_HEIGHT - 1),
+        }});
+      });
+      this.updateOrderLabels(affectedChars);
       return;
     }
 
-    // CTF commands
+    // ── Control point ──────────────────────────────────────────────
+    if (text.includes('control point') || text.includes('take the point') || text.includes('capture point')) {
+      const unowned = this.controlPoints
+        .filter(cp => cp.owner !== 'player1')
+        .sort((a, b) => this.tileDist(targetChars[0].position, a.position) - this.tileDist(targetChars[0].position, b.position));
+      const targetCP = unowned[0] || this.controlPoints[1];
+      for (const char of targetChars) setOrder(char, { type: 'control', targetPosition: targetCP.position });
+      this.updateOrderLabels(affectedChars);
+      return;
+    }
+
+    // ── Bring it home / score / return flag ─────────────────────────
+    if (text.includes('bring it home') || text.includes('bring flag') || text.includes('score')
+      || text.includes('come home') || (text.includes('return') && text.includes('flag'))) {
+      for (const char of targetChars) setOrder(char, { type: 'move', targetPosition: this.ctf.flag1.homePosition });
+      this.updateOrderLabels(affectedChars);
+      return;
+    }
+
+    // ── CTF: grab flag / capture ───────────────────────────────────
     if (text.includes('flag') || text.includes('capture') || text.includes('grab')) {
-      for (const char of targetChars) {
-        setOrder(char, { type: 'capture', targetPosition: this.ctf.flag2.position });
+      for (const char of targetChars) setOrder(char, { type: 'capture', targetPosition: this.ctf.flag2.position });
+    }
+    // ── Escort / protect / follow ally ─────────────────────────────
+    else if (text.includes('escort') || text.includes('guard carrier')
+      || text.includes('protect') || text.includes('follow')) {
+      let escortTarget: Character | undefined;
+      for (const char of myChars) {
+        const cls = CLASSES[char.classId].name.toLowerCase();
+        const animal = ANIMALS[char.animalId].name.toLowerCase();
+        const name = char.name.toLowerCase();
+        if ((text.includes(cls) || text.includes(animal) || text.includes(name))
+          && !targetChars.includes(char)) {
+          escortTarget = char;
+          break;
+        }
       }
-    } else if (text.includes('escort') || text.includes('guard carrier')) {
-      const carrier = myChars.find(c => c.hasFlag);
-      if (carrier) {
+      if (!escortTarget) escortTarget = myChars.find(c => c.hasFlag);
+      if (escortTarget) {
         for (const char of targetChars) {
-          if (char.id !== carrier.id) {
-            setOrder(char, { type: 'escort', targetCharacterId: carrier.id });
-          }
+          if (char.id !== escortTarget.id) setOrder(char, { type: 'escort', targetCharacterId: escortTarget.id });
         }
       }
-    } else if (text.includes('return') && text.includes('flag')) {
+    }
+    // ── Focus fire ─────────────────────────────────────────────────
+    else if (text.includes('focus')) {
+      const target = this.resolveEnemyTarget(text, targetChars[0].position, enemyChars);
+      if (target) {
+        for (const char of targetChars) setOrder(char, { type: 'attack', targetCharacterId: target.id });
+      }
+    }
+    // ── Attack / fight ─────────────────────────────────────────────
+    else if (text.includes('attack') || text.includes('hit') || text.includes('strike')
+      || text.includes('kill') || text.includes('fight') || text.includes('engage')) {
       for (const char of targetChars) {
-        setOrder(char, { type: 'move', targetPosition: this.ctf.flag1.homePosition });
+        const target = this.resolveEnemyTarget(text, char.position, enemyChars);
+        if (target) setOrder(char, { type: 'attack', targetCharacterId: target.id });
       }
-    } else if (text.includes('attack') || text.includes('hit') || text.includes('strike')
-      || text.includes('kill') || text.includes('fight')) {
-      let target = enemyChars[0];
-      for (const enemy of enemyChars) {
-        if (text.includes(CLASSES[enemy.classId].name.toLowerCase())
-          || text.includes(ANIMALS[enemy.animalId].name.toLowerCase())
-          || text.includes(enemy.name.toLowerCase())) {
-          target = enemy; break;
-        }
-      }
-      if (text.includes('nearest') || text.includes('closest')) {
-        target = this.findNearest(targetChars[0].position, enemyChars);
-      }
-      for (const char of targetChars) {
-        if (target) {
-          setOrder(char, { type: 'attack', targetCharacterId: target.id });
-        }
-      }
-    } else if (text.includes('ability') || text.includes('skill') || text.includes('spell')
+    }
+    // ── Ability / spell / cast ─────────────────────────────────────
+    else if (text.includes('ability') || text.includes('skill') || text.includes('spell')
       || text.includes('cast') || text.includes('use')) {
       for (const char of targetChars) {
         const cls = CLASSES[char.classId];
@@ -1400,63 +1592,63 @@ export class BattleScene extends Phaser.Scene {
         if (abilityToUse) {
           const target = (abilityToUse.healing && !abilityToUse.damage)
             ? myChars.reduce((a, b) => a.currentHp / a.stats.hp < b.currentHp / b.stats.hp ? a : b)
-            : enemyChars.length > 0 ? this.findNearest(char.position, enemyChars) : undefined;
-          if (target) {
-            setOrder(char, { type: 'ability', targetCharacterId: target.id, abilityId: abilityToUse.id });
-          }
+            : this.resolveEnemyTarget(text, char.position, enemyChars);
+          if (target) setOrder(char, { type: 'ability', targetCharacterId: target.id, abilityId: abilityToUse.id });
         }
-      }
-    } else if (text.includes('heal') || text.includes('restore') || text.includes('cure')) {
-      const weakest = myChars.reduce((a, b) => a.currentHp / a.stats.hp < b.currentHp / b.stats.hp ? a : b);
-      for (const char of targetChars) {
-        const healAbility = CLASSES[char.classId].abilities.find(a => a.healing && !a.damage);
-        if (healAbility) {
-          setOrder(char, { type: 'ability', targetCharacterId: weakest.id, abilityId: healAbility.id });
-        }
-      }
-    } else if (text.includes('move') || text.includes('go') || text.includes('walk')
-      || text.includes('run') || text.includes('advance') || text.includes('forward')) {
-      for (const char of targetChars) {
-        let targetPos: Position;
-        if (text.includes('center') || text.includes('middle')) {
-          targetPos = { x: Math.floor(MAP_WIDTH / 2), y: Math.floor(MAP_HEIGHT / 2) };
-        } else if (text.includes('up') || text.includes('north')) {
-          targetPos = { x: char.position.x, y: Math.max(0, char.position.y - 8) };
-        } else if (text.includes('down') || text.includes('south')) {
-          targetPos = { x: char.position.x, y: Math.min(MAP_HEIGHT - 1, char.position.y + 8) };
-        } else if (text.includes('left') || text.includes('west')) {
-          targetPos = { x: Math.max(0, char.position.x - 8), y: char.position.y };
-        } else if (text.includes('right') || text.includes('east')) {
-          targetPos = { x: Math.min(MAP_WIDTH - 1, char.position.x + 8), y: char.position.y };
-        } else if (text.includes('enemy') || text.includes('opponent')) {
-          const nearest = this.findNearest(char.position, enemyChars);
-          targetPos = nearest.position;
-        } else {
-          const dir = char.position.x < MAP_WIDTH / 2 ? 1 : -1;
-          targetPos = { x: char.position.x + dir * 8, y: char.position.y };
-        }
-        setOrder(char, { type: 'move', targetPosition: targetPos });
-      }
-    } else if (text.includes('defend') || text.includes('guard') || text.includes('hold')) {
-      for (const char of targetChars) {
-        setOrder(char, { type: 'defend' });
-      }
-    } else if (text.includes('retreat') || text.includes('back') || text.includes('base')) {
-      for (const char of targetChars) {
-        setOrder(char, { type: 'retreat' });
-      }
-    } else {
-      // Default: move toward enemy flag
-      for (const char of targetChars) {
-        setOrder(char, { type: 'move', targetPosition: this.ctf.flag2.position });
       }
     }
+    // ── Heal (with optional target ally) ───────────────────────────
+    else if (text.includes('heal') || text.includes('restore') || text.includes('cure')) {
+      let healTarget: Character | undefined;
+      for (const char of myChars) {
+        const cls = CLASSES[char.classId].name.toLowerCase();
+        const animal = ANIMALS[char.animalId].name.toLowerCase();
+        const name = char.name.toLowerCase();
+        if (!targetChars.includes(char)
+          && (text.includes(cls) || text.includes(animal) || text.includes(name))) {
+          healTarget = char;
+          break;
+        }
+      }
+      if (!healTarget) healTarget = myChars.reduce((a, b) => a.currentHp / a.stats.hp < b.currentHp / b.stats.hp ? a : b);
+      for (const char of targetChars) {
+        const healAbility = CLASSES[char.classId].abilities.find(a => a.healing && !a.damage);
+        if (healAbility) setOrder(char, { type: 'ability', targetCharacterId: healTarget.id, abilityId: healAbility.id });
+      }
+    }
+    // ── Move / go / walk (+ flank, behind, coordinates) ────────────
+    else if (text.includes('move') || text.includes('go') || text.includes('walk')
+      || text.includes('run') || text.includes('advance') || text.includes('forward')
+      || text.includes('flank') || text.includes('behind') || /\d{1,2}\s*[,\s]\s*\d{1,2}/.test(text)) {
+      for (const char of targetChars) setOrder(char, { type: 'move', targetPosition: this.parseMoveTarget(text, char, enemyChars) });
+    }
+    // ── Patrol ──────────────────────────────────────────────────────
+    else if (text.includes('patrol')) {
+      for (const char of targetChars) setOrder(char, { type: 'patrol', targetPosition: this.parseMoveTarget(text, char, enemyChars) });
+    }
+    // ── Defend / guard / hold ──────────────────────────────────────
+    else if (text.includes('defend') || text.includes('guard') || text.includes('hold')) {
+      for (const char of targetChars) setOrder(char, { type: 'defend' });
+    }
+    // ── Retreat / fall back ────────────────────────────────────────
+    else if (text.includes('retreat') || text.includes('back') || text.includes('base')
+      || text.includes('fall back') || text.includes('disengage')) {
+      for (const char of targetChars) setOrder(char, { type: 'retreat' });
+    }
+    // ── Default: move toward enemy flag ────────────────────────────
+    else {
+      for (const char of targetChars) setOrder(char, { type: 'move', targetPosition: this.ctf.flag2.position });
+    }
 
-    // Update labels
-    for (const char of targetChars) {
-      const entity = this.characters.get(char.id);
-      if (entity && char.currentOrder) {
-        const queueLen = this.orderQueues.get(char.id)?.length || 0;
+    this.updateOrderLabels(affectedChars);
+  }
+
+  private updateOrderLabels(charIds: Set<string>) {
+    for (const id of charIds) {
+      const char = this.charData.get(id);
+      const entity = this.characters.get(id);
+      if (entity && char?.currentOrder) {
+        const queueLen = this.orderQueues.get(id)?.length || 0;
         const label = this.getOrderLabel(char.currentOrder) + (queueLen > 0 ? ` (+${queueLen})` : '');
         entity.setOrderText(label);
       }
@@ -1558,7 +1750,7 @@ export class BattleScene extends Phaser.Scene {
             cp.owner = 'player2';
             cp.captureProgress = 100;
             this.sound_.playControlCapture();
-            this.showAnnouncement(`ENEMY CAPTURED POINT: ${cp.buff.label}`, '#ff4444');
+            this.showAnnouncement(`ENEMY CAPTURED POINT: ${cp.buff.label}`, '#FF6B6B');
           }
         }
       } else {
@@ -1839,31 +2031,33 @@ export class BattleScene extends Phaser.Scene {
     const { width } = this.cameras.main;
 
     this.timerText = this.add.text(width / 2, 8, '5:00', {
-      fontSize: '20px',
+      fontSize: '22px',
       color: '#fff',
-      fontFamily: '"Orbitron", monospace',
+      fontFamily: '"Fredoka", sans-serif',
       fontStyle: 'bold',
     }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100);
 
     this.scoreText = this.add.text(width / 2, 32, '0 - 0', {
-      fontSize: '14px',
-      color: '#aaa',
-      fontFamily: '"Rajdhani", monospace',
+      fontSize: '15px',
+      color: '#cbb8ee',
+      fontFamily: '"Nunito", sans-serif',
+      fontStyle: 'bold',
     }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100);
 
     this.objectiveText = this.add.text(width / 2, 50, 'CAPTURE THE FLAG', {
-      fontSize: '10px',
-      color: '#6c63ff',
-      fontFamily: 'monospace',
+      fontSize: '11px',
+      color: '#FF6B9D',
+      fontFamily: '"Fredoka", sans-serif',
       letterSpacing: 2,
     }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100);
 
     const { height } = this.cameras.main;
     this.cooldownBar = this.add.graphics().setScrollFactor(0).setDepth(100);
     this.cooldownText = this.add.text(width / 2, height - 80, 'READY', {
-      fontSize: '11px',
-      color: '#44ff88',
-      fontFamily: 'monospace',
+      fontSize: '12px',
+      color: '#45E6B0',
+      fontFamily: '"Nunito", sans-serif',
+      fontStyle: 'bold',
     }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100);
   }
 
@@ -1871,8 +2065,8 @@ export class BattleScene extends Phaser.Scene {
     const mins = Math.floor(this.gameTimeRemaining / 60);
     const secs = this.gameTimeRemaining % 60;
     this.timerText.setText(`${mins}:${secs.toString().padStart(2, '0')}`);
-    if (this.gameTimeRemaining <= 30) this.timerText.setColor('#ff4444');
-    else if (this.gameTimeRemaining <= 60) this.timerText.setColor('#ffaa44');
+    if (this.gameTimeRemaining <= 30) this.timerText.setColor('#FF6B6B');
+    else if (this.gameTimeRemaining <= 60) this.timerText.setColor('#FFD93D');
   }
 
   private updateScoreDisplay() {
@@ -1890,13 +2084,13 @@ export class BattleScene extends Phaser.Scene {
 
     if (this.commandCooldownRemaining > 0) {
       const progress = this.commandCooldownRemaining / COMMAND_COOLDOWN;
-      this.cooldownBar.fillStyle(0xffaa44, 0.3);
+      this.cooldownBar.fillStyle(0xFFD93D, 0.3);
       this.cooldownBar.fillRect(width / 2 - 150, height - 78, 300 * progress, 4);
       this.cooldownText.setText(`COOLDOWN ${Math.ceil(this.commandCooldownRemaining / 1000)}s`);
-      this.cooldownText.setColor('#ffaa44');
+      this.cooldownText.setColor('#FFD93D');
     } else {
       this.cooldownText.setText('READY');
-      this.cooldownText.setColor('#44ff88');
+      this.cooldownText.setColor('#45E6B0');
     }
   }
 
@@ -1905,7 +2099,7 @@ export class BattleScene extends Phaser.Scene {
     const announce = this.add.text(width / 2, height / 2 - 40, text, {
       fontSize: '28px',
       color,
-      fontFamily: '"Orbitron", monospace',
+      fontFamily: '"Fredoka", sans-serif',
       fontStyle: 'bold',
     }).setOrigin(0.5).setScrollFactor(0).setDepth(200).setAlpha(0);
 
@@ -1953,7 +2147,7 @@ export class BattleScene extends Phaser.Scene {
     this.commandInput.destroy();
 
     const winText = reason === 'flag_captured' ? 'FLAG CAPTURED!' : 'TIME UP!';
-    this.showAnnouncement(winText, winner === this.playerId ? '#44ff88' : '#ff4444');
+    this.showAnnouncement(winText, winner === this.playerId ? '#45E6B0' : '#FF6B6B');
 
     this.time.delayedCall(2000, () => {
       this.cameras.main.fadeOut(500, 5, 5, 16);
@@ -1966,7 +2160,7 @@ export class BattleScene extends Phaser.Scene {
   private addCommandLog(sender: string, text: string, status: string) {
     const entry = document.createElement('div');
     entry.className = 'log-entry';
-    const color = sender === 'System' ? '#ffcc00' : '#aaa';
+    const color = sender === 'System' ? '#FFD93D' : '#aaa';
     entry.innerHTML = `
       <span class="player" style="color:${color}">${sender}:</span>
       <span class="text">${text}</span>
@@ -1989,65 +2183,83 @@ export class BattleScene extends Phaser.Scene {
 
   private updateStatusBar() {
     const myChars = Array.from(this.charData.values()).filter(c => c.owner === this.playerId);
-    const oppChars = Array.from(this.charData.values()).filter(c => c.owner !== this.playerId);
+    const oppChars = Array.from(this.charData.values()).filter(c => c.owner !== this.playerId)
+      .filter(c => {
+        const entity = this.characters.get(c.id);
+        return c.isDead || (entity && entity.fogVisible);
+      });
 
-    let html = '<div style="display:flex;justify-content:space-between;width:100%">';
-    html += '<div>';
-    myChars.forEach(c => {
-      const pct = Math.max(0, (c.currentHp / c.stats.hp) * 100);
-      const flagIcon = c.hasFlag ? ' [FLAG]' : '';
-      const dead = c.isDead ? ` (${c.respawnTimer ?? 0}s)` : '';
+    const effectMeta: Record<string, { color: string; label: string }> = {
+      stun: { color: '#FF6B6B', label: 'STUN' },
+      slow: { color: '#6CC4FF', label: 'SLOW' },
+      speed_boost: { color: '#FFD93D', label: 'SPD+' },
+      damage_boost: { color: '#FF9F43', label: 'DMG+' },
+      defense_debuff: { color: '#C98FFF', label: 'DEF-' },
+    };
+
+    const renderCard = (c: Character, isAlly: boolean) => {
       const cls = CLASSES[c.classId];
+      const side = isAlly ? 'ally' : 'enemy';
+      const pct = Math.max(0, (c.currentHp / c.stats.hp) * 100);
       const ability = cls.abilities[0];
-      const abilityCd = ability ? (c.cooldowns[ability.id] || 0) : 0;
-      const abilityText = ability
-        ? `<span style="color:${abilityCd > 0 ? '#666' : '#8888ff'};font-size:9px">${ability.name} ${abilityCd > 0 ? `(${abilityCd}s)` : '(READY)'}</span>`
-        : '';
+      const cd = ability ? (c.cooldowns[ability.id] || 0) : 0;
 
-      // Active effects
-      const effectIcons = c.effects.map(e => {
-        switch (e.type) {
-          case 'stun': return '<span style="color:#ff4444;font-size:9px">STUN</span>';
-          case 'slow': return '<span style="color:#4488ff;font-size:9px">SLOW</span>';
-          case 'speed_boost': return '<span style="color:#ffcc00;font-size:9px">SPD+</span>';
-          case 'damage_boost': return '<span style="color:#ff6600;font-size:9px">DMG+</span>';
-          case 'defense_debuff': return '<span style="color:#aa44ff;font-size:9px">DEF-</span>';
-          default: return '';
+      let card = `<div class="char-card ${side}${c.isDead ? ' dead' : ''}">`;
+      card += `<div class="char-info">`;
+
+      // Row 1: name + class
+      card += `<div class="char-name" style="color:${isAlly ? '#6CC4FF' : '#FF8EC8'}">${c.name}`;
+      if (c.hasFlag) card += ` <span class="char-flag">FLAG</span>`;
+      card += `</div>`;
+      card += `<div class="char-class">${cls.name}</div>`;
+
+      if (c.isDead) {
+        card += `<div style="color:#FF6B6B;font-size:11px;font-weight:700">DEAD (${c.respawnTimer ?? 0}s)</div>`;
+      } else {
+        // Row 2: HP bar
+        card += `<div class="char-hp-row">`;
+        card += `<div class="hp-bar"><div class="hp-fill ${side}" style="width:${pct}%"></div></div>`;
+        card += `<span class="hp-text">${c.currentHp}/${c.stats.hp}</span>`;
+        card += `</div>`;
+
+        // Row 3: ability + cooldown (allies only show full detail)
+        if (ability) {
+          card += `<div class="char-ability-row">`;
+          card += `<span class="ability-name">${ability.name}</span>`;
+          card += `<span class="ability-cd ${cd > 0 ? 'on-cd' : 'ready'}">${cd > 0 ? cd + 's' : 'READY'}</span>`;
+          card += `</div>`;
         }
-      }).filter(Boolean).join(' ');
 
-      const queueLen = this.orderQueues.get(c.id)?.length || 0;
-      const queueText = queueLen > 0 ? ` <span style="color:#ffaa44;font-size:9px">[+${queueLen} queued]</span>` : '';
+        // Row 4: effects
+        if (c.effects.length > 0) {
+          card += `<div class="char-effects">`;
+          c.effects.forEach(e => {
+            const meta = effectMeta[e.type] || { color: '#888', label: e.type };
+            card += `<span class="effect-badge" style="color:${meta.color}">${meta.label} ${e.duration}s</span>`;
+          });
+          card += `</div>`;
+        }
 
-      html += `<span class="char-status" style="opacity:${c.isDead ? 0.4 : 1}">
-        <strong style="color:#8888ff">${c.name}</strong>
-        <span style="color:#666;font-size:11px">(${cls.name})</span>
-        ${c.isDead ? `<span style="color:#ff4444">${dead}</span>` :
-          `<div class="hp-bar"><div class="hp-fill" style="width:${pct}%"></div></div>
-          <span>${c.currentHp}/${c.stats.hp}</span>`}
-        ${abilityText}${queueText}
-        ${effectIcons ? `<span>${effectIcons}</span>` : ''}
-        <span style="color:#ffaa44">${flagIcon}</span>
-      </span>`;
-    });
-    html += '</div><div>';
-    oppChars.forEach(c => {
-      const entity = this.characters.get(c.id);
-      if (entity && !entity.fogVisible && !c.isDead) return;
-      const pct = Math.max(0, (c.currentHp / c.stats.hp) * 100);
-      const flagIcon = c.hasFlag ? ' [FLAG]' : '';
-      const cls = CLASSES[c.classId];
+        // Row 5: current order (allies only)
+        if (isAlly) {
+          const order = c.currentOrder;
+          const queueLen = this.orderQueues.get(c.id)?.length || 0;
+          const queueSuffix = queueLen > 0 ? ` +${queueLen}` : '';
+          const orderText = order ? this.getOrderLabel(order) : 'idle';
+          card += `<div class="char-order">${orderText}${queueSuffix}</div>`;
+        }
+      }
 
-      html += `<span class="char-status" style="opacity:${c.isDead ? 0.4 : 1}">
-        <strong style="color:#ff8888">${c.name}</strong>
-        <span style="color:#666;font-size:11px">(${cls.name})</span>
-        ${c.isDead ? '<span style="color:#ff4444"> DEAD</span>' :
-          `<div class="hp-bar"><div class="hp-fill" style="width:${pct}%;background:#ff4444"></div></div>
-          <span>${c.currentHp}/${c.stats.hp}</span>`}
-        <span style="color:#ffaa44">${flagIcon}</span>
-      </span>`;
-    });
-    html += '</div></div>';
+      card += `</div></div>`;
+      return card;
+    };
+
+    let html = '<div style="display:flex;justify-content:space-between;width:100%;gap:16px">';
+    html += `<div class="team-section">${myChars.map(c => renderCard(c, true)).join('')}</div>`;
+    if (oppChars.length > 0) {
+      html += `<div class="team-section">${oppChars.map(c => renderCard(c, false)).join('')}</div>`;
+    }
+    html += '</div>';
     this.statusBarEl.innerHTML = html;
   }
 
@@ -2079,7 +2291,7 @@ export class BattleScene extends Phaser.Scene {
 
       html += `<div class="ap-order">`;
       if (c.isDead) {
-        html += `<div class="ap-order-current" style="color:#ff4444">DEAD (${c.respawnTimer ?? 0}s)</div>`;
+        html += `<div class="ap-order-current" style="color:#FF6B6B">DEAD (${c.respawnTimer ?? 0}s)</div>`;
       } else if (order) {
         html += `<div class="ap-order-current">${this.getOrderLabel(order)}</div>`;
       } else {
@@ -2093,9 +2305,9 @@ export class BattleScene extends Phaser.Scene {
       if (c.effects.length > 0) {
         html += `<div class="ap-effects">`;
         const effectMeta: Record<string, { color: string; name: string }> = {
-          stun: { color: '#ff4444', name: 'STUN' },
+          stun: { color: '#FF6B6B', name: 'STUN' },
           slow: { color: '#4488ff', name: 'SLOW' },
-          speed_boost: { color: '#ffcc00', name: 'SPD+' },
+          speed_boost: { color: '#FFD93D', name: 'SPD+' },
           damage_boost: { color: '#ff6600', name: 'DMG+' },
           defense_debuff: { color: '#aa44ff', name: 'DEF-' },
         };
@@ -2127,7 +2339,7 @@ export class BattleScene extends Phaser.Scene {
           const pct = Math.round((c.currentHp / c.stats.hp) * 100);
           html += `<div style="font-size:10px;color:${pct > 50 ? '#66dd88' : '#ff8844'}">${c.currentHp}/${c.stats.hp} HP</div>`;
         } else {
-          html += `<div style="font-size:10px;color:#ff4444">DEAD</div>`;
+          html += `<div style="font-size:10px;color:#FF6B6B">DEAD</div>`;
         }
         html += `</div>`;
       });

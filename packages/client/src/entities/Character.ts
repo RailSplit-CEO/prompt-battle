@@ -5,19 +5,19 @@ import { TILE_SIZE } from '../map/MapGenerator';
 
 // Color per order type
 const ORDER_COLORS: Record<string, string> = {
-  MOVE: '#44ff88',
-  ATK: '#ff4444',
-  ATTACK: '#ff4444',
-  CAPTURE: '#ffaa00',
-  DEFEND: '#4488ff',
-  RETREAT: '#ff88ff',
-  ESCORT: '#44ffff',
-  PATROL: '#88ff44',
-  CONTROL: '#ffff44',
-  STUNNED: '#ff4444',
-  DEAD: '#ff4444',
-  idle: '#888888',
-  blocked: '#ff8800',
+  MOVE: '#45E6B0',
+  ATK: '#FF6B6B',
+  ATTACK: '#FF6B6B',
+  CAPTURE: '#FFD93D',
+  DEFEND: '#6CC4FF',
+  RETREAT: '#FF8EC8',
+  ESCORT: '#45E6E6',
+  PATROL: '#95E6B0',
+  CONTROL: '#FFD93D',
+  STUNNED: '#FF6B6B',
+  DEAD: '#FF6B6B',
+  idle: '#8B6DB0',
+  blocked: '#FF9F43',
 };
 
 function getOrderColor(text: string): string {
@@ -26,8 +26,8 @@ function getOrderColor(text: string): string {
     if (upper.startsWith(key)) return color;
   }
   // Ability names (casting) - purple
-  if (upper.length > 0 && upper !== 'IDLE') return '#bb88ff';
-  return '#888888';
+  if (upper.length > 0 && upper !== 'IDLE') return '#C98FFF';
+  return '#8B6DB0';
 }
 
 export class CharacterEntity {
@@ -66,9 +66,9 @@ export class CharacterEntity {
     this.healthBar.setDepth(11);
 
     this.nameLabel = scene.add.text(px, py + 18, charData.name, {
-      fontSize: '9px',
-      color: isPlayer1 ? '#88aaff' : '#ff8888',
-      fontFamily: '"Rajdhani", monospace',
+      fontSize: '10px',
+      color: isPlayer1 ? '#6CC4FF' : '#FF8EC8',
+      fontFamily: '"Nunito", sans-serif',
       fontStyle: 'bold',
     });
     this.nameLabel.setOrigin(0.5, 0);
@@ -79,9 +79,9 @@ export class CharacterEntity {
     this.orderBg.setDepth(11);
 
     this.orderLabel = scene.add.text(px, py - 28, '', {
-      fontSize: '9px',
-      color: '#ffaa00',
-      fontFamily: '"Rajdhani", monospace',
+      fontSize: '10px',
+      color: '#FFD93D',
+      fontFamily: '"Nunito", sans-serif',
       fontStyle: 'bold',
     });
     this.orderLabel.setOrigin(0.5, 1);
@@ -139,7 +139,7 @@ export class CharacterEntity {
     const y = this.sprite.y - 16;
     this.flagIcon.lineStyle(2, 0xffffff);
     this.flagIcon.lineBetween(x, y, x, y - 12);
-    const flagColor = this.isPlayer1 ? 0xff4444 : 0x4444ff;
+    const flagColor = this.isPlayer1 ? 0xFF6B6B : 0x6CC4FF;
     this.flagIcon.fillStyle(flagColor);
     this.flagIcon.fillTriangle(x, y - 12, x + 8, y - 9, x, y - 6);
   }
@@ -148,8 +148,8 @@ export class CharacterEntity {
     if (!this.respawnOverlay) {
       this.respawnOverlay = this.scene.add.text(this.sprite.x, this.sprite.y, '', {
         fontSize: '14px',
-        color: '#ff4444',
-        fontFamily: '"Orbitron", monospace',
+        color: '#FF6B6B',
+        fontFamily: '"Fredoka", sans-serif',
         fontStyle: 'bold',
       }).setOrigin(0.5).setDepth(15);
     }
@@ -159,7 +159,7 @@ export class CharacterEntity {
     this.nameLabel.setAlpha(0.3);
     this.healthBar.setVisible(false);
     this.orderLabel.setText('DEAD');
-    this.orderLabel.setColor('#ff4444');
+    this.orderLabel.setColor('#FF6B6B');
     this.drawOrderBg();
   }
 
@@ -172,7 +172,7 @@ export class CharacterEntity {
     this.nameLabel.setAlpha(1);
     this.healthBar.setVisible(true);
     this.orderLabel.setText('');
-    this.orderLabel.setColor('#ffaa00');
+    this.orderLabel.setColor('#FFD93D');
     this.orderBg.clear();
   }
 
@@ -231,17 +231,20 @@ export class CharacterEntity {
 
   showDamage(amount: number) {
     const text = this.scene.add.text(this.sprite.x, this.sprite.y - 30, `-${amount}`, {
-      fontSize: '16px',
-      color: '#ff4444',
-      fontFamily: '"Rajdhani", monospace',
+      fontSize: '18px',
+      color: '#FF6B6B',
+      fontFamily: '"Fredoka", sans-serif',
       fontStyle: 'bold',
     }).setOrigin(0.5).setDepth(20);
 
     this.scene.tweens.add({
       targets: text,
-      y: text.y - 30,
+      y: text.y - 35,
       alpha: 0,
-      duration: 800,
+      scaleX: { from: 1.3, to: 0.8 },
+      scaleY: { from: 1.3, to: 0.8 },
+      duration: 900,
+      ease: 'Cubic.easeOut',
       onComplete: () => text.destroy(),
     });
 
@@ -251,9 +254,9 @@ export class CharacterEntity {
 
   showHealing(amount: number) {
     const text = this.scene.add.text(this.sprite.x, this.sprite.y - 30, `+${amount}`, {
-      fontSize: '16px',
-      color: '#4caf50',
-      fontFamily: '"Rajdhani", monospace',
+      fontSize: '18px',
+      color: '#45E6B0',
+      fontFamily: '"Fredoka", sans-serif',
       fontStyle: 'bold',
     }).setOrigin(0.5).setDepth(20);
 
@@ -280,11 +283,11 @@ export class CharacterEntity {
 
   updateEffectAuras(effects: ActiveEffect[]) {
     const EFFECT_COLORS: Record<string, number> = {
-      stun: 0xff4444,
-      slow: 0x4488ff,
-      speed_boost: 0xffff00,
-      damage_boost: 0xff8800,
-      defense_debuff: 0xaa44ff,
+      stun: 0xFF6B6B,
+      slow: 0x6CC4FF,
+      speed_boost: 0xFFD93D,
+      damage_boost: 0xFF9F43,
+      defense_debuff: 0xC98FFF,
     };
 
     const activeTypes = new Set(effects.map(e => e.type));

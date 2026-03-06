@@ -6,13 +6,13 @@
   <title>Prompt Battle</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      background: #0a0a1a;
-      color: #e0e0e0;
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #1B1040;
+      color: #f0e8ff;
+      font-family: 'Nunito', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
       overflow: hidden;
       width: 100vw;
       height: 100vh;
@@ -36,73 +36,83 @@
       bottom: 0;
       left: 0;
       width: 100%;
-      padding: 12px 16px;
-      background: rgba(10, 10, 26, 0.92);
-      border-top: 1px solid #333;
+      padding: 14px 18px;
+      background: rgba(27, 16, 64, 0.94);
+      border-top: 3px solid #FF6B9D;
       display: none;
       pointer-events: all;
       z-index: 20;
     }
     #command-bar .input-row {
       display: flex;
-      gap: 8px;
+      gap: 10px;
       align-items: center;
     }
     #command-input {
       flex: 1;
-      padding: 10px 14px;
+      padding: 12px 16px;
       font-size: 16px;
-      background: #1a1a2e;
-      border: 1px solid #444;
-      border-radius: 6px;
+      font-family: 'Nunito', sans-serif;
+      font-weight: 600;
+      background: #2A1858;
+      border: 3px solid #4A2580;
+      border-radius: 14px;
       color: #fff;
       outline: none;
+      transition: border-color 0.2s;
     }
-    #command-input:focus { border-color: #6c63ff; }
+    #command-input::placeholder { color: #8B6DB0; }
+    #command-input:focus { border-color: #FF6B9D; box-shadow: 0 0 12px rgba(255, 107, 157, 0.3); }
     #voice-btn {
-      width: 44px;
-      height: 44px;
+      width: 48px;
+      height: 48px;
       border-radius: 50%;
-      border: 2px solid #555;
-      background: #1a1a2e;
-      color: #ccc;
+      border: 3px solid #4A2580;
+      background: #2A1858;
+      color: #cbb8ee;
       font-size: 20px;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
+      transition: all 0.2s;
     }
+    #voice-btn:hover { border-color: #FF6B9D; background: #3A2068; }
     #voice-btn.listening {
-      border-color: #ff4444;
-      background: #2a1a1a;
-      color: #ff4444;
-      animation: pulse 1s infinite;
+      border-color: #FF6B6B;
+      background: #4A1838;
+      color: #FF6B6B;
+      animation: pulse 0.8s infinite;
     }
     @keyframes pulse {
       0%, 100% { transform: scale(1); }
-      50% { transform: scale(1.1); }
+      50% { transform: scale(1.15); }
     }
     #send-btn {
-      padding: 10px 20px;
-      background: #6c63ff;
+      padding: 12px 24px;
+      background: linear-gradient(135deg, #FF6B9D, #FF8EC8);
       color: #fff;
-      border: none;
-      border-radius: 6px;
-      font-size: 15px;
+      border: 3px solid #D4517A;
+      border-radius: 14px;
+      font-size: 16px;
+      font-family: 'Fredoka', sans-serif;
+      font-weight: 700;
       cursor: pointer;
-      font-weight: 600;
+      transition: all 0.15s;
     }
-    #send-btn:hover { background: #5a52d5; }
+    #send-btn:hover { transform: scale(1.05); background: linear-gradient(135deg, #FF8EC8, #FF6B9D); }
+    #send-btn:active { transform: scale(0.95); }
     #command-log {
       position: absolute;
-      bottom: 70px;
+      bottom: 75px;
       left: 16px;
-      width: 350px;
+      width: 360px;
       max-height: 200px;
       overflow-y: auto;
-      background: rgba(10, 10, 26, 0.85);
-      border-radius: 6px;
-      padding: 8px 12px;
+      background: rgba(27, 16, 64, 0.9);
+      border: 2px solid #3D2070;
+      border-radius: 14px;
+      padding: 10px 14px;
       font-size: 13px;
       pointer-events: all;
       display: none;
@@ -111,123 +121,159 @@
     #command-log .log-entry {
       margin-bottom: 6px;
       padding: 4px 0;
-      border-bottom: 1px solid #222;
+      border-bottom: 1px solid #2A1858;
     }
-    #command-log .log-entry .player { color: #6c63ff; font-weight: 600; }
-    #command-log .log-entry .text { color: #aaa; }
-    #command-log .log-entry .result { color: #4caf50; font-size: 12px; }
+    #command-log .log-entry .player { color: #6CC4FF; font-weight: 700; }
+    #command-log .log-entry .text { color: #cbb8ee; }
+    #command-log .log-entry .result { color: #45E6B0; font-size: 12px; }
     #status-bar {
       position: absolute;
       top: 0;
       left: 0;
       width: 100%;
-      padding: 8px 16px;
-      background: rgba(10, 10, 26, 0.85);
+      padding: 8px 12px;
+      background: rgba(27, 16, 64, 0.92);
+      border-bottom: 2px solid #3D2070;
       display: none;
       pointer-events: all;
       z-index: 20;
-      font-size: 14px;
+      font-size: 13px;
     }
-    #status-bar .char-status {
-      display: inline-flex;
+    #status-bar .team-section {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    #status-bar .char-card {
+      display: flex;
       align-items: center;
-      gap: 6px;
-      margin-right: 16px;
-      padding: 4px 8px;
-      border-radius: 4px;
-      background: rgba(255,255,255,0.05);
+      gap: 10px;
+      padding: 6px 12px;
+      border-radius: 10px;
+      background: rgba(255,255,255,0.06);
+      border: 2px solid #3D2070;
+      min-width: 200px;
+      transition: opacity 0.3s;
     }
-    #status-bar .char-status .hp-bar {
-      width: 60px;
-      height: 8px;
-      background: #333;
-      border-radius: 4px;
+    #status-bar .char-card.dead { opacity: 0.4; }
+    #status-bar .char-card.ally { border-left: 3px solid #6CC4FF; }
+    #status-bar .char-card.enemy { border-left: 3px solid #FF6B6B; }
+    #status-bar .char-info { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+    #status-bar .char-name { font-weight: 700; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #status-bar .char-class { font-size: 10px; color: #8B6DB0; }
+    #status-bar .char-hp-row { display: flex; align-items: center; gap: 6px; }
+    #status-bar .hp-bar {
+      flex: 1;
+      height: 6px;
+      background: #2A1858;
+      border-radius: 3px;
       overflow: hidden;
+      border: 1px solid #3D2070;
     }
-    #status-bar .char-status .hp-fill {
+    #status-bar .hp-fill {
       height: 100%;
-      background: #4caf50;
+      border-radius: 2px;
       transition: width 0.3s;
     }
+    #status-bar .hp-fill.ally { background: #45E6B0; }
+    #status-bar .hp-fill.enemy { background: #FF6B6B; }
+    #status-bar .hp-text { font-size: 10px; color: #cbb8ee; min-width: 50px; text-align: right; }
+    #status-bar .char-ability-row { display: flex; align-items: center; gap: 6px; margin-top: 1px; }
+    #status-bar .ability-name { font-size: 10px; color: #C98FFF; font-weight: 600; white-space: nowrap; }
+    #status-bar .ability-cd { font-size: 10px; font-weight: 700; }
+    #status-bar .ability-cd.ready { color: #45E6B0; }
+    #status-bar .ability-cd.on-cd { color: #FF9F43; }
+    #status-bar .char-effects { display: flex; gap: 4px; margin-top: 1px; }
+    #status-bar .effect-badge {
+      font-size: 9px;
+      font-weight: 700;
+      padding: 0 4px;
+      border-radius: 3px;
+      background: rgba(0,0,0,0.3);
+    }
+    #status-bar .char-order { font-size: 10px; color: #FFD93D; font-weight: 600; }
+    #status-bar .char-flag { color: #FFD93D; font-size: 10px; font-weight: 700; }
     .processing-indicator {
-      color: #ffaa00;
+      color: #FFD93D;
       font-style: italic;
+      font-weight: 600;
       padding: 4px 0;
     }
-    /* ─── Ability & Queue Panel ──────────────────────────── */
+    /* Ability & Queue Panel */
     #ability-panel {
       position: absolute;
       top: 80px;
       right: 8px;
-      width: 220px;
-      background: rgba(8, 8, 20, 0.92);
-      border: 1px solid #2a2a4a;
-      border-radius: 8px;
-      padding: 10px;
+      width: 225px;
+      background: rgba(27, 16, 64, 0.94);
+      border: 3px solid #3D2070;
+      border-radius: 16px;
+      padding: 12px;
       pointer-events: all;
       display: none;
       z-index: 20;
-      font-family: 'Rajdhani', monospace;
+      font-family: 'Nunito', sans-serif;
       max-height: calc(100vh - 180px);
       overflow-y: auto;
     }
     #ability-panel h3 {
-      font-size: 11px;
-      color: #6c63ff;
+      font-size: 12px;
+      color: #FF6B9D;
       text-transform: uppercase;
       letter-spacing: 2px;
       margin: 0 0 8px 0;
-      border-bottom: 1px solid #2a2a4a;
-      padding-bottom: 4px;
+      border-bottom: 2px solid #3D2070;
+      padding-bottom: 6px;
+      font-family: 'Fredoka', sans-serif;
     }
     .ap-char {
       margin-bottom: 10px;
-      padding: 6px 8px;
-      background: rgba(255,255,255,0.03);
-      border-radius: 6px;
-      border-left: 3px solid #6c63ff;
+      padding: 8px 10px;
+      background: rgba(255,255,255,0.04);
+      border-radius: 10px;
+      border-left: 4px solid #FF6B9D;
     }
-    .ap-char.enemy { border-left-color: #ff4444; }
+    .ap-char.enemy { border-left-color: #FF6B6B; }
     .ap-char-name {
       font-size: 13px;
       font-weight: 700;
-      color: #ddd;
+      color: #f0e8ff;
     }
     .ap-char-class {
       font-size: 11px;
-      color: #888;
+      color: #8B6DB0;
     }
     .ap-ability {
       margin-top: 4px;
-      padding: 4px 6px;
-      background: rgba(108, 99, 255, 0.1);
-      border-radius: 4px;
+      padding: 4px 8px;
+      background: rgba(255, 107, 157, 0.1);
+      border-radius: 8px;
       font-size: 11px;
     }
     .ap-ability-name {
-      color: #bb88ff;
+      color: #C98FFF;
       font-weight: 700;
     }
     .ap-ability-desc {
-      color: #999;
+      color: #8B6DB0;
       font-size: 10px;
     }
     .ap-ability-cd {
       font-size: 10px;
       font-weight: 700;
     }
-    .ap-ability-cd.ready { color: #44ff88; }
-    .ap-ability-cd.cooldown { color: #ff8844; }
+    .ap-ability-cd.ready { color: #45E6B0; }
+    .ap-ability-cd.cooldown { color: #FF9F43; }
     .ap-order {
       margin-top: 4px;
       font-size: 11px;
     }
     .ap-order-current {
-      color: #ffcc00;
+      color: #FFD93D;
       font-weight: 700;
     }
     .ap-order-queued {
-      color: #888;
+      color: #8B6DB0;
       font-size: 10px;
       padding-left: 8px;
     }
@@ -235,35 +281,6 @@
       margin-top: 2px;
       font-size: 10px;
     }
-    /* ─── Better text colors ──────────────────────────────── */
-    #status-bar {
-      font-size: 13px;
-    }
-    #status-bar .char-status {
-      display: inline-flex;
-      flex-direction: column;
-      gap: 2px;
-      margin-right: 12px;
-      padding: 5px 8px;
-      border-radius: 5px;
-      background: rgba(255,255,255,0.06);
-      min-width: 120px;
-    }
-    #status-bar .char-status .hp-bar {
-      width: 80px;
-      height: 6px;
-      background: #222;
-      border-radius: 3px;
-      overflow: hidden;
-    }
-    #status-bar .char-status .hp-fill {
-      height: 100%;
-      background: #4caf50;
-      transition: width 0.3s;
-    }
-    #command-log .log-entry .player { color: #88aaff; font-weight: 700; }
-    #command-log .log-entry .text { color: #ccc; }
-    #command-log .log-entry .result { color: #66dd88; font-size: 12px; }
   </style>
 </head>
 <body>

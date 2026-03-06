@@ -110,9 +110,25 @@ COMMAND QUEUING:
 - For queued actions, set "queued": true. First action for a character is immediate, subsequent are queued.
 - Max 3 queued actions per character.
 
+COMPLEX COMMANDS:
+- Players can address MULTIPLE characters with different orders using commas or "and":
+  "warrior attack the mage, healer heal the warrior"
+  "archer go north and rogue flank"
+- "focus [enemy]" = all targeted characters attack the same enemy.
+- "spread out" / "scatter" = move characters apart in different directions from their center.
+- "flank" = move to the side of the nearest enemy (perpendicular approach).
+- "behind" = move past the nearest enemy to get behind them.
+- "protect [ally]" or "follow [ally]" = escort that ally.
+- "score" / "bring it home" = carry the flag back to your base.
+- "attack weakest" / "attack strongest" = target by HP percentage.
+- "attack carrier" / "attack flag holder" = target the enemy carrying your flag.
+- Explicit coordinates: "move to 5,10" or "go 12 8".
+- "patrol center" = patrol around a position.
+- "disengage" / "fall back" = retreat.
+
 RULES:
 - Interpret the player's intent HEAVILY. If they say "go get their flag", that means capture. If they say "bring it home", that means move to your flag base.
-- Each alive character can receive actions per command (multiple via "then" queuing).
+- A single command can issue DIFFERENT orders to DIFFERENT characters. Parse each clause independently.
 - If the player names a character by class, animal, or name, command THAT character.
 - "all" or "everyone" means all alive characters.
 - If ambiguous, pick the most logical character for the task.

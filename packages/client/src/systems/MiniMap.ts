@@ -5,19 +5,29 @@ import { MAP_WIDTH, MAP_HEIGHT, TILE_SIZE } from '../map/MapGenerator';
 const MM_SIZE = 120;
 
 const TILE_COLORS: Record<TileType, number> = {
-  grass: 0x3a7d44,
-  forest: 0x2d5a27,
-  water: 0x2266aa,
-  rock: 0x666666,
-  hill: 0x8a7d3a,
-  bush: 0x4a8a3a,
-  path: 0xb8a67a,
+  grass: 0x5CC96B,
+  forest: 0x2E8B4E,
+  water: 0x45A5FF,
+  rock: 0x9B9B9B,
+  hill: 0xDEB245,
+  bush: 0x65D155,
+  path: 0xEDD9A7,
+  bridge: 0xC4A060,
+  lava: 0xFF5533,
+  sand: 0xEED9A0,
+  swamp: 0x5A7A44,
+  flowers: 0x7BC96B,
+  mushroom: 0xBB6644,
+  ruins: 0x8888AA,
+  gate_open: 0xCCBB88,
+  gate_closed: 0x777777,
+  switch: 0xFFDD44,
 };
 
 const CP_COLORS: Record<string, number> = {
-  player1: 0x4444ff,
-  player2: 0xff4444,
-  neutral: 0xffffff,
+  player1: 0x6CC4FF,
+  player2: 0xFF6B6B,
+  neutral: 0xFFD93D,
 };
 
 export class MiniMap {
@@ -76,13 +86,13 @@ export class MiniMap {
     }
 
     // Flags
-    this.gfx.fillStyle(0x4444ff, 1);
+    this.gfx.fillStyle(0x6CC4FF, 1);
     this.gfx.fillTriangle(
       flags.pos1.x * this.scaleX, flags.pos1.y * this.scaleY - 3,
       flags.pos1.x * this.scaleX + 4, flags.pos1.y * this.scaleY,
       flags.pos1.x * this.scaleX, flags.pos1.y * this.scaleY + 3,
     );
-    this.gfx.fillStyle(0xff4444, 1);
+    this.gfx.fillStyle(0xFF6B6B, 1);
     this.gfx.fillTriangle(
       flags.pos2.x * this.scaleX, flags.pos2.y * this.scaleY - 3,
       flags.pos2.x * this.scaleX + 4, flags.pos2.y * this.scaleY,
@@ -91,12 +101,12 @@ export class MiniMap {
 
     // Characters
     for (const c of friendlyChars) {
-      this.gfx.fillStyle(0x4488ff, 1);
+      this.gfx.fillStyle(0x6CC4FF, 1);
       this.gfx.fillRect(c.position.x * this.scaleX - 1, c.position.y * this.scaleY - 1, 3, 3);
     }
     for (const c of enemyChars) {
       if (!c.visible) continue;
-      this.gfx.fillStyle(0xff4444, 1);
+      this.gfx.fillStyle(0xFF6B6B, 1);
       this.gfx.fillRect(c.position.x * this.scaleX - 1, c.position.y * this.scaleY - 1, 3, 3);
     }
 

@@ -10,7 +10,7 @@ const config: Phaser.Types.Core.GameConfig = {
   parent: 'game-container',
   width: 1920,
   height: 1080,
-  backgroundColor: '#050510',
+  backgroundColor: '#1B1040',
   antialias: true,
   roundPixels: false,
   scale: {

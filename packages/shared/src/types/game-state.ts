@@ -39,7 +39,10 @@ export interface CharacterOrder {
 }
 
 export type GameStatus = 'waiting' | 'drafting' | 'playing' | 'finished';
-export type TileType = 'grass' | 'forest' | 'water' | 'rock' | 'hill' | 'bush' | 'path';
+export type TileType =
+  | 'grass' | 'forest' | 'water' | 'rock' | 'hill' | 'bush' | 'path'
+  | 'bridge' | 'lava' | 'sand' | 'swamp' | 'flowers' | 'mushroom' | 'ruins'
+  | 'gate_open' | 'gate_closed' | 'switch';
 
 export type GameMode = 'ctf';
 export type WinReason = 'flag_captured' | 'time_up' | 'elimination' | 'disconnect';

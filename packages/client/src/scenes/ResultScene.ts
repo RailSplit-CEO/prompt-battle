@@ -7,7 +7,7 @@ interface ResultData {
 }
 
 export class ResultScene extends Phaser.Scene {
-  private floatingOrbs: { sprite: Phaser.GameObjects.Arc; vx: number; vy: number }[] = [];
+  private floatingShapes: { sprite: Phaser.GameObjects.Arc | Phaser.GameObjects.Star; vx: number; vy: number; rotSpeed: number }[] = [];
 
   constructor() {
     super({ key: 'ResultScene' });
@@ -17,68 +17,81 @@ export class ResultScene extends Phaser.Scene {
     const { width, height } = this.cameras.main;
     const won = data.winner === data.playerId;
 
-    // Background
-    this.cameras.main.setBackgroundColor(won ? '#050f08' : '#0f0508');
+    this.cameras.main.setBackgroundColor(won ? '#0D2818' : '#2A0D18');
     this.cameras.main.fadeIn(300, 0, 0, 0);
+    this.cameras.main.shake(500, won ? 0.015 : 0.025);
 
-    // Screen shake on entry
-    this.cameras.main.shake(500, won ? 0.01 : 0.02);
+    const accentColor = won ? 0x45E6B0 : 0xFF6B6B;
+    const accentHex = won ? '#45E6B0' : '#FF6B6B';
 
-    // ─── BACKGROUND EFFECTS ─────────────────────────────────────
-    const accentColor = won ? 0x44ff88 : 0xff4444;
+    // Floating celebration shapes
+    const colors = won
+      ? [0x45E6B0, 0xFFD93D, 0x6CC4FF, 0xFF6B9D, 0xC98FFF]
+      : [0xFF6B6B, 0xFF9F43, 0xC98FFF];
 
-    // Grid
-    const gridGfx = this.add.graphics();
-    gridGfx.lineStyle(1, accentColor, 0.02);
-    for (let x = 0; x < width; x += 60) gridGfx.lineBetween(x, 0, x, height);
-    for (let y = 0; y < height; y += 60) gridGfx.lineBetween(0, y, width, y);
-
-    // Floating particles
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < (won ? 16 : 8); i++) {
       const x = Math.random() * width;
       const y = Math.random() * height;
-      const r = 3 + Math.random() * 5;
-      const orb = this.add.circle(x, y, r, accentColor, 0.03 + Math.random() * 0.05);
+      const color = colors[i % colors.length];
+      const alpha = 0.05 + Math.random() * 0.08;
+
+      let sprite: Phaser.GameObjects.Arc | Phaser.GameObjects.Star;
+      if (i % 3 === 0) {
+        sprite = this.add.star(x, y, 5, 3 + Math.random() * 4, 6 + Math.random() * 8, color, alpha);
+      } else if (i % 3 === 1) {
+        sprite = this.add.star(x, y, 4, 2 + Math.random() * 3, 5 + Math.random() * 5, color, alpha);
+      } else {
+        const r = 3 + Math.random() * 6;
+        sprite = this.add.circle(x, y, r, color, alpha);
+      }
 
       this.tweens.add({
-        targets: orb,
-        alpha: { from: orb.alpha, to: orb.alpha * 0.2 },
+        targets: sprite,
+        alpha: { from: alpha, to: alpha * 0.2 },
         duration: 2000 + Math.random() * 3000,
         yoyo: true,
         repeat: -1,
         delay: Math.random() * 2000,
       });
 
-      this.floatingOrbs.push({
-        sprite: orb,
-        vx: (Math.random() - 0.5) * 0.4,
-        vy: won ? -(Math.random() * 0.5 + 0.2) : (Math.random() * 0.3 + 0.1),
+      this.floatingShapes.push({
+        sprite,
+        vx: (Math.random() - 0.5) * 0.5,
+        vy: won ? -(Math.random() * 0.6 + 0.2) : (Math.random() * 0.3 + 0.1),
+        rotSpeed: (Math.random() - 0.5) * 0.5,
       });
     }
 
-    // ─── RESULT GLOW ─────────────────────────────────────────────
-    // Soft glow behind result text
+    // Result glow
     const glowRect = this.add.rectangle(width / 2, height / 2 - 70, 500, 80,
-      won ? 0x44ff88 : 0xff4444, 0.04);
+      accentColor, 0.05);
 
     this.tweens.add({
       targets: glowRect,
-      alpha: { from: 0.03, to: 0.08 },
-      scaleX: { from: 1, to: 1.15 },
-      scaleY: { from: 1, to: 1.4 },
+      alpha: { from: 0.04, to: 0.1 },
+      scaleX: { from: 1, to: 1.2 },
+      scaleY: { from: 1, to: 1.5 },
       duration: 2000,
       yoyo: true,
       repeat: -1,
       ease: 'Sine.easeInOut',
     });
 
-    // ─── MAIN TITLE ──────────────────────────────────────────────
-    const mainTitle = this.add.text(width / 2, height / 2 - 70, won ? 'VICTORY' : 'DEFEAT', {
-      fontSize: '72px',
-      color: won ? '#44ff88' : '#ff4444',
-      fontFamily: '"Orbitron", "Rajdhani", monospace',
+    // Title shadow
+    this.add.text(width / 2 + 5, height / 2 - 65, won ? 'VICTORY!' : 'DEFEAT', {
+      fontSize: '80px',
+      color: '#000000',
+      fontFamily: '"Fredoka", sans-serif',
       fontStyle: 'bold',
-    }).setOrigin(0.5).setAlpha(0).setScale(0.5);
+    }).setOrigin(0.5).setAlpha(0.4);
+
+    // Main title
+    const mainTitle = this.add.text(width / 2, height / 2 - 70, won ? 'VICTORY!' : 'DEFEAT', {
+      fontSize: '80px',
+      color: accentHex,
+      fontFamily: '"Fredoka", sans-serif',
+      fontStyle: 'bold',
+    }).setOrigin(0.5).setAlpha(0).setScale(0.3);
 
     this.tweens.add({
       targets: mainTitle,
@@ -90,12 +103,26 @@ export class ResultScene extends Phaser.Scene {
       delay: 200,
     });
 
-    // ─── SUBTITLE ────────────────────────────────────────────────
+    // Victory bounce
+    if (won) {
+      this.tweens.add({
+        targets: mainTitle,
+        y: { from: height / 2 - 70, to: height / 2 - 76 },
+        duration: 1500,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+        delay: 1000,
+      });
+    }
+
+    // Subtitle
     const subtitle = this.add.text(width / 2, height / 2 + 10,
       won ? 'Your commands led to triumph!' : 'Your forces have been defeated.', {
-      fontSize: '16px',
-      color: '#888',
-      fontFamily: 'monospace',
+      fontSize: '18px',
+      color: '#cbb8ee',
+      fontFamily: '"Nunito", sans-serif',
+      fontStyle: '600',
     }).setOrigin(0.5).setAlpha(0);
 
     this.tweens.add({
@@ -106,48 +133,43 @@ export class ResultScene extends Phaser.Scene {
       delay: 700,
     });
 
-    // ─── DECORATIVE LINES ────────────────────────────────────────
+    // Decorative line
     const lineGfx = this.add.graphics();
-    lineGfx.lineStyle(1, accentColor, 0.3);
+    lineGfx.lineStyle(3, accentColor, 0.4);
     lineGfx.lineBetween(width / 2 - 100, height / 2 - 15, width / 2 + 100, height / 2 - 15);
+    lineGfx.fillStyle(accentColor, 0.6);
+    lineGfx.fillCircle(width / 2 - 104, height / 2 - 15, 4);
+    lineGfx.fillCircle(width / 2 + 104, height / 2 - 15, 4);
     lineGfx.setAlpha(0);
     this.tweens.add({ targets: lineGfx, alpha: 1, duration: 600, delay: 500 });
 
-    // ─── PLAY AGAIN BUTTON ───────────────────────────────────────
+    // PLAY AGAIN button
     const btnContainer = this.add.container(width / 2, height / 2 + 80);
-    const btnW = 240, btnH = 50;
+    const btnW = 260, btnH = 56;
 
-    // Button glow
-    const btnGlow = this.add.rectangle(0, 0, btnW + 20, btnH + 20, 0x6c63ff, 0.06);
-    btnContainer.add(btnGlow);
-    this.tweens.add({
-      targets: btnGlow,
-      alpha: { from: 0.05, to: 0.15 },
-      scaleX: { from: 1, to: 1.05 },
-      scaleY: { from: 1, to: 1.1 },
-      duration: 1500,
-      yoyo: true,
-      repeat: -1,
-    });
+    // Button shadow
+    const btnShadow = this.add.graphics();
+    btnShadow.fillStyle(0x000000, 0.3);
+    btnShadow.fillRoundedRect(-btnW / 2 + 4, -btnH / 2 + 4, btnW, btnH, 16);
+    btnContainer.add(btnShadow);
 
-    // Button bg
     const btnBg = this.add.graphics();
-    btnBg.fillStyle(0x6c63ff, 0.25);
-    btnBg.fillRoundedRect(-btnW / 2, -btnH / 2, btnW, btnH, 8);
-    btnBg.lineStyle(1, 0x6c63ff, 0.6);
-    btnBg.strokeRoundedRect(-btnW / 2, -btnH / 2, btnW, btnH, 8);
+    btnBg.fillStyle(0xFF6B9D, 0.35);
+    btnBg.fillRoundedRect(-btnW / 2, -btnH / 2, btnW, btnH, 16);
+    btnBg.lineStyle(3, 0xFF6B9D, 0.8);
+    btnBg.strokeRoundedRect(-btnW / 2, -btnH / 2, btnW, btnH, 16);
     btnContainer.add(btnBg);
 
     const btnText = this.add.text(0, 0, 'PLAY AGAIN', {
-      fontSize: '18px',
+      fontSize: '20px',
       color: '#fff',
-      fontFamily: '"Rajdhani", monospace',
+      fontFamily: '"Fredoka", sans-serif',
       fontStyle: 'bold',
       letterSpacing: 2,
     }).setOrigin(0.5);
     btnContainer.add(btnText);
 
-    btnContainer.setAlpha(0).setScale(0.9);
+    btnContainer.setAlpha(0).setScale(0.5);
     this.tweens.add({
       targets: btnContainer,
       alpha: 1, scaleX: 1, scaleY: 1,
@@ -160,67 +182,71 @@ export class ResultScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true });
 
     zone.on('pointerover', () => {
-      this.tweens.add({ targets: btnContainer, scaleX: 1.05, scaleY: 1.05, duration: 200 });
+      this.tweens.add({ targets: btnContainer, scaleX: 1.08, scaleY: 1.08, duration: 200, ease: 'Back.easeOut' });
       btnBg.clear();
-      btnBg.fillStyle(0x6c63ff, 0.4);
-      btnBg.fillRoundedRect(-btnW / 2, -btnH / 2, btnW, btnH, 8);
-      btnBg.lineStyle(2, 0x6c63ff, 0.9);
-      btnBg.strokeRoundedRect(-btnW / 2, -btnH / 2, btnW, btnH, 8);
+      btnBg.fillStyle(0xFF6B9D, 0.5);
+      btnBg.fillRoundedRect(-btnW / 2, -btnH / 2, btnW, btnH, 16);
+      btnBg.lineStyle(4, 0xFF6B9D, 1);
+      btnBg.strokeRoundedRect(-btnW / 2, -btnH / 2, btnW, btnH, 16);
     });
 
     zone.on('pointerout', () => {
       this.tweens.add({ targets: btnContainer, scaleX: 1, scaleY: 1, duration: 200 });
       btnBg.clear();
-      btnBg.fillStyle(0x6c63ff, 0.25);
-      btnBg.fillRoundedRect(-btnW / 2, -btnH / 2, btnW, btnH, 8);
-      btnBg.lineStyle(1, 0x6c63ff, 0.6);
-      btnBg.strokeRoundedRect(-btnW / 2, -btnH / 2, btnW, btnH, 8);
+      btnBg.fillStyle(0xFF6B9D, 0.35);
+      btnBg.fillRoundedRect(-btnW / 2, -btnH / 2, btnW, btnH, 16);
+      btnBg.lineStyle(3, 0xFF6B9D, 0.8);
+      btnBg.strokeRoundedRect(-btnW / 2, -btnH / 2, btnW, btnH, 16);
     });
 
     zone.on('pointerdown', () => {
       this.tweens.add({
         targets: btnContainer,
-        scaleX: 0.95, scaleY: 0.95,
-        duration: 60,
+        scaleX: 0.92, scaleY: 0.92,
+        duration: 80,
         yoyo: true,
       });
-      this.cameras.main.fadeOut(400, 5, 5, 16);
+      this.cameras.main.fadeOut(400, 27, 16, 64);
       this.cameras.main.once('camerafadeoutcomplete', () => {
         this.scene.start('MenuScene');
       });
     });
 
-    // ─── BACK TO MENU LINK ───────────────────────────────────────
+    // Back to menu hint
     const backText = this.add.text(width / 2, height / 2 + 140, 'or press ESC to return to menu', {
-      fontSize: '11px',
-      color: '#444',
-      fontFamily: 'monospace',
+      fontSize: '12px',
+      color: '#4A2580',
+      fontFamily: '"Nunito", sans-serif',
+      fontStyle: '600',
     }).setOrigin(0.5).setAlpha(0);
 
-    this.tweens.add({ targets: backText, alpha: 0.6, duration: 600, delay: 1200 });
+    this.tweens.add({ targets: backText, alpha: 0.7, duration: 600, delay: 1200 });
 
     this.input.keyboard!.on('keydown-ESC', () => {
-      this.cameras.main.fadeOut(400, 5, 5, 16);
+      this.cameras.main.fadeOut(400, 27, 16, 64);
       this.cameras.main.once('camerafadeoutcomplete', () => {
         this.scene.start('MenuScene');
       });
     });
 
-    // ─── FLASH EFFECT ON VICTORY ─────────────────────────────────
+    // Flash effect on victory
     if (won) {
-      this.cameras.main.flash(600, 68, 255, 136, false);
+      this.cameras.main.flash(600, 69, 230, 176, false);
     }
   }
 
   update() {
     const { width, height } = this.cameras.main;
-    for (const orb of this.floatingOrbs) {
-      orb.sprite.x += orb.vx;
-      orb.sprite.y += orb.vy;
-      if (orb.sprite.x < -20) orb.sprite.x = width + 20;
-      if (orb.sprite.x > width + 20) orb.sprite.x = -20;
-      if (orb.sprite.y < -20) orb.sprite.y = height + 20;
-      if (orb.sprite.y > height + 20) orb.sprite.y = -20;
+    for (const shape of this.floatingShapes) {
+      shape.sprite.x += shape.vx;
+      shape.sprite.y += shape.vy;
+      if ('angle' in shape.sprite) {
+        shape.sprite.angle += shape.rotSpeed;
+      }
+      if (shape.sprite.x < -30) shape.sprite.x = width + 30;
+      if (shape.sprite.x > width + 30) shape.sprite.x = -30;
+      if (shape.sprite.y < -30) shape.sprite.y = height + 30;
+      if (shape.sprite.y > height + 30) shape.sprite.y = -30;
     }
   }
 }
