@@ -21,7 +21,7 @@ import { SoundManager } from '../systems/SoundManager';
 import { CharacterViewports } from '../systems/CharacterViewports';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────
-const COMMAND_COOLDOWN = 5000;
+const COMMAND_COOLDOWN = 10000;
 const GAME_DURATION = 300;
 const RESPAWN_TIME = 20;
 const TICK_RATE = 750;
@@ -146,8 +146,10 @@ export class BattleScene extends Phaser.Scene {
   // Sound
   private sound_: SoundManager = SoundManager.getInstance();
 
-  // Character viewports (replaces minimap)
+  // Character viewports
   private charViewports!: CharacterViewports;
+
+  // Mini-map
 
   // Path visualization
   private pathGraphics!: Phaser.GameObjects.Graphics;
@@ -1186,15 +1188,18 @@ export class BattleScene extends Phaser.Scene {
           this.fogLayer.fillStyle(0x111111, 0.40);
           this.fogLayer.fillRect(px, py, TILE_SIZE, TILE_SIZE);
         } else {
-          // Never explored — solid grey, hide tile texture
+          // Never explored — dark base with subtle zone hints
           if (this.tileSprites[y]?.[x]) {
             this.tileSprites[y][x].setVisible(false);
           }
-          this.fogLayer.fillStyle(0x444444, 1.0);
+          this.fogLayer.fillStyle(0x222222, 1.0);
           this.fogLayer.fillRect(px, py, TILE_SIZE, TILE_SIZE);
         }
       }
     }
+
+    // Draw zone hints over deep fog: base zones + control point zones
+    this.drawDeepFogHints();
 
     // Enemy visibility — only show if currently visible (not in remembered/hazy)
     this.characters.forEach((entity, id) => {
@@ -1221,6 +1226,63 @@ export class BattleScene extends Phaser.Scene {
       const visible = this.visibleTiles.has(key);
       if (pickup.sprite) pickup.sprite.setVisible(visible);
       if (pickup.label) pickup.label.setVisible(visible);
+    }
+  }
+
+  /** Draws subtle zone markers over the deep (unexplored) fog so players can navigate */
+  private drawDeepFogHints() {
+    const isDeepFog = (x: number, y: number) => {
+      const key = `${x},${y}`;
+      return !this.visibleTiles.has(key) && !this.exploredTiles.has(key);
+    };
+
+    // Base zone hints (faint colored glow)
+    const drawBaseHint = (spawns: Position[], color: number) => {
+      if (spawns.length === 0) return;
+      const cx = spawns.reduce((s, p) => s + p.x, 0) / spawns.length;
+      const cy = spawns.reduce((s, p) => s + p.y, 0) / spawns.length;
+      const radius = 5;
+      for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist > radius) continue;
+          const tx = Math.round(cx + dx);
+          const ty = Math.round(cy + dy);
+          if (tx < 0 || tx >= MAP_WIDTH || ty < 0 || ty >= MAP_HEIGHT) continue;
+          if (!isDeepFog(tx, ty)) continue;
+          const alpha = 0.12 * (1 - dist / radius);
+          this.fogLayer.fillStyle(color, alpha);
+          this.fogLayer.fillRect(tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+        }
+      }
+    };
+
+    drawBaseHint(this.mySpawns, 0x6CC4FF);
+    drawBaseHint(this.enemySpawns, 0xFF6B6B);
+
+    // Control point zone hints (golden diamond glow)
+    const CP_RADIUS = 4;
+    for (const cp of this.controlPoints) {
+      for (let dy = -CP_RADIUS; dy <= CP_RADIUS; dy++) {
+        for (let dx = -CP_RADIUS; dx <= CP_RADIUS; dx++) {
+          const dist = Math.abs(dx) + Math.abs(dy); // diamond shape
+          if (dist > CP_RADIUS) continue;
+          const tx = cp.position.x + dx;
+          const ty = cp.position.y + dy;
+          if (tx < 0 || tx >= MAP_WIDTH || ty < 0 || ty >= MAP_HEIGHT) continue;
+          if (!isDeepFog(tx, ty)) continue;
+          const alpha = 0.15 * (1 - dist / CP_RADIUS);
+          this.fogLayer.fillStyle(0xFFD93D, alpha);
+          this.fogLayer.fillRect(tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+        }
+      }
+      // Small center marker for CP in deep fog
+      if (isDeepFog(cp.position.x, cp.position.y)) {
+        this.fogLayer.fillStyle(0xFFD93D, 0.3);
+        const cx = cp.position.x * TILE_SIZE + TILE_SIZE / 2;
+        const cy = cp.position.y * TILE_SIZE + TILE_SIZE / 2;
+        this.fogLayer.fillCircle(cx, cy, TILE_SIZE * 0.6);
+      }
     }
   }
 
@@ -1473,10 +1535,30 @@ export class BattleScene extends Phaser.Scene {
         if (!order.targetPosition) return;
         if (this.tileDist(char.position, order.targetPosition) <= 1) {
           char.currentOrder = null;
+          const entity = this.characters.get(char.id);
+          if (entity) entity.setOrderText('idle');
           return;
         }
         char.path = findPath(this.gameMap.tiles, char.position, order.targetPosition,
           char.stats.speed + 2, occupied);
+        break;
+      }
+      case 'patrol': {
+        if (!order.targetPosition) return;
+        if (this.tileDist(char.position, order.targetPosition) <= 1) {
+          const origin = (order as any)._patrolOrigin || char.position;
+          (order as any)._patrolOrigin = { ...order.targetPosition };
+          order.targetPosition = { ...origin };
+        }
+        if (order.targetPosition) {
+          char.path = findPath(this.gameMap.tiles, char.position, order.targetPosition,
+            char.stats.speed + 2, occupied);
+        }
+        break;
+      }
+      case 'defend':
+      case 'hold': {
+        char.path = [];
         break;
       }
       case 'attack': {
@@ -2006,6 +2088,10 @@ export class BattleScene extends Phaser.Scene {
           collectedOrders.push({ characterId: char.id, order, queued: true });
         }
       } else {
+        // Store patrol origin so the character paces back and forth
+        if (order.type === 'patrol') {
+          (order as any)._patrolOrigin = { ...char.position };
+        }
         char.currentOrder = order;
         char.path = [];
         collectedOrders.push({ characterId: char.id, order, queued: false });
@@ -2230,6 +2316,9 @@ export class BattleScene extends Phaser.Scene {
 
     const partOrders: RemoteOrderPayload[] = [];
     const setOrder = (char: Character, order: CharacterOrder) => {
+      if (order.type === 'patrol') {
+        (order as any)._patrolOrigin = { ...char.position };
+      }
       if (queued) {
         const queue = this.orderQueues.get(char.id);
         if (queue && queue.length < 3) queue.push(order);
@@ -2739,6 +2828,7 @@ export class BattleScene extends Phaser.Scene {
     this.charViewports.update(this.charData, this.characters);
   }
 
+
   // ─── UTILITIES ──────────────────────────────────────────────────
 
   private findNearest(from: Position, targets: Character[]): Character {
@@ -2897,9 +2987,20 @@ export class BattleScene extends Phaser.Scene {
       right: this.input.keyboard!.addKey('D'),
     };
 
-    const EDGE_THRESHOLD = 30; // pixels from screen edge to trigger scroll
-    const EDGE_SPEED = 14;
+    const EDGE_THRESHOLD = 40; // pixels from window edge to trigger scroll
+    const EDGE_SPEED = 16;
     const KEY_SPEED = 12;
+
+    // Track raw window-level mouse position for edge-scroll
+    let windowMouseX = -1;
+    let windowMouseY = -1;
+    const onWindowMouseMove = (e: MouseEvent) => {
+      windowMouseX = e.clientX;
+      windowMouseY = e.clientY;
+    };
+    window.addEventListener('mousemove', onWindowMouseMove);
+    this.events.once('shutdown', () => window.removeEventListener('mousemove', onWindowMouseMove));
+    this.events.once('destroy', () => window.removeEventListener('mousemove', onWindowMouseMove));
 
     const commandInput = document.getElementById('command-input') as HTMLInputElement;
 
@@ -2919,40 +3020,65 @@ export class BattleScene extends Phaser.Scene {
       if (cursors.up.isDown || wDown) cam.scrollY -= KEY_SPEED;
       if (cursors.down.isDown || sDown) cam.scrollY += KEY_SPEED;
 
-      // Edge-of-screen panning (League style)
-      const pointer = this.input.activePointer;
-      const mx = pointer.x;
-      const my = pointer.y;
-      const w = this.scale.width;
-      const h = this.scale.height;
+      // Edge-of-screen panning — uses raw window mouse position so it works
+      // based on the full browser window, not the Phaser viewport
+      const mx = windowMouseX;
+      const my = windowMouseY;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
 
-      if (mx <= EDGE_THRESHOLD) cam.scrollX -= EDGE_SPEED * (1 - mx / EDGE_THRESHOLD);
-      if (mx >= w - EDGE_THRESHOLD) cam.scrollX += EDGE_SPEED * (1 - (w - mx) / EDGE_THRESHOLD);
-      if (my <= EDGE_THRESHOLD) cam.scrollY -= EDGE_SPEED * (1 - my / EDGE_THRESHOLD);
-      if (my >= h - EDGE_THRESHOLD) cam.scrollY += EDGE_SPEED * (1 - (h - my) / EDGE_THRESHOLD);
+      if (mx >= 0 && my >= 0) { // only if we've received at least one mousemove
+        if (mx <= EDGE_THRESHOLD) cam.scrollX -= EDGE_SPEED * (1 - mx / EDGE_THRESHOLD);
+        if (mx >= w - EDGE_THRESHOLD) cam.scrollX += EDGE_SPEED * (1 - (w - mx) / EDGE_THRESHOLD);
+        if (my <= EDGE_THRESHOLD) cam.scrollY -= EDGE_SPEED * (1 - my / EDGE_THRESHOLD);
+        if (my >= h - EDGE_THRESHOLD) cam.scrollY += EDGE_SPEED * (1 - (h - my) / EDGE_THRESHOLD);
+      }
     });
 
     let dragStartX = 0, dragStartY = 0;
+    let isDragging = false;
+    let clickedViewport = false;
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
-      if (p.rightButtonDown()) { dragStartX = p.x; dragStartY = p.y; }
-      // Left-click on a character viewport → snap main camera there
+      dragStartX = p.x;
+      dragStartY = p.y;
+      isDragging = false;
+      clickedViewport = false;
+      // Check if left-click landed on a viewport (handle on pointerup if no drag)
       if (p.leftButtonDown() && this.charViewports) {
+        clickedViewport = !!this.charViewports.handleClick(p.x, p.y);
+      }
+    });
+    this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
+      if (!p.isDown) return;
+      const dx = p.x - dragStartX;
+      const dy = p.y - dragStartY;
+      // Start dragging after a small threshold to distinguish from clicks
+      if (!isDragging && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
+        isDragging = true;
+      }
+      if (isDragging) {
+        this.cameras.main.scrollX -= (p.x - dragStartX) / this.cameras.main.zoom;
+        this.cameras.main.scrollY -= (p.y - dragStartY) / this.cameras.main.zoom;
+        dragStartX = p.x;
+        dragStartY = p.y;
+      }
+    });
+    this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
+      // If it was a click (not a drag) on a viewport, snap camera there
+      if (!isDragging && clickedViewport && this.charViewports) {
         const snapTo = this.charViewports.handleClick(p.x, p.y);
         if (snapTo) {
           const entity = this.characters.get(snapTo);
           if (entity) this.cameras.main.centerOn(entity.sprite.x, entity.sprite.y);
         }
       }
-    });
-    this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
-      if (p.rightButtonDown()) {
-        this.cameras.main.scrollX -= (p.x - dragStartX) * 0.5;
-        this.cameras.main.scrollY -= (p.y - dragStartY) * 0.5;
-        dragStartX = p.x; dragStartY = p.y;
-      }
+      isDragging = false;
+      clickedViewport = false;
     });
     this.input.on('wheel', (_p: unknown, _gx: unknown, _gy: unknown, _gz: unknown, dy: number) => {
-      this.cameras.main.zoom = Phaser.Math.Clamp(this.cameras.main.zoom - dy * 0.003, 0.4, 3);
+      // Smooth scroll-to-zoom: scale factor relative to current zoom so it feels natural at all levels
+      const zoomDelta = -dy * 0.0015 * this.cameras.main.zoom;
+      this.cameras.main.zoom = Phaser.Math.Clamp(this.cameras.main.zoom + zoomDelta, 0.35, 3);
     });
   }
 
@@ -3363,6 +3489,7 @@ export class BattleScene extends Phaser.Scene {
     if (this.moveTickTimer) this.moveTickTimer.destroy();
     if (this.secondTimer) this.secondTimer.destroy();
     if (this.charViewports) this.charViewports.destroy();
+    
   }
   // ─── ONLINE SYNC ──────────────────────────────────────────────
 
