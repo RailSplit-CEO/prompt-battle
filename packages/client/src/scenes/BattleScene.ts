@@ -2889,7 +2889,7 @@ export class BattleScene extends Phaser.Scene {
 
     this.events.on('update', () => {
       const cam = this.cameras.main;
-      const speed = 5;
+      const speed = 12;
       if (cursors.left.isDown || wasd.left.isDown) cam.scrollX -= speed;
       if (cursors.right.isDown || wasd.right.isDown) cam.scrollX += speed;
       if (cursors.up.isDown || wasd.up.isDown) cam.scrollY -= speed;
@@ -2908,7 +2908,7 @@ export class BattleScene extends Phaser.Scene {
       }
     });
     this.input.on('wheel', (_p: unknown, _gx: unknown, _gy: unknown, _gz: unknown, dy: number) => {
-      this.cameras.main.zoom = Phaser.Math.Clamp(this.cameras.main.zoom - dy * 0.001, 0.5, 2);
+      this.cameras.main.zoom = Phaser.Math.Clamp(this.cameras.main.zoom - dy * 0.003, 0.4, 3);
     });
   }
 
