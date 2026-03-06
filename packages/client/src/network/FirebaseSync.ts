@@ -1,0 +1,196 @@
+import { initializeApp, FirebaseApp } from 'firebase/app';
+import { getAuth, signInAnonymously, Auth, User } from 'firebase/auth';
+import { getDatabase, ref, set, get, push, onValue, update, remove, Database, off } from 'firebase/database';
+import { DraftPick, Character, CommandResponse } from '@prompt-battle/shared';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAT4zIS0piAqGfW5ZTCWnbkQPzyLHNDRHY",
+  authDomain: "prompt-battle-c5e6a.firebaseapp.com",
+  databaseURL: "https://prompt-battle-c5e6a-default-rtdb.firebaseio.com",
+  projectId: "prompt-battle-c5e6a",
+  storageBucket: "prompt-battle-c5e6a.firebasestorage.app",
+  messagingSenderId: "329010584107",
+  appId: "1:329010584107:web:c8b08fe0487459e1c1286e",
+};
+
+export class FirebaseSync {
+  private static instance: FirebaseSync;
+  private app!: FirebaseApp;
+  private auth!: Auth;
+  private db!: Database;
+  private user: User | null = null;
+  private initialized = false;
+  private listeners: Array<{ ref: any; unsub: () => void }> = [];
+
+  static getInstance(): FirebaseSync {
+    if (!FirebaseSync.instance) {
+      FirebaseSync.instance = new FirebaseSync();
+    }
+    return FirebaseSync.instance;
+  }
+
+  async initialize(): Promise<void> {
+    if (this.initialized) return;
+
+    try {
+      this.app = initializeApp(firebaseConfig);
+      this.auth = getAuth(this.app);
+      this.db = getDatabase(this.app);
+
+      console.log('[Firebase] Signing in anonymously...');
+      const cred = await signInAnonymously(this.auth);
+      this.user = cred.user;
+      this.initialized = true;
+      console.log('[Firebase] Signed in as', this.user.uid);
+    } catch (err) {
+      console.error('[Firebase] Init failed:', err);
+      throw new Error('Firebase connection failed: ' + (err as Error).message);
+    }
+  }
+
+  getPlayerId(): string {
+    return this.user?.uid || 'local_player';
+  }
+
+  isReady(): boolean {
+    return this.initialized && this.user !== null;
+  }
+
+  // Matchmaking
+  async joinMatchmakingQueue(): Promise<string> {
+    const playerId = this.getPlayerId();
+    const queueRef = ref(this.db, `matchmaking/queue/${playerId}`);
+    await set(queueRef, {
+      playerId,
+      timestamp: Date.now(),
+      status: 'waiting',
+    });
+    console.log('[Firebase] Joined matchmaking queue');
+    return playerId;
+  }
+
+  async waitForMatch(playerId: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const playerRef = ref(this.db, `matchmaking/queue/${playerId}`);
+      const timeout = setTimeout(() => {
+        off(playerRef);
+        reject(new Error('Matchmaking timed out after 60s'));
+      }, 60000);
+
+      onValue(playerRef, (snap) => {
+        const data = snap.val();
+        if (data?.status === 'matched' && data?.gameId) {
+          clearTimeout(timeout);
+          off(playerRef);
+          console.log('[Firebase] Match found:', data.gameId);
+          resolve(data.gameId);
+        }
+      });
+    });
+  }
+
+  async removeFromQueue(): Promise<void> {
+    const playerId = this.getPlayerId();
+    await remove(ref(this.db, `matchmaking/queue/${playerId}`));
+  }
+
+  // Game creation (local mode)
+  async createLocalGame(): Promise<string> {
+    const gameRef = push(ref(this.db, 'games'));
+    const gameId = gameRef.key!;
+    const gameData = {
+      meta: {
+        player1: this.getPlayerId(),
+        player2: 'player2_local',
+        mapSeed: Date.now(),
+        status: 'drafting',
+        currentTurn: 0,
+        createdAt: Date.now(),
+      },
+    };
+
+    try {
+      await set(gameRef, gameData);
+      console.log('[Firebase] Local game created:', gameId);
+    } catch (err) {
+      console.error('[Firebase] Failed to create game:', err);
+      throw err;
+    }
+
+    return gameId;
+  }
+
+  // Draft
+  async submitDraftPick(gameId: string, pick: DraftPick): Promise<void> {
+    const pickRef = push(ref(this.db, `games/${gameId}/draft/picks`));
+    await set(pickRef, pick);
+  }
+
+  onDraftPick(gameId: string, callback: (pick: DraftPick) => void) {
+    const picksRef = ref(this.db, `games/${gameId}/draft/picks`);
+    const unsub = onValue(picksRef, (snap) => {
+      const picks = snap.val();
+      if (picks) {
+        const pickArray = Object.values(picks) as DraftPick[];
+        const latest = pickArray[pickArray.length - 1];
+        callback(latest);
+      }
+    });
+    this.listeners.push({ ref: picksRef, unsub: () => off(picksRef) });
+  }
+
+  // Commands - for online mode, sends to Cloud Function
+  async sendCommand(gameId: string, playerId: string, rawText: string): Promise<CommandResponse> {
+    const functionUrl = `https://us-central1-prompt-battle-c5e6a.cloudfunctions.net`;
+
+    const response = await fetch(`${functionUrl}/processPlayerCommand`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gameId, playerId, rawText }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Command failed (${response.status}): ${text}`);
+    }
+
+    return response.json();
+  }
+
+  // Game state sync
+  onGameStateUpdate(gameId: string, callback: (state: Record<string, Character>) => void) {
+    const stateRef = ref(this.db, `games/${gameId}/state/characters`);
+    onValue(stateRef, (snap) => {
+      const state = snap.val();
+      if (state) callback(state);
+    });
+    this.listeners.push({ ref: stateRef, unsub: () => off(stateRef) });
+  }
+
+  // Update game state
+  async updateGameState(gameId: string, characters: Record<string, Character>): Promise<void> {
+    await update(ref(this.db, `games/${gameId}/state`), { characters });
+  }
+
+  async updateGameStatus(gameId: string, status: string, winner?: string): Promise<void> {
+    const updates: Record<string, unknown> = { status };
+    if (winner) updates.winner = winner;
+    await update(ref(this.db, `games/${gameId}/meta`), updates);
+  }
+
+  // Log command to RTDB
+  async logCommand(gameId: string, playerId: string, rawText: string, actions: unknown[]): Promise<void> {
+    const cmdRef = push(ref(this.db, `games/${gameId}/commands`));
+    await set(cmdRef, {
+      playerId,
+      rawText,
+      actions,
+      timestamp: Date.now(),
+    });
+  }
+
+  cleanup() {
+    this.listeners.forEach(l => l.unsub());
+    this.listeners = [];
+  }
+}

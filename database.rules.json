@@ -1,0 +1,18 @@
+{
+  "rules": {
+    "matchmaking": {
+      "queue": {
+        ".read": true,
+        "$playerId": {
+          ".write": "auth != null"
+        }
+      }
+    },
+    "games": {
+      "$gameId": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "prompt-battle",
+  "private": true,
+  "workspaces": [
+    "packages/shared",
+    "packages/client",
+    "packages/functions"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=packages/client",
+    "build": "npm run build --workspace=packages/shared && npm run build --workspace=packages/client",
+    "deploy": "npm run build && firebase deploy"
+  },
+  "devDependencies": {
+    "@sparktory/context-search": "^0.2.0"
+  }
+}
