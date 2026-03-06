@@ -324,11 +324,11 @@ export class MenuScene extends Phaser.Scene {
       });
 
       this.matchmaking = new Matchmaking(firebase);
-      const gameId = await this.matchmaking.joinQueue();
+      const matchResult = await this.matchmaking.joinQueue();
 
       dotTimer.destroy();
 
-      if (gameId) {
+      if (matchResult.gameId) {
         this.statusText.setText('Match found!');
         this.statusText.setColor('#45E6B0');
 
@@ -338,9 +338,10 @@ export class MenuScene extends Phaser.Scene {
           this.cameras.main.fadeOut(400, 27, 16, 64);
           this.cameras.main.once('camerafadeoutcomplete', () => {
             this.scene.start('DraftScene', {
-              gameId,
+              gameId: matchResult.gameId,
               playerId: firebase.getPlayerId(),
               isLocal: false,
+              amPlayer1: matchResult.amPlayer1,
             });
           });
         });

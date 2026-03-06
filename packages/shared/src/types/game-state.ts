@@ -46,22 +46,29 @@ export interface Character {
   inventory: ConsumableId[];  // max 2 slots
   // Activity channeling
   channelActivity?: {
-    type: 'scout' | 'loot' | 'build' | 'trap' | 'upgrade_cp';
+    type: 'scout' | 'loot' | 'build' | 'trap' | 'upgrade_cp' | 'mine' | 'build_tower';
     ticksRemaining: number;
     position: Position;
   } | null;
+  // Personality & Morale
+  personality?: Personality;
+  morale?: MoraleState;
+  moraleTimer?: number;
+  lastPraised?: number;
   // Optional real-time fields
   respawnTimer?: number;
   currentOrder?: CharacterOrder | null;
   path?: Position[];
   hasFlag?: boolean;
   visionRange?: number;
+  isActiveHero?: boolean;
 }
 
 export interface CharacterOrder {
   type: 'move' | 'attack' | 'ability' | 'defend' | 'retreat' | 'capture' | 'hold'
     | 'escort' | 'patrol' | 'control'
-    | 'use_item' | 'scout' | 'loot' | 'build' | 'set_trap';
+    | 'use_item' | 'scout' | 'loot' | 'build' | 'set_trap'
+    | 'mine' | 'build_tower' | 'praise';
   targetPosition?: Position;
   targetCharacterId?: string;
   abilityId?: string;
@@ -150,7 +157,8 @@ export interface ResolvedAction {
 }
 
 export type ActionType = 'move' | 'attack' | 'ability' | 'defend' | 'retreat' | 'hold' | 'capture' | 'escort' | 'patrol' | 'control'
-  | 'use_item' | 'scout' | 'loot' | 'build' | 'set_trap';
+  | 'use_item' | 'scout' | 'loot' | 'build' | 'set_trap'
+  | 'mine' | 'build_tower' | 'praise';
 
 // ─── Points of Interest ─────────────────────────────────────────
 export interface POI {
@@ -206,4 +214,123 @@ export interface ActionResult {
   flagPickedUp?: boolean;
   flagCaptured?: boolean;
   flagReturned?: boolean;
+  goldEarned?: number;
+}
+
+// ─── Personality & Morale ────────────────────────────────────────
+export type BoldnessAxis = 'bold' | 'cautious';
+export type LoyaltyAxis = 'loyal' | 'independent';
+export interface Personality {
+  boldness: BoldnessAxis;
+  loyalty: LoyaltyAxis;
+}
+export type MoraleState = 'confident' | 'shaken';
+
+// ─── Follower (companions) ──────────────────────────────────────
+export type FollowerType = 'wolf' | 'hawk' | 'militia';
+export interface Follower {
+  id: string;
+  type: FollowerType;
+  ownerId: string;
+  ownerTeam: string;
+  stats: Stats;
+  currentHp: number;
+  position: Position;
+  isDead: boolean;
+  behavior: 'follow' | 'guard' | 'attack' | 'scout';
+  targetPosition?: Position;
+}
+
+// ─── Economy ────────────────────────────────────────────────────
+export type MapPhase = 1 | 2 | 3 | 4;
+export const MINE_RATE_PER_SEC = 3;
+export const BASE_INCOME_PER_SEC = 1;
+export const TOWER_COST = 200;
+
+export interface PlayerEconomy {
+  gold: number;
+  income: number;
+  upkeepPenalty: number;
+}
+
+export interface MineNode {
+  id: string;
+  name: string;
+  position: Position;
+  type: 'safe' | 'rich';
+  depleted: boolean;
+  goldPerSec: number;
+  currentGold: number;
+  activatePhase: MapPhase;
+  occupiedBy: string | null;
+}
+
+export interface Tower {
+  id: string;
+  position: Position;
+  owner: string;
+  hp: number;
+  maxHp: number;
+  damage: number;
+  range: number;
+}
+
+export interface TowerSite {
+  id: string;
+  name: string;
+  position: Position;
+  builtTower: Tower | null;
+  occupied: boolean;
+  activatePhase: MapPhase;
+}
+
+export interface NeutralCamp {
+  id: string;
+  name: string;
+  position: Position;
+  type: 'easy' | 'hard';
+  activatePhase: MapPhase;
+  cleared: boolean;
+  respawnTimer: number;
+  enemies: CampEnemy[];
+  reward: { gold: number; xp: number; buff?: string };
+}
+
+export interface CampEnemy {
+  id: string;
+  hp: number;
+  maxHp: number;
+  attack: number;
+  position: Position;
+  isDead: boolean;
+}
+
+export interface ScoutingPost {
+  id: string;
+  name: string;
+  position: Position;
+  capturedBy: string | null;
+  visionRadius: number;
+}
+
+// ─── Barks ──────────────────────────────────────────────────────
+export type BarkTrigger =
+  | 'order_attack' | 'order_defend' | 'order_move'
+  | 'taking_damage' | 'got_kill' | 'praised'
+  | 'ignored_while_hurt' | 'ally_down'
+  | 'enemy_spotted' | 'low_hp' | 'mine_depleted';
+
+export interface BarkEvent {
+  characterId: string;
+  text: string;
+  trigger: BarkTrigger;
+  timestamp: number;
+}
+
+// ─── Named Map Zones ────────────────────────────────────────────
+export interface MapZone {
+  name: string;
+  center: Position;
+  radius: number;
+  type: 'mine' | 'camp' | 'tower_site' | 'scouting_post' | 'healing_well' | 'spawn' | 'general';
 }

@@ -1,12 +1,13 @@
-import { Character, CLASSES, ANIMALS, Position, CTFState, ControlPoint, TileType, CONSUMABLES, ConsumableId, POI } from '@prompt-battle/shared';
+import { Character, CLASSES, Position, CTFState, ControlPoint, TileType, CONSUMABLES, ConsumableId, POI } from '@prompt-battle/shared';
 
 const GEMINI_API_KEY = (import.meta as any).env?.VITE_GEMINI_API_KEY || '';
-const GEMINI_MODEL = 'gemini-2.0-flash';
+const GEMINI_MODEL = 'gemini-3.1-flash-lite-preview';
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=`;
 
 export interface ParsedGameAction {
   characterId: string;
   type: 'move' | 'attack' | 'ability' | 'defend' | 'retreat' | 'hold' | 'capture' | 'escort' | 'patrol' | 'control'
+    | 'mine' | 'build_tower' | 'praise'
     | 'use_item' | 'scout' | 'loot' | 'build' | 'set_trap';
   targetCharacterId?: string;
   targetPosition?: Position;
@@ -33,17 +34,19 @@ function buildPrompt(
 ): string {
   const myList = myChars.map(c => {
     const cls = CLASSES[c.classId];
-    const animal = ANIMALS[c.animalId];
-    const ability = cls.abilities[0];
-    const cd = ability ? (c.cooldowns[ability.id] || 0) : 0;
-    const abilityStr = ability
-      ? `ABILITY: ${ability.name}(id:${ability.id}) - ${ability.description} [range:${ability.range}, cd:${cd > 0 ? cd + 's' : 'READY'}]`
-      : 'NO ABILITY';
+    const abilities = cls.abilities;
+    const abilityStrs = abilities.map(ability => {
+      const cd = c.cooldowns[ability.id] || 0;
+      return `${ability.name}(id:${ability.id}) - ${ability.description} [range:${ability.range}, cd:${cd > 0 ? cd + 's' : 'READY'}]`;
+    });
+    const abilityStr = abilityStrs.length > 0
+      ? `ABILITIES: ${abilityStrs.join(' | ')}`
+      : 'NO ABILITIES';
     const terrain = tiles[c.position.y]?.[c.position.x] || 'grass';
     const invStr = c.inventory.length > 0
       ? `INVENTORY: [${c.inventory.map(i => CONSUMABLES[i].name).join(', ')}]`
       : 'INVENTORY: empty';
-    return `  ID:"${c.id}" Name:"${c.name}" Class:${cls.name} Animal:${animal.name} Lv.${c.level} ` +
+    return `  ID:"${c.id}" Name:"${c.name}" Class:${cls.name} Role:${cls.role} Lv.${c.level} ` +
       `HP:${c.currentHp}/${c.stats.hp} Pos:(${c.position.x},${c.position.y}) Terrain:${terrain} ` +
       `ATK:${c.stats.attack} DEF:${c.stats.defense} SPD:${c.stats.speed} RNG:${c.stats.range} MAG:${c.stats.magic} ` +
       `${abilityStr} ${invStr}` +
@@ -52,8 +55,7 @@ function buildPrompt(
 
   const enemyList = enemyChars.map(c => {
     const cls = CLASSES[c.classId];
-    const animal = ANIMALS[c.animalId];
-    return `  ID:"${c.id}" Name:"${c.name}" Class:${cls.name} Animal:${animal.name} ` +
+    return `  ID:"${c.id}" Name:"${c.name}" Class:${cls.name} Role:${cls.role} ` +
       `HP:${c.currentHp}/${c.stats.hp} Pos:(${c.position.x},${c.position.y})` +
       `${c.isDead ? ' [DEAD]' : ''}`;
   }).join('\n');
@@ -93,6 +95,19 @@ ${controlPoints.map(cp => {
 }).join('\n')}
 - Stand within 2 tiles of a point to capture it (~5s). Contested if both teams present.
 
+CHARACTER SYSTEM:
+Each character is an ANIMAL (identity/stats) + CLASS (abilities/role). Players may refer to characters by animal name, class name, or character name.
+CLASSES:
+- Warrior (tank): Shield Bash (25 dmg + 3s stun, cd:8, rng:1)
+- Mage (dps): Fireball (45 dmg, cd:6, rng:5)
+- Archer (dps): Piercing Shot (40 dmg, cd:5, rng:7)
+- Healer (support): Healing Light (40 heal, cd:5, rng:4)
+- Rogue (assassin): Backstab (60 dmg, cd:7, rng:1)
+- Paladin (tank): Divine Smite (30 dmg + 20 self-heal, cd:7, rng:1)
+- Necromancer (dps): Drain Life (30 dmg + 20 self-heal, cd:5, rng:4)
+- Bard (support): Discordant Note (20 dmg + 50% slow 4s, cd:6, rng:4)
+ANIMALS modify stats: wolf (+30% atk), lion (+40% atk), turtle (+40% def), elephant (+40% hp), cheetah (+40% spd), falcon (+30% spd, +20% rng), owl (+30% mag), phoenix (+40% mag), chameleon (balanced), spider (+10% atk/spd/rng).
+
 ACTION TYPES:
 - "move": Move toward a position. Requires targetPosition {x, y}. Character keeps moving until arrival.
 - "attack": Chase and attack an enemy. Requires targetCharacterId. Character will pursue and auto-attack in range.
@@ -104,6 +119,9 @@ ACTION TYPES:
 - "patrol": Guard an area, pacing back and forth. Requires targetPosition.
 - "hold": Stop and do nothing.
 - "control": Move to and hold a control point. Requires targetPosition (the control point position). Use for "take the point", "capture", "cap", etc. THIS IS THE PRIMARY OBJECTIVE.
+- "mine": Send a character to mine gold at the nearest mine node. "go mine", "mine west", "gather gold".
+- "build_tower": Build a defensive tower at the nearest tower site (costs 200g). "build tower", "tower up".
+- "praise": Praise a hero for morale boost (+15% dmg 10s). "good job rogue", "nice work paladin".
 - "use_item": Use a consumable from inventory. Requires itemId (the consumable type ID). Use when player says "use bomb", "drink potion", "throw bomb", "activate horn", etc.
 - "scout": Move to nearest lookout post and channel to reveal a large map area (10s channel). Rewards: vision + XP.
 - "loot": Move to nearest treasure cache and loot it (8s channel). Rewards: random consumable item + XP.
@@ -113,7 +131,9 @@ ACTION TYPES:
 POINTS OF INTEREST (POIs):
 ${pois.filter(p => p.active).map(p => `- ${p.type}: Pos:(${p.position.x},${p.position.y}) ${p.type === 'treasure_cache' ? '[LOOT for consumable]' : p.type === 'lookout' ? '[SCOUT for vision]' : '[Stand to heal]'}`).join('\n')}
 
-LEVELING: Characters earn XP from kills (50), capturing CPs (40), looting caches (30), scouting (20). Levels 1-5, each level gives +8% all stats.
+LEVELING: Characters earn XP from kills (50), capturing CPs (40), looting caches (30), scouting (20). Levels 1-3, each level gives +40% all stats.
+
+ECONOMY: Gold is earned from mining (3-5g/sec at mine nodes) and passive income (1g/sec). Towers cost 200g. Barricades cost nothing. At Phase 4 (4:00), income doubles.
 
 INVENTORY: Each character can hold max 2 consumable items. Items are gained from looting treasure caches.
 Available consumables: Siege Bomb (40 AOE dmg), Smoke Bomb (3-tile fog), Battle Horn (team +30% dmg), Haste Elixir (2x speed 15s), Iron Skin (+40% def 20s), Vision Flare (reveal map 10s), Rally Banner (allies respawn 8s faster), Purge Scroll (destroy enemy barricades).
@@ -129,8 +149,8 @@ COMMAND QUEUING:
 
 COMPLEX COMMANDS:
 - Players can address MULTIPLE characters with different orders using commas or "and":
-  "warrior attack the mage, healer heal the warrior"
-  "archer go north and rogue flank"
+  "mage fireball the rogue, paladin defend"
+  "warrior attack and bard rally cry"
 - "focus [enemy]" = all targeted characters attack the same enemy.
 - "spread out" / "scatter" = move characters apart in different directions from their center.
 - "flank" = move to the side of the nearest enemy (perpendicular approach).
@@ -145,7 +165,7 @@ COMPLEX COMMANDS:
 RULES:
 - Interpret the player's intent HEAVILY. If they say "take the point" or "capture", that means control the nearest unowned point.
 - A single command can issue DIFFERENT orders to DIFFERENT characters. Parse each clause independently.
-- If the player names a character by class, animal, or name, command THAT character.
+- If the player names a character by class or name, command THAT character.
 - "all" or "everyone" means all alive characters.
 - If ambiguous, pick the most logical character for the task.
 - NEVER ask for clarification. Always produce valid actions.
@@ -160,7 +180,7 @@ Respond with ONLY valid JSON (no markdown, no code blocks):
   "actions": [
     {
       "characterId": "<exact character ID>",
-      "type": "<move|attack|ability|defend|retreat|capture|escort|patrol|hold|control|use_item|scout|loot|build|set_trap>",
+      "type": "<move|attack|ability|defend|retreat|capture|escort|patrol|hold|control|mine|build_tower|praise|use_item|scout|loot|build|set_trap>",
       "targetCharacterId": "<ID if applicable>",
       "targetPosition": {"x": <number>, "y": <number>},
       "abilityId": "<ability id if applicable>",

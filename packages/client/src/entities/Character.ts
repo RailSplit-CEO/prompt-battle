@@ -1,10 +1,9 @@
 import Phaser from 'phaser';
-import { Character as CharData, Position, ActiveEffect, ClassId, AnimalId } from '@prompt-battle/shared';
+import { Character as CharData, Position, ActiveEffect, ClassId } from '@prompt-battle/shared';
 import { HealthBar } from './HealthBar';
 import { TILE_SIZE } from '../map/MapGenerator';
 
-// Emoji maps
-const CLASS_EMOJIS: Record<ClassId, string> = {
+const CLASS_EMOJIS: Record<string, string> = {
   warrior: '⚔️',
   mage: '🔮',
   archer: '🏹',
@@ -16,19 +15,16 @@ const CLASS_EMOJIS: Record<ClassId, string> = {
 };
 
 const ANIMAL_EMOJIS: Record<string, string> = {
-  wolf: '🐺',
-  lion: '🦁',
-  turtle: '🐢',
-  elephant: '🐘',
-  cheetah: '🐆',
-  falcon: '🦅',
-  owl: '🦉',
-  phoenix: '🔥',
-  chameleon: '🦎',
-  spider: '🕷️',
+  wolf: '🐺', lion: '🦁', turtle: '🐢', elephant: '🐘',
+  cheetah: '🐆', falcon: '🦅', owl: '🦉', phoenix: '🔥',
+  chameleon: '🦎', spider: '🕷️',
+  bear: '🐻', tiger: '🐯', eagle: '🦅', rhino: '🦏',
+  armadillo: '🐾', crab: '🦀', hare: '🐇', fox: '🦊',
+  horse: '🐴', raven: '🐦‍⬛', dragon: '🐉', serpent: '🐍',
+  scorpion: '🦂', bat: '🦇', cat: '🐱',
 };
 
-const CLASS_COLORS: Record<ClassId, number> = {
+const CLASS_COLORS: Record<string, number> = {
   warrior: 0xFF5555,
   mage: 0x5577FF,
   archer: 0x55CC55,
@@ -37,6 +33,12 @@ const CLASS_COLORS: Record<ClassId, number> = {
   paladin: 0xFFAA33,
   necromancer: 0x8855BB,
   bard: 0xFF69B4,
+};
+
+// Morale indicators
+const MORALE_COLORS: Record<string, string> = {
+  confident: '#45E6B0',
+  shaken: '#FFD93D',
 };
 
 // Color per order type
@@ -52,6 +54,10 @@ const ORDER_COLORS: Record<string, string> = {
   CONTROL: '#FFD93D',
   STUNNED: '#FF6B6B',
   DEAD: '#FF6B6B',
+  MINE: '#FFD93D',
+  BUILD: '#FF9F43',
+  SCOUT: '#6CC4FF',
+  LOOT: '#FF9F43',
   idle: '#8B6DB0',
   blocked: '#FF9F43',
 };
@@ -80,6 +86,8 @@ export class CharacterEntity {
   private orderLabel: Phaser.GameObjects.Text;
   private orderBg: Phaser.GameObjects.Graphics;
   private emojiLabel: Phaser.GameObjects.Text;
+  private barkBubble?: Phaser.GameObjects.Container;
+  private barkTimer?: Phaser.Time.TimerEvent;
   private flagIcon?: Phaser.GameObjects.Graphics;
   private respawnOverlay?: Phaser.GameObjects.Text;
   private scene: Phaser.Scene;
@@ -107,8 +115,8 @@ export class CharacterEntity {
     this.sprite.setData('charId', charData.id);
     this.sprite.setInteractive({ useHandCursor: true });
 
-    // Emoji on the character model
-    const animalEmoji = ANIMAL_EMOJIS[charData.animalId] ?? '?';
+    // Animal emoji on the character (animals ARE the characters)
+    const animalEmoji = ANIMAL_EMOJIS[charData.animalId] ?? CLASS_EMOJIS[charData.classId] ?? '?';
     this.emojiLabel = scene.add.text(px, py - 1, animalEmoji, {
       fontSize: '14px',
     }).setOrigin(0.5).setDepth(11);
@@ -117,9 +125,10 @@ export class CharacterEntity {
     this.healthBar = new HealthBar(scene, px, py, charData.stats.hp, 30, this.classColor);
     this.healthBar.setDepth(11);
 
-    // Class emoji + name below the character
-    const classEmoji = CLASS_EMOJIS[charData.classId] ?? '';
-    this.nameLabel = scene.add.text(px, py + 18, `${classEmoji} ${charData.name}`, {
+    // Name + morale indicator below character
+    const moraleIcon = charData.morale === 'confident' ? '●' : '◐';
+    const moraleColor = MORALE_COLORS[charData.morale ?? 'confident'] || '#45E6B0';
+    this.nameLabel = scene.add.text(px, py + 18, `${charData.name}`, {
       fontSize: '9px',
       color: isPlayer1 ? '#6CC4FF' : '#FF8EC8',
       fontFamily: '"Nunito", sans-serif',
@@ -149,6 +158,67 @@ export class CharacterEntity {
     this.drawOrderBg();
   }
 
+  showBark(text: string) {
+    // Remove previous bark
+    if (this.barkBubble) {
+      this.barkBubble.destroy();
+      this.barkBubble = undefined;
+    }
+    if (this.barkTimer) {
+      this.barkTimer.destroy();
+      this.barkTimer = undefined;
+    }
+
+    const px = this.sprite.x;
+    const py = this.sprite.y - 44;
+    const container = this.scene.add.container(px, py).setDepth(30);
+
+    // Background
+    const bg = this.scene.add.graphics();
+    const textObj = this.scene.add.text(0, 0, text, {
+      fontSize: '9px',
+      color: '#fff',
+      fontFamily: '"Nunito", sans-serif',
+      fontStyle: 'bold',
+      wordWrap: { width: 120 },
+    }).setOrigin(0.5);
+    const w = textObj.width + 10;
+    const h = textObj.height + 6;
+    bg.fillStyle(0x000000, 0.75);
+    bg.fillRoundedRect(-w / 2, -h / 2, w, h, 4);
+    // Speech bubble tail
+    bg.fillTriangle(0, h / 2, -4, h / 2 + 6, 4, h / 2);
+
+    container.add(bg);
+    container.add(textObj);
+
+    // Fade in
+    container.setAlpha(0);
+    this.scene.tweens.add({
+      targets: container,
+      alpha: 1,
+      duration: 200,
+    });
+
+    this.barkBubble = container;
+
+    // Auto-destroy after 2.5s
+    this.barkTimer = this.scene.time.delayedCall(2500, () => {
+      if (this.barkBubble) {
+        this.scene.tweens.add({
+          targets: this.barkBubble,
+          alpha: 0,
+          y: this.barkBubble.y - 10,
+          duration: 300,
+          onComplete: () => {
+            this.barkBubble?.destroy();
+            this.barkBubble = undefined;
+          },
+        });
+      }
+    });
+  }
+
   private drawOrderBg() {
     this.orderBg.clear();
     const text = this.orderLabel.text;
@@ -174,6 +244,7 @@ export class CharacterEntity {
     if (this.flagIcon) this.flagIcon.setAlpha(alpha);
     if (this.micLabel) this.micLabel.setAlpha(alpha);
     if (this.selectionGlow) this.selectionGlow.setAlpha(visible ? 0.6 : 0);
+    if (this.barkBubble) this.barkBubble.setAlpha(alpha);
   }
 
   get fogVisible() { return this._visible; }
@@ -279,15 +350,17 @@ export class CharacterEntity {
     if (this.micLabel?.visible) this.micLabel.setPosition(this.sprite.x + 16, this.sprite.y - 20);
     if (this.flagIcon) this.drawFlagIcon();
     if (this.respawnOverlay) this.respawnOverlay.setPosition(this.sprite.x, this.sprite.y);
+    if (this.barkBubble) this.barkBubble.setPosition(this.sprite.x, this.sprite.y - 44);
   }
 
   updateFromState(charData: CharData) {
     this.data = charData;
     this.healthBar.update(this.sprite.x, this.sprite.y, charData.currentHp);
     this.showFlagCarrier(!!charData.hasFlag);
-    const classEmoji = CLASS_EMOJIS[charData.classId] ?? '';
+    const animalEmoji = ANIMAL_EMOJIS[charData.animalId] ?? CLASS_EMOJIS[charData.classId] ?? '';
     const lvl = charData.level > 1 ? ` Lv${charData.level}` : '';
-    this.nameLabel.setText(`${classEmoji} ${charData.name}${lvl}`);
+    const moraleIcon = charData.morale === 'shaken' ? ' ◐' : '';
+    this.nameLabel.setText(`${animalEmoji} ${charData.name}${lvl}${moraleIcon}`);
   }
 
   refreshVisuals() {
@@ -334,6 +407,23 @@ export class CharacterEntity {
     });
   }
 
+  showGoldEarned(amount: number) {
+    const text = this.scene.add.text(this.sprite.x + 10, this.sprite.y - 20, `+${amount}g`, {
+      fontSize: '12px',
+      color: '#FFD93D',
+      fontFamily: '"Fredoka", sans-serif',
+      fontStyle: 'bold',
+    }).setOrigin(0.5).setDepth(20);
+
+    this.scene.tweens.add({
+      targets: text,
+      y: text.y - 20,
+      alpha: 0,
+      duration: 700,
+      onComplete: () => text.destroy(),
+    });
+  }
+
   select() {
     if (!this.selectionRing) {
       this.selectionRing = this.scene.add.sprite(this.sprite.x, this.sprite.y, 'selection_ring');
@@ -341,7 +431,6 @@ export class CharacterEntity {
     }
     this.selectionRing.setVisible(true);
 
-    // Pulsing glow circle
     if (!this.selectionGlow) {
       this.selectionGlow = this.scene.add.graphics().setDepth(8);
     }
@@ -358,7 +447,6 @@ export class CharacterEntity {
       ease: 'Sine.easeInOut',
     });
 
-    // Mic icon
     if (!this.micLabel) {
       this.micLabel = this.scene.add.text(
         this.sprite.x + 16, this.sprite.y - 20, '\uD83C\uDF99\uFE0F', {
@@ -395,11 +483,12 @@ export class CharacterEntity {
       speed_boost: 0xFFD93D,
       damage_boost: 0xFF9F43,
       defense_debuff: 0xC98FFF,
+      shield: 0x4488FF,
+      iron_skin: 0xFFAA33,
     };
 
     const activeTypes = new Set(effects.map(e => e.type));
 
-    // Remove auras for expired effects
     for (const [type, gfx] of this.effectAuras) {
       if (!activeTypes.has(type)) {
         gfx.destroy();
@@ -407,7 +496,6 @@ export class CharacterEntity {
       }
     }
 
-    // Add/update auras for active effects
     for (const type of activeTypes) {
       const color = EFFECT_COLORS[type];
       if (!color) continue;
@@ -435,6 +523,8 @@ export class CharacterEntity {
     if (this.micLabel) this.micLabel.destroy();
     if (this.flagIcon) this.flagIcon.destroy();
     if (this.respawnOverlay) this.respawnOverlay.destroy();
+    if (this.barkBubble) this.barkBubble.destroy();
+    if (this.barkTimer) this.barkTimer.destroy();
     for (const gfx of this.effectAuras.values()) gfx.destroy();
     this.effectAuras.clear();
   }

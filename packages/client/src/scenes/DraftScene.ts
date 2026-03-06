@@ -79,6 +79,10 @@ export class DraftScene extends Phaser.Scene {
   private timerEvent?: Phaser.Time.TimerEvent;
   private timeLeft = 30;
   private usedClasses: Set<string> = new Set();
+  private usedAnimals: Set<string> = new Set();
+  private activeSlotTween?: Phaser.Tweens.Tween;
+  private animalLabel!: Phaser.GameObjects.Text;
+  private animalHintTween?: Phaser.Tweens.Tween;
 
   constructor() {
     super({ key: 'DraftScene' });
@@ -234,24 +238,19 @@ export class DraftScene extends Phaser.Scene {
     for (let x = 0; x < width; x += 50) gridGfx.lineBetween(x, 0, x, height);
     for (let y = 0; y < height; y += 50) gridGfx.lineBetween(0, y, width, y);
 
-    // ─── LAYOUT METRICS ─────────────────────────────────────────
-    const statsPanelW = 280;
-    const contentW = width - statsPanelW - 40; // left content area
-    const contentCenterX = contentW / 2 + 20;
-
     // ─── HEADER ──────────────────────────────────────────────────
-    this.add.rectangle(width / 2, 0, width, 80, 0x1B1040, 0.92).setOrigin(0.5, 0);
+    this.add.rectangle(width / 2, 0, width, 56, 0x1B1040, 0.92).setOrigin(0.5, 0);
 
-    this.add.text(contentCenterX, 18, '🌟 DRAFT PHASE 🌟', {
-      fontSize: '32px',
+    this.add.text(width / 2, 6, '🌟 DRAFT PHASE 🌟', {
+      fontSize: '22px',
       color: '#FF6B9D',
       fontFamily: '"Fredoka", sans-serif',
       fontStyle: 'bold',
       letterSpacing: 5,
     }).setOrigin(0.5, 0);
 
-    this.infoText = this.add.text(contentCenterX, 54, 'Select a class and animal', {
-      fontSize: '15px',
+    this.infoText = this.add.text(width / 2, 32, 'Select a class and animal', {
+      fontSize: '13px',
       color: '#cbb8ee',
       fontFamily: '"Nunito", sans-serif',
       fontStyle: '600',
@@ -259,8 +258,8 @@ export class DraftScene extends Phaser.Scene {
 
     // ─── TIMER ───────────────────────────────────────────────────
     this.timerRing = this.add.graphics();
-    this.timerText = this.add.text(width - statsPanelW - 60, 42, '30', {
-      fontSize: '26px',
+    this.timerText = this.add.text(width - 35, 28, '30', {
+      fontSize: '20px',
       color: '#FFD93D',
       fontFamily: '"Fredoka", sans-serif',
       fontStyle: 'bold',
@@ -268,19 +267,25 @@ export class DraftScene extends Phaser.Scene {
     this.drawTimerRing(1);
 
     // ─── PICK TIMELINE ───────────────────────────────────────────
-    this.createPickTimeline(contentCenterX);
+    this.createPickTimeline(width / 2);
 
-    // ─── CLASS CARDS ─────────────────────────────────────────────
+    // ─── CENTERED STACKED LAYOUT ─────────────────────────────────
+    // Classes on top, animals below, confirm at bottom — all centered
     const classIds = Object.keys(CLASSES) as ClassId[];
-    const cardW = 190;
-    const cardH = 220;
-    const cardGap = 14;
-    const classGridW = 4 * cardW + 3 * cardGap;
-    const classStartX = contentCenterX - classGridW / 2 + cardW / 2;
-    const classY = 130;
+    const animalIds = Object.keys(ANIMALS) as AnimalId[];
 
-    this.add.text(classStartX - cardW / 2, classY - 24, '⚔️  CLASSES', {
-      fontSize: '14px',
+    // Responsive card sizes — fit everything in viewport
+    const maxGridW = Math.min(width - 40, 900);
+    const classCols = 4;
+    const classGap = 8;
+    const cardW = Math.min(140, Math.floor((maxGridW - (classCols - 1) * classGap) / classCols));
+    const cardH = Math.min(105, Math.floor(cardW * 0.75));
+    const classGridW = classCols * cardW + (classCols - 1) * classGap;
+    const classStartX = width / 2 - classGridW / 2 + cardW / 2;
+    const classY0 = 82;
+
+    this.add.text(classStartX - cardW / 2, classY0 - 15, '⚔️  PICK A CLASS', {
+      fontSize: '11px',
       color: '#FF6B9D',
       fontFamily: '"Fredoka", sans-serif',
       letterSpacing: 3,
@@ -288,10 +293,10 @@ export class DraftScene extends Phaser.Scene {
     });
 
     classIds.forEach((id, i) => {
-      const col = i % 4;
-      const row = Math.floor(i / 4);
-      const x = classStartX + col * (cardW + cardGap);
-      const y = classY + row * (cardH + cardGap) + cardH / 2;
+      const col = i % classCols;
+      const row = Math.floor(i / classCols);
+      const x = classStartX + col * (cardW + classGap);
+      const y = classY0 + row * (cardH + classGap) + cardH / 2;
       const card = this.createClassCard(x, y, id, cardW, cardH);
       this.classCards.set(id, card);
 
@@ -299,23 +304,25 @@ export class DraftScene extends Phaser.Scene {
       this.tweens.add({
         targets: card,
         alpha: 1, scaleX: 1, scaleY: 1,
-        duration: 400,
-        delay: 100 + i * 60,
+        duration: 300,
+        delay: 80 + i * 30,
         ease: 'Back.easeOut',
       });
     });
 
-    // ─── ANIMAL CARDS ────────────────────────────────────────────
-    const animalIds = Object.keys(ANIMALS) as AnimalId[];
-    const smallW = 145;
-    const smallH = 168;
-    const smallGap = 12;
-    const animalGridW = 5 * smallW + 4 * smallGap;
-    const animalStartX = contentCenterX - animalGridW / 2 + smallW / 2;
-    const animalYBase = classY + Math.ceil(classIds.length / 4) * (cardH + cardGap) + 20;
+    const classRows = Math.ceil(classIds.length / classCols);
+    const animalY0 = classY0 + classRows * (cardH + classGap) + 18;
 
-    this.add.text(animalStartX - smallW / 2, animalYBase - 24, '🐾  ANIMALS', {
-      fontSize: '14px',
+    // Animal cards
+    const animalCols = 5;
+    const animalGap = 6;
+    const smallW = Math.min(120, Math.floor((maxGridW - (animalCols - 1) * animalGap) / animalCols));
+    const smallH = Math.min(90, Math.floor(smallW * 0.75));
+    const animalGridW = animalCols * smallW + (animalCols - 1) * animalGap;
+    const animalStartX = width / 2 - animalGridW / 2 + smallW / 2;
+
+    this.animalLabel = this.add.text(animalStartX - smallW / 2, animalY0 - 15, '🐾  PICK AN ANIMAL', {
+      fontSize: '11px',
       color: '#FFD93D',
       fontFamily: '"Fredoka", sans-serif',
       letterSpacing: 3,
@@ -323,10 +330,10 @@ export class DraftScene extends Phaser.Scene {
     });
 
     animalIds.forEach((id, i) => {
-      const col = i % 5;
-      const row = Math.floor(i / 5);
-      const x = animalStartX + col * (smallW + smallGap);
-      const y = animalYBase + row * (smallH + smallGap) + smallH / 2;
+      const col = i % animalCols;
+      const row = Math.floor(i / animalCols);
+      const x = animalStartX + col * (smallW + animalGap);
+      const y = animalY0 + row * (smallH + animalGap) + smallH / 2;
       const card = this.createAnimalCard(x, y, id, smallW, smallH);
       this.animalCards.set(id, card);
 
@@ -334,24 +341,28 @@ export class DraftScene extends Phaser.Scene {
       this.tweens.add({
         targets: card,
         alpha: 1, scaleX: 1, scaleY: 1,
-        duration: 400,
-        delay: 500 + i * 50,
+        duration: 300,
+        delay: 200 + i * 25,
         ease: 'Back.easeOut',
       });
     });
 
-    // ─── STATS PREVIEW PANEL (right side) ────────────────────────
-    this.statsPanel = this.add.container(width - statsPanelW - 10, 120);
+    const animalRows = Math.ceil(animalIds.length / animalCols);
+    const animalBottomY = animalY0 + animalRows * (smallH + animalGap);
+
+    // ─── STATS PREVIEW PANEL (right side, shown when both selected) ───
+    const statsPanelW = 240;
+    this.statsPanel = this.add.container(width - statsPanelW - 10, classY0);
     this.statsPanel.setAlpha(0);
 
     // ─── CONFIRM BUTTON ──────────────────────────────────────────
-    const confirmY = animalYBase + Math.ceil(animalIds.length / 5) * (smallH + smallGap) + 30;
-    this.confirmBtn = this.createConfirmButton(contentCenterX, Math.min(confirmY, height - 50));
+    const confirmY = Math.min(animalBottomY + 8, height - 50);
+    this.confirmBtn = this.createConfirmButton(width / 2, confirmY);
     this.confirmBtn.setAlpha(0).setScale(0.9);
     this.tweens.add({
       targets: this.confirmBtn,
       alpha: 1, scaleX: 1, scaleY: 1,
-      duration: 500, delay: 900,
+      duration: 400, delay: 600,
       ease: 'Back.easeOut',
     });
 
@@ -369,6 +380,7 @@ export class DraftScene extends Phaser.Scene {
           this.picks.push(pick);
           this.currentPickIndex++;
           this.usedClasses.add(pick.classId);
+          this.usedAnimals.add(pick.animalId);
           this.animatePickSlot(pick);
           this.updateState();
 
@@ -379,16 +391,7 @@ export class DraftScene extends Phaser.Scene {
       });
     }
 
-    // Enable camera scrolling if content overflows
-    const maxY = confirmY + 60;
-    if (maxY > height) {
-      this.cameras.main.setBounds(0, 0, width, maxY);
-      this.input.on('wheel', (_p: unknown, _gx: unknown, _gy: unknown, _gz: unknown, dy: number) => {
-        this.cameras.main.scrollY = Phaser.Math.Clamp(
-          this.cameras.main.scrollY + dy * 0.5, 0, maxY - height
-        );
-      });
-    }
+    console.log('[Draft] UI built. Screen:', width, 'x', height, 'Cards fit:', animalBottomY < height);
   }
 
   // ─── CARD CREATION ──────────────────────────────────────────────
@@ -398,96 +401,55 @@ export class DraftScene extends Phaser.Scene {
     const roleColor = ROLE_COLORS[cls.role] || 0x888888;
     const container = this.add.container(x, y);
 
-    // Card background
     const bg = this.add.graphics();
     bg.fillStyle(0x2A1555, 1);
-    bg.fillRoundedRect(-w / 2, -h / 2, w, h, 14);
+    bg.fillRoundedRect(-w / 2, -h / 2, w, h, 10);
     bg.lineStyle(2, 0x4A2880, 0.8);
-    bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 14);
+    bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 10);
     container.add(bg);
 
-    // Role color accent line at top
+    // Role accent line
     const accent = this.add.graphics();
     accent.fillStyle(roleColor, 0.7);
-    accent.fillRoundedRect(-w / 2 + 4, -h / 2 + 4, w - 8, 5, 3);
+    accent.fillRoundedRect(-w / 2 + 3, -h / 2 + 3, w - 6, 3, 2);
     container.add(accent);
 
-    // Class icon (emoji in circle)
-    const iconBg = this.add.graphics();
-    iconBg.fillStyle(roleColor, 0.18);
-    iconBg.fillCircle(0, -h / 2 + 55, 36);
-    iconBg.lineStyle(2, roleColor, 0.35);
-    iconBg.strokeCircle(0, -h / 2 + 55, 36);
-    container.add(iconBg);
-
-    const iconText = this.add.text(0, -h / 2 + 55, CLASS_ICONS[id] || id[0].toUpperCase(), {
-      fontSize: '32px',
-      color: '#' + roleColor.toString(16).padStart(6, '0'),
-      fontFamily: '"Fredoka", sans-serif',
-      fontStyle: 'bold',
+    // Class icon centered
+    const iconText = this.add.text(0, -h / 2 + 20, CLASS_ICONS[id] || '', {
+      fontSize: '26px',
     }).setOrigin(0.5);
     container.add(iconText);
 
     // Class name
-    const name = this.add.text(0, -h / 2 + 100, cls.name.toUpperCase(), {
-      fontSize: '16px',
+    const name = this.add.text(0, -h / 2 + 42, cls.name.toUpperCase(), {
+      fontSize: '13px',
       color: '#f0e8ff',
       fontFamily: '"Nunito", sans-serif',
       fontStyle: 'bold',
-    }).setOrigin(0.5);
+    }).setOrigin(0.5, 0);
     container.add(name);
 
     // Role tag
-    const roleBg = this.add.graphics();
-    roleBg.fillStyle(roleColor, 0.14);
-    roleBg.fillRoundedRect(-32, -h / 2 + 115, 64, 20, 6);
-    container.add(roleBg);
-
-    const roleText = this.add.text(0, -h / 2 + 125, cls.role.toUpperCase(), {
-      fontSize: '10px',
+    const roleText = this.add.text(0, -h / 2 + 60, cls.role.toUpperCase(), {
+      fontSize: '9px',
       color: '#' + roleColor.toString(16).padStart(6, '0'),
       fontFamily: '"Nunito", sans-serif',
       letterSpacing: 1,
       fontStyle: 'bold',
-    }).setOrigin(0.5);
+    }).setOrigin(0.5, 0);
     container.add(roleText);
 
-    // Ability name preview
+    // Ability name
     const ability = cls.abilities[0];
     if (ability) {
-      const abilityText = this.add.text(0, -h / 2 + 148, ability.name, {
+      const abilityText = this.add.text(0, -h / 2 + 78, ability.name, {
         fontSize: '10px',
         color: '#C98FFF',
         fontFamily: '"Nunito", sans-serif',
-        fontStyle: 'bold',
-      }).setOrigin(0.5);
+      }).setOrigin(0.5, 0);
       container.add(abilityText);
     }
 
-    // Mini stat bars
-    const stats = cls.baseStats;
-    const maxStat = 150;
-    const barY = -h / 2 + 168;
-    const barNames = ['HP', 'ATK', 'DEF', 'SPD'];
-    const barValues = [stats.hp, stats.attack, stats.defense, stats.speed];
-    const barColors = [0x45E6B0, 0xFF6B6B, 0x6CC4FF, 0x45E6B0];
-
-    barNames.forEach((stat, i) => {
-      const by = barY + i * 15;
-      const label = this.add.text(-w / 2 + 14, by, stat, {
-        fontSize: '10px', color: '#9B7EC0', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
-      }).setOrigin(0, 0.5);
-      container.add(label);
-
-      const barBg = this.add.rectangle(-w / 2 + 48, by, w - 68, 6, 0x2A1858).setOrigin(0, 0.5);
-      container.add(barBg);
-
-      const barFill = this.add.rectangle(-w / 2 + 48, by, (barValues[i] / maxStat) * (w - 68), 6, barColors[i], 0.75)
-        .setOrigin(0, 0.5);
-      container.add(barFill);
-    });
-
-    // Interactive zone
     const zone = this.add.zone(0, 0, w, h).setInteractive({ useHandCursor: true });
     container.add(zone);
 
@@ -504,9 +466,9 @@ export class DraftScene extends Phaser.Scene {
         this.tweens.add({ targets: container, scaleX: 1.05, scaleY: 1.05, duration: 150, ease: 'Back.easeOut' });
         bg.clear();
         bg.fillStyle(0x352068, 1);
-        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 14);
+        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 10);
         bg.lineStyle(2, 0xFF6B9D, 0.6);
-        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 14);
+        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 10);
       }
     });
 
@@ -516,22 +478,15 @@ export class DraftScene extends Phaser.Scene {
         this.tweens.add({ targets: container, scaleX: 1, scaleY: 1, duration: 150 });
         bg.clear();
         bg.fillStyle(0x2A1555, 1);
-        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 14);
+        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 10);
         bg.lineStyle(2, 0x4A2880, 0.8);
-        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 14);
+        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 10);
       }
     });
 
     zone.on('pointerdown', () => {
       if (container.getData('disabled')) return;
       this.selectClass(id);
-      this.tweens.add({
-        targets: container,
-        scaleX: 0.95, scaleY: 0.95,
-        duration: 60,
-        yoyo: true,
-        ease: 'Quad.easeIn',
-      });
     });
 
     return container;
@@ -544,85 +499,50 @@ export class DraftScene extends Phaser.Scene {
 
     const bg = this.add.graphics();
     bg.fillStyle(0x2A1555, 1);
-    bg.fillRoundedRect(-w / 2, -h / 2, w, h, 12);
+    bg.fillRoundedRect(-w / 2, -h / 2, w, h, 10);
     bg.lineStyle(2, 0x4A2880, 0.8);
-    bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 12);
+    bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 10);
     container.add(bg);
 
     // Archetype accent
     const accent = this.add.graphics();
     accent.fillStyle(archColor, 0.6);
-    accent.fillRoundedRect(-w / 2 + 4, -h / 2 + 4, w - 8, 4, 2);
+    accent.fillRoundedRect(-w / 2 + 3, -h / 2 + 3, w - 6, 3, 2);
     container.add(accent);
 
-    // Animal icon (emoji in circle)
-    const iconBg = this.add.graphics();
-    iconBg.fillStyle(archColor, 0.15);
-    iconBg.fillCircle(0, -h / 2 + 44, 30);
-    iconBg.lineStyle(2, archColor, 0.35);
-    iconBg.strokeCircle(0, -h / 2 + 44, 30);
-    container.add(iconBg);
-
-    const iconText = this.add.text(0, -h / 2 + 44, ANIMAL_ICONS[id] || id[0].toUpperCase(), {
-      fontSize: '26px',
-      color: '#' + archColor.toString(16).padStart(6, '0'),
-      fontFamily: '"Fredoka", sans-serif',
-      fontStyle: 'bold',
+    // Icon
+    const iconText = this.add.text(0, -h / 2 + 20, ANIMAL_ICONS[id] || id[0].toUpperCase(), {
+      fontSize: '22px',
     }).setOrigin(0.5);
     container.add(iconText);
 
-    // Animal name
-    const name = this.add.text(0, -h / 2 + 82, animal.name.toUpperCase(), {
-      fontSize: '14px',
+    // Name
+    const name = this.add.text(0, -h / 2 + 44, animal.name.toUpperCase(), {
+      fontSize: '11px',
       color: '#f0e8ff',
       fontFamily: '"Nunito", sans-serif',
       fontStyle: 'bold',
     }).setOrigin(0.5);
     container.add(name);
 
-    // Archetype tag
-    const archBg = this.add.graphics();
-    archBg.fillStyle(archColor, 0.12);
-    archBg.fillRoundedRect(-34, -h / 2 + 95, 68, 18, 5);
-    container.add(archBg);
-
-    const archText = this.add.text(0, -h / 2 + 104, animal.archetype.toUpperCase(), {
-      fontSize: '9px',
-      color: '#' + archColor.toString(16).padStart(6, '0'),
-      fontFamily: '"Nunito", sans-serif',
-      letterSpacing: 1,
-      fontStyle: 'bold',
-    }).setOrigin(0.5);
-    container.add(archText);
-
-    // Passive preview
-    const passiveText = this.add.text(0, -h / 2 + 124, animal.passive.name, {
-      fontSize: '10px',
-      color: '#FFD93D',
-      fontFamily: '"Nunito", sans-serif',
-      fontStyle: 'bold',
-    }).setOrigin(0.5);
-    container.add(passiveText);
-
-    // Stat modifier hints
+    // Stat hint
     const mods = animal.statModifiers;
     const modParts: string[] = [];
-    if (mods.attack > 1) modParts.push(`ATK+`);
-    if (mods.defense > 1) modParts.push(`DEF+`);
-    if (mods.speed > 1) modParts.push(`SPD+`);
-    if (mods.magic > 1) modParts.push(`MAG+`);
-    if (mods.hp > 1) modParts.push(`HP+`);
+    if (mods.attack > 1) modParts.push('ATK+');
+    if (mods.defense > 1) modParts.push('DEF+');
+    if (mods.speed > 1) modParts.push('SPD+');
+    if (mods.magic > 1) modParts.push('MAG+');
+    if (mods.hp > 1) modParts.push('HP+');
 
     if (modParts.length > 0) {
-      const modText = this.add.text(0, -h / 2 + 144, modParts.join(' '), {
+      const modText = this.add.text(0, -h / 2 + 62, modParts.join(' '), {
         fontSize: '9px',
         color: '#' + archColor.toString(16).padStart(6, '0'),
         fontFamily: '"Nunito", sans-serif',
-      }).setOrigin(0.5).setAlpha(0.7);
+      }).setOrigin(0.5).setAlpha(0.8);
       container.add(modText);
     }
 
-    // Interactive zone
     const zone = this.add.zone(0, 0, w, h).setInteractive({ useHandCursor: true });
     container.add(zone);
 
@@ -639,9 +559,9 @@ export class DraftScene extends Phaser.Scene {
         this.tweens.add({ targets: container, scaleX: 1.06, scaleY: 1.06, duration: 150, ease: 'Back.easeOut' });
         bg.clear();
         bg.fillStyle(0x352068, 1);
-        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 12);
+        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 10);
         bg.lineStyle(2, archColor, 0.6);
-        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 12);
+        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 10);
       }
     });
 
@@ -651,21 +571,16 @@ export class DraftScene extends Phaser.Scene {
         this.tweens.add({ targets: container, scaleX: 1, scaleY: 1, duration: 150 });
         bg.clear();
         bg.fillStyle(0x2A1555, 1);
-        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 12);
+        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 10);
         bg.lineStyle(2, 0x4A2880, 0.8);
-        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 12);
+        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 10);
       }
     });
 
     zone.on('pointerdown', () => {
       if (container.getData('disabled')) return;
+      console.log('[Draft] Animal clicked:', id, 'disabled:', container.getData('disabled'), 'usedAnimals:', [...this.usedAnimals]);
       this.selectAnimal(id);
-      this.tweens.add({
-        targets: container,
-        scaleX: 0.94, scaleY: 0.94,
-        duration: 60,
-        yoyo: true,
-      });
     });
 
     return container;
@@ -674,7 +589,7 @@ export class DraftScene extends Phaser.Scene {
   // ─── PICK TIMELINE ──────────────────────────────────────────────
 
   private createPickTimeline(centerX: number) {
-    this.pickTimeline = this.add.container(centerX, 95);
+    this.pickTimeline = this.add.container(centerX, 68);
     const slotW = 90, slotH = 22, gap = 10;
     const totalW = 6 * slotW + 5 * gap;
     const startX = -totalW / 2 + slotW / 2;
@@ -744,133 +659,79 @@ export class DraftScene extends Phaser.Scene {
       const cls = CLASSES[this.selectedClass];
       const animal = ANIMALS[this.selectedAnimal];
       const stats = computeStats(cls.baseStats, animal.statModifiers);
-      const roleColor = ROLE_COLORS[cls.role] || 0x888888;
 
       this.statsPanel.setAlpha(1);
+      const panelW = 220;
+      const panelH = 200;
 
-      // Panel background
-      const panelW = 260;
       const panelBg = this.add.graphics();
       panelBg.fillStyle(0x1E1048, 0.95);
-      panelBg.fillRoundedRect(0, 0, panelW, 420, 14);
+      panelBg.fillRoundedRect(0, 0, panelW, panelH, 10);
       panelBg.lineStyle(2, 0x4A2880, 0.6);
-      panelBg.strokeRoundedRect(0, 0, panelW, 420, 14);
+      panelBg.strokeRoundedRect(0, 0, panelW, panelH, 10);
       this.statsPanel.add(panelBg);
 
-      // Combo title
-      const title = this.add.text(panelW / 2, 18, `${cls.name} + ${animal.name}`, {
-        fontSize: '17px',
+      const title = this.add.text(panelW / 2, 10, `${ANIMAL_ICONS[this.selectedAnimal] || ''} ${cls.name} + ${animal.name}`, {
+        fontSize: '14px',
         color: '#fff',
         fontFamily: '"Nunito", sans-serif',
         fontStyle: 'bold',
       }).setOrigin(0.5, 0);
       this.statsPanel.add(title);
 
-      // Role + Archetype tags
-      const roleColorHex = '#' + roleColor.toString(16).padStart(6, '0');
-      const archColor = ARCHETYPE_COLORS[animal.archetype] || 0x888888;
-      const archColorHex = '#' + archColor.toString(16).padStart(6, '0');
-
-      const tags = this.add.text(panelW / 2, 42, `${cls.role.toUpperCase()} + ${animal.archetype.toUpperCase()}`, {
-        fontSize: '10px',
-        color: roleColorHex,
-        fontFamily: '"Nunito", sans-serif',
-        fontStyle: 'bold',
-        letterSpacing: 1,
-      }).setOrigin(0.5, 0);
-      this.statsPanel.add(tags);
-
-      // Divider
-      const div = this.add.graphics();
-      div.lineStyle(1, 0xFF6B9D, 0.2);
-      div.lineBetween(16, 60, panelW - 16, 60);
-      this.statsPanel.add(div);
-
-      // Stat bars
+      // Compact stat bars
       const statConfig = [
         { key: 'HP', value: stats.hp, max: 210, color: 0x45E6B0 },
         { key: 'ATK', value: stats.attack, max: 50, color: 0xFF6B6B },
         { key: 'DEF', value: stats.defense, max: 30, color: 0x6CC4FF },
         { key: 'SPD', value: stats.speed, max: 7, color: 0x45E6B0 },
-        { key: 'RNG', value: stats.range, max: 8, color: 0xFFD93D },
         { key: 'MAG', value: stats.magic, max: 50, color: 0xC98FFF },
       ];
 
       statConfig.forEach((s, i) => {
-        const sy = 75 + i * 30;
-        const label = this.add.text(16, sy, s.key, {
-          fontSize: '11px', color: '#8B6DB0', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
+        const sy = 34 + i * 20;
+        const label = this.add.text(10, sy, s.key, {
+          fontSize: '9px', color: '#8B6DB0', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
         });
         this.statsPanel.add(label);
 
-        const value = this.add.text(panelW - 16, sy, String(s.value), {
-          fontSize: '11px', color: '#cbb8ee', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
+        const barBg = this.add.rectangle(46, sy + 5, panelW - 80, 6, 0x2A1858).setOrigin(0, 0.5);
+        this.statsPanel.add(barBg);
+        const fillWidth = Math.min(1, s.value / s.max) * (panelW - 80);
+        const barFill = this.add.rectangle(46, sy + 5, 0, 6, s.color, 0.8).setOrigin(0, 0.5);
+        this.statsPanel.add(barFill);
+        this.tweens.add({ targets: barFill, width: fillWidth, duration: 300, delay: i * 30, ease: 'Cubic.easeOut' });
+
+        const value = this.add.text(panelW - 10, sy, String(s.value), {
+          fontSize: '9px', color: '#cbb8ee', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
         }).setOrigin(1, 0);
         this.statsPanel.add(value);
-
-        const barBg = this.add.rectangle(56, sy + 7, panelW - 90, 7, 0x2A1858).setOrigin(0, 0.5);
-        this.statsPanel.add(barBg);
-
-        const fillWidth = Math.min(1, s.value / s.max) * (panelW - 90);
-        const barFill = this.add.rectangle(56, sy + 7, 0, 7, s.color, 0.8).setOrigin(0, 0.5);
-        this.statsPanel.add(barFill);
-
-        this.tweens.add({
-          targets: barFill,
-          width: fillWidth,
-          duration: 400,
-          delay: i * 50,
-          ease: 'Cubic.easeOut',
-        });
       });
 
-      // Ability section
-      const abY = 265;
-      const abTitle = this.add.text(16, abY, 'ABILITY', {
-        fontSize: '10px', color: '#6c63ff', fontFamily: '"Nunito", sans-serif',
-        letterSpacing: 2, fontStyle: 'bold',
-      });
-      this.statsPanel.add(abTitle);
-
-      cls.abilities.forEach((ability, i) => {
-        const ay = abY + 20 + i * 40;
-        const aName = this.add.text(16, ay, ability.name, {
-          fontSize: '13px', color: '#C98FFF', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
+      // Ability
+      const ability = cls.abilities[0];
+      if (ability) {
+        const aName = this.add.text(10, 140, `⚡ ${ability.name}`, {
+          fontSize: '11px', color: '#C98FFF', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
         });
         this.statsPanel.add(aName);
-
-        const aDesc = this.add.text(16, ay + 16, ability.description, {
-          fontSize: '9px', color: '#8B6DB0', fontFamily: '"Nunito", sans-serif',
-          wordWrap: { width: panelW - 32 },
+        const aDesc = this.add.text(10, 155, ability.description, {
+          fontSize: '8px', color: '#8B6DB0', fontFamily: '"Nunito", sans-serif',
+          wordWrap: { width: panelW - 20 },
         });
         this.statsPanel.add(aDesc);
-      });
+      }
 
-      // Passive section
-      const passY = abY + 80;
-      const passTitle = this.add.text(16, passY, `PASSIVE (${animal.name})`, {
-        fontSize: '10px', color: '#FFD93D', fontFamily: '"Nunito", sans-serif',
-        letterSpacing: 1, fontStyle: 'bold',
-      });
-      this.statsPanel.add(passTitle);
-
-      const passName = this.add.text(16, passY + 18, animal.passive.name, {
-        fontSize: '13px', color: '#FFD93D', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
+      // Passive
+      const passName = this.add.text(10, 175, `✨ ${animal.passive.name}`, {
+        fontSize: '11px', color: '#FFD93D', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
       });
       this.statsPanel.add(passName);
 
-      const passDesc = this.add.text(16, passY + 34, animal.passive.description, {
-        fontSize: '9px', color: '#8B6DB0', fontFamily: '"Nunito", sans-serif',
-        wordWrap: { width: panelW - 32 },
-      });
-      this.statsPanel.add(passDesc);
-
-      // Panel entrance animation
       this.tweens.add({
         targets: this.statsPanel,
         alpha: { from: 0, to: 1 },
-        x: { from: this.statsPanel.x + 20, to: this.statsPanel.x },
-        duration: 300,
+        duration: 200,
         ease: 'Cubic.easeOut',
       });
 
@@ -885,17 +746,17 @@ export class DraftScene extends Phaser.Scene {
 
   private createConfirmButton(x: number, y: number): Phaser.GameObjects.Container {
     const container = this.add.container(x, y);
-    const w = 280, h = 54;
+    const w = 260, h = 44;
 
     const bg = this.add.graphics();
     bg.fillStyle(0x2A1858, 0.8);
-    bg.fillRoundedRect(-w / 2, -h / 2, w, h, 16);
+    bg.fillRoundedRect(-w / 2, -h / 2, w, h, 12);
     bg.lineStyle(2, 0x4A2880, 0.5);
-    bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 16);
+    bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 12);
     container.add(bg);
 
     const text = this.add.text(0, 0, '✨ CONFIRM PICK ✨', {
-      fontSize: '17px',
+      fontSize: '15px',
       color: '#7B5EA0',
       fontFamily: '"Fredoka", sans-serif',
       fontStyle: 'bold',
@@ -903,16 +764,13 @@ export class DraftScene extends Phaser.Scene {
     }).setOrigin(0.5);
     container.add(text);
 
-    const zone = this.add.zone(x, y, w, h).setInteractive({ useHandCursor: true });
+    // Zone is INSIDE the container at (0,0) so it moves/scales with the container
+    const zone = this.add.zone(0, 0, w, h).setInteractive({ useHandCursor: true });
+    container.add(zone);
+
     zone.on('pointerdown', () => {
       if (this.confirmBtnEnabled) {
         this.confirmPick();
-        this.tweens.add({
-          targets: container,
-          scaleX: 0.95, scaleY: 0.95,
-          duration: 60,
-          yoyo: true,
-        });
       }
     });
 
@@ -935,20 +793,20 @@ export class DraftScene extends Phaser.Scene {
     this.confirmBtnEnabled = enabled;
     const bg = this.confirmBtn.getData('bg') as Phaser.GameObjects.Graphics;
     const text = this.confirmBtn.getData('text') as Phaser.GameObjects.Text;
-    const w = 280, h = 54;
+    const w = 260, h = 44;
 
     bg.clear();
     if (enabled) {
       bg.fillStyle(0xFF6B9D, 0.3);
-      bg.fillRoundedRect(-w / 2, -h / 2, w, h, 16);
+      bg.fillRoundedRect(-w / 2, -h / 2, w, h, 12);
       bg.lineStyle(2, 0xFF6B9D, 0.8);
-      bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 16);
+      bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 12);
       text.setColor('#fff');
     } else {
       bg.fillStyle(0x2A1858, 0.8);
-      bg.fillRoundedRect(-w / 2, -h / 2, w, h, 16);
+      bg.fillRoundedRect(-w / 2, -h / 2, w, h, 12);
       bg.lineStyle(2, 0x4A2880, 0.5);
-      bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 16);
+      bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 12);
       text.setColor('#7B5EA0');
     }
   }
@@ -956,7 +814,9 @@ export class DraftScene extends Phaser.Scene {
   // ─── SELECTION LOGIC ──────────────────────────────────────────
 
   private selectClass(id: ClassId) {
+    if (this.draftFinished) return;
     if (this.usedClasses.has(id)) return;
+    console.log('[Draft] Class selected:', id);
     this.selectedClass = id;
 
     this.classCards.forEach((container, cid) => {
@@ -967,28 +827,58 @@ export class DraftScene extends Phaser.Scene {
         container.setData('selected', true);
         bg.clear();
         bg.fillStyle(0x352068, 1);
-        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 14);
+        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 10);
         bg.lineStyle(3, 0xFF6B9D, 0.9);
-        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 14);
+        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 10);
         this.tweens.add({ targets: container, scaleX: 1.05, scaleY: 1.05, duration: 150 });
       } else {
         container.setData('selected', false);
         if (!this.usedClasses.has(cid)) {
           bg.clear();
           bg.fillStyle(0x2A1555, 1);
-          bg.fillRoundedRect(-w / 2, -h / 2, w, h, 14);
+          bg.fillRoundedRect(-w / 2, -h / 2, w, h, 10);
           bg.lineStyle(2, 0x4A2880, 0.8);
-          bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 14);
+          bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 10);
         }
         this.tweens.add({ targets: container, scaleX: 1, scaleY: 1, duration: 150 });
       }
     });
 
+    // Flash the animal label to draw attention if no animal selected yet
+    if (!this.selectedAnimal && this.animalLabel) {
+      if (this.animalHintTween) this.animalHintTween.stop();
+      this.animalLabel.setColor('#FF6B9D');
+      this.animalLabel.setText('🐾  ⬇ NOW PICK AN ANIMAL ⬇');
+      this.animalHintTween = this.tweens.add({
+        targets: this.animalLabel,
+        alpha: { from: 1, to: 0.3 },
+        duration: 400,
+        yoyo: true,
+        repeat: 5,
+        onComplete: () => {
+          this.animalLabel.setAlpha(1);
+          this.animalLabel.setColor('#FFD93D');
+          this.animalLabel.setText('🐾  PICK AN ANIMAL');
+        },
+      });
+    }
+
     this.updatePreview();
   }
 
   private selectAnimal(id: AnimalId) {
+    if (this.draftFinished) return;
+    if (this.usedAnimals.has(id)) return;
+    console.log('[Draft] Animal selected:', id);
     this.selectedAnimal = id;
+
+    // Stop the hint flash
+    if (this.animalHintTween) {
+      this.animalHintTween.stop();
+      this.animalLabel.setAlpha(1);
+      this.animalLabel.setColor('#FFD93D');
+      this.animalLabel.setText('🐾  PICK AN ANIMAL');
+    }
 
     this.animalCards.forEach((container, aid) => {
       const bg = container.getData('bg') as Phaser.GameObjects.Graphics;
@@ -999,17 +889,17 @@ export class DraftScene extends Phaser.Scene {
         container.setData('selected', true);
         bg.clear();
         bg.fillStyle(0x352068, 1);
-        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 12);
+        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 10);
         bg.lineStyle(3, archColor, 0.9);
-        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 12);
+        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 10);
         this.tweens.add({ targets: container, scaleX: 1.06, scaleY: 1.06, duration: 150 });
-      } else {
+      } else if (!this.usedAnimals.has(aid)) {
         container.setData('selected', false);
         bg.clear();
         bg.fillStyle(0x2A1555, 1);
-        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 12);
+        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 10);
         bg.lineStyle(2, 0x4A2880, 0.8);
-        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 12);
+        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 10);
         this.tweens.add({ targets: container, scaleX: 1, scaleY: 1, duration: 150 });
       }
     });
@@ -1020,9 +910,16 @@ export class DraftScene extends Phaser.Scene {
   // ─── CONFIRM & DRAFT LOGIC ───────────────────────────────────
 
   private confirmPick() {
-    if (!this.selectedClass || !this.selectedAnimal) return;
-    if (!this.isMyTurn()) return;
-    if (this.usedClasses.has(this.selectedClass)) return;
+    if (this.draftFinished) return;
+    console.log('[Draft] confirmPick called: class=' + this.selectedClass + ' animal=' + this.selectedAnimal +
+      ' pickIndex=' + this.currentPickIndex + ' myPicks=' + this.myPickCount + ' isMyTurn=' + this.isMyTurn());
+    if (!this.selectedClass || !this.selectedAnimal) {
+      console.log('[Draft] Confirm BLOCKED: need both class and animal');
+      return;
+    }
+    if (!this.isMyTurn()) { console.log('[Draft] Confirm BLOCKED: not my turn'); return; }
+    if (this.usedClasses.has(this.selectedClass)) { console.log('[Draft] Confirm BLOCKED: class already used'); return; }
+    if (this.usedAnimals.has(this.selectedAnimal)) { console.log('[Draft] Confirm BLOCKED: animal already used'); return; }
 
     const pick: DraftPick = {
       playerId: this.playerId,
@@ -1034,6 +931,7 @@ export class DraftScene extends Phaser.Scene {
     this.processedPickIds.add(pick.pickOrder);
     this.picks.push(pick);
     this.usedClasses.add(this.selectedClass);
+    this.usedAnimals.add(this.selectedAnimal);
     this.animatePickSlot(pick);
     this.myPickCount++;
     this.currentPickIndex++;
@@ -1041,8 +939,6 @@ export class DraftScene extends Phaser.Scene {
     if (!this.isLocal) {
       this.firebase.submitDraftPick(this.gameId, pick);
     }
-
-    this.cameras.main.flash(150, 255, 107, 157, false);
 
     if (this.isLocal && this.currentPickIndex < 6 && !this.isMyTurn()) {
       this.time.delayedCall(300, () => {
@@ -1066,7 +962,7 @@ export class DraftScene extends Phaser.Scene {
 
   private autoPickForOpponent() {
     const availableClasses = Object.keys(CLASSES).filter(c => !this.usedClasses.has(c));
-    const availableAnimals = Object.keys(ANIMALS);
+    const availableAnimals = Object.keys(ANIMALS).filter(a => !this.usedAnimals.has(a));
     const cls = availableClasses[Math.floor(Math.random() * availableClasses.length)] as ClassId;
     const animal = availableAnimals[Math.floor(Math.random() * availableAnimals.length)] as AnimalId;
 
@@ -1079,6 +975,7 @@ export class DraftScene extends Phaser.Scene {
 
     this.picks.push(pick);
     this.usedClasses.add(cls);
+    this.usedAnimals.add(animal);
     this.animatePickSlot(pick);
     this.currentPickIndex++;
 
@@ -1101,29 +998,35 @@ export class DraftScene extends Phaser.Scene {
       if (!this.usedClasses.has(cid)) {
         bg.clear();
         bg.fillStyle(0x2A1555, 1);
-        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 14);
+        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 10);
         bg.lineStyle(2, 0x4A2880, 0.8);
-        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 14);
+        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 10);
         this.tweens.add({ targets: container, scaleX: 1, scaleY: 1, duration: 150 });
       }
     });
-    this.animalCards.forEach((container) => {
+    this.animalCards.forEach((container, aid) => {
       const bg = container.getData('bg') as Phaser.GameObjects.Graphics;
       const w = container.getData('w') as number;
       const h = container.getData('h') as number;
       container.setData('selected', false);
-      bg.clear();
-      bg.fillStyle(0x2A1555, 1);
-      bg.fillRoundedRect(-w / 2, -h / 2, w, h, 12);
-      bg.lineStyle(2, 0x4A2880, 0.8);
-      bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 12);
-      this.tweens.add({ targets: container, scaleX: 1, scaleY: 1, duration: 150 });
+      if (!this.usedAnimals.has(aid)) {
+        bg.clear();
+        bg.fillStyle(0x2A1555, 1);
+        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 10);
+        bg.lineStyle(2, 0x4A2880, 0.8);
+        bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 10);
+        this.tweens.add({ targets: container, scaleX: 1, scaleY: 1, duration: 150 });
+      }
     });
     this.statsPanel.setAlpha(0);
     this.setConfirmEnabled(false);
   }
 
   private updateState() {
+    console.log('[Draft] updateState: pickIndex=' + this.currentPickIndex + ' myPicks=' + this.myPickCount +
+      ' isMyTurn=' + this.isMyTurn() + ' usedClasses=' + [...this.usedClasses] + ' usedAnimals=' + [...this.usedAnimals]);
+
+    // Grey out used classes
     this.classCards.forEach((container, cid) => {
       if (this.usedClasses.has(cid)) {
         const bg = container.getData('bg') as Phaser.GameObjects.Graphics;
@@ -1132,7 +1035,21 @@ export class DraftScene extends Phaser.Scene {
         container.setData('disabled', true);
         bg.clear();
         bg.fillStyle(0x150A30, 0.5);
-        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 14);
+        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 10);
+        container.setAlpha(0.3);
+      }
+    });
+
+    // Grey out used animals
+    this.animalCards.forEach((container, aid) => {
+      if (this.usedAnimals.has(aid)) {
+        const bg = container.getData('bg') as Phaser.GameObjects.Graphics;
+        const w = container.getData('w') as number;
+        const h = container.getData('h') as number;
+        container.setData('disabled', true);
+        bg.clear();
+        bg.fillStyle(0x150A30, 0.5);
+        bg.fillRoundedRect(-w / 2, -h / 2, w, h, 10);
         container.setAlpha(0.3);
       }
     });
@@ -1150,30 +1067,34 @@ export class DraftScene extends Phaser.Scene {
       this.infoText.setColor('#7B5EA0');
     }
 
-    this.pickSlots.forEach((slot, i) => {
-      if (i === this.currentPickIndex && this.currentPickIndex < 6) {
-        this.tweens.add({
-          targets: slot,
-          scaleX: 1.1, scaleY: 1.1,
-          duration: 400,
-          yoyo: true,
-          repeat: -1,
-          ease: 'Sine.easeInOut',
-        });
-      }
-    });
+    // Stop previous slot pulse tween, start new one on current slot
+    if (this.activeSlotTween) {
+      this.activeSlotTween.stop();
+      // Reset scale of all slots
+      this.pickSlots.forEach(s => { s.scaleX = 1; s.scaleY = 1; });
+    }
+    if (this.currentPickIndex < 6) {
+      const slot = this.pickSlots[this.currentPickIndex];
+      this.activeSlotTween = this.tweens.add({
+        targets: slot,
+        scaleX: 1.1, scaleY: 1.1,
+        duration: 400,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+    }
   }
 
   // ─── TIMER ────────────────────────────────────────────────────
 
   private drawTimerRing(progress: number) {
     const { width } = this.cameras.main;
-    const statsPanelW = 280;
-    const timerX = width - statsPanelW - 60;
+    const timerX = width - 35;
     this.timerRing.clear();
     this.timerRing.lineStyle(3, progress > 0.3 ? 0xFFD93D : 0xFF6B6B, 0.6);
     this.timerRing.beginPath();
-    this.timerRing.arc(timerX, 42, 20, Phaser.Math.DegToRad(-90),
+    this.timerRing.arc(timerX, 28, 16, Phaser.Math.DegToRad(-90),
       Phaser.Math.DegToRad(-90 + 360 * progress), false);
     this.timerRing.strokePath();
   }
@@ -1209,31 +1130,42 @@ export class DraftScene extends Phaser.Scene {
   }
 
   private autoPickForSelf() {
+    console.log('[Draft] AUTO-PICK triggered! timeLeft was 0, pickIndex=' + this.currentPickIndex);
     const available = Object.keys(CLASSES).filter(c => !this.usedClasses.has(c));
-    const animals = Object.keys(ANIMALS);
+    const animals = Object.keys(ANIMALS).filter(a => !this.usedAnimals.has(a));
     this.selectedClass = available[0] as ClassId;
     this.selectedAnimal = animals[Math.floor(Math.random() * animals.length)] as AnimalId;
+    console.log('[Draft] AUTO-PICK chose: class=' + this.selectedClass + ' animal=' + this.selectedAnimal);
     this.confirmPick();
   }
 
+  private draftFinished = false;
+
   private finishDraft() {
+    if (this.draftFinished) return;
+    this.draftFinished = true;
+    console.log('[Draft] FINISHING DRAFT. Total picks:', this.picks.length, 'My picks:', this.myPickCount);
+
     if (this.timerEvent) this.timerEvent.destroy();
+    if (this.activeSlotTween) this.activeSlotTween.stop();
+
+    // Disable all cards immediately
+    this.classCards.forEach(c => c.setData('disabled', true));
+    this.animalCards.forEach(c => c.setData('disabled', true));
+    this.confirmBtnEnabled = false;
 
     this.infoText.setText('DRAFT COMPLETE!');
     this.infoText.setColor('#45E6B0');
 
-    this.cameras.main.flash(400, 69, 230, 176, false);
-
-    this.time.delayedCall(1500, () => {
-      this.cameras.main.fadeOut(500, 27, 16, 64);
-      this.cameras.main.once('camerafadeoutcomplete', () => {
-        this.scene.start('BattleScene', {
-          gameId: this.gameId,
-          playerId: this.playerId,
-          isLocal: this.isLocal,
-          picks: this.picks,
-          amPlayer1: this.amPlayer1,
-        });
+    // Transition to battle quickly
+    this.cameras.main.fadeOut(400, 27, 16, 64);
+    this.cameras.main.once('camerafadeoutcomplete', () => {
+      this.scene.start('BattleScene', {
+        gameId: this.gameId,
+        playerId: this.playerId,
+        isLocal: this.isLocal,
+        picks: this.picks,
+        amPlayer1: this.amPlayer1,
       });
     });
   }

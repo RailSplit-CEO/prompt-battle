@@ -1,6 +1,6 @@
 import { initializeApp, FirebaseApp } from 'firebase/app';
 import { getAuth, signInAnonymously, Auth, User } from 'firebase/auth';
-import { getDatabase, ref, set, get, push, onValue, onChildAdded, update, remove, Database, off } from 'firebase/database';
+import { getDatabase, ref, set, get, push, onValue, onChildAdded, update, remove, Database, off, runTransaction, onDisconnect } from 'firebase/database';
 import { DraftPick, Character, CommandResponse, CharacterOrder, CTFState, ControlPoint } from '@prompt-battle/shared';
 
 const firebaseConfig = {
@@ -56,76 +56,102 @@ export class FirebaseSync {
     return this.initialized && this.user !== null;
   }
 
-  // Matchmaking (client-side: each client checks for waiting opponents)
-  async joinMatchmakingQueue(): Promise<string> {
+  // Atomic matchmaking using transaction on a semaphore node.
+  // /matchmaking/waiting holds a single waiting player's ID, or null.
+  // First player sets it to their ID (becomes player1, waits).
+  // Second player claims it atomically (becomes player2, creates game).
+  async findMatch(): Promise<MatchResult> {
     const playerId = this.getPlayerId();
-    const queueRef = ref(this.db, `matchmaking/queue/${playerId}`);
-    await set(queueRef, {
-      playerId,
-      timestamp: Date.now(),
-      status: 'waiting',
-    });
-    console.log('[Firebase] Joined matchmaking queue');
+    const waitingRef = ref(this.db, 'matchmaking/waiting');
 
-    // Try to match with an existing waiting player
-    const allRef = ref(this.db, `matchmaking/queue`);
-    const snapshot = await get(allRef);
-    if (snapshot.exists()) {
-      const queue = snapshot.val() as Record<string, { playerId: string; status: string; timestamp: number }>;
-      for (const [key, entry] of Object.entries(queue)) {
-        if (entry.playerId !== playerId && entry.status === 'waiting') {
-          // Found an opponent — create a game and match both players
-          const gameId = `game_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-          console.log('[Firebase] Found opponent, creating game:', gameId);
+    // Clean up on disconnect — if we're the one waiting, remove ourselves
+    const disconnectRef = onDisconnect(waitingRef);
 
-          const gameRef = ref(this.db, `games/${gameId}`);
-          await set(gameRef, {
-            meta: {
-              player1: entry.playerId,
-              player2: playerId,
-              mapSeed: Date.now(),
-              status: 'drafting',
-              currentTurn: 0,
-              createdAt: Date.now(),
-            },
-          });
+    let opponentId: string | null = null;
 
-          await Promise.all([
-            update(ref(this.db, `matchmaking/queue/${entry.playerId}`), { status: 'matched', gameId }),
-            update(ref(this.db, `matchmaking/queue/${playerId}`), { status: 'matched', gameId }),
-          ]);
-
-          // Clean up queue after a short delay
-          setTimeout(async () => {
-            await Promise.all([
-              remove(ref(this.db, `matchmaking/queue/${entry.playerId}`)),
-              remove(ref(this.db, `matchmaking/queue/${playerId}`)),
-            ]);
-          }, 5000);
-
-          break;
-        }
+    const result = await runTransaction(waitingRef, (currentWaiting: string | null) => {
+      if (!currentWaiting) {
+        // Nobody waiting — we become the waiting player
+        return playerId;
       }
+      if (currentWaiting === playerId) {
+        // Already waiting (reconnect case)
+        return playerId;
+      }
+      // Someone else is waiting — capture their ID and claim the match
+      opponentId = currentWaiting;
+      return null; // clear the semaphore
+    });
+
+    if (!result.committed) {
+      throw new Error('Matchmaking transaction failed');
     }
 
-    return playerId;
+    const afterValue = result.snapshot.val();
+
+    if (afterValue === playerId) {
+      // We are player1, waiting for an opponent
+      console.log('[Firebase] We are player1, waiting for opponent...');
+      // Set up disconnect cleanup
+      await disconnectRef.set(null);
+
+      // Listen for our match node
+      return this.waitForMatchAsPlayer1(playerId);
+    }
+
+    // We are player2 — we claimed the opponent
+    console.log('[Firebase] We are player2, opponent:', opponentId);
+    // Cancel disconnect handler since we're not waiting anymore
+    await disconnectRef.cancel();
+
+    const gameId = `game_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+
+    // Create the game with correct roles
+    const gameRef = ref(this.db, `games/${gameId}`);
+    await set(gameRef, {
+      meta: {
+        player1: opponentId,
+        player2: playerId,
+        mapSeed: Date.now(),
+        status: 'drafting',
+        currentTurn: 0,
+        createdAt: Date.now(),
+      },
+    });
+
+    // Notify player1 by writing to their match node
+    await set(ref(this.db, `matchmaking/matches/${opponentId}`), {
+      gameId,
+      amPlayer1: true,
+    });
+
+    console.log('[Firebase] Game created:', gameId, '(we are player2)');
+    return { gameId, amPlayer1: false };
   }
 
-  async waitForMatch(playerId: string): Promise<string> {
+  // Player1 waits for player2 to create the game and notify them
+  private waitForMatchAsPlayer1(playerId: string): Promise<MatchResult> {
     return new Promise((resolve, reject) => {
-      const playerRef = ref(this.db, `matchmaking/queue/${playerId}`);
+      const matchRef = ref(this.db, `matchmaking/matches/${playerId}`);
       const timeout = setTimeout(() => {
-        off(playerRef);
+        off(matchRef);
+        // Clean up: remove ourselves from waiting
+        runTransaction(ref(this.db, 'matchmaking/waiting'), (current) => {
+          if (current === playerId) return null;
+          return undefined;
+        });
         reject(new Error('Matchmaking timed out after 60s'));
       }, 60000);
 
-      onValue(playerRef, (snap) => {
+      onValue(matchRef, (snap) => {
         const data = snap.val();
-        if (data?.status === 'matched' && data?.gameId) {
+        if (data?.gameId) {
           clearTimeout(timeout);
-          off(playerRef);
-          console.log('[Firebase] Match found:', data.gameId);
-          resolve(data.gameId);
+          off(matchRef);
+          // Clean up the match notification node
+          remove(matchRef);
+          console.log('[Firebase] Match found:', data.gameId, '(we are player1)');
+          resolve({ gameId: data.gameId, amPlayer1: true });
         }
       });
     });
@@ -133,7 +159,13 @@ export class FirebaseSync {
 
   async removeFromQueue(): Promise<void> {
     const playerId = this.getPlayerId();
-    await remove(ref(this.db, `matchmaking/queue/${playerId}`));
+    // Remove from waiting semaphore if we're the one waiting
+    await runTransaction(ref(this.db, 'matchmaking/waiting'), (current) => {
+      if (current === playerId) return null;
+      return undefined; // abort if someone else is waiting
+    });
+    // Also clean up any match notification
+    await remove(ref(this.db, `matchmaking/matches/${playerId}`));
   }
 
   // Game creation (local mode)
@@ -294,4 +326,9 @@ export interface RemoteOrderPayload {
   characterId: string;
   order: CharacterOrder;
   queued: boolean;
+}
+
+export interface MatchResult {
+  gameId: string;
+  amPlayer1: boolean;
 }

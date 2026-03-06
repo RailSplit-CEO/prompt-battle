@@ -7,7 +7,7 @@ const ARROW_SIZE = 5;
 const ARROW_GAP = 3;
 const LERP = 0.15; // smoothing factor
 
-const TILE_COLORS: Record<TileType, number> = {
+const TILE_COLORS: Record<string, number> = {
   grass: 0x5CC96B,
   forest: 0x2E8B4E,
   water: 0x45A5FF,
@@ -25,6 +25,8 @@ const TILE_COLORS: Record<TileType, number> = {
   gate_open: 0xCCBB88,
   gate_closed: 0x777777,
   switch: 0xFFDD44,
+  mine_node: 0xFFD700,
+  tower_site: 0xAA88CC,
 };
 
 const CP_COLORS: Record<string, number> = {

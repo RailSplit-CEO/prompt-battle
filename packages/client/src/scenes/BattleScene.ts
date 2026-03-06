@@ -4,6 +4,10 @@ import {
   Position, CharacterOrder, CTFState, ControlPoint,
   ConsumableId, CONSUMABLES, rollRandomConsumable,
   POI, Barricade, Trap, XP_THRESHOLDS, LEVEL_STAT_BONUS,
+  Follower, PlayerEconomy, MapPhase,
+  MineNode, Tower, TowerSite, NeutralCamp,
+  getBark, randomPersonality, BARK_COOLDOWN,
+  MINE_RATE_PER_SEC, BASE_INCOME_PER_SEC, TOWER_COST,
 } from '@prompt-battle/shared';
 import { CharacterEntity } from '../entities/Character';
 import {
@@ -19,6 +23,7 @@ import {
 } from '../systems/GeminiCommandParser';
 import { SoundManager } from '../systems/SoundManager';
 import { CharacterViewports } from '../systems/CharacterViewports';
+import { getGambitOrder, GambitContext } from '../systems/GambitAI';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────
 const COMMAND_COOLDOWN = 10000;
@@ -39,6 +44,11 @@ const LOOT_CHANNEL_TICKS = 11;    // ~8 seconds
 const BUILD_CHANNEL_TICKS = 8;    // ~6 seconds
 const TRAP_CHANNEL_TICKS = 5;     // ~4 seconds
 const UPGRADE_CP_TICKS = 11;      // ~8 seconds
+const MINE_CHANNEL_TICKS = 4;     // ~3 seconds per mining cycle
+const BUILD_TOWER_TICKS = 11;     // ~8 seconds to build tower
+const TOWER_HP = 300;
+const TOWER_DPS = 10;
+const TOWER_RANGE = 4;
 const CACHE_RESPAWN_TIME = 45;    // seconds
 const LOOKOUT_VISION_RADIUS = 12;
 const LOOKOUT_VISION_DURATION = 30; // seconds
@@ -186,6 +196,35 @@ export class BattleScene extends Phaser.Scene {
   // Damage tracking for XP assists
   private damageDealt: Map<string, Map<string, number>> = new Map(); // targetId -> Map<attackerId, damage>
 
+  // Economy
+  private economy: { player1: PlayerEconomy; player2: PlayerEconomy } = {
+    player1: { gold: 0, income: BASE_INCOME_PER_SEC, upkeepPenalty: 1 },
+    player2: { gold: 0, income: BASE_INCOME_PER_SEC, upkeepPenalty: 1 },
+  };
+
+  // Followers (unused in animal-based system, kept for type compat)
+  private followers: Follower[] = [];
+
+  // Game phase (1-4, escalation)
+  private gamePhase: MapPhase = 1;
+  private elapsedSeconds = 0;
+
+  // Bark cooldowns per character
+  private lastBarkTime: Map<string, number> = new Map();
+
+  // Active hero (WASD controlled)
+  private activeHeroId: string | null = null;
+
+  // Mine nodes
+  private mineNodes: MineNode[] = [];
+
+  // Towers
+  private towers: Tower[] = [];
+  private towerSites: TowerSite[] = [];
+
+  // Neutral camps
+  private neutralCamps: NeutralCamp[] = [];
+
   // Character selection for direct commands
   private selectedCharId: string | null = null;
   private selectedCharLabel!: Phaser.GameObjects.Text;
@@ -193,11 +232,14 @@ export class BattleScene extends Phaser.Scene {
   // HUD elements (HTML)
   private commandLogEl!: HTMLElement;
   private statusBarEl!: HTMLElement;
-  private commandBarEl!: HTMLElement;
+  private heroBarEl!: HTMLElement;
   private abilityPanelEl!: HTMLElement;
 
   // HUD elements (Phaser)
   private timerText!: Phaser.GameObjects.Text;
+  private goldText!: Phaser.GameObjects.Text;
+  private phaseText!: Phaser.GameObjects.Text;
+  private activeHeroText!: Phaser.GameObjects.Text;
   private cooldownBar!: Phaser.GameObjects.Graphics;
   private cooldownText!: Phaser.GameObjects.Text;
   private scoreText!: Phaser.GameObjects.Text;
@@ -212,7 +254,7 @@ export class BattleScene extends Phaser.Scene {
     this.playerId = data.playerId;
     this.isLocal = data.isLocal;
     this.picks = data.picks;
-    this.isHost = data.isLocal || (data.amPlayer1 ?? true);
+    this.isHost = data.isLocal || !!data.amPlayer1;
   }
 
   create() {
@@ -241,23 +283,29 @@ export class BattleScene extends Phaser.Scene {
     this.initControlPoints();
     this.spawnPickups();
     this.initPOIs();
+    this.initMapFeatures();
     this.initFogOfWar();
     this.pathGraphics = this.add.graphics().setDepth(4);
 
     const worldWidth = MAP_WIDTH * TILE_SIZE;
     const worldHeight = MAP_HEIGHT * TILE_SIZE;
     this.cameras.main.setBounds(0, 0, worldWidth, worldHeight);
-    this.cameras.main.centerOn(worldWidth / 2, worldHeight / 2);
+    // Center camera on player's spawn area, not map center
+    const spawnCenter = this.mySpawns[Math.floor(this.mySpawns.length / 2)];
+    this.cameras.main.centerOn(
+      spawnCenter.x * TILE_SIZE + TILE_SIZE / 2,
+      spawnCenter.y * TILE_SIZE + TILE_SIZE / 2,
+    );
     this.setupCameraControls();
 
     this.charViewports = new CharacterViewports(this, this.playerId);
 
     // HUD (HTML)
-    this.commandBarEl = document.getElementById('command-bar')!;
+    this.heroBarEl = document.getElementById('hero-bar')!;
     this.commandLogEl = document.getElementById('command-log')!;
     this.statusBarEl = document.getElementById('status-bar')!;
     this.abilityPanelEl = document.getElementById('ability-panel')!;
-    this.commandBarEl.style.display = 'block';
+    this.heroBarEl.style.display = 'block';
     this.commandLogEl.style.display = 'block';
     this.statusBarEl.style.display = 'flex';
     this.abilityPanelEl.style.display = 'block';
@@ -272,14 +320,17 @@ export class BattleScene extends Phaser.Scene {
       const char = this.charData.get(charId);
       if (!char || char.owner !== this.playerId) return;
       charEntity.sprite.on('pointerdown', () => {
-        this.selectCharacter(charId);
+        this.selectHeroByCharId(charId);
       });
     });
+
+    // Build hero bar UI
+    this.buildHeroBar();
 
     // Selected character HUD label (fixed to camera)
     this.selectedCharLabel = this.add.text(
       this.cameras.main.width / 2, 10,
-      'Commanding: ALL [Space=talk]',
+      '',
       {
         fontSize: '13px',
         color: '#FFD93D',
@@ -290,17 +341,23 @@ export class BattleScene extends Phaser.Scene {
       }
     ).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100);
 
-    // Keyboard: Q/E or [/] to cycle, Escape to deselect
-    this.input.keyboard!.on('keydown-Q', () => this.cycleSelectedChar(-1));
-    this.input.keyboard!.on('keydown-E', () => this.cycleSelectedChar(1));
-    this.input.keyboard!.on('keydown-OPEN_BRACKET', () => this.cycleSelectedChar(-1));
-    this.input.keyboard!.on('keydown-CLOSED_BRACKET', () => this.cycleSelectedChar(1));
+    // Auto-select first hero (after label is created)
+    const myCharIds = this.getMyAliveCharIds();
+    if (myCharIds.length > 0) {
+      this.selectHeroByIndex(0);
+    }
+
+    // 1/2/3 = select hero, Q/W/E = abilities
+    this.input.keyboard!.on('keydown-ONE', () => this.selectHeroByIndex(0));
+    this.input.keyboard!.on('keydown-TWO', () => this.selectHeroByIndex(1));
+    this.input.keyboard!.on('keydown-THREE', () => this.selectHeroByIndex(2));
+    this.input.keyboard!.on('keydown-Q', () => this.useAbilityHotkey(0));
+    this.input.keyboard!.on('keydown-E', () => this.useAbilityHotkey(1));
+    this.input.keyboard!.on('keydown-R', () => this.useAbilityHotkey(2));
     this.input.keyboard!.on('keydown-ESC', () => this.selectCharacter(null));
 
-    // Ability hotkeys: 1, 2, 3
-    this.input.keyboard!.on('keydown-ONE', () => this.useAbilityHotkey(0));
-    this.input.keyboard!.on('keydown-TWO', () => this.useAbilityHotkey(1));
-    this.input.keyboard!.on('keydown-THREE', () => this.useAbilityHotkey(2));
+    // Show onboarding tutorial on game start
+    this.showOnboarding();
 
     this.cameras.main.fadeIn(500, 5, 5, 16);
 
@@ -382,18 +439,22 @@ export class BattleScene extends Phaser.Scene {
 
   private buildCharacter(pick: DraftPick, index: number, isPlayer1: boolean): Character {
     const cls = CLASSES[pick.classId];
+    if (!cls) {
+      console.error(`Unknown classId: ${pick.classId}, falling back to paladin`);
+    }
+    const classDef = cls || CLASSES['paladin'];
     const animal = ANIMALS[pick.animalId];
-    const stats = computeStats(cls.baseStats, animal.statModifiers);
+    // Combine class base stats with animal stat modifiers
+    const stats = animal ? computeStats(classDef.baseStats, animal.statModifiers) : { ...classDef.baseStats };
     const spawns = isPlayer1 ? this.gameMap.spawnP1 : this.gameMap.spawnP2;
     const name = generateCharacterName();
 
-    let visionRange = animal.vision ?? BASE_VISION;
+    let visionRange = animal?.vision ?? BASE_VISION;
     // Class bonuses
-    if (pick.classId === 'archer') visionRange += 1;
-    if (pick.classId === 'rogue') visionRange += 1;
+    if (pick.classId === 'rogue') visionRange += 2;
 
     return {
-      id: `${pick.playerId}_${pick.classId}_${index}`,
+      id: `${pick.playerId}_${pick.classId}_${pick.animalId}_${index}`,
       owner: pick.playerId,
       classId: pick.classId,
       animalId: pick.animalId,
@@ -401,19 +462,81 @@ export class BattleScene extends Phaser.Scene {
       stats,
       baseStats: { ...stats },
       currentHp: stats.hp,
-      position: { ...spawns[index] },
+      position: { ...spawns[index % spawns.length] },
       cooldowns: {},
       effects: [],
       isDead: false,
       level: 1,
       xp: 0,
       inventory: [],
+      personality: randomPersonality(),
+      morale: 'confident' as const,
+      moraleTimer: 0,
+      lastPraised: 0,
       respawnTimer: 0,
       currentOrder: null,
       path: [],
       hasFlag: false,
       visionRange,
     };
+  }
+
+  // No companion spawning — characters ARE the animals
+
+  private showOnboarding() {
+    const { width, height } = this.cameras.main;
+
+    // Semi-transparent backdrop
+    const bg = this.add.rectangle(width / 2, height / 2, 500, 320, 0x0a0a1e, 0.92)
+      .setScrollFactor(0).setDepth(300).setOrigin(0.5);
+    const border = this.add.rectangle(width / 2, height / 2, 502, 322, 0x6CC4FF, 0.5)
+      .setScrollFactor(0).setDepth(299).setOrigin(0.5);
+
+    const lines = [
+      'PROMPT BATTLE — Quick Start',
+      '',
+      '1 / 2 / 3  —  Select your hero',
+      'WASD  —  Move the selected hero',
+      'Q / E / R  —  Use abilities',
+      'Space (hold)  —  Voice command',
+      '',
+      'OBJECTIVE: Capture & hold control points',
+      'First to 200 points wins!',
+      '',
+      'Each hero has an animal companion!',
+      'They fight alongside you automatically.',
+      '',
+      'Click anywhere to start...',
+    ];
+
+    const text = this.add.text(width / 2, height / 2 - 130, lines.join('\n'), {
+      fontSize: '14px',
+      color: '#E8E8F0',
+      fontFamily: '"Nunito", sans-serif',
+      lineSpacing: 6,
+      align: 'center',
+    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(301);
+
+    // Title styling
+    text.setColor('#E8E8F0');
+
+    const dismiss = () => {
+      this.tweens.add({
+        targets: [bg, border, text],
+        alpha: 0,
+        duration: 300,
+        onComplete: () => { bg.destroy(); border.destroy(); text.destroy(); },
+      });
+    };
+
+    // Dismiss on any click or key
+    this.input.once('pointerdown', dismiss);
+    this.input.keyboard!.once('keydown', dismiss);
+
+    // Auto-dismiss after 8 seconds
+    this.time.delayedCall(8000, () => {
+      if (bg.active) dismiss();
+    });
   }
 
   // ─── DOMINATION ─────────────────────────────────────────────────
@@ -662,6 +785,54 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
+  private initMapFeatures() {
+    // Copy mine nodes, tower sites, neutral camps from game map
+    this.mineNodes = this.gameMap.mineNodes;
+    this.towerSites = this.gameMap.towerSites;
+    this.neutralCamps = this.gameMap.neutralCamps;
+
+    // Render mine node markers on the map
+    for (const mine of this.mineNodes) {
+      const px = mine.position.x * TILE_SIZE + TILE_SIZE / 2;
+      const py = mine.position.y * TILE_SIZE + TILE_SIZE / 2;
+      const color = mine.type === 'rich' ? 0xFFD700 : 0xDDCC55;
+      const marker = this.add.container(px, py).setDepth(5);
+      const circle = this.add.circle(0, 0, 8, color, 0.6);
+      const label = this.add.text(0, -14, `⛏ ${mine.name}`, {
+        fontSize: '7px', color: '#FFD700',
+        fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
+      }).setOrigin(0.5);
+      marker.add([circle, label]);
+    }
+
+    // Render tower site markers
+    for (const site of this.towerSites) {
+      const px = site.position.x * TILE_SIZE + TILE_SIZE / 2;
+      const py = site.position.y * TILE_SIZE + TILE_SIZE / 2;
+      const marker = this.add.container(px, py).setDepth(5);
+      const rect = this.add.rectangle(0, 0, 12, 12, 0xAA88CC, 0.5);
+      const label = this.add.text(0, -14, `🏗 ${site.name}`, {
+        fontSize: '7px', color: '#AA88CC',
+        fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
+      }).setOrigin(0.5);
+      marker.add([rect, label]);
+    }
+
+    // Render neutral camp markers
+    for (const camp of this.neutralCamps) {
+      const px = camp.position.x * TILE_SIZE + TILE_SIZE / 2;
+      const py = camp.position.y * TILE_SIZE + TILE_SIZE / 2;
+      const color = camp.type === 'hard' ? 0xFF5555 : 0xFF9F43;
+      const marker = this.add.container(px, py).setDepth(5);
+      const circle = this.add.circle(0, 0, 10, color, 0.5);
+      const label = this.add.text(0, -14, `🐉 ${camp.name}`, {
+        fontSize: '7px', color: camp.type === 'hard' ? '#FF5555' : '#FF9F43',
+        fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
+      }).setOrigin(0.5);
+      marker.add([circle, label]);
+    }
+  }
+
   private updatePOIs() {
     // Show interact indicators when ally is near a POI
     for (const poi of this.pois) {
@@ -768,6 +939,8 @@ export class BattleScene extends Phaser.Scene {
       case 'build': return BUILD_CHANNEL_TICKS;
       case 'trap': return TRAP_CHANNEL_TICKS;
       case 'upgrade_cp': return UPGRADE_CP_TICKS;
+      case 'mine': return MINE_CHANNEL_TICKS;
+      case 'build_tower': return BUILD_TOWER_TICKS;
       default: return 10;
     }
   }
@@ -860,10 +1033,59 @@ export class BattleScene extends Phaser.Scene {
         }
         break;
       }
+      case 'mine': {
+        // Grant gold for a mining cycle
+        const mine = this.mineNodes.find(m =>
+          m.currentGold > 0 && this.tileDist(char.position, m.position) <= 1
+        );
+        if (mine) {
+          const goldEarned = Math.min(MINE_RATE_PER_SEC * 3, mine.currentGold); // ~3s worth
+          mine.currentGold -= goldEarned;
+          const econ = char.owner === this.playerId
+            ? (this.isHost ? this.economy.player1 : this.economy.player2)
+            : (this.isHost ? this.economy.player2 : this.economy.player1);
+          econ.gold += goldEarned;
+          const myEntity = this.characters.get(char.id);
+          if (myEntity) myEntity.showGoldEarned(goldEarned);
+          this.addCommandLog('System', `${char.name} mined ${goldEarned}g`, 'activity');
+          // If mine still has gold, keep mining (re-start channel)
+          if (mine.currentGold > 0 && char.currentOrder?.type === 'mine') {
+            this.startChannel(char, 'mine');
+            return; // don't clear order
+          } else if (mine.currentGold <= 0) {
+            this.triggerBark(char, 'mine_depleted');
+            this.showAnnouncement(`${mine.name} depleted!`, '#FF9F43');
+          }
+        }
+        break;
+      }
+      case 'build_tower': {
+        // Build a tower at the nearest tower site
+        const site = this.towerSites.find(s =>
+          s.occupied && this.tileDist(char.position, s.position) <= 1
+        );
+        if (site) {
+          const tower: Tower = {
+            id: `tower_${Date.now()}`,
+            position: { ...site.position },
+            owner: char.owner === this.playerId
+              ? (this.isHost ? 'player1' : 'player2')
+              : (this.isHost ? 'player2' : 'player1'),
+            hp: TOWER_HP,
+            maxHp: TOWER_HP,
+            damage: TOWER_DPS,
+            range: TOWER_RANGE,
+          };
+          this.towers.push(tower);
+          this.addCommandLog('System', `${char.name} built a tower!`, 'activity');
+          this.showAnnouncement('TOWER BUILT!', '#6CC4FF');
+        }
+        break;
+      }
     }
   }
 
-  private startChannel(char: Character, type: 'scout' | 'loot' | 'build' | 'trap' | 'upgrade_cp') {
+  private startChannel(char: Character, type: 'scout' | 'loot' | 'build' | 'trap' | 'upgrade_cp' | 'mine' | 'build_tower') {
     char.channelActivity = {
       type,
       ticksRemaining: this.getChannelTotal(type),
@@ -1215,9 +1437,19 @@ export class BattleScene extends Phaser.Scene {
         );
         if (!friendlyNearby) visible = false;
       }
+      // Bark: enemy spotted when first becoming visible
+      if (visible && !entity.fogVisible && !char.isDead) {
+        const nearestAlly = Array.from(this.charData.values())
+          .filter(c => c.owner === this.playerId && !c.isDead)
+          .sort((a, b) =>
+            this.tileDist(a.position, char.position) - this.tileDist(b.position, char.position)
+          )[0];
+        if (nearestAlly) {
+          this.triggerBark(nearestAlly, 'enemy_spotted');
+        }
+      }
       entity.setFogVisible(visible);
     });
-
 
     // Hide pickups in fog — only show if currently visible
     for (const pickup of this.pickups) {
@@ -1333,7 +1565,12 @@ export class BattleScene extends Phaser.Scene {
     if (this.gameOver) return;
 
     this.gameTimeRemaining--;
+    this.elapsedSeconds++;
     this.updateTimerDisplay();
+    this.updateGamePhase();
+
+    // Economy: passive income + mining
+    this.tickEconomy();
 
     // Respawn timers
     this.charData.forEach((char, id) => {
@@ -1344,6 +1581,10 @@ export class BattleScene extends Phaser.Scene {
         if (char.respawnTimer! <= 0) this.respawnCharacter(char);
       }
     });
+
+    // Morale decay: heroes ignored while hurt get morale down
+    this.tickMorale();
+    this.tickGambitAI();
 
     this.tickCooldowns();
     this.tickPOIRespawns();
@@ -1653,6 +1894,33 @@ export class BattleScene extends Phaser.Scene {
         }
         break;
       }
+      case 'mine': {
+        // Find nearest mine node and path to it
+        const mine = this.mineNodes
+          .filter(m => m.currentGold > 0 && m.activatePhase <= this.gamePhase)
+          .sort((a, b) => this.tileDist(char.position, a.position) - this.tileDist(char.position, b.position))[0];
+        if (!mine) { char.currentOrder = null; return; }
+        if (this.tileDist(char.position, mine.position) <= 1) return; // at mine, auto-actions handle channeling
+        char.path = findPath(this.gameMap.tiles, char.position, mine.position,
+          char.stats.speed + 2, occupied);
+        break;
+      }
+      case 'build_tower': {
+        // Find nearest empty tower site and path to it
+        const site = this.towerSites
+          .filter(s => !s.occupied && s.activatePhase <= this.gamePhase)
+          .sort((a, b) => this.tileDist(char.position, a.position) - this.tileDist(char.position, b.position))[0];
+        if (!site) { char.currentOrder = null; return; }
+        if (this.tileDist(char.position, site.position) <= 1) return;
+        char.path = findPath(this.gameMap.tiles, char.position, site.position,
+          char.stats.speed + 2, occupied);
+        break;
+      }
+      case 'praise': {
+        // Handled instantly in local parser, clear order
+        char.currentOrder = null;
+        break;
+      }
       case 'use_item': {
         // Instant - handled in executeAutoActions
         break;
@@ -1717,6 +1985,31 @@ export class BattleScene extends Phaser.Scene {
         );
         if (cache) {
           this.startChannel(char, 'loot');
+          return;
+        }
+      }
+
+      // Mine - at mine node, start mining (continuous)
+      if (order.type === 'mine' && !char.channelActivity) {
+        const nearMine = this.mineNodes.find(m =>
+          m.currentGold > 0 && m.activatePhase <= this.gamePhase &&
+          this.tileDist(char.position, m.position) <= 1
+        );
+        if (nearMine) {
+          this.startChannel(char, 'mine');
+          return;
+        }
+      }
+
+      // Build tower - at tower site, spend gold and start building
+      if (order.type === 'build_tower' && !char.channelActivity) {
+        const nearSite = this.towerSites.find(s =>
+          !s.occupied && s.activatePhase <= this.gamePhase &&
+          this.tileDist(char.position, s.position) <= 1
+        );
+        if (nearSite && this.spendGold(TOWER_COST)) {
+          nearSite.occupied = true;
+          this.startChannel(char, 'build_tower');
           return;
         }
       }
@@ -1835,6 +2128,11 @@ export class BattleScene extends Phaser.Scene {
     if (attackerBuffs.damage > 1) damage = Math.round(damage * attackerBuffs.damage);
     if (defenderBuffs.defense > 1) damage = Math.max(1, Math.round(damage / defenderBuffs.defense));
 
+    // Morale penalty: shaken heroes deal 10% less damage
+    if (attacker.morale === 'shaken') {
+      damage = Math.round(damage * 0.9);
+    }
+
     target.currentHp = Math.max(0, target.currentHp - damage);
 
     if (targetEntity.fogVisible || target.owner === this.playerId) {
@@ -1844,6 +2142,19 @@ export class BattleScene extends Phaser.Scene {
     this.showAttackVFX(attacker, target);
     this.sound_.playAttackHit();
 
+    // Bark: taking damage
+    this.triggerBark(target, 'taking_damage');
+
+    // Bark: low HP warning
+    if (target.currentHp > 0 && target.currentHp < target.stats.hp * 0.3) {
+      this.triggerBark(target, 'low_hp');
+      // Morale: drop to shaken if hit hard while already low
+      if (target.morale === 'confident') {
+        target.morale = 'shaken';
+        target.moraleTimer = 0;
+      }
+    }
+
     if (target.currentHp <= 0) {
       this.killCharacter(target, attacker.id);
       this.sound_.playKill();
@@ -1852,17 +2163,38 @@ export class BattleScene extends Phaser.Scene {
 
   private killCharacter(char: Character, killerId?: string) {
     char.isDead = true;
-    char.respawnTimer = RESPAWN_TIME;
+    // Anti-snowball: losing team respawns 3s faster
+    const isLosingTeam = char.owner === this.playerId
+      ? (this.isHost ? this.domScore1 < this.domScore2 : this.domScore2 < this.domScore1)
+      : (this.isHost ? this.domScore2 < this.domScore1 : this.domScore1 < this.domScore2);
+    char.respawnTimer = isLosingTeam ? Math.max(5, RESPAWN_TIME - 3) : RESPAWN_TIME;
     char.path = [];
     char.currentOrder = null;
     char.channelActivity = null;
     const queue = this.orderQueues.get(char.id);
     if (queue) queue.length = 0;
 
-    // Grant XP to killer
+    // Grant XP to killer + bark
     if (killerId) {
       const killer = this.charData.get(killerId);
-      if (killer) this.grantXP(killer, XP_KILL);
+      if (killer) {
+        this.grantXP(killer, XP_KILL);
+        this.triggerBark(killer, 'got_kill');
+      }
+    }
+
+    // Bark: ally down — nearby allies react
+    const nearbyAllies = Array.from(this.charData.values()).filter(c =>
+      c.id !== char.id && c.owner === char.owner && !c.isDead &&
+      this.tileDist(c.position, char.position) <= 5
+    );
+    for (const ally of nearbyAllies) {
+      this.triggerBark(ally, 'ally_down');
+      // Morale: seeing ally die makes you shaken
+      if (ally.morale === 'confident' && Math.random() < 0.5) {
+        ally.morale = 'shaken';
+        ally.moraleTimer = 0;
+      }
     }
 
     const entity = this.characters.get(char.id);
@@ -2171,7 +2503,6 @@ export class BattleScene extends Phaser.Scene {
     const charTokens = new Set<string>();
     for (const char of myChars) {
       charTokens.add(CLASSES[char.classId].name.toLowerCase());
-      charTokens.add(ANIMALS[char.animalId].name.toLowerCase());
       for (const w of char.name.toLowerCase().split(/\s+/)) {
         if (w.length > 2) charTokens.add(w);
       }
@@ -2206,9 +2537,8 @@ export class BattleScene extends Phaser.Scene {
     const matched: Character[] = [];
     for (const char of myChars) {
       const cls = CLASSES[char.classId].name.toLowerCase();
-      const animal = ANIMALS[char.animalId].name.toLowerCase();
       const name = char.name.toLowerCase();
-      if (text.includes(cls) || text.includes(animal) || text.includes(name)) {
+      if (text.includes(cls) || text.includes(name)) {
         matched.push(char);
       }
     }
@@ -2219,7 +2549,6 @@ export class BattleScene extends Phaser.Scene {
     if (enemyChars.length === 0) return undefined;
     for (const enemy of enemyChars) {
       if (text.includes(CLASSES[enemy.classId].name.toLowerCase())
-        || text.includes(ANIMALS[enemy.animalId].name.toLowerCase())
         || text.includes(enemy.name.toLowerCase())) {
         return enemy;
       }
@@ -2330,8 +2659,42 @@ export class BattleScene extends Phaser.Scene {
       }
       affectedChars.add(char.id);
       partOrders.push({ characterId: char.id, order, queued });
+
+      // Trigger order bark based on order type
+      if (order.type === 'attack' || order.type === 'ability') {
+        this.triggerBark(char, 'order_attack');
+      } else if (order.type === 'defend' || order.type === 'hold') {
+        this.triggerBark(char, 'order_defend');
+      } else if (order.type === 'move' || order.type === 'retreat' || order.type === 'patrol') {
+        this.triggerBark(char, 'order_move');
+      }
     };
 
+    // ── Praise ─────────────────────────────────────────────────────
+    if (text.includes('good job') || text.includes('nice work') || text.includes('well done')
+      || text.includes('great job') || text.includes('praise') || text.includes('nice one')) {
+      for (const char of targetChars) {
+        this.handlePraise(char.id);
+      }
+      this.updateOrderLabels(affectedChars);
+      return partOrders;
+    }
+    // ── Mine ──────────────────────────────────────────────────────
+    else if (text.includes('mine') || text.includes('gather') || text.includes('collect gold')) {
+      for (const char of targetChars) setOrder(char, { type: 'mine' as any });
+      this.updateOrderLabels(affectedChars);
+      return partOrders;
+    }
+    // ── Build tower ──────────────────────────────────────────────
+    else if (text.includes('build tower') || text.includes('tower')) {
+      if (this.getMyGold() >= TOWER_COST) {
+        for (const char of targetChars) setOrder(char, { type: 'build_tower' as any });
+      } else {
+        this.addCommandLog('System', `Not enough gold! Need ${TOWER_COST}g (have ${Math.floor(this.getMyGold())}g)`, 'warning');
+      }
+      this.updateOrderLabels(affectedChars);
+      return partOrders;
+    }
     // ── Use consumable item ─────────────────────────────────────────
     if (text.includes('use ') || text.includes('drink ') || text.includes('throw ') || text.includes('activate ')) {
       for (const char of targetChars) {
@@ -2428,9 +2791,8 @@ export class BattleScene extends Phaser.Scene {
       let escortTarget: Character | undefined;
       for (const char of myChars) {
         const cls = CLASSES[char.classId].name.toLowerCase();
-        const animal = ANIMALS[char.animalId].name.toLowerCase();
         const name = char.name.toLowerCase();
-        if ((text.includes(cls) || text.includes(animal) || text.includes(name))
+        if ((text.includes(cls) || text.includes(name))
           && !targetChars.includes(char)) {
           escortTarget = char;
           break;
@@ -2482,10 +2844,9 @@ export class BattleScene extends Phaser.Scene {
       let healTarget: Character | undefined;
       for (const char of myChars) {
         const cls = CLASSES[char.classId].name.toLowerCase();
-        const animal = ANIMALS[char.animalId].name.toLowerCase();
         const name = char.name.toLowerCase();
         if (!targetChars.includes(char)
-          && (text.includes(cls) || text.includes(animal) || text.includes(name))) {
+          && (text.includes(cls) || text.includes(name))) {
           healTarget = char;
           break;
         }
@@ -2829,6 +3190,224 @@ export class BattleScene extends Phaser.Scene {
   }
 
 
+  // ─── ECONOMY ──────────────────────────────────────────────────
+
+  private tickEconomy() {
+    const myEcon = this.isHost ? this.economy.player1 : this.economy.player2;
+    const oppEcon = this.isHost ? this.economy.player2 : this.economy.player1;
+
+    // Base passive income
+    let myIncome = BASE_INCOME_PER_SEC;
+    let oppIncome = BASE_INCOME_PER_SEC;
+
+    // Double income at Phase 4 (4:00 = 240s elapsed)
+    const incomeMultiplier = this.gamePhase >= 4 ? 2 : 1;
+
+    // Upkeep penalty: team with more alive units/followers mines 15% slower
+    const myUnitCount = Array.from(this.charData.values()).filter(c => c.owner === this.playerId && !c.isDead).length
+      + this.followers.filter(f => f.ownerTeam === (this.isHost ? 'player1' : 'player2') && !f.isDead).length;
+    const oppUnitCount = Array.from(this.charData.values()).filter(c => c.owner !== this.playerId && !c.isDead).length
+      + this.followers.filter(f => f.ownerTeam !== (this.isHost ? 'player1' : 'player2') && !f.isDead).length;
+    const myUpkeep = myUnitCount > oppUnitCount ? 0.85 : 1;
+    const oppUpkeep = oppUnitCount > myUnitCount ? 0.85 : 1;
+
+    // Safe mine slowdown at Phase 3+ (force expansion to center)
+    const safeMineSlowdown = this.gamePhase >= 3 ? 0.5 : 1;
+
+    // Mining income from characters at mine nodes
+    this.charData.forEach(char => {
+      if (char.isDead) return;
+      if (char.channelActivity?.type === 'mine') {
+        // Check if this is a safe mine
+        const nearMine = this.mineNodes.find(m =>
+          this.tileDist(char.position, m.position) <= 1
+        );
+        const mineSlowdown = nearMine?.type === 'safe' ? safeMineSlowdown : 1;
+        const rate = MINE_RATE_PER_SEC * incomeMultiplier * mineSlowdown;
+        if (char.owner === this.playerId) {
+          myIncome += rate * myUpkeep;
+        } else {
+          oppIncome += rate * oppUpkeep;
+        }
+      }
+    });
+
+    myEcon.income = myIncome;
+    oppEcon.income = oppIncome;
+    myEcon.upkeepPenalty = myUpkeep;
+    oppEcon.upkeepPenalty = oppUpkeep;
+
+    myEcon.gold += myIncome;
+    oppEcon.gold += oppIncome;
+  }
+
+  private getMyGold(): number {
+    return this.isHost ? this.economy.player1.gold : this.economy.player2.gold;
+  }
+
+  private spendGold(amount: number): boolean {
+    const econ = this.isHost ? this.economy.player1 : this.economy.player2;
+    if (econ.gold < amount) return false;
+    econ.gold -= amount;
+    return true;
+  }
+
+  // ─── GAME PHASE ────────────────────────────────────────────────
+
+  private updateGamePhase() {
+    const prev = this.gamePhase;
+    if (this.elapsedSeconds >= 250) {
+      this.gamePhase = 4;
+    } else if (this.elapsedSeconds >= 180) {
+      this.gamePhase = 3;
+    } else if (this.elapsedSeconds >= 90) {
+      this.gamePhase = 2;
+    } else {
+      this.gamePhase = 1;
+    }
+
+    if (this.gamePhase !== prev) {
+      this.onPhaseChange(this.gamePhase);
+    }
+  }
+
+  private getPhaseLabel(): string {
+    switch (this.gamePhase) {
+      case 1: return 'EARLY GAME';
+      case 2: return 'MID GAME';
+      case 3: return 'LATE GAME';
+      case 4: return 'OVERTIME';
+      default: return '';
+    }
+  }
+
+  private onPhaseChange(phase: MapPhase) {
+    switch (phase) {
+      case 2:
+        this.showAnnouncement('MID GAME — Camps & rich mines open!', '#FFD93D');
+        break;
+      case 3:
+        this.showAnnouncement('LATE GAME — Safe mines slow, fight for center!', '#FF9F43');
+        break;
+      case 4:
+        this.showAnnouncement('OVERTIME — Double income, final push!', '#FF6B6B');
+        break;
+    }
+  }
+
+  // ─── MORALE & BARKS ───────────────────────────────────────────
+
+  private tickMorale() {
+    this.charData.forEach((char) => {
+      if (char.isDead) return;
+
+      // Morale recovery: near allies or at full health
+      const nearAlly = Array.from(this.charData.values()).some(c =>
+        c.id !== char.id && c.owner === char.owner && !c.isDead &&
+        this.tileDist(c.position, char.position) <= 3
+      );
+
+      if (char.morale === 'shaken') {
+        char.moraleTimer = (char.moraleTimer ?? 0) + 1;
+        // Recover if near allies, high HP, or 15s passed
+        if (nearAlly || char.currentHp > char.stats.hp * 0.7 || (char.moraleTimer ?? 0) >= 15) {
+          char.morale = 'confident';
+          char.moraleTimer = 0;
+        }
+      }
+
+      // Ignored while hurt: if below 40% HP for 10+ seconds without praise
+      if (char.owner === this.playerId && char.currentHp < char.stats.hp * 0.4) {
+        const timeSincePraise = Date.now() - (char.lastPraised ?? 0);
+        if (timeSincePraise > 10000 && char.morale === 'confident') {
+          this.triggerBark(char, 'ignored_while_hurt');
+        }
+      }
+    });
+  }
+
+  private tickGambitAI() {
+    // Disabled — player controls all characters directly
+    return;
+    // Only run gambit for own characters on the host (or local)
+    if (!this.isHost && !this.isLocal) return;
+
+    const myChars = Array.from(this.charData.values())
+      .filter(c => c.owner === this.playerId && !c.isDead);
+    const enemies = Array.from(this.charData.values())
+      .filter(c => c.owner !== this.playerId && !c.isDead);
+
+    // Find available mine positions
+    const minePositions = this.mineNodes
+      .filter(m => m.currentGold > 0 && m.activatePhase <= this.gamePhase)
+      .map(m => m.position);
+
+    // Find healing well position
+    const healingWell = this.pois.find(p => p.type === 'healing_well' && p.active);
+    const basePos = this.isHost ? this.gameMap.spawnP1[0] : this.gameMap.spawnP2[0];
+
+    for (const char of myChars) {
+      // Skip the active hero — player controls via WASD
+      if (char.id === this.activeHeroId) continue;
+      // Skip if character has a player-assigned order and isn't idle
+      // (gambit only overrides idle or completed orders)
+
+      const ctx: GambitContext = {
+        char,
+        allies: myChars,
+        enemies,
+        activeHeroId: this.activeHeroId,
+        gold: this.getMyGold(),
+        gamePhase: this.gamePhase,
+        minePositions,
+        healingWellPos: healingWell?.position,
+        basePosition: basePos,
+        tileAt: (x, y) => this.gameMap.tiles[y]?.[x] || 'rock',
+      };
+
+      const order = getGambitOrder(ctx);
+      if (order) {
+        char.currentOrder = order;
+        char.path = [];
+      }
+    }
+  }
+
+  private triggerBark(char: Character, trigger: import('@prompt-battle/shared').BarkTrigger) {
+    if (char.owner !== this.playerId) return; // Only show barks for own team
+    const now = Date.now();
+    const lastBark = this.lastBarkTime.get(char.id) || 0;
+    if (now - lastBark < BARK_COOLDOWN * 1000) return;
+
+    if (!char.personality) return;
+    const text = getBark(char.personality, trigger);
+    if (!text) return;
+
+    this.lastBarkTime.set(char.id, now);
+    const entity = this.characters.get(char.id);
+    if (entity) {
+      entity.showBark(text);
+    }
+  }
+
+  private handlePraise(charId: string) {
+    const char = this.charData.get(charId);
+    if (!char || char.isDead || char.owner !== this.playerId) return;
+
+    char.lastPraised = Date.now();
+    // Morale boost
+    if (char.morale === 'shaken') {
+      char.morale = 'confident';
+      char.moraleTimer = 0;
+    }
+
+    // Temporary damage buff (+15% for 10s)
+    char.effects.push({ type: 'damage_boost', duration: 10, value: 1.15 });
+
+    this.triggerBark(char, 'praised');
+    this.addCommandLog('System', `${char.name} was praised! +15% damage for 10s`, 'praise');
+  }
+
   // ─── UTILITIES ──────────────────────────────────────────────────
 
   private findNearest(from: Position, targets: Character[]): Character {
@@ -2994,31 +3573,77 @@ export class BattleScene extends Phaser.Scene {
     // Track raw window-level mouse position for edge-scroll
     let windowMouseX = -1;
     let windowMouseY = -1;
+    let mouseInWindow = false;
     const onWindowMouseMove = (e: MouseEvent) => {
       windowMouseX = e.clientX;
       windowMouseY = e.clientY;
+      mouseInWindow = true;
+    };
+    const onMouseLeave = () => {
+      mouseInWindow = false;
     };
     window.addEventListener('mousemove', onWindowMouseMove);
-    this.events.once('shutdown', () => window.removeEventListener('mousemove', onWindowMouseMove));
-    this.events.once('destroy', () => window.removeEventListener('mousemove', onWindowMouseMove));
+    document.addEventListener('mouseleave', onMouseLeave);
+    this.events.once('shutdown', () => {
+      window.removeEventListener('mousemove', onWindowMouseMove);
+      document.removeEventListener('mouseleave', onMouseLeave);
+    });
+    this.events.once('destroy', () => {
+      window.removeEventListener('mousemove', onWindowMouseMove);
+      document.removeEventListener('mouseleave', onMouseLeave);
+    });
 
-    const commandInput = document.getElementById('command-input') as HTMLInputElement;
+    // Tab key to cycle active hero (WASD control)
+    const tabKey = this.input.keyboard!.addKey('TAB');
+    tabKey.on('down', () => {
+      this.cycleActiveHero();
+    });
 
-    this.events.on('update', () => {
+    // Accumulator for WASD movement ticks
+    let wasdMoveAccum = 0;
+    const WASD_MOVE_INTERVAL = 200; // ms between tile movements
+
+    this.events.on('update', (_time: number, delta: number) => {
       const cam = this.cameras.main;
 
-      // Skip keyboard panning when the text input is focused
-      const inputFocused = document.activeElement === commandInput;
+      // Skip keyboard controls when a text input is focused
+      const tag = (document.activeElement as HTMLElement)?.tagName;
+      const inputFocused = tag === 'INPUT' || tag === 'TEXTAREA';
 
-      // Keyboard panning (arrows always work, WASD only when not typing)
       const wDown = !inputFocused && wasd.up.isDown;
       const sDown = !inputFocused && wasd.down.isDown;
       const aDown = !inputFocused && wasd.left.isDown;
       const dDown = !inputFocused && wasd.right.isDown;
-      if (cursors.left.isDown || aDown) cam.scrollX -= KEY_SPEED;
-      if (cursors.right.isDown || dDown) cam.scrollX += KEY_SPEED;
-      if (cursors.up.isDown || wDown) cam.scrollY -= KEY_SPEED;
-      if (cursors.down.isDown || sDown) cam.scrollY += KEY_SPEED;
+
+      // WASD hero movement when active hero is set
+      if (this.activeHeroId && (wDown || sDown || aDown || dDown)) {
+        wasdMoveAccum += delta;
+        if (wasdMoveAccum >= WASD_MOVE_INTERVAL) {
+          wasdMoveAccum = 0;
+          this.moveActiveHeroWASD(wDown, sDown, aDown, dDown);
+        }
+        // Camera follows active hero
+        const hero = this.charData.get(this.activeHeroId);
+        if (hero) {
+          cam.scrollX += (hero.position.x * TILE_SIZE + TILE_SIZE / 2 - cam.scrollX - cam.width / 2) * 0.1;
+          cam.scrollY += (hero.position.y * TILE_SIZE + TILE_SIZE / 2 - cam.scrollY - cam.height / 2) * 0.1;
+        }
+      } else {
+        wasdMoveAccum = 0;
+        // Keyboard panning (arrows always work, WASD pans when no active hero)
+        if (!this.activeHeroId) {
+          if (aDown) cam.scrollX -= KEY_SPEED;
+          if (dDown) cam.scrollX += KEY_SPEED;
+          if (wDown) cam.scrollY -= KEY_SPEED;
+          if (sDown) cam.scrollY += KEY_SPEED;
+        }
+      }
+
+      // Arrow keys always pan camera
+      if (cursors.left.isDown) cam.scrollX -= KEY_SPEED;
+      if (cursors.right.isDown) cam.scrollX += KEY_SPEED;
+      if (cursors.up.isDown) cam.scrollY -= KEY_SPEED;
+      if (cursors.down.isDown) cam.scrollY += KEY_SPEED;
 
       // Edge-of-screen panning — uses raw window mouse position so it works
       // based on the full browser window, not the Phaser viewport
@@ -3027,11 +3652,16 @@ export class BattleScene extends Phaser.Scene {
       const w = window.innerWidth;
       const h = window.innerHeight;
 
-      if (mx >= 0 && my >= 0) { // only if we've received at least one mousemove
+      // Edge-of-screen panning (skip bottom 120px where hero bar lives)
+      // Only pan when mouse is actually inside the window
+      const heroBarHeight = 120;
+      if (mouseInWindow && mx >= 0 && my >= 0) {
         if (mx <= EDGE_THRESHOLD) cam.scrollX -= EDGE_SPEED * (1 - mx / EDGE_THRESHOLD);
         if (mx >= w - EDGE_THRESHOLD) cam.scrollX += EDGE_SPEED * (1 - (w - mx) / EDGE_THRESHOLD);
         if (my <= EDGE_THRESHOLD) cam.scrollY -= EDGE_SPEED * (1 - my / EDGE_THRESHOLD);
-        if (my >= h - EDGE_THRESHOLD) cam.scrollY += EDGE_SPEED * (1 - (h - my) / EDGE_THRESHOLD);
+        if (my >= h - heroBarHeight - EDGE_THRESHOLD && my < h - heroBarHeight) {
+          cam.scrollY += EDGE_SPEED * (1 - (h - heroBarHeight - my) / EDGE_THRESHOLD);
+        }
       }
     });
 
@@ -3094,6 +3724,32 @@ export class BattleScene extends Phaser.Scene {
       fontStyle: 'bold',
     }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100);
 
+    // Gold display — left of timer
+    this.goldText = this.add.text(width / 2 - 80, 12, '💰 0', {
+      fontSize: '14px',
+      color: '#FFD700',
+      fontFamily: '"Nunito", sans-serif',
+      fontStyle: 'bold',
+    }).setOrigin(1, 0).setScrollFactor(0).setDepth(100);
+
+    // Phase display — right of timer
+    this.phaseText = this.add.text(width / 2 + 80, 12, 'EARLY GAME', {
+      fontSize: '14px',
+      color: '#45E6B0',
+      fontFamily: '"Nunito", sans-serif',
+      fontStyle: 'bold',
+    }).setOrigin(0, 0).setScrollFactor(0).setDepth(100);
+
+    // Active hero indicator — prominent bar at top-left
+    this.activeHeroText = this.add.text(8, 8, '', {
+      fontSize: '14px',
+      color: '#FFD93D',
+      fontFamily: '"Fredoka", sans-serif',
+      fontStyle: 'bold',
+      backgroundColor: '#1a1a2e',
+      padding: { x: 10, y: 5 },
+    }).setScrollFactor(0).setDepth(100);
+
     this.scoreText = this.add.text(width / 2, 32, '0 - 0', {
       fontSize: '15px',
       color: '#cbb8ee',
@@ -3118,12 +3774,254 @@ export class BattleScene extends Phaser.Scene {
     }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100);
   }
 
+  // ─── WASD HERO CONTROL ──────────────────────────────────────────
+
+  private cycleActiveHero() {
+    const myCharIds = Array.from(this.charData.entries())
+      .filter(([, c]) => c.owner === this.playerId && !c.isDead)
+      .map(([id]) => id);
+    if (myCharIds.length === 0) return;
+
+    if (!this.activeHeroId) {
+      this.activeHeroId = myCharIds[0];
+    } else {
+      const idx = myCharIds.indexOf(this.activeHeroId);
+      this.activeHeroId = myCharIds[(idx + 1) % myCharIds.length];
+    }
+
+    // Mark the active hero on the character data
+    this.charData.forEach((c) => { c.isActiveHero = false; });
+    const activeChar = this.charData.get(this.activeHeroId);
+    if (activeChar) {
+      activeChar.isActiveHero = true;
+      this.selectCharacter(this.activeHeroId);
+      this.addCommandLog('System', `Now controlling: ${activeChar.name}`, 'system');
+    }
+  }
+
+  private getMyAliveCharIds(): string[] {
+    return Array.from(this.charData.entries())
+      .filter(([, c]) => c.owner === this.playerId && !c.isDead)
+      .map(([id]) => id);
+  }
+
+  /** All my characters (including dead) in draft order */
+  private getMyCharIds(): string[] {
+    return Array.from(this.charData.entries())
+      .filter(([, c]) => c.owner === this.playerId)
+      .map(([id]) => id);
+  }
+
+  private selectHeroByIndex(index: number) {
+    const myCharIds = this.getMyCharIds();
+    if (index >= myCharIds.length) return;
+    const charId = myCharIds[index];
+    const char = this.charData.get(charId);
+    if (!char || char.isDead) return;
+    this.selectHeroByCharId(charId);
+  }
+
+  private selectHeroByCharId(charId: string) {
+    // Set as active hero (WASD controlled)
+    this.charData.forEach((c) => { c.isActiveHero = false; });
+    this.activeHeroId = charId;
+    const char = this.charData.get(charId);
+    if (char) {
+      char.isActiveHero = true;
+      this.selectCharacter(charId);
+
+      // Snap camera to hero
+      const entity = this.characters.get(charId);
+      if (entity) {
+        this.cameras.main.centerOn(entity.sprite.x, entity.sprite.y);
+      }
+    }
+    this.updateHeroBar();
+  }
+
+  private buildHeroBar() {
+    const heroRow = document.getElementById('hero-row');
+    if (!heroRow) return;
+    heroRow.innerHTML = '';
+
+    const myCharIds = this.getMyCharIds();
+    const ANIMAL_ICONS: Record<string, string> = {
+      wolf: '🐺', lion: '🦁', turtle: '🐢', elephant: '🐘',
+      cheetah: '🐆', falcon: '🦅', owl: '🦉', phoenix: '🔥',
+      chameleon: '🦎', spider: '🕷️',
+      bear: '🐻', tiger: '🐯', eagle: '🦅', rhino: '🦏',
+      armadillo: '🐾', crab: '🦀', hare: '🐇', fox: '🦊',
+      horse: '🐴', raven: '🐦‍⬛', dragon: '🐉', serpent: '🐍',
+      scorpion: '🦂', bat: '🦇', cat: '🐱',
+    };
+
+    myCharIds.forEach((charId, i) => {
+      const char = this.charData.get(charId)!;
+      const cls = CLASSES[char.classId];
+      const icon = ANIMAL_ICONS[char.animalId] || '🐾';
+
+      const slot = document.createElement('div');
+      slot.className = 'hero-slot' + (charId === this.activeHeroId ? ' active' : '') + (char.isDead ? ' dead' : '');
+      slot.dataset.charId = charId;
+      slot.dataset.index = String(i);
+
+      const hpPct = Math.round((char.currentHp / char.stats.hp) * 100);
+      const hpClass = hpPct < 30 ? 'low' : hpPct < 60 ? 'mid' : '';
+
+      slot.innerHTML = `
+        <div class="hotkey">${i + 1}</div>
+        <div class="hero-icon">${icon}</div>
+        <div class="hero-info">
+          <div class="hero-name">${char.name}</div>
+          <div class="hero-class">${cls?.name || char.classId} (${cls?.role || ''})</div>
+          <div class="hero-hp-bar"><div class="hero-hp-fill ${hpClass}" style="width:${hpPct}%"></div></div>
+        </div>
+      `;
+
+      slot.addEventListener('click', () => this.selectHeroByIndex(i));
+      heroRow.appendChild(slot);
+    });
+
+    // Voice section
+    const voiceSection = document.createElement('div');
+    voiceSection.className = 'voice-section';
+    voiceSection.innerHTML = `
+      <span style="font-size:18px">🎙️</span>
+      <div class="voice-label">Hold [Space] to speak</div>
+      <div class="voice-transcript" id="voice-transcript"></div>
+    `;
+    heroRow.appendChild(voiceSection);
+
+    this.updateAbilityBar();
+  }
+
+  private updateHeroBar() {
+    const heroRow = document.getElementById('hero-row');
+    if (!heroRow) return;
+    const myCharIds = this.getMyCharIds();
+
+    myCharIds.forEach((charId, i) => {
+      const char = this.charData.get(charId);
+      if (!char) return;
+      const slot = heroRow.querySelector(`[data-index="${i}"]`) as HTMLElement;
+      if (!slot) return;
+
+      const isActive = charId === this.activeHeroId;
+      slot.className = 'hero-slot' + (isActive ? ' active' : '') + (char.isDead ? ' dead' : '');
+
+      const hpPct = Math.round((char.currentHp / char.stats.hp) * 100);
+      const hpClass = hpPct < 30 ? 'low' : hpPct < 60 ? 'mid' : '';
+      const fill = slot.querySelector('.hero-hp-fill') as HTMLElement;
+      if (fill) {
+        fill.style.width = `${hpPct}%`;
+        fill.className = `hero-hp-fill ${hpClass}`;
+      }
+    });
+
+    this.updateAbilityBar();
+  }
+
+  private updateAbilityBar() {
+    const bar = document.getElementById('ability-bar');
+    if (!bar) return;
+    bar.innerHTML = '';
+
+    if (!this.activeHeroId) return;
+    const char = this.charData.get(this.activeHeroId);
+    if (!char) return;
+
+    const cls = CLASSES[char.classId];
+    if (!cls) return;
+
+    const keys = ['Q', 'E', 'R'];
+    cls.abilities.forEach((ability, i) => {
+      const cd = char.cooldowns[ability.id] || 0;
+      const btn = document.createElement('div');
+      btn.className = 'ability-btn' + (cd > 0 ? ' on-cooldown' : '');
+      btn.innerHTML = `
+        <span class="ability-key">${keys[i] || ''}</span>
+        <span class="ability-name">${ability.name}</span>
+        <span class="ability-cd ${cd > 0 ? 'cooldown' : 'ready'}">${cd > 0 ? cd + 's' : 'READY'}</span>
+      `;
+      btn.addEventListener('click', () => this.useAbilityHotkey(i));
+      bar.appendChild(btn);
+    });
+  }
+
+  private moveActiveHeroWASD(up: boolean, down: boolean, left: boolean, right: boolean) {
+    if (!this.activeHeroId) return;
+    const char = this.charData.get(this.activeHeroId);
+    if (!char || char.isDead) return;
+
+    let dx = 0, dy = 0;
+    if (left) dx = -1;
+    else if (right) dx = 1;
+    if (up) dy = -1;
+    else if (down) dy = 1;
+
+    const newX = char.position.x + dx;
+    const newY = char.position.y + dy;
+
+    // Bounds check
+    if (newX < 0 || newX >= MAP_WIDTH || newY < 0 || newY >= MAP_HEIGHT) return;
+
+    // Passability check
+    if (!isPassable(this.gameMap.tiles[newY]?.[newX])) return;
+
+    // Clear any existing order — WASD overrides AI
+    char.currentOrder = null;
+    char.path = [];
+    char.channelActivity = null;
+
+    // Move directly
+    char.position = { x: newX, y: newY };
+    const entity = this.characters.get(this.activeHeroId);
+    if (entity) {
+      entity.snapToPosition();
+      entity.setOrderText('WASD');
+    }
+
+    // Auto-attack: if enemy in range, attack it
+    const adjEnemy = Array.from(this.charData.values()).find(e =>
+      e.owner !== char.owner && !e.isDead &&
+      Math.abs(e.position.x - newX) + Math.abs(e.position.y - newY) <= char.stats.range
+    );
+    if (adjEnemy) {
+      this.resolveAutoAttack(char, adjEnemy);
+    }
+  }
+
   private updateTimerDisplay() {
     const mins = Math.floor(this.gameTimeRemaining / 60);
     const secs = this.gameTimeRemaining % 60;
     this.timerText.setText(`${mins}:${secs.toString().padStart(2, '0')}`);
     if (this.gameTimeRemaining <= 30) this.timerText.setColor('#FF6B6B');
     else if (this.gameTimeRemaining <= 60) this.timerText.setColor('#FFD93D');
+
+    // Update gold display
+    const gold = Math.floor(this.getMyGold());
+    const income = Math.floor(this.isHost ? this.economy.player1.income : this.economy.player2.income);
+    this.goldText.setText(`💰 ${gold} (+${income}/s)`);
+
+    // Update phase display with descriptive name
+    const phaseColors = ['#45E6B0', '#45E6B0', '#FFD93D', '#FF9F43', '#FF6B6B'];
+    this.phaseText.setText(this.getPhaseLabel());
+    this.phaseText.setColor(phaseColors[this.gamePhase] || '#45E6B0');
+
+    // Update active hero indicator — prominent and clear
+    if (this.activeHeroId) {
+      const hero = this.charData.get(this.activeHeroId);
+      if (hero) {
+        const cls = CLASSES[hero.classId];
+        const hpPct = Math.round((hero.currentHp / hero.stats.hp) * 100);
+        this.activeHeroText.setText(`COMMANDING: ${hero.name} (${cls?.name || hero.classId}) HP:${hpPct}% [Tab=switch]`);
+      }
+    } else {
+      this.activeHeroText.setText('[1/2/3] to select a hero');
+    }
+
+    // Update HTML hero bar
+    this.updateHeroBar();
   }
 
   private updateScoreDisplay() {
@@ -3211,7 +4109,7 @@ export class BattleScene extends Phaser.Scene {
     if (this.moveTickTimer) this.moveTickTimer.destroy();
     if (this.secondTimer) this.secondTimer.destroy();
 
-    this.commandBarEl.style.display = 'none';
+    this.heroBarEl.style.display = 'none';
     this.commandLogEl.style.display = 'none';
     this.statusBarEl.style.display = 'none';
     this.abilityPanelEl.style.display = 'none';
@@ -3351,6 +4249,8 @@ export class BattleScene extends Phaser.Scene {
               build: 'Barricade (60s)',
               trap: 'Hidden trap (25dmg+stun)',
               upgrade_cp: 'Buff x1.5',
+              mine: 'Gold income',
+              build_tower: 'Defensive tower',
             };
             const reward = channelRewardMap[c.channelActivity.type] || '';
             orderText = `${c.channelActivity.type.toUpperCase()} ${progress}% (${timeLeft}s) → ${reward}`;
@@ -3381,12 +4281,11 @@ export class BattleScene extends Phaser.Scene {
     let html = '<h3>Your Team</h3>';
     myChars.forEach(c => {
       const cls = CLASSES[c.classId];
-      const animal = ANIMALS[c.animalId];
       const isAlive = !c.isDead;
 
       html += `<div class="ap-char" style="opacity:${isAlive ? 1 : 0.4}">`;
       html += `<div class="ap-char-name">${c.name}</div>`;
-      html += `<div class="ap-char-class">${cls.name} + ${animal.name}</div>`;
+      html += `<div class="ap-char-class">${cls.name}</div>`;
 
       const isSelected = c.id === this.selectedCharId;
       cls.abilities.forEach((ability, i) => {
@@ -3480,7 +4379,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   shutdown() {
-    this.commandBarEl.style.display = 'none';
+    this.heroBarEl.style.display = 'none';
     this.commandLogEl.style.display = 'none';
     this.statusBarEl.style.display = 'none';
     this.abilityPanelEl.style.display = 'none';

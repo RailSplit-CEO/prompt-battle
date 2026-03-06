@@ -10,8 +10,8 @@ for (const cls of Object.values(CLASSES)) {
   }
 }
 
-export function getAbilitiesForClass(classId: string): [Ability, Ability] {
+export function getAbilitiesForClass(classId: string): Ability[] {
   const cls = CLASSES[classId];
   if (!cls) throw new Error(`Unknown class: ${classId}`);
-  return cls.abilities as [Ability, Ability];
+  return cls.abilities;
 }
