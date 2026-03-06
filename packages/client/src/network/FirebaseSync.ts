@@ -56,7 +56,7 @@ export class FirebaseSync {
     return this.initialized && this.user !== null;
   }
 
-  // Matchmaking
+  // Matchmaking (client-side: each client checks for waiting opponents)
   async joinMatchmakingQueue(): Promise<string> {
     const playerId = this.getPlayerId();
     const queueRef = ref(this.db, `matchmaking/queue/${playerId}`);
@@ -66,6 +66,48 @@ export class FirebaseSync {
       status: 'waiting',
     });
     console.log('[Firebase] Joined matchmaking queue');
+
+    // Try to match with an existing waiting player
+    const allRef = ref(this.db, `matchmaking/queue`);
+    const snapshot = await get(allRef);
+    if (snapshot.exists()) {
+      const queue = snapshot.val() as Record<string, { playerId: string; status: string; timestamp: number }>;
+      for (const [key, entry] of Object.entries(queue)) {
+        if (entry.playerId !== playerId && entry.status === 'waiting') {
+          // Found an opponent — create a game and match both players
+          const gameId = `game_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+          console.log('[Firebase] Found opponent, creating game:', gameId);
+
+          const gameRef = ref(this.db, `games/${gameId}`);
+          await set(gameRef, {
+            meta: {
+              player1: entry.playerId,
+              player2: playerId,
+              mapSeed: Date.now(),
+              status: 'drafting',
+              currentTurn: 0,
+              createdAt: Date.now(),
+            },
+          });
+
+          await Promise.all([
+            update(ref(this.db, `matchmaking/queue/${entry.playerId}`), { status: 'matched', gameId }),
+            update(ref(this.db, `matchmaking/queue/${playerId}`), { status: 'matched', gameId }),
+          ]);
+
+          // Clean up queue after a short delay
+          setTimeout(async () => {
+            await Promise.all([
+              remove(ref(this.db, `matchmaking/queue/${entry.playerId}`)),
+              remove(ref(this.db, `matchmaking/queue/${playerId}`)),
+            ]);
+          }, 5000);
+
+          break;
+        }
+      }
+    }
+
     return playerId;
   }
 
