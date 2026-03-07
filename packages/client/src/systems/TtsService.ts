@@ -78,20 +78,25 @@ export class TtsService {
         return;
       }
 
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
+      const data = await response.json();
+      const audioUrl = data?.audio?.url;
+      if (!audioUrl) {
+        console.warn('[TTS] No audio URL in response:', data);
+        this.playing = false;
+        this.processQueue();
+        return;
+      }
+
+      const audio = new Audio(audioUrl);
       audio.volume = this.volume;
       this.currentAudio = audio;
 
       audio.onended = () => {
-        URL.revokeObjectURL(url);
         this.currentAudio = null;
         this.playing = false;
         this.processQueue();
       };
       audio.onerror = () => {
-        URL.revokeObjectURL(url);
         this.currentAudio = null;
         this.playing = false;
         this.processQueue();
