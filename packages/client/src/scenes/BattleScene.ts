@@ -2362,6 +2362,15 @@ export class BattleScene extends Phaser.Scene {
           const label = this.getOrderLabel(order) + (queueLen > 0 ? ` (+${queueLen})` : '');
           entity.setOrderText(label);
         }
+
+        // Trigger bark so characters respond with TTS
+        if (order.type === 'attack' || order.type === 'ability') {
+          this.triggerBark(char, 'order_attack');
+        } else if (order.type === 'defend' || order.type === 'hold') {
+          this.triggerBark(char, 'order_defend');
+        } else if (order.type === 'move' || order.type === 'retreat' || order.type === 'patrol') {
+          this.triggerBark(char, 'order_move');
+        }
       }
     }
     return collectedOrders;
