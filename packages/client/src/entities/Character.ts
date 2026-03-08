@@ -489,7 +489,7 @@ export class CharacterEntity {
     this.selectionGlow.strokeCircle(this.sprite.x, this.sprite.y, 26);
   }
 
-  updateEffectAuras(effects: ActiveEffect[]) {
+  updateEffectAuras(effects: ActiveEffect[] = []) {
     const EFFECT_COLORS: Record<string, number> = {
       stun: 0xFF6B6B,
       slow: 0x6CC4FF,

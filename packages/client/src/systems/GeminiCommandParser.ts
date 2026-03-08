@@ -36,7 +36,7 @@ function buildPrompt(
     const cls = CLASSES[c.classId];
     const abilities = cls.abilities;
     const abilityStrs = abilities.map(ability => {
-      const cd = c.cooldowns[ability.id] || 0;
+      const cd = c.cooldowns?.[ability.id] || 0;
       return `${ability.name}(id:${ability.id}) - ${ability.description} [range:${ability.range}, cd:${cd > 0 ? cd + 's' : 'READY'}]`;
     });
     const abilityStr = abilityStrs.length > 0

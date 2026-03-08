@@ -1,0 +1,959 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prompt Battle - MOBA Prototype v3</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#080810;color:#eee;font-family:'Segoe UI',sans-serif;overflow:hidden;user-select:none}
+canvas{display:block}
+
+#hud{position:absolute;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:6px 16px;background:linear-gradient(180deg,rgba(0,0,0,.9),rgba(0,0,0,0));z-index:10;pointer-events:none}
+#hud>*{pointer-events:auto}
+.bhp{font-size:12px;font-weight:bold;display:flex;align-items:center;gap:6px}
+.bhp .bar{width:130px;height:8px;background:#222;border-radius:4px;overflow:hidden}
+.bhp .fill{height:100%;transition:width .3s;border-radius:4px}
+.bhp.b .fill{background:linear-gradient(90deg,#1565c0,#4fc3f7)}
+.bhp.r .fill{background:linear-gradient(90deg,#ef5350,#c62828)}
+.tc{text-align:center}
+.timer{font-size:20px;color:#ffd54f;font-weight:bold;font-variant-numeric:tabular-nums}
+.phase{font-size:9px;color:#aaa;letter-spacing:1px;text-transform:uppercase}
+.gold{font-size:12px;color:#ffd54f;margin-left:12px}
+
+#heroes{position:absolute;bottom:0;left:50%;transform:translateX(-50%);display:flex;gap:5px;padding:5px 10px;background:rgba(0,0,0,.9);border-radius:10px 10px 0 0;z-index:10}
+.hc{width:66px;padding:3px;border:2px solid #333;border-radius:6px;background:#151525;cursor:pointer;text-align:center;transition:.15s}
+.hc:hover{border-color:#4fc3f7}
+.hc.sel{border-color:#ffd54f;box-shadow:0 0 12px rgba(255,213,79,.3)}
+.hc.dead{opacity:.35}
+.hc .em{font-size:24px;display:block}
+.hc .nm{font-size:8px;color:#ccc}
+.hc .rl{font-size:7px;color:#777}
+.hc .hp{margin-top:2px;height:3px;background:#333;border-radius:2px;overflow:hidden}
+.hc .hp .f{height:100%;background:#66bb6a;transition:width .2s}
+.hc .sp{font-size:7px;color:#ffa726;margin-top:1px}
+
+#cmd-bar{position:absolute;bottom:88px;left:50%;transform:translateX(-50%);z-index:10;width:400px}
+#cmd-bar input{width:100%;padding:7px 14px;border:2px solid rgba(79,195,247,.3);border-radius:18px;background:rgba(0,0,0,.85);color:#fff;font-size:12px;outline:none}
+#cmd-bar input:focus{border-color:#4fc3f7}
+#cmd-bar input::placeholder{color:#444}
+
+#log{position:absolute;top:40px;left:10px;width:230px;z-index:10;font-size:9px;max-height:160px;overflow-y:auto;pointer-events:none}
+#log div{padding:1px 5px;margin:1px 0;border-radius:2px;background:rgba(0,0,0,.6)}
+.cmd{color:#4fc3f7}.enemy{color:#ef5350}.event{color:#ffd54f}.sys{color:#666}
+
+#info{position:absolute;top:40px;right:10px;z-index:10;font-size:9px;color:#555;line-height:1.5;background:rgba(0,0,0,.6);padding:5px 8px;border-radius:5px;max-width:200px}
+#info b{color:#999}
+
+#minimap{position:absolute;bottom:6px;right:6px;z-index:10;border:1px solid #333;border-radius:3px}
+
+#overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:1000;flex-direction:column;align-items:center;justify-content:center}
+#overlay h1{font-size:48px;margin-bottom:6px;text-shadow:0 0 30px currentColor}
+#overlay p{font-size:14px;color:#888;margin-bottom:20px}
+#overlay button{padding:10px 32px;font-size:15px;border:none;border-radius:6px;cursor:pointer;background:#4fc3f7;color:#080810;font-weight:bold}
+
+#announce{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:20;font-size:28px;font-weight:bold;color:#ffd54f;text-shadow:0 0 20px rgba(255,213,79,.5);opacity:0;transition:opacity .3s;pointer-events:none;text-align:center}
+</style>
+</head>
+<body>
+<div id="hud">
+  <div class="bhp b"><span>Your Base</span><div class="bar"><div class="fill" id="bb" style="width:100%"></div></div><span id="bhn">100%</span><span class="gold" id="gold-display">Gold: 0</span></div>
+  <div class="tc"><div class="timer" id="timer">5:00</div><div class="phase" id="phase">Early Game</div></div>
+  <div class="bhp r"><span id="rhn">100%</span><div class="bar"><div class="fill" id="rb" style="width:100%"></div></div><span>Enemy Base</span></div>
+</div>
+<div id="info">
+  <b>Right-click</b> move<br>
+  <b>Left-click</b> attack/interact<br>
+  <b>1-5</b> select hero<br>
+  <b>Type commands below</b><br><br>
+  <b>Terrain:</b><br>
+  High Ground: +25% dmg<br>
+  Forest: ambush +30%<br>
+  Low Valley: 2x tower spawn<br>
+  Water: boats/amphibious only<br><br>
+  <b>Objectives:</b><br>
+  Towers: spawn creeps<br>
+  Monster Camps: temp army<br>
+  Gold Mines: passive gold<br>
+  Kraken: team buff (water)<br>
+  Shrines: temp buffs
+</div>
+<div id="cmd-bar"><input id="cmd" type="text" placeholder="e.g. 'Bear go to Fortress' or 'Turtle flank through water'" autocomplete="off"/></div>
+<div id="heroes"></div>
+<div id="log"></div>
+<canvas id="minimap" width="160" height="160"></canvas>
+<canvas id="G"></canvas>
+<div id="announce"></div>
+<div id="overlay"><h1 id="wt"></h1><p id="ws"></p><button onclick="location.reload()">Play Again</button></div>
+
+<script>
+const G=document.getElementById('G'),X=G.getContext('2d');
+const MM=document.getElementById('minimap'),MX=MM.getContext('2d');
+function resize(){G.width=innerWidth;G.height=innerHeight}
+resize();addEventListener('resize',resize);
+
+// ═══════════════════════════════════════════════════════════
+// MAP
+// ═══════════════════════════════════════════════════════════
+const TL=26,CO=56,RO=44,MW=CO*TL,MH=RO*TL;
+const T={W:0,G:1,H:2,F:3,P:4,BR:5,LO:6,RV:7,BB:8,RB:9,S:10};
+const TC={
+  [T.W]:{pass:0,swim:1,col:'#0b2a4a',spd:.4,dmg:1},
+  [T.G]:{pass:1,swim:0,col:'#1e3a16',spd:1,dmg:1},
+  [T.H]:{pass:1,swim:0,col:'#2a4a1e',spd:.9,dmg:1.25},
+  [T.F]:{pass:1,swim:0,col:'#142a0e',spd:.6,dmg:1,ambush:1.3},
+  [T.P]:{pass:1,swim:0,col:'#3a2e1e',spd:1.3,dmg:1},
+  [T.BR]:{pass:1,swim:0,col:'#5d4037',spd:1,dmg:1},
+  [T.LO]:{pass:1,swim:0,col:'#161e2e',spd:1,dmg:.8},
+  [T.RV]:{pass:0,swim:1,col:'#142050',spd:.5,dmg:1},
+  [T.BB]:{pass:1,swim:0,col:'#1555a0',spd:1,dmg:1},
+  [T.RB]:{pass:1,swim:0,col:'#a02020',spd:1,dmg:1},
+  [T.S]:{pass:1,swim:0,col:'#6d5a38',spd:.8,dmg:1},
+};
+
+const M=[];
+for(let r=0;r<RO;r++){M[r]=[];for(let c=0;c<CO;c++)M[r][c]=T.W}
+
+function fR(c1,r1,c2,r2,t){for(let r=Math.max(0,r1);r<=Math.min(RO-1,r2);r++)for(let c=Math.max(0,c1);c<=Math.min(CO-1,c2);c++)M[r][c]=t}
+function fC(cx,cy,rad,t){for(let r=0;r<RO;r++)for(let c=0;c<CO;c++)if(Math.hypot(c-cx,r-cy)<=rad)M[r][c]=t}
+
+// Island shape - slightly oblong diamond
+for(let r=0;r<RO;r++)for(let c=0;c<CO;c++){
+  const dx=(c-CO/2)/(CO/2),dy=(r-RO/2)/(RO/2);
+  if(Math.sqrt(dx*dx*.65+dy*dy*.85)<.82)M[r][c]=T.G;
+}
+// Shore
+for(let r=0;r<RO;r++)for(let c=0;c<CO;c++)if(M[r][c]===T.W){
+  for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++){
+    const nr=r+dr,nc=c+dc;
+    if(nr>=0&&nr<RO&&nc>=0&&nc<CO&&M[nr][nc]===T.G)M[r][c]=T.S;
+  }
+}
+
+// Water channel around island (navigable path just inside the shore)
+// This creates a "moat" that boats can use
+for(let r=0;r<RO;r++)for(let c=0;c<CO;c++){
+  if(M[r][c]===T.S){
+    // Check if adjacent to deep water
+    let adjWater=false;
+    for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++){
+      const nr=r+dr,nc=c+dc;
+      if(nr>=0&&nr<RO&&nc>=0&&nc<CO&&M[nr][nc]===T.W)adjWater=true;
+    }
+    // Make outer shore tiles navigable water
+    if(adjWater){
+      // keep as sand (passable shore)
+    }
+  }
+}
+
+// Bases diagonal
+fC(7,35,3,T.H);fC(7,35,2,T.BB);
+fC(48,8,3,T.H);fC(48,8,2,T.RB);
+
+// ── THREE LANES (diagonal orientation) ──
+// Top lane: goes along top edge
+for(let i=0;i<42;i++){const c=7+i,r=Math.round(12-Math.sin(i/42*Math.PI)*.5);if(r>=0&&r<RO&&c<CO)fR(c,r,c,r+1,T.P)}
+// Bot lane: goes along bottom edge
+for(let i=0;i<42;i++){const c=7+i,r=Math.round(30+Math.sin(i/42*Math.PI)*.5);if(r>=0&&r<RO&&c<CO)fR(c,r,c,r+1,T.P)}
+// Mid lane: diagonal center
+for(let i=0;i<42;i++){const c=7+i,r=Math.round(35-i*(27/41));if(r>=0&&r<RO&&c<CO)fR(c-1,r,c+1,r,T.P)}
+// Connectors
+fR(6,12,8,35,T.P);fR(47,8,49,30,T.P);
+
+// ── RIVER (perpendicular to mid lane, crosses all 3 lanes)
+for(let i=0;i<35;i++){
+  const c=Math.round(16+i*.7);
+  const r=Math.round(6+i*.85);
+  if(r<RO&&c<CO){M[r][c]=T.RV;if(r+1<RO)M[r+1][c]=T.RV;if(c+1<CO)M[r][c+1]=T.RV}
+}
+
+// ── BRIDGES
+const bridges=[];
+function makeBridge(cx,cy,name){
+  for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++){
+    const r=cy+dr,c=cx+dc;
+    if(r>=0&&r<RO&&c>=0&&c<CO)M[r][c]=T.BR;
+  }
+  bridges.push({x:cx*TL+TL/2,y:cy*TL+TL/2,name});
+}
+makeBridge(22,14,'North Bridge');
+makeBridge(27,21,'Mid Bridge');
+makeBridge(32,27,'South Bridge');
+
+// ── HIGH GROUND (overlook positions)
+fC(16,11,2.5,T.H);  // North hilltop
+fC(38,28,2.5,T.H);  // South hilltop
+fC(20,28,2,T.H);     // SW hill
+fC(35,13,2,T.H);     // NE hill
+
+// ── LOW GROUND valley (center - high reward area)
+fC(27,21,3.5,T.LO);
+// Re-place bridge on top
+makeBridge(27,21,'Mid Bridge');
+
+// ── FORESTS
+fC(13,19,2.2,T.F);fC(19,14,2,T.F);fC(36,25,2.2,T.F);fC(40,18,2,T.F);
+fC(23,32,2,T.F);fC(32,10,2,T.F);fC(10,26,1.8,T.F);fC(44,16,1.8,T.F);
+
+// ── WATER FEATURES (controlled carving, doesn't destroy island interior)
+// Kraken lake at north center
+fC(28,2,4,T.W);
+
+// West dock harbor inlet (cols 0-4, rows 18-26)
+for(let r=18;r<=26;r++){for(let c=0;c<=4;c++){if(r<RO&&c<CO&&M[r][c]!==T.P&&M[r][c]!==T.BB)M[r][c]=T.W}}
+
+// East dock harbor inlet (cols 51-55, rows 16-24)
+for(let r=16;r<=24;r++){for(let c=51;c<CO;c++){if(r<RO&&c<CO&&M[r][c]!==T.P&&M[r][c]!==T.RB)M[r][c]=T.W}}
+
+// Narrow edge channels connecting harbors to top/bottom water
+// West channel (cols 0-2, full height)
+for(let r=0;r<RO;r++){for(let c=0;c<=2;c++){if(M[r][c]!==T.BB&&M[r][c]!==T.P)M[r][c]=T.W}}
+// East channel (cols 53-55, full height)
+for(let r=0;r<RO;r++){for(let c=53;c<CO;c++){if(M[r][c]!==T.RB&&M[r][c]!==T.P)M[r][c]=T.W}}
+// South water passage (rows 41-43)
+for(let c=3;c<53;c++){for(let r=41;r<RO;r++){if(M[r][c]!==T.BB&&M[r][c]!==T.RB)M[r][c]=T.W}}
+
+// Re-add shore tiles where grass meets water
+for(let r=0;r<RO;r++)for(let c=0;c<CO;c++){
+  if(M[r][c]===T.G){
+    for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++){
+      const nr=r+dr,nc=c+dc;
+      if(nr>=0&&nr<RO&&nc>=0&&nc<CO&&M[nr][nc]===T.W){M[r][c]=T.S;break}
+    }
+  }
+}
+
+function tAt(px,py){const c=Math.floor(px/TL),r=Math.floor(py/TL);return(r>=0&&r<RO&&c>=0&&c<CO)?M[r][c]:T.W}
+function tProps(px,py){return TC[tAt(px,py)]}
+
+// ═══════════════════════════════════════════════════════════
+// LOCATIONS (all named for voice commands)
+// ═══════════════════════════════════════════════════════════
+
+// type: tower | mine | camp | shrine | kraken | dock
+const LOCS=[
+  // ── TOWERS (capture → spawn creeps)
+  // Blue side
+  {id:'Barracks',  x:10*TL,y:33*TL, type:'tower', owner:'blue', hp:200,mhp:200, spawnRate:4,st:0},
+  {id:'Outpost',   x:8*TL, y:14*TL, type:'tower', owner:'blue', hp:150,mhp:150, spawnRate:5,st:0},
+  {id:'Palisade',  x:14*TL,y:30*TL, type:'tower', owner:'blue', hp:150,mhp:150, spawnRate:5,st:0},
+  // Red side
+  {id:'Stronghold',x:45*TL,y:10*TL, type:'tower', owner:'red', hp:200,mhp:200, spawnRate:4,st:0},
+  {id:'Garrison',  x:47*TL,y:28*TL, type:'tower', owner:'red', hp:150,mhp:150, spawnRate:5,st:0},
+  {id:'Rampart',   x:40*TL,y:11*TL, type:'tower', owner:'red', hp:150,mhp:150, spawnRate:5,st:0},
+  // Contested
+  {id:'Fortress',  x:27*TL,y:21*TL, type:'tower', owner:null, hp:250,mhp:250, spawnRate:2.5,st:0, reward:'2x', label:'CENTER'},
+  {id:'Shrine',    x:22*TL,y:15*TL, type:'tower', owner:null, hp:120,mhp:120, spawnRate:4.5,st:0, label:'N'},
+  {id:'Ruins',     x:32*TL,y:27*TL, type:'tower', owner:null, hp:120,mhp:120, spawnRate:4.5,st:0, label:'S'},
+  {id:'Lighthouse',x:18*TL,y:11*TL, type:'tower', owner:null, hp:100,mhp:100, spawnRate:5,st:0, label:'NW'},
+  {id:'Harbor',    x:38*TL,y:29*TL, type:'tower', owner:null, hp:100,mhp:100, spawnRate:5,st:0, label:'SE'},
+
+  // ── GOLD MINES (stand near → generate gold)
+  {id:'Gold Pit',    x:12*TL,y:23*TL, type:'mine', owner:null, gold:0, rate:3, occupied:null, emoji:'\u{26CF}\u{FE0F}'},
+  {id:'Crystal Mine',x:42*TL,y:19*TL, type:'mine', owner:null, gold:0, rate:3, occupied:null, emoji:'\u{1F48E}'},
+  {id:'Deep Vein',   x:27*TL,y:15*TL, type:'mine', owner:null, gold:0, rate:5, occupied:null, emoji:'\u{1F4B0}'},  // Contested, richer
+
+  // ── MONSTER CAMPS (defeat → temp army joins you)
+  {id:'Wolf Den',  x:16*TL,y:26*TL, type:'camp', owner:null, hp:120,mhp:120, reward:'wolves', emoji:'\u{1F43A}', respawn:45, dead:false, deadTimer:0},
+  {id:'Boar Camp', x:38*TL,y:15*TL, type:'camp', owner:null, hp:120,mhp:120, reward:'boars', emoji:'\u{1F417}', respawn:45, dead:false, deadTimer:0},
+  {id:'Spider Nest',x:24*TL,y:28*TL, type:'camp', owner:null, hp:80,mhp:80, reward:'spiders', emoji:'\u{1F577}\u{FE0F}', respawn:35, dead:false, deadTimer:0},
+  {id:'Hawk Roost', x:34*TL,y:12*TL, type:'camp', owner:null, hp:80,mhp:80, reward:'hawks', emoji:'\u{1F985}', respawn:35, dead:false, deadTimer:0},
+
+  // ── SHRINES (walk through → temp buff)
+  {id:'Speed Shrine', x:20*TL,y:20*TL, type:'shrine', buff:'speed', duration:15, emoji:'\u{26A1}', cooldown:0},
+  {id:'Power Shrine', x:34*TL,y:22*TL, type:'shrine', buff:'power', duration:12, emoji:'\u{1F525}', cooldown:0},
+  {id:'Heal Shrine',  x:27*TL,y:30*TL, type:'shrine', buff:'heal', duration:1, emoji:'\u{1F49A}', cooldown:0},
+
+  // ── DOCKS (capture → spawn boats on water, enable water flanking)
+  {id:'West Dock',  x:6*TL, y:22*TL, type:'dock', owner:null, hp:80,mhp:80, st:0, emoji:'\u{26F5}', waterSpawn:{x:3*TL,y:22*TL}},
+  {id:'East Dock',  x:49*TL,y:20*TL, type:'dock', owner:null, hp:80,mhp:80, st:0, emoji:'\u{26F5}', waterSpawn:{x:52*TL,y:20*TL}},
+
+  // ── KRAKEN (water boss - requires 2+ heroes, gives massive team buff)
+  {id:'Kraken',x:28*TL,y:4*TL, type:'kraken', hp:400,mhp:400, alive:true, respawn:60, deadTimer:0, emoji:'\u{1F419}'},
+];
+
+const BASES={blue:{x:7*TL,y:35*TL,hp:800,mhp:800},red:{x:48*TL,y:8*TL,hp:800,mhp:800}};
+
+// ═══════════════════════════════════════════════════════════
+// HEROES
+// ═══════════════════════════════════════════════════════════
+const HDEFS=[
+  {name:'Bear',emoji:'\u{1F43B}',role:'Tank',move:'land',hp:200,atk:14,spd:1.6,range:36,as:1.4,
+   spell:{name:'Roar',cd:8,range:80,dmg:0,type:'aoe_stun',radius:70,dur:2},color:'#8d6e63'},
+  {name:'Eagle',emoji:'\u{1F985}',role:'Scout',move:'flying',hp:85,atk:16,spd:3.2,range:90,as:.9,
+   spell:{name:'Dive',cd:6,range:120,dmg:35,type:'target'},color:'#78909c'},
+  {name:'Turtle',emoji:'\u{1F422}',role:'Siege',move:'amphibious',hp:230,atk:10,spd:1.3,range:40,as:1.6,
+   spell:{name:'Shell',cd:10,range:0,dmg:0,type:'shield',dur:4,red:.8},color:'#2e7d32'},
+  {name:'Snake',emoji:'\u{1F40D}',role:'Assassin',move:'land',hp:90,atk:28,spd:2.5,range:32,as:.6,
+   spell:{name:'Venom',cd:5,range:60,dmg:40,type:'target',slow:.5,slowDur:3},color:'#66bb6a'},
+  {name:'Elephant',emoji:'\u{1F418}',role:'Breaker',move:'land',hp:280,atk:20,spd:1.0,range:45,as:2,
+   spell:{name:'Charge',cd:12,range:150,dmg:50,type:'dash'},color:'#607d8b'},
+];
+
+let heroes=[],aiH=[],minions=[],particles=[];
+let selIdx=0,camX=0,camY=0,camTX=0,camTY=0;
+let gTime=300,phase=1,spawnMul=1,gameOver=false,aiClk=0,tick=0,wOff=0;
+let gold={blue:0,red:0};
+let krakenBuff={blue:0,red:0}; // timer
+let announceTimer=0;
+
+function mkH(d,o,x,y){return{...d,owner:o,x,y,chp:d.hp,mhp:d.hp,target:null,alive:true,rt:0,ac:0,sc:0,shT:0,shR:0,stT:0,slT:0,slF:1,inF:false,amb:false,speedBuff:0,dmgBuff:0}}
+
+function init(){
+  const bx=BASES.blue.x,by=BASES.blue.y,rx=BASES.red.x,ry=BASES.red.y;
+  heroes=HDEFS.map((d,i)=>mkH(d,'blue',bx+(i%2)*28-14,by+Math.floor(i/2)*28-14));
+  aiH=HDEFS.map((d,i)=>mkH(d,'red',rx+(i%2)*28-14,ry+Math.floor(i/2)*28-14));
+}
+init();
+
+// ═══════════════════════════════════════════════════════════
+// UTILITY
+// ═══════════════════════════════════════════════════════════
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}
+
+function canGo(u,px,py){
+  const t=tAt(px,py),p=TC[t];
+  if(u.move==='flying')return true;
+  if(u.move==='amphibious')return p.pass||p.swim;
+  return p.pass;
+}
+
+function moveT(u,tx,ty,dt){
+  const d=dist(u,{x:tx,y:ty});
+  if(d<4)return true;
+  const tp=tProps(u.x,u.y);
+  let spd=u.spd*(tp?tp.spd:1)*u.slF;
+  if(u.move==='flying')spd=u.spd*1.1;
+  if(u.speedBuff>0)spd*=1.5;
+  const step=Math.min(spd*60*dt,d);
+  const nx=u.x+(tx-u.x)/d*step, ny=u.y+(ty-u.y)/d*step;
+  if(canGo(u,nx,ny)){u.x=nx;u.y=ny}
+  else if(canGo(u,nx,u.y))u.x=nx;
+  else if(canGo(u,u.x,ny))u.y=ny;
+  const nf=tAt(u.x,u.y)===T.F;
+  if(nf&&!u.inF){u.inF=true;u.amb=true}else if(!nf){u.inF=false;u.amb=false}
+  return d<8;
+}
+
+function log(m,c){const el=document.getElementById('log'),d=document.createElement('div');d.className=c||'sys';d.textContent=m;el.prepend(d);while(el.children.length>35)el.lastChild.remove()}
+function spark(x,y,col,n,sz){for(let i=0;i<n;i++)particles.push({x,y,vx:(Math.random()-.5)*5,vy:(Math.random()-.5)*5,life:15+Math.random()*18,col,sz:sz||2+Math.random()*3})}
+function announce(text){document.getElementById('announce').textContent=text;document.getElementById('announce').style.opacity='1';announceTimer=2}
+
+// ═══════════════════════════════════════════════════════════
+// COMBAT
+// ═══════════════════════════════════════════════════════════
+function dmg(a,t,base){
+  let d=base;
+  const at=tAt(a.x,a.y),tt=tAt(t.x,t.y);
+  if(at===T.H&&tt!==T.H)d*=1.25;
+  if(at===T.LO)d*=.8;
+  if(a.amb){d*=1.3;a.amb=false}
+  if(a.dmgBuff>0)d*=1.4;
+  if(krakenBuff[a.owner]>0)d*=1.2;
+  if(t.shT>0)d*=(1-t.shR);
+  if(t.chp!==undefined)t.chp-=d;else t.hp-=d;
+  return d;
+}
+
+function trySpell(u,t){
+  if(!u.spell||u.sc>0||u.stT>0)return;
+  const s=u.spell;
+  if(s.type==='shield'){if(u.chp<u.mhp*.5){u.shT=s.dur;u.shR=s.red;u.sc=s.cd;spark(u.x,u.y,'#4fc3f7',10,4)}return}
+  if(!t)return;
+  if(dist(u,t)>s.range)return;
+  if(s.type==='aoe_stun'){
+    const es=[...(u.owner==='blue'?aiH:heroes).filter(h=>h.alive),...minions.filter(m=>m.owner!==u.owner&&m.hp>0)];
+    for(const e of es)if(dist(u,e)<s.radius){e.stT=s.dur;spark(e.x,e.y,'#ffd54f',4)}
+    u.sc=s.cd;spark(u.x,u.y,'#ffd54f',15,5);
+  }else if(s.type==='target'){
+    dmg(u,t,s.dmg);if(s.slow){t.slT=s.slowDur;t.slF=s.slow}
+    u.sc=s.cd;spark(t.x,t.y,'#ff5722',8,4);
+  }else if(s.type==='dash'){
+    const d2=dist(u,t);if(d2>20){u.x+=(t.x-u.x)/d2*Math.min(d2-10,100);u.y+=(t.y-u.y)/d2*Math.min(d2-10,100)}
+    dmg(u,t,s.dmg);u.sc=s.cd;spark(t.x,t.y,'#ff9800',12,5);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// UNIT UPDATE
+// ═══════════════════════════════════════════════════════════
+function updUnit(u,dt,eH,eM){
+  if(!u.alive){u.rt-=dt;if(u.rt<=0){u.alive=true;u.chp=u.mhp;const b=u.owner==='blue'?BASES.blue:BASES.red;u.x=b.x+(Math.random()-.5)*30;u.y=b.y+(Math.random()-.5)*30;u.stT=0;u.slT=0;u.slF=1;u.shT=0;if(u.owner==='blue')log(`${u.name} respawned!`,'cmd')}return}
+  if(u.chp<=0){u.alive=false;u.rt=10;spark(u.x,u.y,u.owner==='blue'?'#4fc3f7':'#ef5350',18);if(u.owner==='blue')log(`${u.name} slain!`,'enemy');else log(`Enemy ${u.name} slain!`,'cmd');return}
+  u.ac=Math.max(0,u.ac-dt);u.sc=Math.max(0,u.sc-dt);u.stT=Math.max(0,u.stT-dt);u.slT=Math.max(0,u.slT-dt);if(u.slT<=0)u.slF=1;u.shT=Math.max(0,u.shT-dt);u.speedBuff=Math.max(0,u.speedBuff-dt);u.dmgBuff=Math.max(0,u.dmgBuff-dt);
+  if(u.stT>0)return;
+
+  // Check shrines
+  for(const s of LOCS.filter(l=>l.type==='shrine'&&l.cooldown<=0)){
+    if(dist(u,s)<30){
+      if(s.buff==='speed'){u.speedBuff=s.duration;log(`${u.name} got speed boost!`,'event');spark(s.x,s.y,'#ffd54f',10)}
+      else if(s.buff==='power'){u.dmgBuff=s.duration;log(`${u.name} got power boost!`,'event');spark(s.x,s.y,'#ff5722',10)}
+      else if(s.buff==='heal'){u.chp=Math.min(u.mhp,u.chp+u.mhp*.4);log(`${u.name} healed!`,'event');spark(s.x,s.y,'#66bb6a',10)}
+      s.cooldown=30;
+    }
+  }
+
+  const allE=[...eH.filter(h=>h.alive),...eM.filter(m=>m.hp>0)];
+  let near=null,nd=999;
+  for(const e of allE){const d2=dist(u,e);if(d2<nd){near=e;nd=d2}}
+  if(near&&nd<(u.spell?.range||0)*1.2)trySpell(u,near);
+
+  // Check camp interaction
+  if(u.target?.type==='camp'){
+    const loc=u.target.ref;
+    if(!loc||loc.dead){u.target=null;return}
+    if(dist(u,loc)<50){
+      if(u.ac<=0){loc.hp-=u.atk;u.ac=u.as;spark(loc.x,loc.y,'#ff5722',3);
+        if(loc.hp<=0){
+          loc.dead=true;loc.deadTimer=loc.respawn;
+          // Spawn temp allies
+          for(let i=0;i<3;i++){
+            minions.push({x:loc.x+(Math.random()-.5)*30,y:loc.y+(Math.random()-.5)*30,owner:u.owner,
+              hp:50*spawnMul,mhp:50*spawnMul,atk:8*spawnMul,spd:2,range:30,ac:0,
+              target:{x:u.owner==='blue'?BASES.red.x:BASES.blue.x,y:u.owner==='blue'?BASES.red.y:BASES.blue.y},
+              emoji:loc.emoji,move:'land',isBoat:false,slF:1,slT:0,stT:0,life:60});
+          }
+          log(`${u.name} cleared ${loc.id}! Mercenaries join!`,'event');
+          announce(`${loc.reward.toUpperCase()} RECRUITED!`);
+          u.target=null;
+        }
+      }
+    }else moveT(u,loc.x,loc.y,dt);
+    return;
+  }
+
+  // Check mine interaction
+  if(u.target?.type==='mine'){
+    const loc=u.target.ref;
+    if(!loc){u.target=null;return}
+    if(dist(u,loc)<40){
+      loc.occupied=u.owner;
+      // Auto-attack nearby enemies while mining
+      if(near&&nd<=u.range&&u.ac<=0){dmg(u,near,u.atk);u.ac=u.as;spark(near.x,near.y,'#ff5722',3)}
+    }else moveT(u,loc.x,loc.y,dt);
+    return;
+  }
+
+  // Check kraken interaction
+  if(u.target?.type==='kraken'){
+    const kr=LOCS.find(l=>l.type==='kraken');
+    if(!kr||!kr.alive){u.target=null;return}
+    if(dist(u,kr)<60){
+      if(u.ac<=0){kr.hp-=u.atk;u.ac=u.as;spark(kr.x,kr.y,'#9c27b0',4);
+        if(kr.hp<=0){
+          kr.alive=false;kr.deadTimer=kr.respawn;
+          krakenBuff[u.owner]=90;
+          log(`${u.owner==='blue'?'Your':'Enemy'} team slew the KRAKEN! +20% damage for 90s!`,u.owner==='blue'?'event':'enemy');
+          announce('KRAKEN SLAIN! +20% TEAM DAMAGE!');
+          spark(kr.x,kr.y,'#9c27b0',30,6);
+          u.target=null;
+        }
+      }
+    }else moveT(u,kr.x,kr.y,dt);
+    return;
+  }
+
+  if(u.target){
+    if(u.target.type==='move'){
+      if(moveT(u,u.target.x,u.target.y,dt))u.target=null;
+      if(near&&nd<=u.range&&u.ac<=0){dmg(u,near,u.atk);u.ac=u.as;spark(near.x,near.y,'#ff5722',3)}
+    }else if(u.target.type==='attack'){
+      const r=u.target.ref;
+      if(!r||(r.alive===false)||(r.hp!==undefined&&r.hp<=0)||(r.chp!==undefined&&r.chp<=0)){u.target=null;return}
+      if(dist(u,r)<=u.range){if(u.ac<=0){dmg(u,r,u.atk);u.ac=u.as;spark(r.x,r.y,'#ff5722',3)}}
+      else moveT(u,r.x,r.y,dt);
+    }else if(u.target.type==='tower'||u.target.type==='dock'){
+      const loc=u.target.ref;if(!loc){u.target=null;return}
+      if(dist(u,loc)<50){
+        if(loc.owner&&loc.owner!==u.owner&&loc.hp>0){if(u.ac<=0){loc.hp-=u.atk;u.ac=u.as;spark(loc.x,loc.y,'#ff5722',4)}}
+        if(near&&nd<=u.range&&u.ac<=0){dmg(u,near,u.atk);u.ac=u.as;spark(near.x,near.y,'#ff5722',3)}
+      }else moveT(u,loc.x,loc.y,dt);
+    }
+  }else{
+    if(near&&nd<=u.range*1.5){
+      if(nd>u.range)moveT(u,near.x,near.y,dt);
+      else if(u.ac<=0){dmg(u,near,u.atk);u.ac=u.as;spark(near.x,near.y,'#ff5722',3)}
+    }
+  }
+  const eb=u.owner==='blue'?BASES.red:BASES.blue;
+  if(dist(u,eb)<50&&u.ac<=0){eb.hp-=u.atk;u.ac=u.as;spark(eb.x,eb.y,'#ff5722',5)}
+}
+
+// ═══════════════════════════════════════════════════════════
+// MINION UPDATE
+// ═══════════════════════════════════════════════════════════
+function updMinion(m,dt){
+  if(m.hp<=0)return false;
+  m.ac=Math.max(0,m.ac-dt);m.stT=Math.max(0,m.stT-dt);m.slT=Math.max(0,m.slT-dt);if(m.slT<=0)m.slF=1;
+  if(m.life!==undefined){m.life-=dt;if(m.life<=0){m.hp=0;return false}} // Merc lifetime
+  if(m.stT>0)return true;
+  const es=m.owner==='blue'?[...aiH.filter(h=>h.alive),...minions.filter(e=>e!==m&&e.owner==='red'&&e.hp>0)]:[...heroes.filter(h=>h.alive),...minions.filter(e=>e!==m&&e.owner==='blue'&&e.hp>0)];
+  let near=null,nd=50;
+  for(const e of es){const d2=dist(m,e);if(d2<nd){near=e;nd=d2}}
+  const eTowers=LOCS.filter(l=>(l.type==='tower'||l.type==='dock')&&l.owner&&l.owner!==m.owner&&l.hp>0);
+  for(const t of eTowers){const d2=dist(m,t);if(d2<45){near=t;nd=d2}}
+  const eb=m.owner==='blue'?BASES.red:BASES.blue;
+  if(dist(m,eb)<45){if(m.ac<=0){eb.hp-=m.atk;m.ac=1;spark(eb.x,eb.y,'#ff5722',2)}return true}
+  if(near&&nd<30){if(m.ac<=0){const d2=m.atk;if(near.chp!==undefined)near.chp-=d2;else near.hp-=d2;m.ac=1}}
+  else if(near&&nd<50)moveT(m,near.x,near.y,dt);
+  else{moveT(m,m.target.x,m.target.y,dt);if(dist(m,m.target)<20){if(m.waypoints&&m.wpIdx<m.waypoints.length-1){m.wpIdx++;m.target=m.waypoints[m.wpIdx]}else{m.target={x:eb.x,y:eb.y}}}}
+  return true;
+}
+
+// ═══════════════════════════════════════════════════════════
+// LOCATIONS UPDATE
+// ═══════════════════════════════════════════════════════════
+function updLocs(dt){
+  for(const l of LOCS){
+    // Shrine cooldowns
+    if(l.type==='shrine'){l.cooldown=Math.max(0,l.cooldown-dt);continue}
+
+    // Camp respawn
+    if(l.type==='camp'){
+      if(l.dead){l.deadTimer-=dt;if(l.deadTimer<=0){l.dead=false;l.hp=l.mhp;log(`${l.id} respawned!`,'sys')}}
+      continue;
+    }
+
+    // Kraken respawn
+    if(l.type==='kraken'){
+      if(!l.alive){l.deadTimer-=dt;if(l.deadTimer<=0){l.alive=true;l.hp=l.mhp;log('The KRAKEN has returned!','event');announce('THE KRAKEN RETURNS!')}}
+      continue;
+    }
+
+    // Mines: generate gold
+    if(l.type==='mine'){
+      // Check who's near
+      const bNear=[...heroes.filter(h=>h.alive),...minions.filter(m=>m.owner==='blue'&&m.hp>0)].some(u=>dist(u,l)<40);
+      const rNear=[...aiH.filter(h=>h.alive),...minions.filter(m=>m.owner==='red'&&m.hp>0)].some(u=>dist(u,l)<40);
+      if(bNear&&!rNear){l.occupied='blue';gold.blue+=l.rate*dt}
+      else if(rNear&&!bNear){l.occupied='red';gold.red+=l.rate*dt}
+      else l.occupied=null;
+      continue;
+    }
+
+    // Towers and Docks
+    if(l.type==='tower'||l.type==='dock'){
+      if(l.hp<=0){
+        const bN=[...heroes.filter(h=>h.alive),...minions.filter(m=>m.owner==='blue'&&m.hp>0)].filter(u=>dist(u,l)<50).length;
+        const rN=[...aiH.filter(h=>h.alive),...minions.filter(m=>m.owner==='red'&&m.hp>0)].filter(u=>dist(u,l)<50).length;
+        if(bN>0&&rN===0){l.hp=l.mhp;l.owner='blue';log(`Captured ${l.id}!`,'cmd');spark(l.x,l.y,'#4fc3f7',20)}
+        else if(rN>0&&bN===0){l.hp=l.mhp;l.owner='red';log(`Enemy captured ${l.id}`,'enemy');spark(l.x,l.y,'#ef5350',20)}
+        continue;
+      }
+      // Tower shoots
+      if(l.owner){
+        const es=l.owner==='blue'?[...aiH.filter(h=>h.alive),...minions.filter(m=>m.owner==='red'&&m.hp>0)]:[...heroes.filter(h=>h.alive),...minions.filter(m=>m.owner==='blue'&&m.hp>0)];
+        for(const e of es){if(dist(e,l)<70){const d2=8*dt;if(e.chp!==undefined)e.chp-=d2;else e.hp-=d2;if(Math.random()<.08)spark(e.x,e.y,'#ffa726',2);break}}
+        // Spawn
+        if(l.type==='tower'){
+          l.st+=dt*spawnMul;
+          if(l.st>=l.spawnRate){l.st=0;spawnCreep(l)}
+        }
+        // Docks spawn boats
+        if(l.type==='dock'){
+          l.st+=dt*spawnMul;
+          if(l.st>=8){l.st=0;spawnBoat(l)}
+        }
+      }
+    }
+  }
+
+  // Passive gold
+  gold.blue+=.5*dt;gold.red+=.5*dt;
+
+  // Kraken buff timer
+  krakenBuff.blue=Math.max(0,krakenBuff.blue-dt);
+  krakenBuff.red=Math.max(0,krakenBuff.red-dt);
+
+  // Gold → upgrade towers (auto)
+  if(gold.blue>=50){gold.blue-=50;const t=LOCS.filter(l=>l.type==='tower'&&l.owner==='blue');if(t.length)t[Math.floor(Math.random()*t.length)].mhp+=20}
+  if(gold.red>=50){gold.red-=50;const t=LOCS.filter(l=>l.type==='tower'&&l.owner==='red');if(t.length)t[Math.floor(Math.random()*t.length)].mhp+=20}
+}
+
+function spawnCreep(loc){
+  const tb=loc.owner==='blue'?BASES.red:BASES.blue;
+  let wp={x:tb.x,y:tb.y};
+  // Target enemy towers in the same lane (similar y) to spread creep waves across all lanes
+  const el=LOCS.filter(l=>(l.type==='tower')&&l.owner!==loc.owner&&l.hp>0)
+    .sort((a,b)=>Math.abs(a.y-loc.y)-Math.abs(b.y-loc.y));
+  if(el.length)wp={x:el[0].x,y:el[0].y};
+  const ct=loc.reward==='2x'?2:1;
+  const pool=loc.owner==='blue'?heroes:aiH;
+  for(let i=0;i<ct;i++){
+    const em=pool[Math.floor(Math.random()*pool.length)].emoji;
+    minions.push({x:loc.x+(Math.random()-.5)*18,y:loc.y+(Math.random()-.5)*18,owner:loc.owner,
+      hp:35*spawnMul,mhp:35*spawnMul,atk:6*spawnMul,spd:1.4+Math.random()*.3,range:30,ac:0,
+      target:wp,emoji:em,move:'land',isBoat:false,slF:1,slT:0,stT:0});
+  }
+}
+
+function spawnBoat(loc){
+  // Boats spawn in harbor water and follow waypoints around island ring
+  let sx,sy,wps;
+  if(loc.owner==='blue'){
+    sx=3*TL;sy=22*TL; // West harbor
+    // Route: north up west channel → east across top → south down east channel → red base
+    wps=[{x:1*TL,y:5*TL},{x:28*TL,y:1*TL},{x:54*TL,y:1*TL},{x:54*TL,y:10*TL},{x:BASES.red.x,y:BASES.red.y}];
+  }else{
+    sx=52*TL;sy=20*TL; // East harbor
+    // Route: south down east channel → west across bottom → north up west channel → blue base
+    wps=[{x:54*TL,y:38*TL},{x:28*TL,y:42*TL},{x:1*TL,y:42*TL},{x:1*TL,y:32*TL},{x:BASES.blue.x,y:BASES.blue.y}];
+  }
+  minions.push({x:sx,y:sy,owner:loc.owner,
+    hp:50*spawnMul,mhp:50*spawnMul,atk:8*spawnMul,spd:2,range:35,ac:0,
+    target:wps[0],waypoints:wps,wpIdx:0,
+    emoji:'\u{26F5}',move:'amphibious',isBoat:true,slF:1,slT:0,stT:0});
+  log(`${loc.owner==='blue'?'Your':'Enemy'} dock launched a boat!`,loc.owner==='blue'?'cmd':'enemy');
+}
+
+// ═══════════════════════════════════════════════════════════
+// AI
+// ═══════════════════════════════════════════════════════════
+function updAI(dt){
+  aiClk-=dt;if(aiClk>0)return;aiClk=1.5+Math.random()*2;
+  // Lane assignments: spread heroes across top/mid/bot + roamer
+  // aiH: [0]=Bear(Tank), [1]=Eagle(Scout/flying), [2]=Turtle(Siege/amphibious), [3]=Snake(Assassin), [4]=Elephant(Breaker)
+  const laneOf=[0,2,1,2,0]; // 0=top, 1=mid, 2=bot
+  const topY=20*TL,botY=24*TL;
+  const allTowers=LOCS.filter(l=>(l.type==='tower'||l.type==='dock')&&l.owner!=='red'&&l.hp>0);
+  const laneTowers=[
+    allTowers.filter(l=>l.y<topY),  // top lane towers
+    allTowers.filter(l=>l.y>=topY&&l.y<=botY), // mid lane towers
+    allTowers.filter(l=>l.y>botY),  // bot lane towers
+  ];
+  for(let i=0;i<aiH.length;i++){
+    const h=aiH[i];if(!h.alive)continue;
+    // Low HP → retreat
+    if(h.chp<h.mhp*.2){h.target={type:'move',x:BASES.red.x,y:BASES.red.y};continue}
+    // React to nearby enemies
+    const nb=heroes.filter(e=>e.alive&&dist(e,h)<120);
+    if(nb.length&&h.chp>h.mhp*.4){h.target={type:'attack',ref:nb[0],x:nb[0].x,y:nb[0].y};continue}
+    // Eagle roams: kraken, camps, or hunt weakest hero
+    if(i===1){
+      const kr=LOCS.find(l=>l.type==='kraken'&&l.alive);
+      const aiNearKr=aiH.filter(a=>a.alive&&kr&&dist(a,kr)<150).length;
+      if(kr&&aiNearKr>=1&&Math.random()<.3){h.target={type:'kraken',ref:kr,x:kr.x,y:kr.y};continue}
+      const camps=LOCS.filter(l=>l.type==='camp'&&!l.dead).sort((a,b)=>dist(a,h)-dist(b,h));
+      if(camps.length&&Math.random()<.4){h.target={type:'camp',ref:camps[0],x:camps[0].x,y:camps[0].y};continue}
+      // Hunt weakest hero
+      const weak=heroes.filter(e=>e.alive).sort((a,b)=>(a.chp/a.mhp)-(b.chp/b.mhp));
+      if(weak.length){h.target={type:'attack',ref:weak[0],x:weak[0].x,y:weak[0].y};continue}
+    }
+    // Turtle occasionally flanks through water
+    if(i===2&&Math.random()<.2){
+      const dock=LOCS.find(l=>l.id==='East Dock');
+      if(dock){h.target={type:'dock',ref:dock,x:dock.x,y:dock.y};continue}
+    }
+    // Camps chance for non-roamers
+    if(Math.random()<.12){
+      const camps=LOCS.filter(l=>l.type==='camp'&&!l.dead).sort((a,b)=>dist(a,h)-dist(b,h));
+      if(camps.length){h.target={type:'camp',ref:camps[0],x:camps[0].x,y:camps[0].y};continue}
+    }
+    // Push assigned lane
+    const lane=laneOf[i];
+    const targets=laneTowers[lane].length?laneTowers[lane]:allTowers;
+    if(targets.length){
+      const t=targets.sort((a,b)=>dist(a,h)-dist(b,h))[0];
+      h.target={type:'tower',ref:t,x:t.x,y:t.y};
+    }else h.target={type:'move',x:BASES.blue.x,y:BASES.blue.y};
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// COMMAND PARSER
+// ═══════════════════════════════════════════════════════════
+document.getElementById('cmd').addEventListener('keydown',e=>{if(e.key!=='Enter')return;const v=e.target.value.trim();if(!v)return;e.target.value='';parseCmd(v)});
+
+function parseCmd(raw){
+  const t=raw.toLowerCase();log(`> ${raw}`,'cmd');
+  let tgts=[];
+  if(t.includes('everyone')||t.includes('all'))tgts=heroes.filter(h=>h.alive);
+  else for(const h of heroes)if(t.includes(h.name.toLowerCase()))tgts.push(h);
+  if(!tgts.length){const s=heroes[selIdx];if(s?.alive)tgts=[s]}
+  if(!tgts.length){log('No alive heroes','sys');return}
+
+  // Find location
+  let loc=null;
+  for(const l of LOCS)if(t.includes(l.id.toLowerCase())){loc=l;break}
+  if(!loc)for(const b of bridges)if(t.includes(b.name.toLowerCase()))loc=b;
+  if(!loc){
+    if(t.includes('kraken'))loc=LOCS.find(l=>l.type==='kraken');
+    else if(t.includes('wolf'))loc=LOCS.find(l=>l.id==='Wolf Den');
+    else if(t.includes('boar'))loc=LOCS.find(l=>l.id==='Boar Camp');
+    else if(t.includes('spider'))loc=LOCS.find(l=>l.id==='Spider Nest');
+    else if(t.includes('hawk'))loc=LOCS.find(l=>l.id==='Hawk Roost');
+    else if(t.includes('gold')||t.includes('mine'))loc=LOCS.find(l=>l.type==='mine'&&l.id.includes('Gold'));
+    else if(t.includes('crystal'))loc=LOCS.find(l=>l.id==='Crystal Mine');
+    else if(t.includes('fortress')||t.includes('center')||t.includes('mid'))loc=LOCS.find(l=>l.id==='Fortress');
+    else if(t.includes('shrine')&&t.includes('speed'))loc=LOCS.find(l=>l.id==='Speed Shrine');
+    else if(t.includes('shrine')&&t.includes('power'))loc=LOCS.find(l=>l.id==='Power Shrine');
+    else if(t.includes('shrine')&&t.includes('heal'))loc=LOCS.find(l=>l.id==='Heal Shrine');
+    else if(t.includes('dock')||t.includes('west dock'))loc=LOCS.find(l=>l.id==='West Dock');
+    else if(t.includes('pier')||t.includes('east dock'))loc=LOCS.find(l=>l.id==='East Dock');
+    else if(t.includes('lighthouse')||t.includes('top'))loc=LOCS.find(l=>l.id==='Lighthouse');
+    else if(t.includes('harbor')||t.includes('bot'))loc=LOCS.find(l=>l.id==='Harbor');
+    else if(t.includes('ruins')||t.includes('south'))loc=LOCS.find(l=>l.id==='Ruins');
+  }
+
+  if(t.includes('defend')||t.includes('protect')){
+    for(const h of tgts){h.target={type:'move',x:BASES.blue.x+40,y:BASES.blue.y};log(`${h.name}: Defending!`,'cmd')}
+  }else if(t.includes('push')||(t.includes('attack')&&t.includes('base'))){
+    for(const h of tgts){h.target={type:'move',x:BASES.red.x-40,y:BASES.red.y};log(`${h.name}: Pushing base!`,'cmd')}
+  }else if(t.includes('kill kraken')||t.includes('kraken')){
+    const kr=LOCS.find(l=>l.type==='kraken');
+    if(kr?.alive){for(const h of tgts){h.target={type:'kraken',ref:kr,x:kr.x,y:kr.y};log(`${h.name}: Going for the Kraken!`,'event')}}
+    else log('Kraken is dead','sys');
+  }else if(loc?.type==='camp'&&!loc.dead){
+    for(const h of tgts){h.target={type:'camp',ref:loc,x:loc.x,y:loc.y};log(`${h.name}: Clearing ${loc.id}`,'cmd')}
+  }else if(loc?.type==='mine'){
+    for(const h of tgts){h.target={type:'mine',ref:loc,x:loc.x,y:loc.y};log(`${h.name}: Mining at ${loc.id}`,'cmd')}
+  }else if(t.includes('attack')||t.includes('kill')||t.includes('fight')){
+    let enemy=null;for(const e of aiH)if(t.includes(e.name.toLowerCase())&&e.alive){enemy=e;break}
+    for(const h of tgts){const tgt=enemy||aiH.filter(e=>e.alive).sort((a,b)=>dist(a,h)-dist(b,h))[0];if(tgt){h.target={type:'attack',ref:tgt,x:tgt.x,y:tgt.y};log(`${h.name}: Attacking ${tgt.name}!`,'cmd')}}
+  }else if(t.includes('flank')||t.includes('water')){
+    // Send through water route
+    const dock=LOCS.find(l=>l.id==='West Dock');
+    for(const h of tgts){
+      if(h.move==='amphibious'||h.move==='flying'){
+        h.target={type:'move',x:BASES.red.x,y:BASES.red.y+80};
+        log(`${h.name}: Flanking through water!`,'cmd');
+      }else log(`${h.name} can't traverse water (land unit)`,'sys');
+    }
+  }else if(t.includes('retreat')||t.includes('back')){
+    for(const h of tgts){h.target={type:'move',x:BASES.blue.x+30,y:BASES.blue.y+(Math.random()-.5)*40};log(`${h.name}: Falling back!`,'cmd')}
+  }else if(loc){
+    const tp=loc.type||'tower';
+    for(const h of tgts){h.target={type:tp==='dock'?'dock':tp,ref:loc,x:loc.x,y:loc.y};log(`${h.name}: Heading to ${loc.id||loc.name}`,'cmd')}
+  }else{
+    log('Try: "Bear go to Fortress", "Turtle kill Kraken", "Snake clear Wolf Den"','sys');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// MOUSE
+// ═══════════════════════════════════════════════════════════
+G.addEventListener('contextmenu',e=>{
+  e.preventDefault();const wx=e.clientX+camX,wy=e.clientY+camY,h=heroes[selIdx];if(!h?.alive)return;
+  for(const l of LOCS){if(dist({x:wx,y:wy},l)<25){
+    const tp=l.type;
+    h.target={type:tp==='camp'?'camp':tp==='mine'?'mine':tp==='kraken'?'kraken':'tower',ref:l,x:l.x,y:l.y};
+    log(`${h.name}: -> ${l.id}`,'cmd');spark(l.x,l.y,'#ffd54f',6);return;
+  }}
+  h.target={type:'move',x:wx,y:wy};spark(wx,wy,'#4fc3f7',5);
+});
+G.addEventListener('click',e=>{
+  const wx=e.clientX+camX,wy=e.clientY+camY,h=heroes[selIdx];if(!h?.alive)return;
+  for(const eh of aiH)if(eh.alive&&dist({x:wx,y:wy},eh)<20){h.target={type:'attack',ref:eh,x:eh.x,y:eh.y};log(`${h.name}: Targeting ${eh.name}!`,'cmd');return}
+  for(const l of LOCS)if(l.owner!=='blue'&&dist({x:wx,y:wy},l)<25){h.target={type:l.type==='camp'?'camp':l.type==='mine'?'mine':l.type==='kraken'?'kraken':'tower',ref:l,x:l.x,y:l.y};log(`${h.name}: -> ${l.id}`,'cmd');return}
+});
+document.addEventListener('keydown',e=>{if(document.activeElement===document.getElementById('cmd'))return;if(e.key>='1'&&e.key<='5'){selIdx=parseInt(e.key)-1;buildHB()}});
+
+// ═══════════════════════════════════════════════════════════
+// RENDER
+// ═══════════════════════════════════════════════════════════
+function render(){
+  X.fillStyle='#080810';X.fillRect(0,0,G.width,G.height);
+  X.save();X.translate(-camX,-camY);
+  wOff+=.012;
+
+  // Terrain
+  const r1=Math.max(0,Math.floor(camY/TL)-1),r2=Math.min(RO-1,Math.floor((camY+G.height)/TL)+1);
+  const c1=Math.max(0,Math.floor(camX/TL)-1),c2=Math.min(CO-1,Math.floor((camX+G.width)/TL)+1);
+  for(let r=r1;r<=r2;r++)for(let c=c1;c<=c2;c++){
+    const t=M[r][c],p=TC[t],sx=c*TL,sy=r*TL;
+    if(t===T.W||t===T.RV){
+      const w=Math.sin(c*.5+r*.3+wOff*4)*6;
+      const rb=t===T.W?11:20,gb=t===T.W?42:32,bb=t===T.W?74:80;
+      X.fillStyle=`rgb(${rb+w},${gb+w},${bb+w})`;
+    }else if(t===T.H){
+      const n=Math.sin(c*1.1)*2+Math.cos(r*.9)*2;
+      X.fillStyle=`rgb(${42+n},${74+n},${30+n})`;
+    }else if(t===T.LO){
+      const pulse=Math.sin(tick*2+c*.3+r*.3)*4;
+      X.fillStyle=`rgb(${22+pulse},${30+pulse},${46+pulse})`;
+    }else X.fillStyle=p.col;
+    X.fillRect(sx,sy,TL,TL);
+    if(t===T.H){const bel=r+1<RO?M[r+1][c]:T.W;if(bel!==T.H&&bel!==T.BB&&bel!==T.RB){X.fillStyle='rgba(0,0,0,.25)';X.fillRect(sx,sy+TL-2,TL,2)}}
+  }
+
+  // Bridges
+  for(const b of bridges){const sx=b.x,sy=b.y;X.fillStyle='rgba(93,64,55,.7)';X.fillRect(sx-22,sy-5,44,10);X.strokeStyle='#795548';X.lineWidth=1;X.strokeRect(sx-22,sy-5,44,10);X.fillStyle='rgba(255,255,255,.35)';X.font='7px Segoe UI';X.textAlign='center';X.fillText(b.name,sx,sy-9)}
+
+  // Bases
+  for(const[team,base]of Object.entries(BASES)){
+    const sx=base.x,sy=base.y,p=Math.sin(tick*3)*3;
+    const grd=X.createRadialGradient(sx,sy,8,sx,sy,50+p);
+    grd.addColorStop(0,team==='blue'?'rgba(21,101,192,.5)':'rgba(198,40,40,.5)');grd.addColorStop(1,'rgba(0,0,0,0)');
+    X.fillStyle=grd;X.beginPath();X.arc(sx,sy,50+p,0,Math.PI*2);X.fill();
+    X.fillStyle=team==='blue'?'#1565c0':'#c62828';X.beginPath();X.arc(sx,sy,26,0,Math.PI*2);X.fill();
+    X.strokeStyle=team==='blue'?'#42a5f5':'#ef5350';X.lineWidth=2;X.beginPath();X.arc(sx,sy,28,0,Math.PI*2);X.stroke();
+    X.font='18px Segoe UI';X.textAlign='center';X.fillText(team==='blue'?'\u{1F3F0}':'\u{1F3AF}',sx,sy+6);
+    const pct=base.hp/base.mhp;X.fillStyle='#222';X.fillRect(sx-22,sy+32,44,4);
+    X.fillStyle=pct>.5?'#66bb6a':pct>.25?'#ffa726':'#ef5350';X.fillRect(sx-22,sy+32,44*Math.max(0,pct),4);
+  }
+
+  // Locations
+  for(const l of LOCS){
+    const sx=l.x,sy=l.y;
+    if(l.type==='tower'||l.type==='dock'){
+      const alive=l.hp>0,col=l.owner==='blue'?'#4fc3f7':l.owner==='red'?'#ef5350':'#666';
+      X.globalAlpha=alive?.9:.25;
+      if(alive&&l.owner){X.strokeStyle=l.owner==='blue'?'rgba(79,195,247,.07)':'rgba(239,83,80,.07)';X.lineWidth=1;X.beginPath();X.arc(sx,sy,70,0,Math.PI*2);X.stroke()}
+      X.fillStyle=alive?col:'#444';X.beginPath();X.arc(sx,sy,12,0,Math.PI*2);X.fill();
+      for(let a=0;a<5;a++){const ang=a*Math.PI*2/5;X.fillRect(sx+Math.cos(ang)*12-2.5,sy+Math.sin(ang)*12-2.5,5,5)}
+      if(l.reward==='2x'){X.fillStyle='#ffd54f';X.font='bold 9px Segoe UI';X.textAlign='center';X.fillText('2x',sx,sy+3)}
+      if(l.type==='dock'){X.font='12px Segoe UI';X.fillText(l.emoji||'',sx,sy+4)}
+      X.globalAlpha=1;
+      X.fillStyle=alive?'#ddd':'#555';X.font='8px Segoe UI';X.textAlign='center';X.fillText(l.id,sx,sy+24);
+      if(l.label){X.fillStyle='#ffd54f';X.font='bold 7px Segoe UI';X.fillText(l.label,sx,sy-16)}
+      if(alive){const pct=l.hp/l.mhp;X.fillStyle='#222';X.fillRect(sx-10,sy-18,20,3);X.fillStyle=pct>.5?'#66bb6a':'#ffa726';X.fillRect(sx-10,sy-18,20*pct,3)}
+    }else if(l.type==='mine'){
+      X.font='16px Segoe UI';X.textAlign='center';X.fillText(l.emoji,sx,sy+5);
+      X.fillStyle=l.occupied==='blue'?'#4fc3f7':l.occupied==='red'?'#ef5350':'#888';X.font='8px Segoe UI';X.fillText(l.id,sx,sy+18);
+      if(l.occupied){X.fillStyle='#ffd54f';X.font='7px Segoe UI';X.fillText(`+${l.rate}g/s`,sx,sy-10)}
+    }else if(l.type==='camp'){
+      X.globalAlpha=l.dead?.2:1;
+      X.font='18px Segoe UI';X.textAlign='center';X.fillText(l.emoji,sx,sy+6);
+      X.fillStyle='#ccc';X.font='8px Segoe UI';X.fillText(l.id,sx,sy+22);
+      if(!l.dead){const pct=l.hp/l.mhp;X.fillStyle='#222';X.fillRect(sx-10,sy-12,20,3);X.fillStyle='#ffa726';X.fillRect(sx-10,sy-12,20*pct,3)}
+      else{X.fillStyle='#666';X.font='7px Segoe UI';X.fillText(`${Math.ceil(l.deadTimer)}s`,sx,sy+6)}
+      X.globalAlpha=1;
+    }else if(l.type==='shrine'){
+      X.globalAlpha=l.cooldown>0?.3:1;
+      X.font='16px Segoe UI';X.textAlign='center';X.fillText(l.emoji,sx,sy+5);
+      X.fillStyle='#ffd54f';X.font='7px Segoe UI';X.fillText(l.id,sx,sy+18);
+      if(l.cooldown>0){X.fillStyle='#666';X.fillText(`${Math.ceil(l.cooldown)}s`,sx,sy-6)}
+      X.globalAlpha=1;
+    }else if(l.type==='kraken'){
+      X.globalAlpha=l.alive?1:.2;
+      const bob=Math.sin(tick*2)*3;
+      X.font='28px Segoe UI';X.textAlign='center';X.fillText(l.emoji,sx,sy+8+bob);
+      X.fillStyle='#9c27b0';X.font='bold 9px Segoe UI';X.fillText('KRAKEN',sx,sy+28);
+      if(l.alive){const pct=l.hp/l.mhp;X.fillStyle='#222';X.fillRect(sx-18,sy-16,36,4);X.fillStyle='#9c27b0';X.fillRect(sx-18,sy-16,36*pct,4)}
+      else{X.fillStyle='#666';X.font='8px Segoe UI';X.fillText(`${Math.ceil(l.deadTimer)}s`,sx,sy+6)}
+      X.globalAlpha=1;
+    }
+  }
+
+  // Minions
+  for(const m of minions){
+    if(m.hp<=0)continue;const sx=m.x,sy=m.y;
+    if(m.isBoat){X.fillStyle=m.owner==='blue'?'rgba(79,195,247,.25)':'rgba(239,83,80,.25)';X.beginPath();X.arc(sx,sy,8,0,Math.PI*2);X.fill()}
+    X.font='11px Segoe UI';X.textAlign='center';X.fillText(m.emoji,sx,sy+3);
+    const pct=m.hp/m.mhp;X.fillStyle='#222';X.fillRect(sx-5,sy-7,10,2);
+    X.fillStyle=m.owner==='blue'?'#4fc3f7':'#ef5350';X.fillRect(sx-5,sy-7,10*pct,2);
+  }
+
+  // Heroes
+  for(const h of[...heroes,...aiH]){
+    if(!h.alive)continue;const sx=h.x,sy=h.y,isB=h.owner==='blue',isSel=isB&&heroes.indexOf(h)===selIdx;
+    if(h.move==='flying'){X.strokeStyle='rgba(255,255,255,.1)';X.setLineDash([2,3]);X.beginPath();X.arc(sx,sy,18,0,Math.PI*2);X.stroke();X.setLineDash([])}
+    if(h.shT>0){X.strokeStyle='rgba(79,195,247,.5)';X.lineWidth=2;X.beginPath();X.arc(sx,sy,16,0,Math.PI*2);X.stroke()}
+    if(h.stT>0){X.fillStyle='#ffd54f';X.font='9px Segoe UI';X.textAlign='center';X.fillText('\u{2B50}',sx+10,sy-8)}
+    if(isSel){X.strokeStyle='#ffd54f';X.lineWidth=2;X.beginPath();X.arc(sx,sy,20,0,Math.PI*2);X.stroke()}
+    X.fillStyle=isB?'rgba(79,195,247,.12)':'rgba(239,83,80,.12)';X.beginPath();X.arc(sx,sy,14,0,Math.PI*2);X.fill();
+    X.font='22px Segoe UI';X.textAlign='center';X.fillText(h.emoji,sx,sy+7);
+    X.fillStyle=isB?'#4fc3f7':'#ef5350';X.font='bold 8px Segoe UI';X.fillText(h.name,sx,sy-18);
+    X.fillStyle='rgba(255,255,255,.3)';X.font='6px Segoe UI';
+    const mi=h.move==='flying'?'\u{1F54A}':h.move==='amphibious'?'\u{1F30A}':'';
+    X.fillText(`${h.role}${mi}`,sx,sy+18);
+    const pct=h.chp/h.mhp;X.fillStyle='#222';X.fillRect(sx-14,sy-12,28,3);
+    X.fillStyle=pct>.6?'#66bb6a':pct>.3?'#ffa726':'#ef5350';X.fillRect(sx-14,sy-12,28*Math.max(0,pct),3);
+    if(isSel&&h.target){X.strokeStyle='rgba(255,213,79,.2)';X.lineWidth=1;X.setLineDash([3,3]);X.beginPath();X.moveTo(sx,sy);X.lineTo(h.target.x,h.target.y);X.stroke();X.setLineDash([])}
+    if(h.speedBuff>0){X.fillStyle='#ffd54f';X.font='7px Segoe UI';X.fillText('\u{26A1}',sx+14,sy-4)}
+    if(h.dmgBuff>0){X.fillStyle='#ff5722';X.font='7px Segoe UI';X.fillText('\u{1F525}',sx+14,sy+4)}
+  }
+
+  // Kraken buff indicators
+  if(krakenBuff.blue>0){X.fillStyle='rgba(156,39,176,.1)';X.fillRect(BASES.blue.x-40,BASES.blue.y-40,80,80);X.fillStyle='#9c27b0';X.font='8px Segoe UI';X.textAlign='center';X.fillText(`Kraken ${Math.ceil(krakenBuff.blue)}s`,BASES.blue.x,BASES.blue.y+48)}
+  if(krakenBuff.red>0){X.fillStyle='rgba(156,39,176,.1)';X.fillRect(BASES.red.x-40,BASES.red.y-40,80,80)}
+
+  // Particles
+  for(const p of particles){X.fillStyle=p.col;X.globalAlpha=Math.min(1,p.life/12);X.fillRect(p.x-p.sz/2,p.y-p.sz/2,p.sz,p.sz)}
+  X.globalAlpha=1;
+  X.restore();
+
+  // Minimap
+  const sc=160/Math.max(MW,MH);
+  MX.fillStyle='#080810';MX.fillRect(0,0,160,160);
+  for(let r=0;r<RO;r+=2)for(let c=0;c<CO;c+=2){MX.fillStyle=TC[M[r][c]].col;MX.fillRect(c*TL*sc,r*TL*sc,TL*2*sc+1,TL*2*sc+1)}
+  for(const l of LOCS){MX.fillStyle=l.owner==='blue'?'#4fc3f7':l.owner==='red'?'#ef5350':l.type==='kraken'?'#9c27b0':'#888';MX.fillRect(l.x*sc-1.5,l.y*sc-1.5,3,3)}
+  for(const h of heroes)if(h.alive){MX.fillStyle='#4fc3f7';MX.fillRect(h.x*sc-2,h.y*sc-2,4,4)}
+  for(const h of aiH)if(h.alive){MX.fillStyle='#ef5350';MX.fillRect(h.x*sc-2,h.y*sc-2,4,4)}
+  MX.strokeStyle='#ffd54f';MX.lineWidth=1;MX.strokeRect(camX*sc,camY*sc,G.width*sc,G.height*sc);
+}
+
+// Hero bar
+function buildHB(){
+  const bar=document.getElementById('heroes');bar.innerHTML='';
+  heroes.forEach((h,i)=>{
+    const d=document.createElement('div');
+    d.className='hc'+(i===selIdx?' sel':'')+(!h.alive?' dead':'');
+    const pct=h.alive?Math.max(0,h.chp/h.mhp*100):0;
+    const sr=h.sc<=0;
+    d.innerHTML=`<span class="em">${h.emoji}</span><span class="nm">${h.name}</span><span class="rl">${h.role} ${h.move==='flying'?'\u{1F54A}':h.move==='amphibious'?'\u{1F30A}':''}</span><div class="hp"><div class="f" style="width:${pct}%;background:${pct>50?'#66bb6a':pct>25?'#ffa726':'#ef5350'}"></div></div><span class="sp" style="color:${sr?'#66bb6a':'#555'}">${h.spell.name}${sr?' \u{2705}':' \u{23F3}'}</span>`;
+    if(!h.alive)d.innerHTML+=`<span class="sp" style="color:#ef5350">${Math.ceil(h.rt)}s</span>`;
+    d.addEventListener('click',()=>{selIdx=i;buildHB()});
+    bar.appendChild(d);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// GAME LOOP
+// ═══════════════════════════════════════════════════════════
+let lastT=performance.now();
+function loop(now){
+  if(gameOver)return;
+  const dt=Math.min((now-lastT)/1000,.1);lastT=now;tick+=dt;
+  gTime-=dt;if(gTime<0)gTime=0;
+  const mn=Math.floor(gTime/60),sc=Math.floor(gTime%60);
+  document.getElementById('timer').textContent=`${mn}:${sc.toString().padStart(2,'0')}`;
+  if(gTime<100){spawnMul=2.5;document.getElementById('phase').textContent='FINAL PUSH';document.getElementById('phase').style.color='#ef5350';phase=3}
+  else if(gTime<200){spawnMul=1.5;document.getElementById('phase').textContent='Mid Game';document.getElementById('phase').style.color='#ffa726';phase=2}
+
+  updLocs(dt);updAI(dt);
+  for(const h of heroes)updUnit(h,dt,aiH,minions.filter(m=>m.owner==='red'));
+  for(const h of aiH)updUnit(h,dt,heroes,minions.filter(m=>m.owner==='blue'));
+  for(let i=minions.length-1;i>=0;i--)if(!updMinion(minions[i],dt)){spark(minions[i].x,minions[i].y,minions[i].owner==='blue'?'#4fc3f7':'#ef5350',3);minions.splice(i,1)}
+  if(minions.length>250)minions.splice(0,minions.length-250);
+  for(let i=particles.length-1;i>=0;i--){particles[i].x+=particles[i].vx;particles[i].y+=particles[i].vy;particles[i].life--;if(particles[i].life<=0)particles.splice(i,1)}
+
+  // Camera
+  const sel=heroes[selIdx];
+  if(sel?.alive){camTX=sel.x-G.width/2;camTY=sel.y-G.height/2}
+  camX+=(camTX-camX)*.06;camY+=(camTY-camY)*.06;
+  camX=Math.max(-80,Math.min(MW-G.width+80,camX));camY=Math.max(-80,Math.min(MH-G.height+80,camY));
+
+  // HUD
+  const bp=Math.max(0,BASES.blue.hp/BASES.blue.mhp),rp=Math.max(0,BASES.red.hp/BASES.red.mhp);
+  document.getElementById('bb').style.width=(bp*100)+'%';document.getElementById('rb').style.width=(rp*100)+'%';
+  document.getElementById('bhn').textContent=Math.round(bp*100)+'%';document.getElementById('rhn').textContent=Math.round(rp*100)+'%';
+  document.getElementById('gold-display').textContent=`Gold: ${Math.floor(gold.blue)}`;
+  buildHB();
+
+  // Announce timer
+  if(announceTimer>0){announceTimer-=dt;if(announceTimer<=0)document.getElementById('announce').style.opacity='0'}
+
+  // Win
+  if(BASES.blue.hp<=0||BASES.red.hp<=0||gTime<=0){
+    gameOver=true;let w,col;
+    if(BASES.red.hp<=0){w='VICTORY';col='#4fc3f7'}else if(BASES.blue.hp<=0){w='DEFEAT';col='#ef5350'}
+    else{w=BASES.blue.hp>BASES.red.hp?'VICTORY':'DEFEAT';col=w==='VICTORY'?'#4fc3f7':'#ef5350'}
+    document.getElementById('wt').textContent=w;document.getElementById('wt').style.color=col;
+    const bt=LOCS.filter(l=>l.owner==='blue').length,rt=LOCS.filter(l=>l.owner==='red').length;
+    document.getElementById('ws').textContent=`Towers: ${bt}-${rt} | Base: ${Math.round(bp*100)}% vs ${Math.round(rp*100)}% | Gold: ${Math.floor(gold.blue)}`;
+    document.getElementById('overlay').style.display='flex';
+  }
+
+  render();
+  requestAnimationFrame(loop);
+}
+
+log('Destroy the enemy base!','event');
+log('Capture towers for creeps, clear camps for mercs','event');
+log('Mine gold, grab shrines, SLAY THE KRAKEN!','event');
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

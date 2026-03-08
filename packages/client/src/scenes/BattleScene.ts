@@ -4398,6 +4398,10 @@ export class BattleScene extends Phaser.Scene {
     // Update characters
     for (const [id, charState] of Object.entries(state.characters)) {
       const prev = this.charData.get(id);
+      // Firebase drops empty objects/arrays — ensure defaults
+      if (!charState.cooldowns) charState.cooldowns = {};
+      if (!charState.effects) charState.effects = [];
+      if (!charState.inventory) charState.inventory = [];
       this.charData.set(id, charState);
 
       const entity = this.characters.get(id);
