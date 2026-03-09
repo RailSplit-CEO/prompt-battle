@@ -6,10 +6,9 @@ import { FirebaseSync } from '../network/FirebaseSync';
 // ═══════════════════════════════════════════════════════════════
 
 const GEMINI_API_KEY = (import.meta as any).env?.VITE_GEMINI_API_KEY || '';
-const GEMINI_MODEL = 'gemini-2.0-flash-lite';
+const GEMINI_MODEL = 'gemini-2.0-flash';
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=`;
-let lastGeminiCall = 0;
-const GEMINI_COOLDOWN_MS = 3000; // min 3s between API calls to avoid 429
+const GEMINI_MAX_RETRIES = 3;
 
 interface HordeCommand {
   subject: string; // animal type or "all"
@@ -28,14 +27,6 @@ async function parseWithGemini(
   gameTime: number,
 ): Promise<HordeCommand[] | null> {
   if (!GEMINI_API_KEY) return null;
-
-  // Rate limit to avoid 429 Too Many Requests
-  const now = Date.now();
-  if (now - lastGeminiCall < GEMINI_COOLDOWN_MS) {
-    console.log('[Gemini] Rate limited, using local parser');
-    return null;
-  }
-  lastGeminiCall = now;
 
   const unitList = myUnits.map(u => `  ${u.type}: ${u.count} units`).join('\n');
   const campList = camps.map(c =>
@@ -117,36 +108,50 @@ Respond with ONLY a valid JSON ARRAY (no markdown):
   }
 ]`;
 
-  try {
-    const response = await fetch(GEMINI_URL + GEMINI_API_KEY, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          maxOutputTokens: 256,
-          responseMimeType: 'application/json',
-        },
-      }),
-    });
+  const body = JSON.stringify({
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: {
+      maxOutputTokens: 256,
+      responseMimeType: 'application/json',
+    },
+  });
 
-    if (!response.ok) {
-      console.warn('Gemini API error:', response.status);
+  for (let attempt = 0; attempt < GEMINI_MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(GEMINI_URL + GEMINI_API_KEY, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      });
+
+      if (response.status === 429) {
+        // Rate limited — wait and retry with exponential backoff
+        const wait = 1000 * Math.pow(2, attempt); // 1s, 2s, 4s
+        console.warn(`[Gemini] 429 rate limited, retrying in ${wait}ms (attempt ${attempt + 1}/${GEMINI_MAX_RETRIES})`);
+        await new Promise(r => setTimeout(r, wait));
+        continue;
+      }
+
+      if (!response.ok) {
+        console.warn('[Gemini] API error:', response.status);
+        return null;
+      }
+
+      const data = await response.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) return null;
+
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) return parsed as HordeCommand[];
+      return [parsed] as HordeCommand[];
+    } catch (err) {
+      console.warn('[Gemini] Parse failed, falling back to local:', err);
       return null;
     }
-
-    const data = await response.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) return null;
-
-    const parsed = JSON.parse(text);
-    // Accept both array and single object for backwards compat
-    if (Array.isArray(parsed)) return parsed as HordeCommand[];
-    return [parsed] as HordeCommand[];
-  } catch (err) {
-    console.warn('Gemini parse failed, falling back to local:', err);
-    return null;
   }
+
+  console.warn('[Gemini] All retries exhausted, falling back to local parser');
+  return null;
 }
 
 // ═══════════════════════════════════════════════════════════════
