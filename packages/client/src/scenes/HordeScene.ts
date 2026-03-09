@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { FirebaseSync } from '../network/FirebaseSync';
 
 // ═══════════════════════════════════════════════════════════════
 // GEMINI INTEGRATION
@@ -164,6 +165,36 @@ interface HNexus {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// MULTIPLAYER SYNC TYPES
+// ═══════════════════════════════════════════════════════════════
+
+interface HordeSceneData {
+  isOnline?: boolean;
+  gameId?: string;
+  playerId?: string;
+  amPlayer1?: boolean;
+}
+
+interface HordeSyncUnit {
+  id: number; type: string; team: number;
+  hp: number; maxHp: number; attack: number; speed: number;
+  x: number; y: number; targetX: number; targetY: number;
+  dead: boolean; campId: string | null;
+}
+
+interface HordeSyncState {
+  units: HordeSyncUnit[];
+  camps: { id: string; owner: number; spawnTimer: number }[];
+  nexuses: { team: number; hp: number }[];
+  rallyPoints: Record<string, { x: number; y: number }>;
+  baseSpawnTimers: { 1: number; 2: number };
+  nextId: number;
+  gameTime: number;
+  gameOver: boolean;
+  winner: number | null;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // CONSTANTS
 // ═══════════════════════════════════════════════════════════════
 
@@ -182,60 +213,89 @@ const ANIMALS: Record<string, AnimalDef> = {
   dragon: { type: 'dragon', emoji: '🐉', hp: 8000,  attack: 500,  speed: 80,  tier: 5 },
 };
 
-// Generate camps in concentric arcs from each nexus corner
+// Map: camps spread along the diagonal + flanks.
+// Higher tier = deeper into enemy territory. You MUST push forward.
+//
+//  P1 (bottom-left)
+//    🐰🐰  safe bunnies
+//      🐺  your-side wolf
+//        🐺🐻 contested mid
+//          🐉  center dragon
+//        🐻🐺 contested mid
+//      🐺  enemy-side wolf
+//    🐰🐰  enemy bunnies
+//  P2 (top-right)
+//
+//  🦁 Lions are OFF-diagonal, deep in enemy territory.
+
 function makeCamps(): CampDef[] {
   const camps: CampDef[] = [];
   let idx = 0;
+  const cx = WORLD_W / 2, cy = WORLD_H / 2;
+  // Diagonal P1->P2
+  const dxr = P2_BASE.x - P1_BASE.x, dyr = P2_BASE.y - P1_BASE.y;
+  const dlen = Math.sqrt(dxr * dxr + dyr * dyr);
+  // Perpendicular for flanking
+  const ppx = -dyr / dlen, ppy = dxr / dlen;
+  // Lerp: t=0 is P1, t=1 is P2
+  const lx = (t: number, off = 0) => P1_BASE.x + dxr * t + ppx * off;
+  const ly = (t: number, off = 0) => P1_BASE.y + dyr * t + ppy * off;
 
-  const bases = [
-    { bx: P1_BASE.x, by: P1_BASE.y, centerAngle: -Math.PI / 4, side: 'A' },
-    { bx: P2_BASE.x, by: P2_BASE.y, centerAngle: 3 * Math.PI / 4, side: 'B' },
-  ];
-
-  for (const { bx, by, centerAngle, side } of bases) {
-    // Ring 1: 2 bunny camps
-    for (let i = 0; i < 2; i++) {
-      const a = centerAngle + (i - 0.5) * 0.5;
-      camps.push({
-        id: `bunny_${side}_${i}`, name: `🐰 Bunny Camp ${++idx}`,
-        type: 'bunny', x: bx + Math.cos(a) * 350, y: by + Math.sin(a) * 350,
-        guards: 3, spawnMs: 4000, buff: { stat: 'speed', value: 0.05 },
-      });
-    }
-
-    // Ring 2: 5 random camps
-    const ring2Types = ['wolf', 'bear', 'wolf', 'wolf', 'bear'];
-    for (let i = 0; i < 5; i++) {
-      const a = centerAngle + (i - 2) * 0.35;
-      const t = ring2Types[i];
-      const def = ANIMALS[t];
-      camps.push({
-        id: `${t}_${side}_${i}`, name: `${def.emoji} ${cap(t)} Camp ${++idx}`,
-        type: t, x: bx + Math.cos(a) * 750, y: by + Math.sin(a) * 750,
-        guards: t === 'wolf' ? 3 : 2, spawnMs: t === 'wolf' ? 6000 : 7500,
-        buff: { stat: t === 'wolf' ? 'attack' : 'hp', value: t === 'wolf' ? 0.08 : 0.10 },
-      });
-    }
-
-    // Ring 3: 3 hard camps
-    const ring3Types = ['lion', 'lion', 'bear'];
-    for (let i = 0; i < 3; i++) {
-      const a = centerAngle + (i - 1) * 0.45;
-      const t = ring3Types[i];
-      const def = ANIMALS[t];
-      camps.push({
-        id: `${t}_${side}_r3_${i}`, name: `${def.emoji} ${cap(t)} Camp ${++idx}`,
-        type: t, x: bx + Math.cos(a) * 1100, y: by + Math.sin(a) * 1100,
-        guards: t === 'lion' ? 2 : 3, spawnMs: t === 'lion' ? 10000 : 7500,
-        buff: { stat: 'attack', value: t === 'lion' ? 0.12 : 0.10 },
-      });
-    }
+  // BUNNY: safe, near each base
+  for (const [side, t] of [['A', 0.08], ['B', 0.92]] as const) {
+    camps.push({
+      id: `bunny_${side}_0`, name: `🐰 Bunny Camp ${++idx}`,
+      type: 'bunny', x: lx(t, -180), y: ly(t, -180),
+      guards: 3, spawnMs: 4000, buff: { stat: 'speed', value: 0.05 },
+    });
+    camps.push({
+      id: `bunny_${side}_1`, name: `🐰 Bunny Camp ${++idx}`,
+      type: 'bunny', x: lx(t, 180), y: ly(t, 180),
+      guards: 3, spawnMs: 4000, buff: { stat: 'speed', value: 0.05 },
+    });
   }
 
-  // Center dragon camp
+  // WOLF: your-side + contested
+  for (const [side, t, off] of [
+    ['A', 0.20, 200], ['B', 0.80, -200],   // near-side
+    ['A', 0.38, -220], ['B', 0.62, 220],   // contested no-mans-land
+  ] as const) {
+    camps.push({
+      id: `wolf_${side}_${idx}`, name: `🐺 Wolf Camp ${++idx}`,
+      type: 'wolf', x: lx(t, off), y: ly(t, off),
+      guards: t > 0.3 && t < 0.7 ? 4 : 3, spawnMs: 6000,
+      buff: { stat: 'attack', value: 0.08 },
+    });
+  }
+
+  // BEAR: contested zone around center
+  for (const [side, t, off] of [
+    ['A', 0.32, 0], ['B', 0.68, 0],       // on diagonal
+    ['A', 0.45, 350], ['B', 0.55, -350],   // flanked near center
+  ] as const) {
+    camps.push({
+      id: `bear_${side}_${idx}`, name: `🐻 Bear Camp ${++idx}`,
+      type: 'bear', x: lx(t, off), y: ly(t, off),
+      guards: 2, spawnMs: 7500, buff: { stat: 'hp', value: 0.10 },
+    });
+  }
+
+  // LION: DEEP in enemy territory (must cross past center)
+  for (const [side, t, off] of [
+    ['A', 0.75, 400], ['A', 0.72, -350],   // near P2 base
+    ['B', 0.25, -400], ['B', 0.28, 350],   // near P1 base
+  ] as const) {
+    camps.push({
+      id: `lion_${side}_${idx}`, name: `🦁 Lion Camp ${++idx}`,
+      type: 'lion', x: lx(t, off), y: ly(t, off),
+      guards: 2, spawnMs: 10000, buff: { stat: 'attack', value: 0.12 },
+    });
+  }
+
+  // CENTER: Dragon Lair
   camps.push({
     id: 'dragon_center', name: "🐉 Dragon's Lair",
-    type: 'dragon', x: WORLD_W / 2, y: WORLD_H / 2,
+    type: 'dragon', x: cx, y: cy,
     guards: 1, spawnMs: 15000, buff: { stat: 'all', value: 0.15 },
   });
 
@@ -294,8 +354,27 @@ export class HordeScene extends Phaser.Scene {
   // When you command "bunnies attack wolf camp", ALL future bunnies also go there
   private rallyPoints: Record<string, { x: number; y: number }> = {};
 
+  // ─── MULTIPLAYER ──────────────────────────────────────────────
+  private isOnline = false;
+  private isHost = true; // host = runs simulation; guest = renders sync state
+  private myTeam: 1 | 2 = 1;
+  private gameId: string | null = null;
+  private playerId: string | null = null;
+  private firebase: FirebaseSync | null = null;
+  private syncTimer = 0;
+  private readonly SYNC_INTERVAL_MS = 150; // push state 6-7 times/sec
+
   constructor() {
     super({ key: 'HordeScene' });
+  }
+
+  init(data?: HordeSceneData) {
+    this.isOnline = data?.isOnline || false;
+    this.gameId = data?.gameId || null;
+    this.playerId = data?.playerId || null;
+    // Player 1 (host) = team 1 (bottom-left), Player 2 (guest) = team 2 (top-right)
+    this.isHost = data?.amPlayer1 !== false; // default host if solo
+    this.myTeam = this.isHost ? 1 : 2;
   }
 
   create() {
@@ -311,6 +390,8 @@ export class HordeScene extends Phaser.Scene {
     this.hudTexts = {};
     this.rallyPoints = {};
 
+    this.syncTimer = 0;
+
     this.cameras.main.setBackgroundColor('#0d1a0d');
     this.drawBackground();
     this.setupCamps();
@@ -320,10 +401,38 @@ export class HordeScene extends Phaser.Scene {
     this.setupHUD();
     this.events.on('shutdown', () => this.cleanupHTML());
 
-    // Starting bunnies
-    for (let i = 0; i < 3; i++) {
-      this.spawnUnit('bunny', 1, P1_BASE.x + 50 + i * 20, P1_BASE.y - 50);
-      this.spawnUnit('bunny', 2, P2_BASE.x - 50 - i * 20, P2_BASE.y + 50);
+    // Starting bunnies — only host/solo spawns units; guest gets them via sync
+    if (!this.isOnline || this.isHost) {
+      for (let i = 0; i < 3; i++) {
+        this.spawnUnit('bunny', 1, P1_BASE.x + 50 + i * 20, P1_BASE.y - 50);
+        this.spawnUnit('bunny', 2, P2_BASE.x - 50 - i * 20, P2_BASE.y + 50);
+      }
+    }
+
+    // ─── ONLINE SETUP ───
+    if (this.isOnline && this.gameId) {
+      this.firebase = FirebaseSync.getInstance();
+      if (this.isHost) {
+        // Host: listen for guest commands
+        this.firebase.onRemoteOrders(this.gameId, (data) => {
+          if (data.orders) {
+            for (const entry of data.orders) {
+              // entry is { heroId, order: { text, team } }
+              const cmd = (entry as any).order || entry;
+              if (cmd.text && cmd.team) {
+                this.handleCommand(cmd.text, cmd.team as 1 | 2);
+              }
+            }
+          }
+          // Clean up processed order
+          if (this.gameId) this.firebase!.removeRemoteOrder(this.gameId, data.key);
+        });
+      } else {
+        // Guest: listen for sync state from host
+        this.firebase.onSyncState(this.gameId, (state: any) => {
+          this.applyGuestSync(state as HordeSyncState);
+        });
+      }
     }
   }
 
@@ -375,8 +484,10 @@ export class HordeScene extends Phaser.Scene {
       };
       this.camps.push(camp);
 
-      // Spawn real neutral defender units around the camp
-      this.spawnCampDefenders(camp);
+      // Spawn real neutral defender units around the camp (host/solo only; guest gets via sync)
+      if (!this.isOnline || this.isHost) {
+        this.spawnCampDefenders(camp);
+      }
     }
   }
 
@@ -412,8 +523,9 @@ export class HordeScene extends Phaser.Scene {
       c.add(this.add.circle(0, 0, 50, TEAM_COLORS[team], 0.15));
       c.add(this.add.circle(0, 0, 35, TEAM_COLORS[team], 0.3));
       c.add(this.add.text(0, -5, '👑', { fontSize: '36px' }).setOrigin(0.5));
-      c.add(this.add.text(0, -55, team === 1 ? 'YOUR NEXUS' : 'ENEMY NEXUS', {
-        fontSize: '14px', color: team === 1 ? '#4499FF' : '#FF5555',
+      const isMyNexus = team === this.myTeam;
+      c.add(this.add.text(0, -55, isMyNexus ? 'YOUR NEXUS' : 'ENEMY NEXUS', {
+        fontSize: '14px', color: isMyNexus ? '#4499FF' : '#FF5555',
         fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
         stroke: '#000', strokeThickness: 3,
       }).setOrigin(0.5));
@@ -451,7 +563,10 @@ export class HordeScene extends Phaser.Scene {
   private setupCamera() {
     const cam = this.cameras.main;
     cam.setBounds(0, 0, WORLD_W, WORLD_H);
-    cam.centerOn(P1_BASE.x + 400, P1_BASE.y - 400);
+    const myBase = this.myTeam === 1 ? P1_BASE : P2_BASE;
+    const camOffX = this.myTeam === 1 ? 400 : -400;
+    const camOffY = this.myTeam === 1 ? -400 : 400;
+    cam.centerOn(myBase.x + camOffX, myBase.y + camOffY);
     cam.setZoom(0.7);
     this.input.on('wheel', (_ptr: any, _over: any, _dx: number, deltaY: number) => {
       cam.zoom = Phaser.Math.Clamp(cam.zoom + (deltaY > 0 ? -0.05 : 0.05), 0.2, 2.0);
@@ -511,7 +626,7 @@ export class HordeScene extends Phaser.Scene {
     input.addEventListener('keydown', (e) => {
       e.stopPropagation();
       if (e.key === 'Enter' && input.value.trim()) {
-        this.handleCommand(input.value.trim(), 1);
+        this.issueCommand(input.value.trim());
         input.value = '';
       }
     });
@@ -555,7 +670,7 @@ export class HordeScene extends Phaser.Scene {
       for (let i = 0; i < e.results.length; i++) text += e.results[i][0].transcript;
       if (this.transcriptEl) this.transcriptEl.textContent = text;
       if (e.results[e.results.length - 1].isFinal && text.trim()) {
-        this.handleCommand(text.trim(), 1);
+        this.issueCommand(text.trim());
         this.stopListening();
       }
     };
@@ -666,8 +781,10 @@ export class HordeScene extends Phaser.Scene {
   }
 
   private updateHUD() {
-    const p1 = this.units.filter(u => u.team === 1 && !u.dead);
-    const p2 = this.units.filter(u => u.team === 2 && !u.dead);
+    const myT = this.myTeam;
+    const enemyT = myT === 1 ? 2 : 1;
+    const p1 = this.units.filter(u => u.team === myT && !u.dead);
+    const p2 = this.units.filter(u => u.team === enemyT && !u.dead);
     const countBy = (us: HUnit[]) => {
       const c: Record<string, number> = {};
       for (const u of us) c[u.type] = (c[u.type] || 0) + 1;
@@ -697,7 +814,7 @@ export class HordeScene extends Phaser.Scene {
     // Base production
     prodRates['bunny'] = (prodRates['bunny'] || 0) + 60 / (BASE_SPAWN_MS / 1000);
     // Camp production
-    const myCamps = this.camps.filter(c => c.owner === 1);
+    const myCamps = this.camps.filter(c => c.owner === myT);
     for (const c of myCamps) {
       prodRates[c.animalType] = (prodRates[c.animalType] || 0) + 60 / (c.spawnMs / 1000);
     }
@@ -710,21 +827,21 @@ export class HordeScene extends Phaser.Scene {
     this.hudTexts['production']?.setText(prodLines.join('\n'));
 
     // ─── CAMPS ───
-    const yourCamps = this.camps.filter(c => c.owner === 1).length;
-    const enemyCamps = this.camps.filter(c => c.owner === 2).length;
+    const yourCamps = this.camps.filter(c => c.owner === myT).length;
+    const enemyCamps = this.camps.filter(c => c.owner === enemyT).length;
     const neutralCamps = this.camps.filter(c => c.owner === 0).length;
     const campLines: string[] = [];
     campLines.push(`🔵 Yours: ${yourCamps}  🔴 Enemy: ${enemyCamps}  ⚪ Neutral: ${neutralCamps}`);
     campLines.push('');
     for (const c of this.camps) {
-      const icon = c.owner === 0 ? '⚪' : c.owner === 1 ? '🔵' : '🔴';
-      const tag = c.owner === 1 ? ' (YOU)' : c.owner === 2 ? ' (ENEMY)' : '';
+      const icon = c.owner === 0 ? '⚪' : c.owner === myT ? '🔵' : '🔴';
+      const tag = c.owner === myT ? ' (YOU)' : c.owner === enemyT ? ' (ENEMY)' : '';
       campLines.push(`${icon} ${c.name}${tag}`);
     }
     this.hudTexts['camps']?.setText(campLines.join('\n'));
 
     // ─── BUFFS ───
-    const b = this.getBuffs(1);
+    const b = this.getBuffs(myT as 1 | 2);
     const bl: string[] = [];
     if (b.speed > 0) bl.push(`⚡ Speed +${Math.round(b.speed * 100)}%`);
     if (b.attack > 0) bl.push(`⚔ Attack +${Math.round(b.attack * 100)}%`);
@@ -739,7 +856,8 @@ export class HordeScene extends Phaser.Scene {
       if (count === 0) continue;
       enemyLines.push(`${def.emoji} ${cap(type)}: ${count}`);
     }
-    enemyLines.push(`Camps: ${enemyCamps}`);
+    const enemyCampsCount = this.camps.filter(c => c.owner === enemyT).length;
+    enemyLines.push(`Camps: ${enemyCampsCount}`);
     this.hudTexts['enemy']?.setText(enemyLines.join('\n'));
   }
 
@@ -748,19 +866,40 @@ export class HordeScene extends Phaser.Scene {
   update(_time: number, delta: number) {
     if (this.gameOver) return;
     const dt = delta / 1000;
-    this.gameTime += delta;
     this.updateCamera(dt);
+
+    if (this.isOnline && !this.isHost) {
+      // Guest: only render, no simulation — state comes from host via sync
+      this.updateUnitSprites();
+      this.updateCampVisuals();
+      this.drawNexusBars();
+      this.updateHUD();
+      return;
+    }
+
+    // Host (or solo): run full simulation
+    this.gameTime += delta;
     this.updateSpawning(delta);
     this.updateMovement(dt);
     this.updateCombat(delta);
     this.updateCampCapture();
-    this.updateAI(delta);
+    // Only run AI when solo (not online PvP)
+    if (!this.isOnline) this.updateAI(delta);
     this.cleanupDead();
     this.updateUnitSprites();
     this.updateCampVisuals();
     this.drawNexusBars();
     this.updateHUD();
     this.checkWin();
+
+    // Host: push sync state to Firebase
+    if (this.isOnline && this.isHost && this.firebase && this.gameId) {
+      this.syncTimer += delta;
+      if (this.syncTimer >= this.SYNC_INTERVAL_MS) {
+        this.syncTimer -= this.SYNC_INTERVAL_MS;
+        this.pushHostSync();
+      }
+    }
   }
 
   // ─── SPAWNING ────────────────────────────────────────────────
@@ -1162,7 +1301,7 @@ export class HordeScene extends Phaser.Scene {
 
   private showGameOver() {
     const cam = this.cameras.main;
-    const win = this.winner === 1;
+    const win = this.winner === this.myTeam;
     this.add.rectangle(cam.width / 2, cam.height / 2, cam.width, cam.height, 0x000000, 0.7)
       .setScrollFactor(0).setDepth(200);
     const t = this.add.text(cam.width / 2, cam.height / 2 - 40, win ? 'VICTORY!' : 'DEFEAT', {
@@ -1242,6 +1381,136 @@ export class HordeScene extends Phaser.Scene {
       const r = Math.sqrt(i) * spacing;
       units[i].targetX = tx + Math.cos(a) * r;
       units[i].targetY = ty + Math.sin(a) * r;
+    }
+  }
+
+  // ─── MULTIPLAYER SYNC ──────────────────────────────────────
+
+  /** Called when the local player issues a voice/text command */
+  private issueCommand(text: string) {
+    if (this.isOnline && !this.isHost) {
+      // Guest: send command to host via Firebase
+      this.showFeedback('Sending command...', '#FFD93D');
+      if (this.firebase && this.gameId) {
+        this.firebase.sendRemoteOrders(this.gameId, this.playerId || '', [
+          { heroId: '', order: { text, team: this.myTeam } as any },
+        ]);
+      }
+      return;
+    }
+    // Host or solo: execute locally
+    this.handleCommand(text, this.myTeam);
+  }
+
+  /** Host pushes full game state to Firebase for guest to render */
+  private pushHostSync() {
+    if (!this.firebase || !this.gameId) return;
+    const syncUnits: HordeSyncUnit[] = this.units.filter(u => !u.dead).map(u => ({
+      id: u.id, type: u.type, team: u.team,
+      hp: u.hp, maxHp: u.maxHp, attack: u.attack, speed: u.speed,
+      x: u.x, y: u.y, targetX: u.targetX, targetY: u.targetY,
+      dead: false, campId: u.campId,
+    }));
+    const syncCamps = this.camps.map(c => ({
+      id: c.id, owner: c.owner, spawnTimer: c.spawnTimer,
+    }));
+    const syncNexuses = this.nexuses.map(n => ({
+      team: n.team, hp: n.hp,
+    }));
+    const state: HordeSyncState = {
+      units: syncUnits,
+      camps: syncCamps,
+      nexuses: syncNexuses,
+      rallyPoints: this.rallyPoints,
+      baseSpawnTimers: this.baseSpawnTimers,
+      nextId: this.nextId,
+      gameTime: this.gameTime,
+      gameOver: this.gameOver,
+      winner: this.winner,
+    };
+    this.firebase.pushSyncState(this.gameId, state as any);
+  }
+
+  /** Guest applies state snapshot from host */
+  private applyGuestSync(state: HordeSyncState) {
+    if (!state) return;
+
+    // Firebase RTDB converts arrays to objects with numeric keys — normalize
+    const toArray = <T>(val: T[] | Record<string, T> | undefined): T[] => {
+      if (!val) return [];
+      if (Array.isArray(val)) return val;
+      return Object.values(val);
+    };
+
+    const syncUnits = toArray(state.units);
+    const syncCamps = toArray(state.camps);
+    const syncNexuses = toArray(state.nexuses);
+
+    this.gameTime = state.gameTime || 0;
+    this.nextId = state.nextId || 0;
+    this.rallyPoints = state.rallyPoints || {};
+    this.baseSpawnTimers = state.baseSpawnTimers || { 1: 0, 2: 0 };
+
+    // Sync nexuses
+    for (const sn of syncNexuses) {
+      const n = this.nexuses.find(nx => nx.team === sn.team);
+      if (n) n.hp = sn.hp;
+    }
+
+    // Sync camps
+    for (const sc of syncCamps) {
+      const c = this.camps.find(cx => cx.id === sc.id);
+      if (c) {
+        c.owner = sc.owner as 0 | 1 | 2;
+        c.spawnTimer = sc.spawnTimer;
+      }
+    }
+
+    // Sync units: reconcile existing with incoming
+    const liveUnits = syncUnits.filter(u => !u.dead);
+    const incomingIds = new Set(liveUnits.map(u => u.id));
+
+    // Remove units that no longer exist
+    for (const u of this.units) {
+      if (!incomingIds.has(u.id)) {
+        u.dead = true;
+        if (u.sprite) { u.sprite.destroy(); u.sprite = null; }
+      }
+    }
+    this.units = this.units.filter(u => !u.dead);
+
+    // Update or create units
+    const existingMap = new Map(this.units.map(u => [u.id, u]));
+    for (const su of liveUnits) {
+      const existing = existingMap.get(su.id);
+      if (existing) {
+        // Update in place — lerp position for smoothness
+        existing.hp = su.hp;
+        existing.maxHp = su.maxHp;
+        existing.targetX = su.targetX;
+        existing.targetY = su.targetY;
+        existing.team = su.team as 0 | 1 | 2;
+        existing.type = su.type;
+        // Lerp actual position toward synced position
+        existing.x += (su.x - existing.x) * 0.3;
+        existing.y += (su.y - existing.y) * 0.3;
+      } else {
+        // New unit from host
+        this.units.push({
+          id: su.id, type: su.type, team: su.team as 0 | 1 | 2,
+          hp: su.hp, maxHp: su.maxHp, attack: su.attack, speed: su.speed,
+          x: su.x, y: su.y, targetX: su.targetX, targetY: su.targetY,
+          attackTimer: 0, sprite: null, dead: false,
+          campId: su.campId, lungeX: 0, lungeY: 0,
+        });
+      }
+    }
+
+    // Check game over (only trigger once)
+    if (state.gameOver && !this.gameOver) {
+      this.gameOver = true;
+      this.winner = state.winner as 1 | 2 | null;
+      this.showGameOver();
     }
   }
 
@@ -1441,5 +1710,6 @@ export class HordeScene extends Phaser.Scene {
     this.textInput?.remove(); this.textInput = null;
     this.voiceStatusEl?.remove(); this.voiceStatusEl = null;
     try { this.recognition?.abort(); } catch (_e) { /* */ }
+    if (this.firebase) { this.firebase.cleanup(); this.firebase = null; }
   }
 }

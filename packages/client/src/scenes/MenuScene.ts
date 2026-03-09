@@ -125,10 +125,10 @@ export class MenuScene extends Phaser.Scene {
     });
     jungleBtn.zone.on('pointerdown', () => this.startJungleLane());
 
-    // Horde Mode button
+    // Horde Mode button (solo vs AI)
     const hordeBtnY = jungleBtnY + 82;
     const hordeBtn = this.createCartoonButton(
-      width / 2, hordeBtnY, 300, 62, 'HORDE MODE', 0x45E6B0, false
+      width / 2, hordeBtnY, 300, 62, 'HORDE (SOLO)', 0x45E6B0, false
     );
     hordeBtn.container.setAlpha(0).setScale(0.5);
     this.tweens.add({
@@ -138,8 +138,21 @@ export class MenuScene extends Phaser.Scene {
     });
     hordeBtn.zone.on('pointerdown', () => this.startHordeMode());
 
+    // Horde PvP (online multiplayer)
+    const hordePvpBtnY = hordeBtnY + 82;
+    const hordePvpBtn = this.createCartoonButton(
+      width / 2, hordePvpBtnY, 300, 62, 'HORDE PVP', 0xFF9F43, true
+    );
+    hordePvpBtn.container.setAlpha(0).setScale(0.5);
+    this.tweens.add({
+      targets: hordePvpBtn.container,
+      alpha: 1, scaleX: 1, scaleY: 1,
+      duration: 600, delay: 1300, ease: 'Back.easeOut',
+    });
+    hordePvpBtn.zone.on('pointerdown', () => this.findHordeMatch());
+
     // Keyboard shortcut hint
-    const shortcutHint = this.add.text(width / 2, hordeBtnY + 44, 'Press ENTER to find match', {
+    const shortcutHint = this.add.text(width / 2, hordePvpBtnY + 44, 'Press ENTER to find match', {
       fontSize: '12px',
       color: '#8B6DB0',
       fontFamily: '"Nunito", sans-serif',
@@ -423,6 +436,65 @@ export class MenuScene extends Phaser.Scene {
     this.cameras.main.once('camerafadeoutcomplete', () => {
       this.scene.start('HordeScene');
     });
+  }
+
+  private async findHordeMatch() {
+    this.statusText.setText('Connecting for Horde PvP...');
+    this.tweens.add({ targets: this.statusText, alpha: { from: 0, to: 1 }, duration: 300 });
+
+    try {
+      const firebase = FirebaseSync.getInstance();
+      await firebase.initialize();
+      this.statusText.setText('Searching for opponent...');
+
+      let dots = 0;
+      const dotTimer = this.time.addEvent({
+        delay: 500,
+        callback: () => {
+          dots = (dots + 1) % 4;
+          this.statusText.setText('Searching for Horde opponent' + '.'.repeat(dots));
+        },
+        loop: true,
+      });
+
+      const pulseTween = this.tweens.add({
+        targets: this.statusText,
+        alpha: { from: 1, to: 0.5 },
+        duration: 800,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+
+      this.matchmaking = new Matchmaking(firebase, 'horde_waiting');
+      const matchResult = await this.matchmaking.joinQueue();
+
+      dotTimer.destroy();
+      pulseTween.stop();
+      this.statusText.setAlpha(1);
+
+      if (matchResult.gameId) {
+        this.statusText.setText('Opponent found! Starting Horde PvP...');
+        this.statusText.setColor('#45E6B0');
+
+        this.cameras.main.flash(300, 255, 159, 67, false);
+
+        this.time.delayedCall(800, () => {
+          this.cameras.main.fadeOut(400, 27, 16, 64);
+          this.cameras.main.once('camerafadeoutcomplete', () => {
+            this.scene.start('HordeScene', {
+              isOnline: true,
+              gameId: matchResult.gameId,
+              playerId: firebase.getPlayerId(),
+              amPlayer1: matchResult.amPlayer1,
+            });
+          });
+        });
+      }
+    } catch (err) {
+      this.statusText.setText('Error: ' + (err as Error).message);
+      this.statusText.setColor('#FF6B6B');
+    }
   }
 
   private async startLocalTest() {

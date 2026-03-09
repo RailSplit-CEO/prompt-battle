@@ -60,9 +60,9 @@ export class FirebaseSync {
   // /matchmaking/waiting holds a single waiting player's ID, or null.
   // First player sets it to their ID (becomes player1, waits).
   // Second player claims it atomically (becomes player2, creates game).
-  async findMatch(): Promise<MatchResult> {
+  async findMatch(queueName = 'waiting'): Promise<MatchResult> {
     const playerId = this.getPlayerId();
-    const waitingRef = ref(this.db, 'matchmaking/waiting');
+    const waitingRef = ref(this.db, `matchmaking/${queueName}`);
 
     // Clean up on disconnect — if we're the one waiting, remove ourselves
     const disconnectRef = onDisconnect(waitingRef);
@@ -96,7 +96,7 @@ export class FirebaseSync {
       await disconnectRef.set(null);
 
       // Listen for our match node
-      return this.waitForMatchAsPlayer1(playerId);
+      return this.waitForMatchAsPlayer1(playerId, queueName);
     }
 
     // We are player2 — we claimed the opponent
@@ -130,13 +130,13 @@ export class FirebaseSync {
   }
 
   // Player1 waits for player2 to create the game and notify them
-  private waitForMatchAsPlayer1(playerId: string): Promise<MatchResult> {
+  private waitForMatchAsPlayer1(playerId: string, queueName = 'waiting'): Promise<MatchResult> {
     return new Promise((resolve, reject) => {
       const matchRef = ref(this.db, `matchmaking/matches/${playerId}`);
       const timeout = setTimeout(() => {
         off(matchRef);
         // Clean up: remove ourselves from waiting
-        runTransaction(ref(this.db, 'matchmaking/waiting'), (current) => {
+        runTransaction(ref(this.db, `matchmaking/${queueName}`), (current) => {
           if (current === playerId) return null;
           return undefined;
         });
@@ -157,10 +157,10 @@ export class FirebaseSync {
     });
   }
 
-  async removeFromQueue(): Promise<void> {
+  async removeFromQueue(queueName = 'waiting'): Promise<void> {
     const playerId = this.getPlayerId();
     // Remove from waiting semaphore if we're the one waiting
-    await runTransaction(ref(this.db, 'matchmaking/waiting'), (current) => {
+    await runTransaction(ref(this.db, `matchmaking/${queueName}`), (current) => {
       if (current === playerId) return null;
       return undefined; // abort if someone else is waiting
     });
