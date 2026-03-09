@@ -1,251 +1,114 @@
 import Phaser from 'phaser';
 import {
-  DraftPick, Character, computeStats, CLASSES, ANIMALS,
-  Position, CharacterOrder, CTFState, ControlPoint,
-  ConsumableId, CONSUMABLES, rollRandomConsumable,
-  POI, Barricade, Trap, XP_THRESHOLDS, LEVEL_STAT_BONUS,
-  Follower, PlayerEconomy, MapPhase,
-  MineNode, Tower, TowerSite, NeutralCamp,
-  getBark, randomPersonality, BARK_COOLDOWN,
-  MINE_RATE_PER_SEC, BASE_INCOME_PER_SEC, TOWER_COST,
+  Hero, HeroOrder, AnimalUnit, Camp, Structure, Base,
+  GameState, Position, AnimalType, TileType,
+  HERO_BASE_STATS, HERO_RESPAWN_BASE, HERO_RESPAWN_COMEBACK_BONUS,
+  BASE_MAX_HP, MAX_UNITS, MAX_UNITS_PER_HERO,
+  CAMP_SCALING_INTERVAL, CAMP_SCALING_AMOUNT, CAMP_NEUTRAL_TIMER,
+  HERO_PASSIVES, HeroPassive, UpgradeType, UPGRADE_EFFECTS,
+  UNIT_DEFS, getScaledUnitStats, getCounterMultiplier,
+  createAllCamps, createAllStructures,
+  getBark, BarkTrigger,
 } from '@prompt-battle/shared';
 import { CharacterEntity } from '../entities/Character';
+import { FollowerEntity } from '../entities/Follower';
 import {
   generateMap, GameMap, MAP_WIDTH, MAP_HEIGHT, TILE_SIZE, isPassable,
-  SwitchGateLink, POIPlacement, ControlPointDef,
 } from '../map/MapGenerator';
-import { loadMapFromDef } from '../map/MapLoader';
-import defaultMapDef from '../map/maps/default.json';
 import { findPath } from '../map/Pathfinding';
 import { CommandInput } from '../systems/CommandInput';
-import { FirebaseSync, SyncSnapshot, RemoteOrderPayload } from '../network/FirebaseSync';
 import { generateCharacterName, resetNames } from '../systems/NameGenerator';
 import {
   parseCommandWithGemini, GeminiParseResult,
 } from '../systems/GeminiCommandParser';
 import { SoundManager } from '../systems/SoundManager';
 import { TtsService } from '../systems/TtsService';
-import { CharacterViewports } from '../systems/CharacterViewports';
 import { getGambitOrder, GambitContext } from '../systems/GambitAI';
+import { MiniMap } from '../systems/MiniMap';
 
-// ─── CONSTANTS ────────────────────────────────────────────────────
-const COMMAND_COOLDOWN = 0;
+// ─── CONSTANTS ────────────────────────────────────────────────
 const GAME_DURATION = 300;
-const RESPAWN_TIME = 20;
 const TICK_RATE = 750;
-const MOVE_TICK = 900;
-const BASE_VISION = 5;
-const PICKUP_RESPAWN = 25; // seconds
-const DOM_POINTS_TO_WIN = 200; // Domination: first to 200 points wins
-const DOM_POINTS_PER_TICK = 1; // Points earned per owned control point per second
-const ATTACK_INTERVAL = 2000; // ms between auto-attacks per character
-const CENTER_CP_MULTIPLIER = 2;
+const MOVE_TICK = 500;
+const BASE_VISION = 8;
+const CAMP_ATTACK_RANGE = 2;
+const STRUCTURE_ATTACK_RANGE = 2;
+const HERO_ATTACK_RANGE = 2;
+const BASE_ATTACK_RANGE = 3;
 
-// Activity channel times (in game ticks, TICK_RATE = 750ms)
-const SCOUT_CHANNEL_TICKS = 13;   // ~10 seconds
-const LOOT_CHANNEL_TICKS = 11;    // ~8 seconds
-const BUILD_CHANNEL_TICKS = 8;    // ~6 seconds
-const TRAP_CHANNEL_TICKS = 5;     // ~4 seconds
-const UPGRADE_CP_TICKS = 11;      // ~8 seconds
-const MINE_CHANNEL_TICKS = 4;     // ~3 seconds per mining cycle
-const BUILD_TOWER_TICKS = 11;     // ~8 seconds to build tower
-const TOWER_HP = 300;
-const TOWER_DPS = 10;
-const TOWER_RANGE = 4;
-const CACHE_RESPAWN_TIME = 45;    // seconds
-const LOOKOUT_VISION_RADIUS = 12;
-const LOOKOUT_VISION_DURATION = 30; // seconds
-const WELL_HEAL_PER_TICK = 8;
-const BARRICADE_HP = 80;
-const BARRICADE_DECAY = 60;       // seconds
-const MAX_TRAPS_PER_TEAM = 3;
-const TRAP_DAMAGE = 25;
-const TRAP_STUN = 3;
-const MAX_INVENTORY = 2;
-const XP_KILL = 50;
-const XP_CAPTURE_CP = 40;
-const XP_LOOT_CACHE = 30;
-const XP_SCOUT = 20;
+// ─── TYPES ────────────────────────────────────────────────────
 
-// ─── TYPES ────────────────────────────────────────────────────────
-
-interface GameAction {
-  characterId: string;
-  type: string;
-  target?: Position | string;
-  abilityId?: string;
-  result?: { damage?: number; killed?: string };
-}
-
-interface Pickup {
-  id: string;
-  type: 'health_potion' | 'speed_boost' | 'damage_boost';
-  position: Position;
-  active: boolean;
-  respawnTimer: number;
-  sprite?: Phaser.GameObjects.Sprite;
-  label?: Phaser.GameObjects.Text;
+interface HeroConfig {
+  name: string;
+  passive: HeroPassive;
 }
 
 interface BattleSceneData {
   gameId: string;
   playerId: string;
   isLocal: boolean;
-  picks: DraftPick[];
+  picks: any[];
   amPlayer1?: boolean;
+  heroConfig?: {
+    myHeroes: HeroConfig[];
+    enemyHeroes: HeroConfig[];
+  };
 }
+
+// ─── SCENE ────────────────────────────────────────────────────
 
 export class BattleScene extends Phaser.Scene {
   private gameId!: string;
   private playerId!: string;
   private isLocal!: boolean;
-  private picks!: DraftPick[];
-  private isHost = true;
-  private opponentId = 'opponent';
 
-  /** Team tag used in control-point ownership, etc. */
-  private get myTeam(): string { return this.isHost ? 'player1' : 'player2'; }
-  private get enemyTeam(): string { return this.isHost ? 'player2' : 'player1'; }
-  private get mySpawns(): Position[] { return this.isHost ? this.gameMap.spawnP1 : this.gameMap.spawnP2; }
-  private get enemySpawns(): Position[] { return this.isHost ? this.gameMap.spawnP2 : this.gameMap.spawnP1; }
+  private get myTeam(): 'player1' | 'player2' { return 'player1'; }
+  private get enemyTeam(): 'player1' | 'player2' { return 'player2'; }
 
   private gameMap!: GameMap;
-  private characters: Map<string, CharacterEntity> = new Map();
-  private charData: Map<string, Character> = new Map();
+  private state!: GameState;
+  private heroEntities: Map<string, CharacterEntity> = new Map();
+  private unitEntities: Map<string, FollowerEntity> = new Map();
+
+  // Camp & structure sprites
+  private campSprites: Map<string, Phaser.GameObjects.Container> = new Map();
+  private structureSprites: Map<string, Phaser.GameObjects.Container> = new Map();
+  private baseSprites: Map<string, Phaser.GameObjects.Container> = new Map();
+
+  // Input
   private commandInput!: CommandInput;
-  private firebase!: FirebaseSync;
   private hasGemini = false;
+  private selectedHeroIdx = 0; // 0, 1, or 2
 
-  // Real-time state
-  private gameTimeRemaining = GAME_DURATION;
-  private lastCommandTime = 0;
-  private commandCooldownRemaining = 0;
-  private pendingCommands: string[] = [];
-  private gameOver = false;
-
-  // CTF / Domination
-  private ctf!: CTFState;
-  private flag1Sprite!: Phaser.GameObjects.Container;
-  private flag2Sprite!: Phaser.GameObjects.Container;
-  private domScore1 = 0;
-  private domScore2 = 0;
-
-  // Fog of war (single-state: 30% darkness on non-visible tiles)
+  // Fog of war
   private fogLayer!: Phaser.GameObjects.Graphics;
   private visibleTiles: Set<string> = new Set();
 
-  // Pickups
-  private pickups: Pickup[] = [];
-
-  // Order queues (charId -> queued orders)
-  private orderQueues: Map<string, CharacterOrder[]> = new Map();
-
-  // Tick timers
+  // Timers
   private gameTickTimer?: Phaser.Time.TimerEvent;
   private moveTickTimer?: Phaser.Time.TimerEvent;
   private secondTimer?: Phaser.Time.TimerEvent;
+  private gameOver = false;
 
-  // Control Points
-  private controlPoints: ControlPoint[] = [];
-  private cpSprites: Map<string, Phaser.GameObjects.Container> = new Map();
-
-  // Terrain mechanics
-  private forestAmbushUsed: Set<string> = new Set(); // charId -> used
-  private lastCharTile: Map<string, string> = new Map(); // charId -> "x,y"
-  private lastAttackTime: Map<string, number> = new Map(); // charId -> timestamp
-
-  // Sound
+  // Systems
   private sound_: SoundManager = SoundManager.getInstance();
   private tts: TtsService = new TtsService();
+  private miniMap!: MiniMap;
 
-  // Character viewports
-  private charViewports!: CharacterViewports;
+  // HUD
+  private timerText!: Phaser.GameObjects.Text;
+  private baseHpTexts!: { p1: Phaser.GameObjects.Text; p2: Phaser.GameObjects.Text };
+  private upgradeIcons: Phaser.GameObjects.Text[] = [];
+  private heroSelectTexts: Phaser.GameObjects.Text[] = [];
 
-  // Mini-map
+  // Map rendering
+  private tileSprites: Phaser.GameObjects.Sprite[][] = [];
 
   // Path visualization
   private pathGraphics!: Phaser.GameObjects.Graphics;
 
-  // Map rendering
-  private tileLayer!: Phaser.GameObjects.Group;
-  private tileSprites: Phaser.GameObjects.Sprite[][] = [];
-
-  // Switch/gate system
-  private switchGateLinks: SwitchGateLink[] = [];
-  private activatedSwitches: Set<string> = new Set();
-
-  // POIs (lookouts, wells, caches)
-  private pois: POI[] = [];
-  private poiSprites: Map<string, Phaser.GameObjects.Container> = new Map();
-  private poiInteractIndicators: Map<string, Phaser.GameObjects.Container> = new Map();
-
-  // Barricades & Traps
-  private barricades: Barricade[] = [];
-  private barricadeSprites: Map<string, Phaser.GameObjects.Sprite> = new Map();
-  private traps: Trap[] = [];
-  private trapSprites: Map<string, Phaser.GameObjects.Sprite> = new Map();
-
-  // Lookout vision zones (temporary revealed areas)
-  private lookoutVisionZones: { center: Position; radius: number; expiresAt: number }[] = [];
-
-  // Vision flare (reveals whole map temporarily)
-  private visionFlareUntil = 0;
-
-  // Smoke bombs (fog clouds)
-  private smokeClouds: { position: Position; radius: number; owner: string; expiresAt: number }[] = [];
-  private smokeSprites: Map<string, Phaser.GameObjects.Graphics> = new Map();
-
-  // Damage tracking for XP assists
-  private damageDealt: Map<string, Map<string, number>> = new Map(); // targetId -> Map<attackerId, damage>
-
-  // Economy
-  private economy: { player1: PlayerEconomy; player2: PlayerEconomy } = {
-    player1: { gold: 0, income: BASE_INCOME_PER_SEC, upkeepPenalty: 1 },
-    player2: { gold: 0, income: BASE_INCOME_PER_SEC, upkeepPenalty: 1 },
-  };
-
-  // Followers (unused in animal-based system, kept for type compat)
-  private followers: Follower[] = [];
-
-  // Game phase (1-4, escalation)
-  private gamePhase: MapPhase = 1;
-  private elapsedSeconds = 0;
-
-  // Bark cooldowns per character
-  private lastBarkTime: Map<string, number> = new Map();
-
-  // Active hero (WASD controlled)
-  private activeHeroId: string | null = null;
-
-  // Mine nodes
-  private mineNodes: MineNode[] = [];
-
-  // Towers
-  private towers: Tower[] = [];
-  private towerSites: TowerSite[] = [];
-
-  // Neutral camps
-  private neutralCamps: NeutralCamp[] = [];
-
-  // Character selection for direct commands
-  private selectedCharId: string | null = null;
-  private selectedCharLabel!: Phaser.GameObjects.Text;
-
-  // HUD elements (HTML)
-  private commandLogEl!: HTMLElement;
-  private statusBarEl!: HTMLElement;
-  private heroBarEl!: HTMLElement;
-  private abilityPanelEl!: HTMLElement;
-
-  // HUD elements (Phaser)
-  private timerText!: Phaser.GameObjects.Text;
-  private goldText!: Phaser.GameObjects.Text;
-  private phaseText!: Phaser.GameObjects.Text;
-  private activeHeroText!: Phaser.GameObjects.Text;
-  private cooldownBar!: Phaser.GameObjects.Graphics;
-  private cooldownText!: Phaser.GameObjects.Text;
-  private scoreText!: Phaser.GameObjects.Text;
-  private objectiveText!: Phaser.GameObjects.Text;
+  // Unit ID counter
+  private unitIdCounter = 0;
 
   constructor() {
     super({ key: 'BattleScene' });
@@ -255,152 +118,169 @@ export class BattleScene extends Phaser.Scene {
     this.gameId = data.gameId;
     this.playerId = data.playerId;
     this.isLocal = data.isLocal;
-    this.picks = data.picks;
-    this.isHost = data.isLocal || !!data.amPlayer1;
   }
 
-  create() {
-    this.firebase = FirebaseSync.getInstance();
-    resetNames();
-    this.gameOver = false;
-    this.gameTimeRemaining = GAME_DURATION;
-    this.lastCommandTime = 0;
-    this.commandCooldownRemaining = 0;
-    this.orderQueues.clear();
+  create(data: BattleSceneData) {
+    this.cameras.main.setBackgroundColor('#1B1040');
 
-    this.hasGemini = !!((import.meta as any).env?.VITE_GEMINI_API_KEY);
+    // Generate map
+    const seed = Date.now();
+    this.gameMap = generateMap(seed);
 
-    // Determine opponent's player ID from picks
-    const oppPick = this.picks.find(p => p.playerId !== this.playerId);
-    if (oppPick) this.opponentId = oppPick.playerId;
+    // Check Gemini
+    this.hasGemini = !!(import.meta as any).env?.VITE_GEMINI_API_KEY;
 
-    const seed = this.isLocal
-      ? Date.now()
-      : this.gameId.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-    this.gameMap = loadMapFromDef(defaultMapDef as any);
+    // Create initial game state
+    const heroConfig = data.heroConfig;
+    this.state = this.createInitialState(heroConfig);
 
+    // Render map tiles
     this.renderMap();
-    this.createCharacters();
-    this.initDomination();
-    this.initControlPoints();
-    this.spawnPickups();
-    this.initPOIs();
-    this.initMapFeatures();
-    this.initFogOfWar();
-    this.pathGraphics = this.add.graphics().setDepth(4);
 
-    const worldWidth = MAP_WIDTH * TILE_SIZE;
-    const worldHeight = MAP_HEIGHT * TILE_SIZE;
-    this.cameras.main.setBounds(0, 0, worldWidth, worldHeight);
-    // Center camera on player's spawn area, not map center
-    const spawnCenter = this.mySpawns[Math.floor(this.mySpawns.length / 2)];
-    this.cameras.main.centerOn(
-      spawnCenter.x * TILE_SIZE + TILE_SIZE / 2,
-      spawnCenter.y * TILE_SIZE + TILE_SIZE / 2,
-    );
-    this.setupCameraControls();
+    // Render objectives
+    this.renderCamps();
+    this.renderStructures();
+    this.renderBases();
 
-    this.charViewports = new CharacterViewports(this, this.playerId);
+    // Render heroes
+    this.renderHeroes();
 
-    // HUD (HTML)
-    this.heroBarEl = document.getElementById('hero-bar')!;
-    this.commandLogEl = document.getElementById('command-log')!;
-    this.statusBarEl = document.getElementById('status-bar')!;
-    this.abilityPanelEl = document.getElementById('ability-panel')!;
-    this.heroBarEl.style.display = 'block';
-    this.commandLogEl.style.display = 'block';
-    this.statusBarEl.style.display = 'flex';
-    this.abilityPanelEl.style.display = 'block';
+    // Path graphics
+    this.pathGraphics = this.add.graphics().setDepth(5);
 
-    this.createPhaserHUD();
+    // Fog of war
+    this.fogLayer = this.add.graphics().setDepth(50);
 
-    this.commandInput = new CommandInput(this, this.gameId, this.playerId, this.isLocal);
-    this.commandInput.onCommand((rawText) => this.handleCommand(rawText));
-    this.updateStatusBar();
+    // Camera
+    this.cameras.main.setBounds(0, 0, MAP_WIDTH * TILE_SIZE, MAP_HEIGHT * TILE_SIZE);
+    const spawnPos = this.gameMap.spawnP1[0];
+    this.cameras.main.centerOn(spawnPos.x * TILE_SIZE, spawnPos.y * TILE_SIZE);
 
-    this.characters.forEach((charEntity, charId) => {
-      const char = this.charData.get(charId);
-      if (!char || char.owner !== this.playerId) return;
-      // Double-click to select (single click felt too easy to accidentally trigger)
-      let lastClickTime = 0;
-      charEntity.sprite.on('pointerdown', () => {
-        const now = Date.now();
-        if (now - lastClickTime < 400) {
-          this.selectHeroByCharId(charId);
-        }
-        lastClickTime = now;
-      });
-    });
+    // MiniMap
+    this.miniMap = new MiniMap(this, this.gameMap.tiles);
 
-    // Build hero bar UI
-    this.buildHeroBar();
+    // HUD
+    this.createHUD();
 
-    // Selected character HUD label (fixed to camera)
-    this.selectedCharLabel = this.add.text(
-      this.cameras.main.width / 2, 10,
-      '',
-      {
-        fontSize: '13px',
-        color: '#FFD93D',
-        fontFamily: '"Nunito", sans-serif',
-        fontStyle: 'bold',
-        backgroundColor: '#00000088',
-        padding: { x: 8, y: 4 },
-      }
-    ).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100);
+    // Input
+    this.setupInput(data);
 
-    // Auto-select first hero (after label is created)
-    const myCharIds = this.getMyAliveCharIds();
-    if (myCharIds.length > 0) {
-      this.selectHeroByIndex(0);
-    }
+    // Select first hero
+    this.selectHero(0);
 
-    // 1/2/3 = select hero, Q/W/E = abilities
-    this.input.keyboard!.on('keydown-ONE', () => this.selectHeroByIndex(0));
-    this.input.keyboard!.on('keydown-TWO', () => this.selectHeroByIndex(1));
-    this.input.keyboard!.on('keydown-THREE', () => this.selectHeroByIndex(2));
-    this.input.keyboard!.on('keydown-Q', () => this.useAbilityHotkey(0));
-    this.input.keyboard!.on('keydown-E', () => this.useAbilityHotkey(1));
-    this.input.keyboard!.on('keydown-R', () => this.useAbilityHotkey(2));
-    this.input.keyboard!.on('keydown-ESC', () => this.selectCharacter(null));
+    // Start game ticks
+    this.startTicks();
 
-    // Show onboarding tutorial on game start
-    this.showOnboarding();
-
-    this.cameras.main.fadeIn(500, 5, 5, 16);
-
-    if (!this.isLocal && this.isHost) {
-      this.startGameLoop();
-      this.firebase.onRemoteOrders(this.gameId, (data) => {
-        if (data.playerId !== this.playerId) {
-          this.applyRemoteOrders(data.playerId, data.orders);
-          this.firebase.removeRemoteOrder(this.gameId, data.key);
-        }
-      });
-      this.pushSyncState();
-    } else if (!this.isLocal && !this.isHost) {
-      this.firebase.onSyncState(this.gameId, (state) => {
-        this.applySyncState(state);
-      });
-      this.secondTimer = this.time.addEvent({
-        delay: 1000,
-        callback: () => {
-          if (!this.gameOver) {
-            this.gameTimeRemaining--;
-            this.updateTimerDisplay();
-          }
-        },
-        loop: true,
-      });
-    } else {
-      this.startGameLoop();
-    }
+    // Fade in
+    this.cameras.main.fadeIn(600, 27, 16, 64);
   }
 
-  // ─── MAP RENDERING ──────────────────────────────────────────────
+  // ─── STATE CREATION ──────────────────────────────────────
+
+  private createInitialState(heroConfig?: { myHeroes: HeroConfig[]; enemyHeroes: HeroConfig[] }): GameState {
+    resetNames();
+
+    const heroes: Record<string, Hero> = {};
+    const passives: HeroPassive[] = ['rally_leader', 'iron_will', 'swift_command'];
+
+    // Player 1 heroes
+    const p1Spawns = this.gameMap.spawnP1;
+    const p1Configs = heroConfig?.myHeroes ?? passives.map(p => ({ name: generateCharacterName(), passive: p }));
+    for (let i = 0; i < 3; i++) {
+      const id = `p1_hero_${i}`;
+      const cfg = p1Configs[i];
+      heroes[id] = {
+        id,
+        name: cfg.name,
+        team: 'player1',
+        passive: cfg.passive,
+        currentHp: HERO_BASE_STATS.maxHp,
+        maxHp: HERO_BASE_STATS.maxHp,
+        attack: HERO_BASE_STATS.attack,
+        defense: HERO_BASE_STATS.defense,
+        speed: HERO_BASE_STATS.speed,
+        range: HERO_BASE_STATS.range,
+        position: { ...p1Spawns[i % p1Spawns.length] },
+        isDead: false,
+        respawnTimer: 0,
+        path: [],
+        currentOrder: null,
+        orderQueue: [],
+        upgrades: [],
+        visionRange: HERO_BASE_STATS.visionRange,
+        isActiveHero: i === 0,
+        attackCooldown: 0,
+      };
+    }
+
+    // Player 2 heroes
+    const p2Spawns = this.gameMap.spawnP2;
+    const p2Configs = heroConfig?.enemyHeroes ?? passives.map(p => ({ name: generateCharacterName(), passive: p }));
+    for (let i = 0; i < 3; i++) {
+      const id = `p2_hero_${i}`;
+      const cfg = p2Configs[i];
+      heroes[id] = {
+        id,
+        name: cfg.name,
+        team: 'player2',
+        passive: cfg.passive,
+        currentHp: HERO_BASE_STATS.maxHp,
+        maxHp: HERO_BASE_STATS.maxHp,
+        attack: HERO_BASE_STATS.attack,
+        defense: HERO_BASE_STATS.defense,
+        speed: HERO_BASE_STATS.speed,
+        range: HERO_BASE_STATS.range,
+        position: { ...p2Spawns[i % p2Spawns.length] },
+        isDead: false,
+        respawnTimer: 0,
+        path: [],
+        currentOrder: null,
+        orderQueue: [],
+        upgrades: [],
+        visionRange: HERO_BASE_STATS.visionRange,
+        isActiveHero: false,
+        attackCooldown: 0,
+      };
+    }
+
+    const camps = createAllCamps();
+    const structures = createAllStructures();
+
+    const blueBase: Base = {
+      position: { x: 5, y: 35 },
+      hp: BASE_MAX_HP,
+      maxHp: BASE_MAX_HP,
+    };
+    const redBase: Base = {
+      position: { x: 45, y: 5 },
+      hp: BASE_MAX_HP,
+      maxHp: BASE_MAX_HP,
+    };
+
+    return {
+      meta: {
+        player1: 'player1',
+        player2: 'player2',
+        mapSeed: Date.now(),
+        status: 'playing',
+        currentTurn: 0,
+        createdAt: Date.now(),
+        gameDuration: GAME_DURATION,
+        timeRemaining: GAME_DURATION,
+        gameTime: 0,
+      },
+      heroes,
+      units: [],
+      camps,
+      structures,
+      bases: { player1: blueBase, player2: redBase },
+      commandLog: [],
+    };
+  }
+
+  // ─── RENDERING ───────────────────────────────────────────
 
   private renderMap() {
-    this.tileLayer = this.add.group();
     this.tileSprites = [];
     for (let y = 0; y < MAP_HEIGHT; y++) {
       this.tileSprites[y] = [];
@@ -409,4096 +289,1247 @@ export class BattleScene extends Phaser.Scene {
         const sprite = this.add.sprite(
           x * TILE_SIZE + TILE_SIZE / 2,
           y * TILE_SIZE + TILE_SIZE / 2,
-          `tile_${tile}`
-        );
-        sprite.setDepth(0);
-        this.tileLayer.add(sprite);
+          `tile_${tile}`,
+        ).setDepth(0);
         this.tileSprites[y][x] = sprite;
       }
     }
-    this.switchGateLinks = this.gameMap.switchGateLinks;
   }
 
-  // ─── CHARACTER CREATION ─────────────────────────────────────────
+  private renderCamps() {
+    for (const camp of this.state.camps) {
+      const px = camp.position.x * TILE_SIZE + TILE_SIZE / 2;
+      const py = camp.position.y * TILE_SIZE + TILE_SIZE / 2;
 
-  private createCharacters() {
-    const myPicks = this.picks.filter(p => p.playerId === this.playerId);
-    const oppPicks = this.picks.filter(p => p.playerId !== this.playerId);
+      const container = this.add.container(px, py).setDepth(3);
 
-    // For spawns, use actual game role (amPlayer1/isHost), not local perspective
-    const mySpawnIsP1 = this.isHost;
+      // Camp marker sprite
+      const marker = this.add.sprite(0, 0, 'camp_neutral').setScale(1.2);
+      container.add(marker);
 
-    myPicks.forEach((pick, i) => {
-      const charData = this.buildCharacter(pick, i, mySpawnIsP1);
-      this.charData.set(charData.id, charData);
-      const entity = new CharacterEntity(this, charData, true);
-      this.characters.set(charData.id, entity);
-      this.orderQueues.set(charData.id, []);
-    });
+      // Camp emoji
+      const emoji = this.add.text(0, -2, camp.emoji, { fontSize: '16px' }).setOrigin(0.5);
+      container.add(emoji);
 
-    oppPicks.forEach((pick, i) => {
-      const charData = this.buildCharacter(pick, i, !mySpawnIsP1);
-      this.charData.set(charData.id, charData);
-      const entity = new CharacterEntity(this, charData, false);
-      this.characters.set(charData.id, entity);
-      this.orderQueues.set(charData.id, []);
-    });
-  }
-
-  private buildCharacter(pick: DraftPick, index: number, isPlayer1: boolean): Character {
-    const cls = CLASSES[pick.classId];
-    if (!cls) {
-      console.error(`Unknown classId: ${pick.classId}, falling back to paladin`);
-    }
-    const classDef = cls || CLASSES['paladin'];
-    const animal = ANIMALS[pick.animalId];
-    // Combine class base stats with animal stat modifiers
-    const stats = animal ? computeStats(classDef.baseStats, animal.statModifiers) : { ...classDef.baseStats };
-    const spawns = isPlayer1 ? this.gameMap.spawnP1 : this.gameMap.spawnP2;
-    const name = generateCharacterName();
-
-    let visionRange = animal?.vision ?? BASE_VISION;
-    // Class bonuses
-    if (pick.classId === 'rogue') visionRange += 2;
-
-    return {
-      id: `${pick.playerId}_${pick.classId}_${pick.animalId}_${index}`,
-      owner: pick.playerId,
-      classId: pick.classId,
-      animalId: pick.animalId,
-      name,
-      stats,
-      baseStats: { ...stats },
-      currentHp: stats.hp,
-      position: { ...spawns[index % spawns.length] },
-      cooldowns: {},
-      effects: [],
-      isDead: false,
-      level: 1,
-      xp: 0,
-      inventory: [],
-      personality: randomPersonality(),
-      morale: 'confident' as const,
-      moraleTimer: 0,
-      lastPraised: 0,
-      respawnTimer: 0,
-      currentOrder: null,
-      path: [],
-      hasFlag: false,
-      visionRange,
-    };
-  }
-
-  // No companion spawning — characters ARE the animals
-
-  private showOnboarding() {
-    const { width, height } = this.cameras.main;
-
-    // Semi-transparent backdrop
-    const bg = this.add.rectangle(width / 2, height / 2, 500, 320, 0x0a0a1e, 0.92)
-      .setScrollFactor(0).setDepth(300).setOrigin(0.5);
-    const border = this.add.rectangle(width / 2, height / 2, 502, 322, 0x6CC4FF, 0.5)
-      .setScrollFactor(0).setDepth(299).setOrigin(0.5);
-
-    const lines = [
-      'PROMPT BATTLE — Quick Start',
-      '',
-      '1 / 2 / 3  —  Select your hero',
-      'WASD  —  Move the selected hero',
-      'Q / E / R  —  Use abilities',
-      'Space (hold)  —  Voice command',
-      '',
-      'OBJECTIVE: Capture & hold control points',
-      'First to 200 points wins!',
-      '',
-      'Each hero has an animal type that',
-      'modifies their stats & abilities.',
-      '',
-      'Click anywhere to start...',
-    ];
-
-    const text = this.add.text(width / 2, height / 2 - 130, lines.join('\n'), {
-      fontSize: '15px',
-      color: '#E8E8F0',
-      fontFamily: '"Nunito", sans-serif',
-      lineSpacing: 8,
-      align: 'center',
-    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(301);
-
-    // Title styling
-    text.setColor('#E8E8F0');
-
-    const dismiss = () => {
-      this.tweens.add({
-        targets: [bg, border, text],
-        alpha: 0,
-        duration: 300,
-        onComplete: () => { bg.destroy(); border.destroy(); text.destroy(); },
-      });
-    };
-
-    // Dismiss on any click or key
-    this.input.once('pointerdown', dismiss);
-    this.input.keyboard!.once('keydown', dismiss);
-
-    // Auto-dismiss after 8 seconds
-    this.time.delayedCall(8000, () => {
-      if (bg.active) dismiss();
-    });
-  }
-
-  // ─── DOMINATION ─────────────────────────────────────────────────
-
-  private initDomination() {
-    this.domScore1 = 0;
-    this.domScore2 = 0;
-    this.ctf = {
-      flag1: { position: { x: 0, y: 0 }, homePosition: { x: 0, y: 0 }, carrier: null, isHome: true },
-      flag2: { position: { x: 0, y: 0 }, homePosition: { x: 0, y: 0 }, carrier: null, isHome: true },
-      score1: 0, score2: 0, capturesNeeded: 999,
-    };
-  }
-
-  private tickDominationScoring() {
-    let p1Points = 0;
-    let p2Points = 0;
-    for (let i = 0; i < this.controlPoints.length; i++) {
-      const cp = this.controlPoints[i];
-      const mult = i === 1 ? CENTER_CP_MULTIPLIER : 1; // center CP worth 2x
-      if (cp.owner === 'player1') p1Points += DOM_POINTS_PER_TICK * mult;
-      if (cp.owner === 'player2') p2Points += DOM_POINTS_PER_TICK * mult;
-    }
-    if (p1Points > 0 || p2Points > 0) {
-      this.domScore1 += p1Points;
-      this.domScore2 += p2Points;
-      this.updateScoreDisplay();
-    }
-
-    if (this.domScore1 >= DOM_POINTS_TO_WIN) {
-      this.endGame(this.playerId, 'domination');
-    } else if (this.domScore2 >= DOM_POINTS_TO_WIN) {
-      this.endGame(this.opponentId, 'domination');
-    }
-  }
-
-  // ─── PICKUPS ────────────────────────────────────────────────────
-
-  private spawnPickups() {
-    // Skip hardcoded pickups if using a custom map definition (no POIs = no pickups)
-    if (this.gameMap.controlPointDefs && this.gameMap.poiPlacements.length === 0) return;
-
-    const cx = Math.floor(MAP_WIDTH / 2);
-    const cy = Math.floor(MAP_HEIGHT / 2);
-
-    const defs: { type: Pickup['type']; pos: Position }[] = [
-      { type: 'health_potion', pos: { x: cx, y: cy - 8 } },
-      { type: 'health_potion', pos: { x: cx, y: cy + 8 } },
-      { type: 'health_potion', pos: { x: cx - 16, y: cy } },
-      { type: 'health_potion', pos: { x: cx + 16, y: cy } },
-      { type: 'speed_boost', pos: { x: cx - 12, y: cy - 10 } },
-      { type: 'speed_boost', pos: { x: cx + 12, y: cy + 10 } },
-      { type: 'damage_boost', pos: { x: cx - 10, y: cy + 12 } },
-      { type: 'damage_boost', pos: { x: cx + 10, y: cy - 12 } },
-    ];
-
-    for (let i = 0; i < defs.length; i++) {
-      let pos = defs[i].pos;
-      // Find nearest passable tile
-      if (!isPassable(this.gameMap.tiles[pos.y]?.[pos.x])) {
-        for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [-1, -1]]) {
-          const nx = pos.x + dx;
-          const ny = pos.y + dy;
-          if (nx >= 0 && nx < MAP_WIDTH && ny >= 0 && ny < MAP_HEIGHT
-            && isPassable(this.gameMap.tiles[ny][nx])) {
-            pos = { x: nx, y: ny };
-            break;
-          }
-        }
-      }
-
-      const px = pos.x * TILE_SIZE + TILE_SIZE / 2;
-      const py = pos.y * TILE_SIZE + TILE_SIZE / 2;
-
-      const sprite = this.add.sprite(px, py, `pickup_${defs[i].type}`);
-      sprite.setDepth(5);
-      sprite.setScale(0.8);
-      this.tweens.add({
-        targets: sprite,
-        scaleX: 0.9, scaleY: 0.9, alpha: 0.7,
-        duration: 800, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
-      });
-
-      const labelMap: Record<string, string> = {
-        health_potion: 'HP', speed_boost: 'SPD', damage_boost: 'DMG',
-      };
-      const colorMap: Record<string, string> = {
-        health_potion: '#45E6B0', speed_boost: '#FFD93D', damage_boost: '#FF6B6B',
-      };
-
-      const label = this.add.text(px, py + 18, labelMap[defs[i].type], {
+      // Camp name label
+      const label = this.add.text(0, 20, camp.name, {
         fontSize: '7px',
-        color: colorMap[defs[i].type],
-        fontFamily: 'monospace',
-        fontStyle: 'bold',
-      }).setOrigin(0.5).setDepth(6);
-
-      this.pickups.push({
-        id: `pickup_${i}`,
-        type: defs[i].type,
-        position: pos,
-        active: true,
-        respawnTimer: 0,
-        sprite,
-        label,
-      });
-    }
-  }
-
-  private checkPickupCollisions() {
-    this.charData.forEach((char) => {
-      if (char.isDead) return;
-      for (const pickup of this.pickups) {
-        if (!pickup.active) continue;
-        if (char.position.x === pickup.position.x && char.position.y === pickup.position.y) {
-          this.collectPickup(char, pickup);
-        }
-      }
-    });
-  }
-
-  private collectPickup(char: Character, pickup: Pickup) {
-    pickup.active = false;
-    pickup.respawnTimer = PICKUP_RESPAWN;
-    if (pickup.sprite) pickup.sprite.setVisible(false);
-    if (pickup.label) pickup.label.setVisible(false);
-
-    const entity = this.characters.get(char.id);
-
-    switch (pickup.type) {
-      case 'health_potion': {
-        const heal = Math.round(char.stats.hp * 0.35);
-        char.currentHp = Math.min(char.stats.hp, char.currentHp + heal);
-        if (entity) entity.showHealing(heal);
-        this.addCommandLog('System', `${char.name} picked up Health Potion! (+${heal} HP)`, 'pickup');
-        break;
-      }
-      case 'speed_boost':
-        char.effects.push({ type: 'speed_boost', duration: 12, value: 2 });
-        if (entity) {
-          entity.sprite.setTint(0xffff00);
-          this.time.delayedCall(12000, () => entity.sprite.clearTint());
-        }
-        this.addCommandLog('System', `${char.name} picked up Speed Boost! (12s)`, 'pickup');
-        break;
-      case 'damage_boost':
-        char.effects.push({ type: 'damage_boost', duration: 12, value: 1.5 });
-        if (entity) {
-          entity.sprite.setTint(0xff6600);
-          this.time.delayedCall(12000, () => entity.sprite.clearTint());
-        }
-        this.addCommandLog('System', `${char.name} picked up Damage Boost! (12s)`, 'pickup');
-        break;
-    }
-
-    this.sound_.playPickupCollect();
-    if (entity) entity.refreshVisuals();
-    this.updateStatusBar();
-  }
-
-  // ─── POI SYSTEM (Lookouts, Wells, Caches) ──────────────────────
-
-  private initPOIs() {
-    let poiIdx = 0;
-    for (const placement of this.gameMap.poiPlacements) {
-      const poi: POI = {
-        id: `poi_${poiIdx++}`,
-        type: placement.type,
-        position: placement.position,
-        active: true,
-        respawnTimer: 0,
-        channelTime: placement.type === 'lookout' ? SCOUT_CHANNEL_TICKS
-          : placement.type === 'treasure_cache' ? LOOT_CHANNEL_TICKS : 0,
-      };
-      this.pois.push(poi);
-
-      const px = placement.position.x * TILE_SIZE + TILE_SIZE / 2;
-      const py = placement.position.y * TILE_SIZE + TILE_SIZE / 2;
-      const container = this.add.container(px, py).setDepth(6);
-
-      // POI sprite
-      const texKey = `poi_${placement.type}`;
-      const sprite = this.add.sprite(0, 0, texKey).setScale(0.9);
-      container.add(sprite);
-
-      // Label with reward info
-      const labelMap = {
-        lookout: 'SCOUT',
-        healing_well: 'HEAL',
-        treasure_cache: 'LOOT',
-      };
-      const rewardMap = {
-        lookout: '+Vision +20XP',
-        healing_well: '+HP/tick',
-        treasure_cache: '+Item +30XP',
-      };
-      const colorMap = {
-        lookout: '#FFD93D',
-        healing_well: '#45E6B0',
-        treasure_cache: '#FF9F43',
-      };
-      const label = this.add.text(0, 16, labelMap[placement.type], {
-        fontSize: '7px',
-        color: colorMap[placement.type],
+        color: '#ccc',
         fontFamily: '"Nunito", sans-serif',
         fontStyle: 'bold',
+        shadow: { offsetX: 1, offsetY: 1, color: '#000', blur: 2, fill: true, stroke: true },
       }).setOrigin(0.5);
       container.add(label);
 
-      const rewardLabel = this.add.text(0, 24, rewardMap[placement.type], {
-        fontSize: '6px',
-        color: '#cbb8ee',
+      this.campSprites.set(camp.id, container);
+    }
+  }
+
+  private renderStructures() {
+    for (const structure of this.state.structures) {
+      const px = structure.position.x * TILE_SIZE + TILE_SIZE / 2;
+      const py = structure.position.y * TILE_SIZE + TILE_SIZE / 2;
+
+      const container = this.add.container(px, py).setDepth(3);
+
+      const marker = this.add.sprite(0, 0, 'structure').setScale(1.3);
+      container.add(marker);
+
+      const emoji = this.add.text(0, -3, structure.emoji, { fontSize: '18px' }).setOrigin(0.5);
+      container.add(emoji);
+
+      // HP bar
+      const hpBg = this.add.rectangle(0, 18, 30, 4, 0x000000, 0.7).setOrigin(0.5);
+      container.add(hpBg);
+      const hpFill = this.add.rectangle(0, 18, 30, 4, 0x45E6B0).setOrigin(0.5);
+      container.add(hpFill);
+      (container as any)._hpFill = hpFill;
+
+      // Label
+      const label = this.add.text(0, 26, structure.name, {
+        fontSize: '7px',
+        color: '#FFD93D',
         fontFamily: '"Nunito", sans-serif',
+        fontStyle: 'bold',
+        shadow: { offsetX: 1, offsetY: 1, color: '#000', blur: 2, fill: true, stroke: true },
       }).setOrigin(0.5);
-      container.add(rewardLabel);
+      container.add(label);
 
-      // Pulsing animation
-      this.tweens.add({
-        targets: sprite,
-        scaleX: { from: 0.85, to: 0.95 },
-        scaleY: { from: 0.85, to: 0.95 },
-        alpha: { from: 0.8, to: 1 },
-        duration: 1000,
-        yoyo: true,
-        repeat: -1,
-        ease: 'Sine.easeInOut',
-      });
+      this.structureSprites.set(structure.id, container);
+    }
+  }
 
-      this.poiSprites.set(poi.id, container);
+  private renderBases() {
+    const renderBase = (base: Base, team: 'player1' | 'player2') => {
+      const px = base.position.x * TILE_SIZE + TILE_SIZE / 2;
+      const py = base.position.y * TILE_SIZE + TILE_SIZE / 2;
 
-      // Interact indicator (shows when a character is nearby)
-      const interactMap = {
-        lookout: '>> SCOUT: Reveal map +20XP',
-        healing_well: '>> Stand here to heal',
-        treasure_cache: '>> LOOT: Random item +30XP',
+      const container = this.add.container(px, py).setDepth(3);
+      const sprite = this.add.sprite(0, 0, `base_${team === 'player1' ? 'p1' : 'p2'}`).setScale(1.5);
+      container.add(sprite);
+
+      const emoji = this.add.text(0, -2, team === 'player1' ? '🏰' : '🏯', { fontSize: '20px' }).setOrigin(0.5);
+      container.add(emoji);
+
+      // HP bar
+      const hpBg = this.add.rectangle(0, 24, 40, 5, 0x000000, 0.7).setOrigin(0.5);
+      container.add(hpBg);
+      const hpFill = this.add.rectangle(0, 24, 40, 5, team === 'player1' ? 0x4499FF : 0xFF5555).setOrigin(0.5);
+      container.add(hpFill);
+      (container as any)._hpFill = hpFill;
+
+      this.baseSprites.set(team, container);
+    };
+
+    renderBase(this.state.bases.player1, 'player1');
+    renderBase(this.state.bases.player2, 'player2');
+  }
+
+  private renderHeroes() {
+    const heroIds = Object.keys(this.state.heroes);
+    for (const heroId of heroIds) {
+      const hero = this.state.heroes[heroId];
+      const isP1 = hero.team === 'player1';
+      const entity = new CharacterEntity(this, hero, isP1);
+      this.heroEntities.set(heroId, entity);
+    }
+  }
+
+  // ─── HUD ─────────────────────────────────────────────────
+
+  private createHUD() {
+    const { width, height } = this.cameras.main;
+
+    // Timer
+    this.timerText = this.add.text(width / 2, 10, '5:00', {
+      fontSize: '18px',
+      color: '#FFD93D',
+      fontFamily: '"Fredoka", sans-serif',
+      fontStyle: 'bold',
+      shadow: { offsetX: 1, offsetY: 1, color: '#000', blur: 3, fill: true, stroke: true },
+      backgroundColor: 'rgba(0,0,0,0.5)',
+      padding: { x: 8, y: 4 },
+    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100);
+
+    // Base HP texts
+    this.baseHpTexts = {
+      p1: this.add.text(10, 10, '🏰 500/500', {
+        fontSize: '12px', color: '#6CC4FF',
+        fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
+        shadow: { offsetX: 1, offsetY: 1, color: '#000', blur: 2, fill: true, stroke: true },
+      }).setScrollFactor(0).setDepth(100),
+      p2: this.add.text(width - 10, 10, '🏯 500/500', {
+        fontSize: '12px', color: '#FF6B6B',
+        fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
+        shadow: { offsetX: 1, offsetY: 1, color: '#000', blur: 2, fill: true, stroke: true },
+      }).setOrigin(1, 0).setScrollFactor(0).setDepth(100),
+    };
+
+    // Hero selection indicators (bottom-left)
+    const myHeroIds = this.getMyHeroIds();
+    for (let i = 0; i < myHeroIds.length; i++) {
+      const hero = this.state.heroes[myHeroIds[i]];
+      const text = this.add.text(10, height - 80 + i * 22, `[${i + 1}] ${hero.name}`, {
+        fontSize: '12px',
+        color: i === 0 ? '#FFD93D' : '#8B6DB0',
+        fontFamily: '"Nunito", sans-serif',
+        fontStyle: 'bold',
+        shadow: { offsetX: 1, offsetY: 1, color: '#000', blur: 2, fill: true, stroke: true },
+        backgroundColor: 'rgba(0,0,0,0.4)',
+        padding: { x: 4, y: 2 },
+      }).setScrollFactor(0).setDepth(100);
+      this.heroSelectTexts.push(text);
+    }
+  }
+
+  private updateHUD() {
+    const tr = this.state.meta.timeRemaining;
+    const min = Math.floor(tr / 60);
+    const sec = tr % 60;
+    this.timerText.setText(`${min}:${sec.toString().padStart(2, '0')}`);
+
+    const b1 = this.state.bases.player1;
+    const b2 = this.state.bases.player2;
+    this.baseHpTexts.p1.setText(`🏰 ${Math.round(b1.hp)}/${b1.maxHp}`);
+    this.baseHpTexts.p2.setText(`🏯 ${Math.round(b2.hp)}/${b2.maxHp}`);
+
+    // Update hero select labels
+    const myHeroIds = this.getMyHeroIds();
+    for (let i = 0; i < myHeroIds.length; i++) {
+      const hero = this.state.heroes[myHeroIds[i]];
+      const armyCount = this.state.units.filter(u => u.ownerId === hero.id && !u.isDead).length;
+      const statusStr = hero.isDead ? ' [DEAD]' : ` (x${armyCount})`;
+      this.heroSelectTexts[i].setText(`[${i + 1}] ${hero.name}${statusStr}`);
+      this.heroSelectTexts[i].setColor(i === this.selectedHeroIdx ? '#FFD93D' : '#8B6DB0');
+    }
+
+    // Update base sprite HP bars
+    this.updateBaseSprite('player1', b1);
+    this.updateBaseSprite('player2', b2);
+
+    // Update structure HP bars
+    for (const structure of this.state.structures) {
+      const container = this.structureSprites.get(structure.id);
+      if (!container) continue;
+      const hpFill = (container as any)._hpFill as Phaser.GameObjects.Rectangle;
+      if (hpFill) {
+        const ratio = Math.max(0, structure.hp / structure.maxHp);
+        hpFill.setDisplaySize(30 * ratio, 4);
+      }
+      if (structure.hp <= 0) {
+        container.setAlpha(0.4);
+      }
+    }
+
+    // Update camp colors
+    for (const camp of this.state.camps) {
+      const container = this.campSprites.get(camp.id);
+      if (!container) continue;
+      const marker = container.list[0] as Phaser.GameObjects.Sprite;
+      if (camp.capturedTeam === 'player1') {
+        marker.setTexture('camp_p1');
+      } else if (camp.capturedTeam === 'player2') {
+        marker.setTexture('camp_p2');
+      } else {
+        marker.setTexture('camp_neutral');
+      }
+    }
+  }
+
+  private updateBaseSprite(team: string, base: Base) {
+    const container = this.baseSprites.get(team);
+    if (!container) return;
+    const hpFill = (container as any)._hpFill as Phaser.GameObjects.Rectangle;
+    if (hpFill) {
+      const ratio = Math.max(0, base.hp / base.maxHp);
+      hpFill.setDisplaySize(40 * ratio, 5);
+    }
+  }
+
+  // ─── INPUT ───────────────────────────────────────────────
+
+  private setupInput(data: BattleSceneData) {
+    // Keyboard
+    if (this.input.keyboard) {
+      // Hero selection: 1, 2, 3
+      this.input.keyboard.on('keydown-ONE', () => this.selectHero(0));
+      this.input.keyboard.on('keydown-TWO', () => this.selectHero(1));
+      this.input.keyboard.on('keydown-THREE', () => this.selectHero(2));
+
+      // Camera: WASD
+      const cursors = {
+        w: this.input.keyboard.addKey('W'),
+        a: this.input.keyboard.addKey('A'),
+        s: this.input.keyboard.addKey('S'),
+        d: this.input.keyboard.addKey('D'),
       };
-      const interactLabel = interactMap[placement.type];
-      const interactContainer = this.add.container(px, py - 26).setDepth(15).setVisible(false);
-      const interactBg = this.add.graphics();
-      interactBg.fillStyle(0x000000, 0.8);
-      interactBg.fillRoundedRect(-80, -10, 160, 20, 5);
-      interactContainer.add(interactBg);
-      const interactText = this.add.text(0, 0, interactLabel, {
-        fontSize: '8px', color: '#FFD93D',
-        fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
-      }).setOrigin(0.5);
-      interactContainer.add(interactText);
-      this.poiInteractIndicators.set(poi.id, interactContainer);
-    }
-  }
 
-  private initMapFeatures() {
-    // Copy mine nodes, tower sites, neutral camps from game map
-    this.mineNodes = this.gameMap.mineNodes;
-    this.towerSites = this.gameMap.towerSites;
-    this.neutralCamps = this.gameMap.neutralCamps;
-
-    // Render mine node markers on the map
-    for (const mine of this.mineNodes) {
-      const px = mine.position.x * TILE_SIZE + TILE_SIZE / 2;
-      const py = mine.position.y * TILE_SIZE + TILE_SIZE / 2;
-      const color = mine.type === 'rich' ? 0xFFD700 : 0xDDCC55;
-      const marker = this.add.container(px, py).setDepth(5);
-      const circle = this.add.circle(0, 0, 8, color, 0.6);
-      const label = this.add.text(0, -14, `⛏ ${mine.name}`, {
-        fontSize: '7px', color: '#FFD700',
-        fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
-      }).setOrigin(0.5);
-      marker.add([circle, label]);
-    }
-
-    // Render tower site markers
-    for (const site of this.towerSites) {
-      const px = site.position.x * TILE_SIZE + TILE_SIZE / 2;
-      const py = site.position.y * TILE_SIZE + TILE_SIZE / 2;
-      const marker = this.add.container(px, py).setDepth(5);
-      const rect = this.add.rectangle(0, 0, 12, 12, 0xAA88CC, 0.5);
-      const label = this.add.text(0, -14, `🏗 ${site.name}`, {
-        fontSize: '7px', color: '#AA88CC',
-        fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
-      }).setOrigin(0.5);
-      marker.add([rect, label]);
-    }
-
-    // Render neutral camp markers
-    for (const camp of this.neutralCamps) {
-      const px = camp.position.x * TILE_SIZE + TILE_SIZE / 2;
-      const py = camp.position.y * TILE_SIZE + TILE_SIZE / 2;
-      const color = camp.type === 'hard' ? 0xFF5555 : 0xFF9F43;
-      const marker = this.add.container(px, py).setDepth(5);
-      const circle = this.add.circle(0, 0, 10, color, 0.5);
-      const label = this.add.text(0, -14, `🐉 ${camp.name}`, {
-        fontSize: '7px', color: camp.type === 'hard' ? '#FF5555' : '#FF9F43',
-        fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
-      }).setOrigin(0.5);
-      marker.add([circle, label]);
-    }
-  }
-
-  private updatePOIs() {
-    // Show interact indicators when ally is near a POI
-    for (const poi of this.pois) {
-      const indicator = this.poiInteractIndicators.get(poi.id);
-      if (!indicator) continue;
-
-      if (!poi.active) {
-        indicator.setVisible(false);
-        const sprite = this.poiSprites.get(poi.id);
-        if (sprite) sprite.setAlpha(0.3);
-        continue;
-      }
-
-      const sprite = this.poiSprites.get(poi.id);
-      if (sprite) sprite.setAlpha(1);
-
-      // Check if any allied character is adjacent
-      let allyNearby = false;
-      this.charData.forEach(char => {
-        if (char.owner !== this.playerId || char.isDead) return;
-        if (this.tileDist(char.position, poi.position) <= 1) {
-          allyNearby = true;
-        }
-      });
-
-      indicator.setVisible(allyNearby && poi.type !== 'healing_well'); // wells are passive
-    }
-
-    // Healing wells: passively heal characters standing on them
-    for (const poi of this.pois) {
-      if (poi.type !== 'healing_well' || !poi.active) continue;
-      this.charData.forEach(char => {
-        if (char.isDead) return;
-        if (char.position.x === poi.position.x && char.position.y === poi.position.y) {
-          if (char.currentHp < char.stats.hp) {
-            const heal = Math.min(WELL_HEAL_PER_TICK, char.stats.hp - char.currentHp);
-            char.currentHp += heal;
-            const entity = this.characters.get(char.id);
-            if (entity && heal > 0) entity.showHealing(heal);
-          }
-        }
+      this.events.on('update', () => {
+        const cam = this.cameras.main;
+        const speed = 6;
+        if (cursors.w.isDown) cam.scrollY -= speed;
+        if (cursors.s.isDown) cam.scrollY += speed;
+        if (cursors.a.isDown) cam.scrollX -= speed;
+        if (cursors.d.isDown) cam.scrollX += speed;
       });
     }
-  }
 
-  private tickPOIRespawns() {
-    for (const poi of this.pois) {
-      if (!poi.active && poi.respawnTimer > 0) {
-        poi.respawnTimer--;
-        if (poi.respawnTimer <= 0) {
-          poi.active = true;
+    // Mouse click: right-click to move, left-click on objectives to attack
+    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      if (this.gameOver) return;
+
+      // Check minimap click first
+      if (this.miniMap) {
+        const mmPos = this.miniMap.handleClick(pointer);
+        if (mmPos) {
+          const cam = this.cameras.main;
+          cam.centerOn(mmPos.x * TILE_SIZE, mmPos.y * TILE_SIZE);
+          return;
         }
       }
-    }
-  }
 
-  // ─── ACTIVITY CHANNELING ──────────────────────────────────────
+      const worldX = pointer.worldX;
+      const worldY = pointer.worldY;
+      const tileX = Math.floor(worldX / TILE_SIZE);
+      const tileY = Math.floor(worldY / TILE_SIZE);
 
-  private updateChanneling() {
-    this.charData.forEach(char => {
-      if (char.isDead || !char.channelActivity) return;
+      const hero = this.getSelectedHero();
+      if (!hero || hero.isDead) return;
 
-      const activity = char.channelActivity;
-      const entity = this.characters.get(char.id);
-
-      // Check if still at the position
-      if (char.position.x !== activity.position.x || char.position.y !== activity.position.y) {
-        char.channelActivity = null;
-        if (entity) entity.setOrderText(char.currentOrder ? this.getOrderLabel(char.currentOrder) : 'idle');
-        return;
+      if (pointer.rightButtonDown()) {
+        // Right-click: move
+        this.issueOrder(hero.id, { type: 'move', targetPosition: { x: tileX, y: tileY } });
+      } else {
+        // Left-click: check for targets
+        const target = this.findClickTarget(tileX, tileY);
+        if (target) {
+          this.issueOrder(hero.id, target);
+        } else {
+          // Move to clicked position
+          this.issueOrder(hero.id, { type: 'move', targetPosition: { x: tileX, y: tileY } });
+        }
       }
+    });
 
-      // Check if stunned = interrupt
-      if (char.effects.some(e => e.type === 'stun')) {
-        char.channelActivity = null;
-        if (entity) entity.setOrderText('STUNNED');
-        return;
-      }
-
-      // Tick channel
-      activity.ticksRemaining--;
-
-      // Show progress
-      if (entity) {
-        const totalTicks = this.getChannelTotal(activity.type);
-        const progress = Math.round(((totalTicks - activity.ticksRemaining) / totalTicks) * 100);
-        const timeLeft = Math.ceil(activity.ticksRemaining * TICK_RATE / 1000);
-        entity.setOrderText(`${activity.type.toUpperCase()} ${progress}% (${timeLeft}s)`);
-      }
-
-      if (activity.ticksRemaining <= 0) {
-        this.completeChannel(char, activity.type);
-        char.channelActivity = null;
-        char.currentOrder = null;
-        if (entity) entity.setOrderText('idle');
+    // Voice commands
+    this.commandInput = new CommandInput(this, this.gameId, this.playerId, this.isLocal);
+    this.commandInput.onCommand(async (rawText: string) => {
+      if (this.gameOver || !this.hasGemini) return;
+      try {
+        const result = await parseCommandWithGemini(rawText, this.state, 'player1');
+        for (const action of result.actions) {
+          this.issueOrder(action.heroId, {
+            type: action.type as any,
+            targetId: action.targetId,
+            targetPosition: action.targetPosition,
+          });
+        }
+      } catch (err) {
+        console.error('Gemini parse error:', err);
       }
     });
   }
 
-  private getChannelTotal(type: string): number {
-    switch (type) {
-      case 'scout': return SCOUT_CHANNEL_TICKS;
-      case 'loot': return LOOT_CHANNEL_TICKS;
-      case 'build': return BUILD_CHANNEL_TICKS;
-      case 'trap': return TRAP_CHANNEL_TICKS;
-      case 'upgrade_cp': return UPGRADE_CP_TICKS;
-      case 'mine': return MINE_CHANNEL_TICKS;
-      case 'build_tower': return BUILD_TOWER_TICKS;
-      default: return 10;
+  private findClickTarget(tileX: number, tileY: number): HeroOrder | null {
+    // Check camps
+    for (const camp of this.state.camps) {
+      if (this.tileDist(camp.position, { x: tileX, y: tileY }) <= 2) {
+        return { type: 'attack_camp', targetId: camp.id, targetPosition: camp.position };
+      }
+    }
+    // Check structures
+    for (const structure of this.state.structures) {
+      if (structure.hp <= 0) continue;
+      if (this.tileDist(structure.position, { x: tileX, y: tileY }) <= 2) {
+        return { type: 'attack_structure', targetId: structure.id, targetPosition: structure.position };
+      }
+    }
+    // Check enemy heroes
+    for (const heroId of Object.keys(this.state.heroes)) {
+      const enemy = this.state.heroes[heroId];
+      if (enemy.team === this.myTeam || enemy.isDead) continue;
+      if (this.tileDist(enemy.position, { x: tileX, y: tileY }) <= 1) {
+        return { type: 'attack_hero', targetId: enemy.id, targetPosition: enemy.position };
+      }
+    }
+    // Check enemy base
+    const enemyBase = this.state.bases[this.enemyTeam];
+    if (this.tileDist(enemyBase.position, { x: tileX, y: tileY }) <= 3) {
+      return { type: 'attack_base', targetPosition: enemyBase.position };
+    }
+    return null;
+  }
+
+  private selectHero(idx: number) {
+    const myHeroIds = this.getMyHeroIds();
+    if (idx >= myHeroIds.length) return;
+
+    // Deselect previous
+    const prevId = myHeroIds[this.selectedHeroIdx];
+    const prevEntity = this.heroEntities.get(prevId);
+    if (prevEntity) prevEntity.deselect();
+
+    this.selectedHeroIdx = idx;
+    const newId = myHeroIds[idx];
+    const newEntity = this.heroEntities.get(newId);
+    if (newEntity) {
+      newEntity.select();
+      // Center camera on selected hero
+      const hero = this.state.heroes[newId];
+      this.cameras.main.centerOn(
+        hero.position.x * TILE_SIZE + TILE_SIZE / 2,
+        hero.position.y * TILE_SIZE + TILE_SIZE / 2,
+      );
     }
   }
 
-  private completeChannel(char: Character, type: string) {
-    const entity = this.characters.get(char.id);
-    switch (type) {
-      case 'scout': {
-        // Grant vision in large radius for 30 seconds
-        this.lookoutVisionZones.push({
-          center: { ...char.position },
-          radius: LOOKOUT_VISION_RADIUS,
-          expiresAt: Date.now() + LOOKOUT_VISION_DURATION * 1000,
-        });
-        this.grantXP(char, XP_SCOUT);
-        this.addCommandLog('System', `${char.name} scouted! Vision revealed for ${LOOKOUT_VISION_DURATION}s`, 'activity');
-        this.showAnnouncement('LOOKOUT ACTIVATED', '#FFD93D');
+  private issueOrder(heroId: string, order: HeroOrder) {
+    const hero = this.state.heroes[heroId];
+    if (!hero || hero.isDead) return;
+
+    hero.currentOrder = order;
+    hero.path = [];
+
+    // Update order text on entity
+    const entity = this.heroEntities.get(heroId);
+    if (entity) {
+      const orderText = order.type.replace(/_/g, ' ').toUpperCase();
+      entity.setOrderText(orderText);
+    }
+
+    // Show bark
+    const barkTrigger: BarkTrigger | null =
+      order.type.startsWith('attack') ? 'order_attack'
+        : order.type === 'move' ? 'order_move'
+          : order.type === 'defend' ? 'order_defend'
+            : null;
+    if (barkTrigger) {
+      const bark = getBark(barkTrigger);
+      if (bark && entity) entity.showBark(bark);
+    }
+  }
+
+  // ─── GAME TICKS ──────────────────────────────────────────
+
+  private startTicks() {
+    this.secondTimer = this.time.addEvent({
+      delay: 1000, loop: true,
+      callback: () => this.secondTick(),
+    });
+    this.gameTickTimer = this.time.addEvent({
+      delay: TICK_RATE, loop: true,
+      callback: () => this.gameTick(),
+    });
+    this.moveTickTimer = this.time.addEvent({
+      delay: MOVE_TICK, loop: true,
+      callback: () => this.moveTick(),
+    });
+  }
+
+  // ─── SECOND TICK (1s) ────────────────────────────────────
+
+  private secondTick() {
+    if (this.gameOver) return;
+
+    const meta = this.state.meta;
+    meta.timeRemaining--;
+    meta.gameTime++;
+
+    // Camp scaling
+    if (meta.gameTime > 0 && meta.gameTime % CAMP_SCALING_INTERVAL === 0) {
+      for (const camp of this.state.camps) {
+        camp.scalingFactor += CAMP_SCALING_AMOUNT;
+      }
+    }
+
+    // Respawn timers
+    for (const heroId of Object.keys(this.state.heroes)) {
+      const hero = this.state.heroes[heroId];
+      if (hero.isDead) {
+        hero.respawnTimer--;
+        if (hero.respawnTimer <= 0) {
+          this.respawnHero(hero);
+        }
+      }
+    }
+
+    // Spawn units from captured camps
+    this.spawnUnitsFromCamps();
+
+    // Structure attacks
+    this.structureAttackTick();
+
+    // AI for player 2
+    this.runAI();
+
+    // Win condition check
+    this.checkWinCondition();
+
+    // Update HUD
+    this.updateHUD();
+  }
+
+  // ─── GAME TICK (750ms) ──────────────────────────────────
+
+  private gameTick() {
+    if (this.gameOver) return;
+
+    // Execute hero orders
+    for (const heroId of Object.keys(this.state.heroes)) {
+      const hero = this.state.heroes[heroId];
+      if (hero.isDead) continue;
+      this.executeHeroOrder(hero);
+    }
+
+    // Unit AI
+    this.unitAI();
+
+    // Combat resolution
+    this.resolveCombat();
+
+    // Update army counts on hero entities
+    for (const [heroId, entity] of this.heroEntities) {
+      const count = this.state.units.filter(u => u.ownerId === heroId && !u.isDead).length;
+      entity.setArmyCount(count);
+    }
+
+    // Fog of war
+    this.updateFogOfWar();
+
+    // Sync entity positions
+    this.syncEntities();
+
+    // Clean up dead units
+    this.cleanupDeadUnits();
+  }
+
+  // ─── MOVE TICK (500ms) ──────────────────────────────────
+
+  private moveTick() {
+    if (this.gameOver) return;
+
+    // Move heroes along their paths
+    for (const heroId of Object.keys(this.state.heroes)) {
+      const hero = this.state.heroes[heroId];
+      if (hero.isDead || hero.path.length === 0) continue;
+
+      const entity = this.heroEntities.get(heroId);
+      if (entity?.isMoving) continue;
+
+      const next = hero.path.shift()!;
+      hero.position = { ...next };
+
+      if (entity) {
+        entity.stepToTile(next.x, next.y);
+      }
+    }
+
+    // Move units toward their owners (follow behavior)
+    for (const unit of this.state.units) {
+      if (unit.isDead) continue;
+      if (unit.behavior === 'follow') {
+        const owner = this.state.heroes[unit.ownerId];
+        if (!owner || owner.isDead) {
+          unit.behavior = 'hold';
+          continue;
+        }
+        const dist = this.tileDist(unit.position, owner.position);
+        if (dist > 2) {
+          // Move one step toward owner
+          const dx = Math.sign(owner.position.x - unit.position.x);
+          const dy = Math.sign(owner.position.y - unit.position.y);
+          const nx = unit.position.x + dx;
+          const ny = unit.position.y + dy;
+          if (nx >= 0 && nx < MAP_WIDTH && ny >= 0 && ny < MAP_HEIGHT
+            && isPassable(this.gameMap.tiles[ny][nx])) {
+            unit.position = { x: nx, y: ny };
+          }
+        }
+      }
+    }
+
+    // Sync follower entity positions
+    for (const [unitId, entity] of this.unitEntities) {
+      const unit = this.state.units.find(u => u.id === unitId);
+      if (unit && !unit.isDead) {
+        entity.syncPosition(unit.position.x, unit.position.y);
+      }
+    }
+  }
+
+  // ─── HERO ORDER EXECUTION ───────────────────────────────
+
+  private executeHeroOrder(hero: Hero) {
+    const order = hero.currentOrder;
+    if (!order) return;
+
+    switch (order.type) {
+      case 'move':
+        if (order.targetPosition && hero.path.length === 0) {
+          hero.path = findPath(this.gameMap.tiles, hero.position, order.targetPosition, 100);
+          if (hero.path.length === 0) hero.currentOrder = null;
+        }
+        break;
+
+      case 'attack_camp': {
+        const camp = this.state.camps.find(c => c.id === order.targetId);
+        if (!camp) { hero.currentOrder = null; break; }
+        const dist = this.tileDist(hero.position, camp.position);
+        if (dist <= CAMP_ATTACK_RANGE) {
+          this.heroAttackCamp(hero, camp);
+        } else if (hero.path.length === 0) {
+          hero.path = findPath(this.gameMap.tiles, hero.position, camp.position, 100);
+        }
         break;
       }
-      case 'loot': {
-        // Find the cache POI at this position
-        const poi = this.pois.find(p =>
-          p.type === 'treasure_cache' && p.active &&
-          p.position.x === char.position.x && p.position.y === char.position.y
-        );
-        if (poi) {
-          poi.active = false;
-          poi.respawnTimer = CACHE_RESPAWN_TIME;
+
+      case 'attack_structure': {
+        const structure = this.state.structures.find(s => s.id === order.targetId);
+        if (!structure || structure.hp <= 0) { hero.currentOrder = null; break; }
+        const dist = this.tileDist(hero.position, structure.position);
+        if (dist <= STRUCTURE_ATTACK_RANGE) {
+          this.heroAttackStructure(hero, structure);
+        } else if (hero.path.length === 0) {
+          hero.path = findPath(this.gameMap.tiles, hero.position, structure.position, 100);
         }
-        // Roll random consumable
-        if (char.inventory.length < MAX_INVENTORY) {
-          const item = rollRandomConsumable();
-          char.inventory.push(item);
-          const def = CONSUMABLES[item];
-          this.grantXP(char, XP_LOOT_CACHE);
-          this.addCommandLog('System', `${char.name} looted: ${def.icon} ${def.name}!`, 'activity');
-          this.showAnnouncement(`LOOTED: ${def.name}`, '#FF9F43');
+        break;
+      }
+
+      case 'attack_hero': {
+        const target = this.state.heroes[order.targetId ?? ''];
+        if (!target || target.isDead) { hero.currentOrder = null; break; }
+        const dist = this.tileDist(hero.position, target.position);
+        if (dist <= HERO_ATTACK_RANGE) {
+          this.heroAttackHero(hero, target);
         } else {
-          this.addCommandLog('System', `${char.name} inventory full! (max ${MAX_INVENTORY})`, 'warning');
+          // Chase
+          hero.path = findPath(this.gameMap.tiles, hero.position, target.position, 100);
         }
         break;
       }
-      case 'build': {
-        const barricade: Barricade = {
-          id: `barricade_${Date.now()}`,
-          position: { ...char.position },
-          owner: char.owner,
-          hp: BARRICADE_HP,
-          maxHp: BARRICADE_HP,
-          decayTimer: BARRICADE_DECAY,
-        };
-        this.barricades.push(barricade);
-        this.createBarricadeSprite(barricade);
-        this.addCommandLog('System', `${char.name} built a barricade!`, 'activity');
-        break;
-      }
-      case 'trap': {
-        const teamTraps = this.traps.filter(t => t.owner === char.owner);
-        if (teamTraps.length >= MAX_TRAPS_PER_TEAM) {
-          // Remove oldest
-          const oldest = teamTraps[0];
-          this.traps = this.traps.filter(t => t.id !== oldest.id);
-          const spr = this.trapSprites.get(oldest.id);
-          if (spr) { spr.destroy(); this.trapSprites.delete(oldest.id); }
-        }
-        const trap: Trap = {
-          id: `trap_${Date.now()}`,
-          position: { ...char.position },
-          owner: char.owner,
-          damage: TRAP_DAMAGE,
-          stunDuration: TRAP_STUN,
-          visible: false,
-        };
-        this.traps.push(trap);
-        this.createTrapSprite(trap);
-        this.addCommandLog('System', `${char.name} set a trap!`, 'activity');
-        break;
-      }
-      case 'upgrade_cp': {
-        const cp = this.controlPoints.find(c =>
-          c.owner === (char.owner === this.playerId ? 'player1' : 'player2') &&
-          this.tileDist(char.position, c.position) <= 2
-        );
-        if (cp && !cp.upgraded) {
-          cp.upgraded = true;
-          cp.buff.value *= 1.5;
-          cp.buff.label = cp.buff.label + ' (UP)';
-          this.addCommandLog('System', `${char.name} upgraded control point! Buff increased.`, 'activity');
-          this.showAnnouncement('CP UPGRADED!', '#6CC4FF');
+
+      case 'attack_base': {
+        const enemyBase = hero.team === 'player1' ? this.state.bases.player2 : this.state.bases.player1;
+        const dist = this.tileDist(hero.position, enemyBase.position);
+        if (dist <= BASE_ATTACK_RANGE) {
+          this.heroAttackBase(hero, enemyBase);
+        } else if (hero.path.length === 0) {
+          hero.path = findPath(this.gameMap.tiles, hero.position, enemyBase.position, 100);
         }
         break;
       }
-      case 'mine': {
-        // Grant gold for a mining cycle
-        const mine = this.mineNodes.find(m =>
-          m.currentGold > 0 && this.tileDist(char.position, m.position) <= 1
-        );
-        if (mine) {
-          const goldEarned = Math.min(MINE_RATE_PER_SEC * 3, mine.currentGold); // ~3s worth
-          mine.currentGold -= goldEarned;
-          const econ = char.owner === this.playerId
-            ? (this.isHost ? this.economy.player1 : this.economy.player2)
-            : (this.isHost ? this.economy.player2 : this.economy.player1);
-          econ.gold += goldEarned;
-          const myEntity = this.characters.get(char.id);
-          if (myEntity) myEntity.showGoldEarned(goldEarned);
-          this.addCommandLog('System', `${char.name} mined ${goldEarned}g`, 'activity');
-          // If mine still has gold, keep mining (re-start channel)
-          if (mine.currentGold > 0 && char.currentOrder?.type === 'mine') {
-            this.startChannel(char, 'mine');
-            return; // don't clear order
-          } else if (mine.currentGold <= 0) {
-            this.triggerBark(char, 'mine_depleted');
-            this.showAnnouncement(`${mine.name} depleted!`, '#FF9F43');
-          }
+
+      case 'defend':
+        // Stay put, attack nearby enemies (handled in resolveCombat)
+        break;
+
+      case 'retreat': {
+        const ownBase = hero.team === 'player1' ? this.state.bases.player1 : this.state.bases.player2;
+        if (hero.path.length === 0) {
+          hero.path = findPath(this.gameMap.tiles, hero.position, ownBase.position, 100);
+          if (hero.path.length === 0) hero.currentOrder = null;
         }
         break;
       }
-      case 'build_tower': {
-        // Build a tower at the nearest tower site
-        const site = this.towerSites.find(s =>
-          s.occupied && this.tileDist(char.position, s.position) <= 1
-        );
-        if (site) {
-          const tower: Tower = {
-            id: `tower_${Date.now()}`,
-            position: { ...site.position },
-            owner: char.owner === this.playerId
-              ? (this.isHost ? 'player1' : 'player2')
-              : (this.isHost ? 'player2' : 'player1'),
-            hp: TOWER_HP,
-            maxHp: TOWER_HP,
-            damage: TOWER_DPS,
-            range: TOWER_RANGE,
-          };
-          this.towers.push(tower);
-          this.addCommandLog('System', `${char.name} built a tower!`, 'activity');
-          this.showAnnouncement('TOWER BUILT!', '#6CC4FF');
-        }
+
+      case 'hold':
+        // Do nothing
         break;
+    }
+  }
+
+  // ─── COMBAT ──────────────────────────────────────────────
+
+  private heroAttackCamp(hero: Hero, camp: Camp) {
+    hero.attackCooldown--;
+    if (hero.attackCooldown > 0) return;
+    hero.attackCooldown = 2; // Every 2 game ticks
+
+    // Attack alive guards
+    const aliveGuards = camp.guards.filter(g => !g.isDead);
+    if (aliveGuards.length === 0) {
+      // Camp captured!
+      this.captureCamp(hero, camp);
+      return;
+    }
+
+    // Hero attacks first alive guard
+    const guard = aliveGuards[0];
+    const dmg = Math.max(1, hero.attack - guard.defense);
+    guard.hp -= dmg;
+    if (guard.hp <= 0) {
+      guard.isDead = true;
+      // Check if all guards dead
+      if (camp.guards.every(g => g.isDead)) {
+        this.captureCamp(hero, camp);
+      }
+    }
+
+    // Guards attack hero back
+    for (const g of aliveGuards) {
+      if (g.isDead) continue;
+      const guardDmg = Math.max(1, g.attack - hero.defense);
+      hero.currentHp -= guardDmg;
+      const entity = this.heroEntities.get(hero.id);
+      if (entity) entity.showDamage(guardDmg);
+      if (hero.currentHp <= 0) {
+        this.killHero(hero);
+        return;
+      }
+    }
+
+    // Army units also attack guards
+    const armyUnits = this.state.units.filter(u => u.ownerId === hero.id && !u.isDead);
+    for (const unit of armyUnits) {
+      if (aliveGuards.every(g => g.isDead)) break;
+      const alive = aliveGuards.find(g => !g.isDead);
+      if (!alive) break;
+      const unitDmg = Math.max(1, unit.attack - alive.defense);
+      alive.hp -= unitDmg;
+      if (alive.hp <= 0) alive.isDead = true;
+    }
+
+    if (camp.guards.every(g => g.isDead)) {
+      this.captureCamp(hero, camp);
+    }
+  }
+
+  private captureCamp(hero: Hero, camp: Camp) {
+    camp.capturedBy = hero.id;
+    camp.capturedTeam = hero.team;
+    camp.spawnTimer = camp.spawnRate;
+
+    const entity = this.heroEntities.get(hero.id);
+    const bark = getBark('camp_captured');
+    if (bark && entity) entity.showBark(bark);
+  }
+
+  private heroAttackStructure(hero: Hero, structure: Structure) {
+    hero.attackCooldown--;
+    if (hero.attackCooldown > 0) return;
+    hero.attackCooldown = 2;
+
+    const dmg = Math.max(1, hero.attack);
+    structure.hp -= dmg;
+
+    // Army also attacks
+    const army = this.state.units.filter(u => u.ownerId === hero.id && !u.isDead);
+    for (const unit of army) {
+      const unitDmg = Math.max(1, unit.attack);
+      structure.hp -= unitDmg;
+    }
+
+    if (structure.hp <= 0) {
+      structure.hp = 0;
+      structure.destroyedBy = hero.team;
+      // Grant upgrade
+      this.grantUpgrade(hero.team, structure.upgradeType);
+    }
+  }
+
+  private heroAttackHero(attacker: Hero, defender: Hero) {
+    attacker.attackCooldown--;
+    if (attacker.attackCooldown > 0) return;
+    attacker.attackCooldown = 2;
+
+    const dmg = Math.max(1, attacker.attack - defender.defense);
+    defender.currentHp -= dmg;
+
+    const defEntity = this.heroEntities.get(defender.id);
+    if (defEntity) defEntity.showDamage(dmg);
+
+    if (defender.currentHp <= 0) {
+      this.killHero(defender);
+    }
+  }
+
+  private heroAttackBase(hero: Hero, base: Base) {
+    hero.attackCooldown--;
+    if (hero.attackCooldown > 0) return;
+    hero.attackCooldown = 2;
+
+    const dmg = Math.max(1, hero.attack);
+    base.hp -= dmg;
+
+    // Army also attacks base
+    const army = this.state.units.filter(u => u.ownerId === hero.id && !u.isDead);
+    for (const unit of army) {
+      const unitDmg = Math.max(1, unit.attack);
+      base.hp -= unitDmg;
+    }
+
+    if (base.hp <= 0) base.hp = 0;
+  }
+
+  private structureAttackTick() {
+    for (const structure of this.state.structures) {
+      if (structure.hp <= 0) continue;
+      structure.attackCooldown--;
+      if (structure.attackCooldown > 0) continue;
+      structure.attackCooldown = 2;
+
+      // Find nearest enemy hero or unit in range
+      for (const heroId of Object.keys(this.state.heroes)) {
+        const hero = this.state.heroes[heroId];
+        if (hero.isDead) continue;
+        const dist = this.tileDist(structure.position, hero.position);
+        if (dist <= structure.range) {
+          const dmg = Math.max(1, structure.attack - hero.defense);
+          hero.currentHp -= dmg;
+          const entity = this.heroEntities.get(heroId);
+          if (entity) entity.showDamage(dmg);
+          if (hero.currentHp <= 0) this.killHero(hero);
+          break; // Only attack one target per tick
+        }
       }
     }
   }
 
-  private startChannel(char: Character, type: 'scout' | 'loot' | 'build' | 'trap' | 'upgrade_cp' | 'mine' | 'build_tower') {
-    char.channelActivity = {
-      type,
-      ticksRemaining: this.getChannelTotal(type),
-      position: { ...char.position },
-    };
-    char.path = []; // stop moving
-    const entity = this.characters.get(char.id);
-    if (entity) entity.setOrderText(`${type.toUpperCase()} 0%`);
-  }
+  private resolveCombat() {
+    // Hero auto-attack nearby enemies (for defend order or close combat)
+    for (const heroId of Object.keys(this.state.heroes)) {
+      const hero = this.state.heroes[heroId];
+      if (hero.isDead) continue;
 
-  // ─── BARRICADES & TRAPS ───────────────────────────────────────
-
-  private createBarricadeSprite(b: Barricade) {
-    const px = b.position.x * TILE_SIZE + TILE_SIZE / 2;
-    const py = b.position.y * TILE_SIZE + TILE_SIZE / 2;
-    const sprite = this.add.sprite(px, py, 'barricade').setDepth(8);
-    this.barricadeSprites.set(b.id, sprite);
-  }
-
-  private createTrapSprite(t: Trap) {
-    const px = t.position.x * TILE_SIZE + TILE_SIZE / 2;
-    const py = t.position.y * TILE_SIZE + TILE_SIZE / 2;
-    const sprite = this.add.sprite(px, py, 'trap').setDepth(3).setAlpha(0.4);
-    // Only visible to the trap owner
-    if (t.owner !== this.playerId) sprite.setVisible(false);
-    this.trapSprites.set(t.id, sprite);
-  }
-
-  private updateBarricadesAndTraps() {
-    // Barricade decay
-    for (let i = this.barricades.length - 1; i >= 0; i--) {
-      const b = this.barricades[i];
-      if (b.hp <= 0 || b.decayTimer <= 0) {
-        const spr = this.barricadeSprites.get(b.id);
-        if (spr) { spr.destroy(); this.barricadeSprites.delete(b.id); }
-        this.barricades.splice(i, 1);
-      }
-    }
-
-    // Trap triggers
-    this.charData.forEach(char => {
-      if (char.isDead) return;
-      for (let i = this.traps.length - 1; i >= 0; i--) {
-        const trap = this.traps[i];
-        if (trap.owner === char.owner) continue; // don't trigger own traps
-        if (char.position.x === trap.position.x && char.position.y === trap.position.y) {
-          // Trigger!
-          char.currentHp = Math.max(0, char.currentHp - trap.damage);
-          char.effects.push({ type: 'stun', duration: trap.stunDuration, value: 1 });
-          const entity = this.characters.get(char.id);
-          if (entity) {
-            entity.showDamage(trap.damage);
-            entity.setOrderText('TRAPPED!');
+      // Auto-attack nearby enemy heroes
+      for (const eId of Object.keys(this.state.heroes)) {
+        const enemy = this.state.heroes[eId];
+        if (enemy.team === hero.team || enemy.isDead) continue;
+        const dist = this.tileDist(hero.position, enemy.position);
+        if (dist <= hero.range) {
+          hero.attackCooldown--;
+          if (hero.attackCooldown <= 0) {
+            hero.attackCooldown = 2;
+            const dmg = Math.max(1, hero.attack - enemy.defense);
+            enemy.currentHp -= dmg;
+            const entity = this.heroEntities.get(eId);
+            if (entity) entity.showDamage(dmg);
+            if (enemy.currentHp <= 0) this.killHero(enemy);
           }
-          this.addCommandLog('System', `${char.name} triggered a trap! (-${trap.damage} HP, stunned ${trap.stunDuration}s)`, 'trap');
-          if (char.currentHp <= 0) this.killCharacter(char);
-          // Remove trap
-          const spr = this.trapSprites.get(trap.id);
-          if (spr) { spr.destroy(); this.trapSprites.delete(trap.id); }
-          this.traps.splice(i, 1);
           break;
         }
       }
-    });
-  }
-
-  private tickBarricadeDecay() {
-    for (const b of this.barricades) {
-      b.decayTimer--;
     }
   }
 
-  // Returns true if position is blocked by a barricade
-  private isBarricadeAt(pos: Position): boolean {
-    return this.barricades.some(b => b.position.x === pos.x && b.position.y === pos.y && b.hp > 0);
-  }
+  // ─── UNIT AI ─────────────────────────────────────────────
 
-  // ─── LEVELING / XP ───────────────────────────────────────────
+  private unitAI() {
+    for (const unit of this.state.units) {
+      if (unit.isDead) continue;
 
-  private grantXP(char: Character, amount: number) {
-    if (char.level >= 5) return; // max level
-    char.xp += amount;
-
-    const nextThreshold = XP_THRESHOLDS[char.level] ?? Infinity;
-    if (char.xp >= nextThreshold) {
-      char.level++;
-      this.applyLevelStats(char);
-      const entity = this.characters.get(char.id);
-      if (entity) {
-        this.showLevelUpVFX(entity);
+      const owner = this.state.heroes[unit.ownerId];
+      if (!owner || owner.isDead) {
+        unit.behavior = 'hold';
+        continue;
       }
-      this.addCommandLog('System', `${char.name} reached LEVEL ${char.level}!`, 'levelup');
-      this.showAnnouncement(`${char.name} LEVEL UP! (Lv.${char.level})`, '#FFD93D');
-    }
-  }
 
-  private applyLevelStats(char: Character) {
-    const bonus = 1 + (char.level - 1) * LEVEL_STAT_BONUS;
-    char.stats = {
-      hp: Math.round(char.baseStats.hp * bonus),
-      attack: Math.round(char.baseStats.attack * bonus),
-      defense: Math.round(char.baseStats.defense * bonus),
-      speed: Math.round(char.baseStats.speed * bonus),
-      range: char.baseStats.range, // range doesn't scale
-      magic: Math.round(char.baseStats.magic * bonus),
-    };
-    // Heal the HP difference from level up
-    const hpGain = char.stats.hp - char.baseStats.hp * (1 + (char.level - 2) * LEVEL_STAT_BONUS);
-    if (hpGain > 0) char.currentHp = Math.min(char.stats.hp, char.currentHp + Math.round(hpGain));
-  }
-
-  private showLevelUpVFX(entity: CharacterEntity) {
-    // Golden burst
-    const burst = this.add.circle(entity.sprite.x, entity.sprite.y, 4, 0xFFD93D, 0.8).setDepth(25);
-    this.tweens.add({
-      targets: burst,
-      scaleX: 4, scaleY: 4, alpha: 0,
-      duration: 500, ease: 'Cubic.easeOut',
-      onComplete: () => burst.destroy(),
-    });
-    // Stars
-    for (let i = 0; i < 6; i++) {
-      const angle = (Math.PI * 2 / 6) * i;
-      const star = this.add.text(
-        entity.sprite.x + Math.cos(angle) * 4,
-        entity.sprite.y + Math.sin(angle) * 4,
-        '\u2B50', { fontSize: '10px' }
-      ).setOrigin(0.5).setDepth(25);
-      this.tweens.add({
-        targets: star,
-        x: star.x + Math.cos(angle) * 20,
-        y: star.y + Math.sin(angle) * 20,
-        alpha: 0,
-        duration: 600, delay: 100,
-        onComplete: () => star.destroy(),
-      });
-    }
-  }
-
-  // ─── CONSUMABLE USE ───────────────────────────────────────────
-
-  private useConsumable(char: Character, itemId: ConsumableId) {
-    const idx = char.inventory.indexOf(itemId);
-    if (idx === -1) {
-      this.addCommandLog('System', `${char.name} doesn't have ${CONSUMABLES[itemId].name}!`, 'warning');
-      return;
-    }
-    char.inventory.splice(idx, 1);
-    const def = CONSUMABLES[itemId];
-    const entity = this.characters.get(char.id);
-
-    switch (itemId) {
-      case 'siege_bomb': {
-        // 40 AOE damage in 2-tile radius around character
-        this.charData.forEach(target => {
-          if (target.owner === char.owner || target.isDead) return;
-          if (this.tileDist(char.position, target.position) <= 2) {
-            target.currentHp = Math.max(0, target.currentHp - 40);
-            const te = this.characters.get(target.id);
-            if (te) te.showDamage(40);
-            if (target.currentHp <= 0) this.killCharacter(target);
-          }
-        });
-        // VFX: explosion
-        if (entity) {
-          const exp = this.add.circle(entity.sprite.x, entity.sprite.y, 8, 0xFF6B00, 0.8).setDepth(25);
-          this.tweens.add({ targets: exp, scaleX: 5, scaleY: 5, alpha: 0, duration: 400, onComplete: () => exp.destroy() });
+      // Find nearby enemies
+      let closestEnemy: Hero | null = null;
+      let closestDist = Infinity;
+      for (const heroId of Object.keys(this.state.heroes)) {
+        const enemy = this.state.heroes[heroId];
+        if (enemy.team === unit.team || enemy.isDead) continue;
+        const dist = this.tileDist(unit.position, enemy.position);
+        if (dist < closestDist && dist <= unit.range + 2) {
+          closestDist = dist;
+          closestEnemy = enemy;
         }
-        break;
       }
-      case 'smoke_bomb': {
-        this.smokeClouds.push({
-          position: { ...char.position },
-          radius: 3,
-          owner: char.owner,
-          expiresAt: Date.now() + 8000,
-        });
-        break;
-      }
-      case 'battle_horn': {
-        // All allies +30% damage for 12s
-        this.charData.forEach(ally => {
-          if (ally.owner === char.owner && !ally.isDead) {
-            ally.effects.push({ type: 'damage_boost', duration: 12, value: 1.3 });
-          }
-        });
-        this.showAnnouncement('BATTLE HORN! +30% DMG', '#FF9F43');
-        break;
-      }
-      case 'haste_elixir': {
-        char.effects.push({ type: 'speed_boost', duration: 15, value: 2 });
-        break;
-      }
-      case 'iron_skin': {
-        char.effects.push({ type: 'iron_skin', duration: 20, value: 1.4 });
-        break;
-      }
-      case 'vision_flare': {
-        this.visionFlareUntil = Date.now() + 10000;
-        this.showAnnouncement('VISION FLARE! Map revealed!', '#FFD93D');
-        break;
-      }
-      case 'rally_banner': {
-        this.charData.forEach(ally => {
-          if (ally.owner === char.owner && ally.isDead && (ally.respawnTimer ?? 0) > 8) {
-            ally.respawnTimer = Math.max(1, (ally.respawnTimer ?? 0) - 8);
-          }
-        });
-        this.showAnnouncement('RALLY! Respawns accelerated!', '#45E6B0');
-        break;
-      }
-      case 'purge_scroll': {
-        // Destroy enemy barricades within 5 tiles
-        for (let i = this.barricades.length - 1; i >= 0; i--) {
-          const b = this.barricades[i];
-          if (b.owner !== char.owner && this.tileDist(char.position, b.position) <= 5) {
-            const spr = this.barricadeSprites.get(b.id);
-            if (spr) { spr.destroy(); this.barricadeSprites.delete(b.id); }
-            this.barricades.splice(i, 1);
-          }
+
+      if (closestEnemy && closestDist <= unit.range) {
+        // Attack!
+        unit.attackCooldown--;
+        if (unit.attackCooldown <= 0) {
+          const def = UNIT_DEFS[unit.type];
+          unit.attackCooldown = Math.ceil(def.attackInterval / TICK_RATE);
+
+          const dmg = Math.max(1, unit.attack - closestEnemy.defense);
+          closestEnemy.currentHp -= dmg;
+          const entity = this.heroEntities.get(closestEnemy.id);
+          if (entity) entity.showDamage(dmg);
+          if (closestEnemy.currentHp <= 0) this.killHero(closestEnemy);
         }
-        this.showAnnouncement('PURGE! Enemy barricades destroyed!', '#C98FFF');
-        break;
+      } else {
+        // Follow owner
+        unit.behavior = 'follow';
+      }
+
+      // Unit-on-unit combat
+      for (const other of this.state.units) {
+        if (other.isDead || other.team === unit.team) continue;
+        const dist = this.tileDist(unit.position, other.position);
+        if (dist <= unit.range) {
+          unit.attackCooldown--;
+          if (unit.attackCooldown <= 0) {
+            const def = UNIT_DEFS[unit.type];
+            unit.attackCooldown = Math.ceil(def.attackInterval / TICK_RATE);
+
+            const counterMult = getCounterMultiplier(def.tags, UNIT_DEFS[other.type].tags);
+            const dmg = Math.max(1, Math.round((unit.attack - other.defense) * counterMult));
+            other.currentHp -= dmg;
+            if (other.currentHp <= 0) {
+              other.isDead = true;
+            }
+          }
+          break; // Only fight one enemy unit per tick
+        }
+      }
+    }
+  }
+
+  // ─── SPAWNING ────────────────────────────────────────────
+
+  private spawnUnitsFromCamps() {
+    for (const camp of this.state.camps) {
+      if (!camp.capturedBy || !camp.capturedTeam) continue;
+
+      const owner = this.state.heroes[camp.capturedBy];
+      if (!owner) continue;
+
+      // Check if owner is dead - units hold but don't spawn
+      if (owner.isDead) continue;
+
+      camp.spawnTimer--;
+      if (camp.spawnTimer > 0) continue;
+
+      // Check unit limits
+      const totalUnits = this.state.units.filter(u => !u.isDead).length;
+      const heroUnits = this.state.units.filter(u => u.ownerId === owner.id && !u.isDead).length;
+      if (totalUnits >= MAX_UNITS || heroUnits >= MAX_UNITS_PER_HERO) {
+        camp.spawnTimer = camp.spawnRate;
+        continue;
+      }
+
+      // Calculate spawn rate with passives and upgrades
+      let spawnRate = camp.spawnRate;
+      if (owner.passive === 'rally_leader') spawnRate = Math.round(spawnRate * 0.8);
+      if (owner.upgrades.includes('rapid_reinforcements')) spawnRate = Math.round(spawnRate * 0.5);
+      camp.spawnTimer = spawnRate;
+
+      // Create unit
+      const def = UNIT_DEFS[camp.animalType];
+      let hpBonus = 0;
+      let atkBonus = 0;
+      if (owner.passive === 'iron_will') hpBonus += 0.15;
+      if (owner.upgrades.includes('hardened_hides')) hpBonus += 0.30;
+      if (owner.upgrades.includes('savage_strikes')) atkBonus += 0.25;
+
+      const stats = getScaledUnitStats(def, camp.scalingFactor, hpBonus, atkBonus);
+
+      const unit: AnimalUnit = {
+        id: `unit_${this.unitIdCounter++}`,
+        type: camp.animalType,
+        ownerId: owner.id,
+        team: owner.team,
+        currentHp: stats.maxHp,
+        maxHp: stats.maxHp,
+        attack: stats.attack,
+        defense: stats.defense,
+        speed: stats.speed,
+        range: stats.range,
+        position: { ...camp.position },
+        isDead: false,
+        behavior: 'follow',
+        attackCooldown: 0,
+        specialTimer: 0,
+        campId: camp.id,
+      };
+
+      // Mystic missiles upgrade: melee units gain ranged attack
+      if (owner.upgrades.includes('mystic_missiles') && unit.range <= 1) {
+        unit.range = 3;
+      }
+
+      this.state.units.push(unit);
+
+      // Create entity
+      const entity = new FollowerEntity(this, unit);
+      this.unitEntities.set(unit.id, entity);
+    }
+  }
+
+  // ─── HERO DEATH & RESPAWN ────────────────────────────────
+
+  private killHero(hero: Hero) {
+    hero.isDead = true;
+    hero.currentHp = 0;
+    hero.path = [];
+    hero.currentOrder = null;
+
+    // Comeback mechanic: losing team respawns faster
+    const p1BaseHp = this.state.bases.player1.hp;
+    const p2BaseHp = this.state.bases.player2.hp;
+    let respawnTime = HERO_RESPAWN_BASE;
+    if ((hero.team === 'player1' && p1BaseHp < p2BaseHp) ||
+      (hero.team === 'player2' && p2BaseHp < p1BaseHp)) {
+      respawnTime -= HERO_RESPAWN_COMEBACK_BONUS;
+    }
+    hero.respawnTimer = Math.max(5, respawnTime);
+
+    // Units hold position
+    for (const unit of this.state.units) {
+      if (unit.ownerId === hero.id && !unit.isDead) {
+        unit.behavior = 'hold';
       }
     }
 
-    this.addCommandLog('System', `${char.name} used ${def.icon} ${def.name}!`, 'item');
+    const entity = this.heroEntities.get(hero.id);
+    if (entity) entity.showRespawning(hero.respawnTimer);
   }
 
-  // ─── FOG OF WAR ─────────────────────────────────────────────────
+  private respawnHero(hero: Hero) {
+    hero.isDead = false;
+    hero.respawnTimer = 0;
+    hero.currentHp = hero.maxHp;
+    hero.attackCooldown = 0;
 
-  private initFogOfWar() {
-    this.fogLayer = this.add.graphics();
-    this.fogLayer.setDepth(50);
-    this.updateFogOfWar();
+    // Respawn at base
+    const base = hero.team === 'player1' ? this.state.bases.player1 : this.state.bases.player2;
+    hero.position = { ...base.position };
+
+    const entity = this.heroEntities.get(hero.id);
+    if (entity) {
+      entity.hideRespawn();
+      entity.snapToPosition();
+      entity.updateFromState(hero);
+    }
+
+    // Resume unit following
+    for (const unit of this.state.units) {
+      if (unit.ownerId === hero.id && !unit.isDead) {
+        unit.behavior = 'follow';
+      }
+    }
   }
+
+  // ─── UPGRADES ────────────────────────────────────────────
+
+  private grantUpgrade(team: 'player1' | 'player2', upgradeType: UpgradeType) {
+    for (const heroId of Object.keys(this.state.heroes)) {
+      const hero = this.state.heroes[heroId];
+      if (hero.team !== team) continue;
+      if (!hero.upgrades.includes(upgradeType)) {
+        hero.upgrades.push(upgradeType);
+      }
+    }
+
+    // Apply retroactively to existing units
+    if (upgradeType === 'hardened_hides') {
+      for (const unit of this.state.units) {
+        if (unit.team === team && !unit.isDead) {
+          const bonus = Math.round(unit.maxHp * 0.30);
+          unit.maxHp += bonus;
+          unit.currentHp += bonus;
+        }
+      }
+    }
+    if (upgradeType === 'savage_strikes') {
+      for (const unit of this.state.units) {
+        if (unit.team === team && !unit.isDead) {
+          unit.attack = Math.round(unit.attack * 1.25);
+        }
+      }
+    }
+    if (upgradeType === 'mystic_missiles') {
+      for (const unit of this.state.units) {
+        if (unit.team === team && !unit.isDead && unit.range <= 1) {
+          unit.range = 3;
+        }
+      }
+    }
+  }
+
+  // ─── AI (PLAYER 2) ──────────────────────────────────────
+
+  private runAI() {
+    const p2Heroes = Object.values(this.state.heroes).filter(h => h.team === 'player2');
+    const p1Heroes = Object.values(this.state.heroes).filter(h => h.team === 'player1');
+
+    for (const hero of p2Heroes) {
+      if (hero.isDead) continue;
+      // Only reconsider order if idle or no current order
+      if (hero.currentOrder && hero.path.length > 0) continue;
+
+      const ctx: GambitContext = {
+        hero,
+        allies: p2Heroes.filter(h => h.id !== hero.id),
+        enemies: p1Heroes,
+        camps: this.state.camps,
+        structures: this.state.structures,
+        units: this.state.units,
+        enemyBasePos: this.state.bases.player1.position,
+        ownBasePos: this.state.bases.player2.position,
+        gameTime: this.state.meta.gameTime,
+      };
+
+      const order = getGambitOrder(ctx);
+      if (order) {
+        this.issueOrder(hero.id, order);
+      }
+    }
+  }
+
+  // ─── FOG OF WAR ──────────────────────────────────────────
 
   private updateFogOfWar() {
     this.visibleTiles.clear();
 
-    // Vision flare: reveal everything
-    const now = Date.now();
-    if (this.visionFlareUntil > now) {
-      for (let y = 0; y < MAP_HEIGHT; y++) {
-        for (let x = 0; x < MAP_WIDTH; x++) {
-          this.visibleTiles.add(`${x},${y}`);
-        }
-      }
-    } else {
-      // Normal character vision
-      this.charData.forEach((char) => {
-        if (char.owner !== this.playerId || char.isDead) return;
-        const vision = char.visionRange ?? BASE_VISION;
-        const cx = char.position.x;
-        const cy = char.position.y;
+    // Vision from my heroes
+    const myHeroes = Object.values(this.state.heroes).filter(h => h.team === this.myTeam && !h.isDead);
+    for (const hero of myHeroes) {
+      this.revealArea(hero.position, hero.visionRange);
+    }
 
-        for (let dy = -vision; dy <= vision; dy++) {
-          for (let dx = -vision; dx <= vision; dx++) {
-            if (dx * dx + dy * dy > vision * vision) continue;
-            const tx = cx + dx;
-            const ty = cy + dy;
-            if (tx < 0 || tx >= MAP_WIDTH || ty < 0 || ty >= MAP_HEIGHT) continue;
-            if (this.hasLineOfSight(cx, cy, tx, ty)) {
-              this.visibleTiles.add(`${tx},${ty}`);
-            }
-          }
-        }
-      });
-
-      // Lookout vision zones
-      this.lookoutVisionZones = this.lookoutVisionZones.filter(z => z.expiresAt > now);
-      for (const zone of this.lookoutVisionZones) {
-        for (let dy = -zone.radius; dy <= zone.radius; dy++) {
-          for (let dx = -zone.radius; dx <= zone.radius; dx++) {
-            if (dx * dx + dy * dy > zone.radius * zone.radius) continue;
-            const tx = zone.center.x + dx;
-            const ty = zone.center.y + dy;
-            if (tx >= 0 && tx < MAP_WIDTH && ty >= 0 && ty < MAP_HEIGHT) {
-              this.visibleTiles.add(`${tx},${ty}`);
-            }
-          }
-        }
+    // Vision from my captured camps
+    for (const camp of this.state.camps) {
+      if (camp.capturedTeam === this.myTeam) {
+        this.revealArea(camp.position, camp.visionRange);
       }
     }
 
-    // Draw fog overlay — all tiles always visible, 30% darkness on non-visible
+    // Vision from my units
+    for (const unit of this.state.units) {
+      if (unit.team === this.myTeam && !unit.isDead) {
+        this.revealArea(unit.position, 4);
+      }
+    }
+
+    // Apply fog
     this.fogLayer.clear();
+    this.fogLayer.fillStyle(0x0D0A18, 0.6);
+
     for (let y = 0; y < MAP_HEIGHT; y++) {
       for (let x = 0; x < MAP_WIDTH; x++) {
-        const key = `${x},${y}`;
-
-        if (this.tileSprites[y]?.[x]) {
-          this.tileSprites[y][x].setTexture(`tile_${this.gameMap.tiles[y][x]}`);
-          this.tileSprites[y][x].setVisible(true);
-        }
-
-        if (!this.visibleTiles.has(key)) {
-          this.fogLayer.fillStyle(0x000000, 0.30);
+        if (!this.visibleTiles.has(`${x},${y}`)) {
           this.fogLayer.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
         }
       }
     }
 
-    // Enemy visibility — only show if currently visible (not in remembered/hazy)
-    this.characters.forEach((entity, id) => {
-      const char = this.charData.get(id);
-      if (!char || char.owner === this.playerId) return;
-      const key = `${char.position.x},${char.position.y}`;
-      let visible = this.visibleTiles.has(key);
-      // Bush concealment: enemies on bush tiles are invisible unless a friendly is within 1 tile
-      if (visible && this.gameMap.tiles[char.position.y]?.[char.position.x] === 'bush') {
-        const friendlyNearby = Array.from(this.charData.values()).some(f =>
-          f.owner === this.playerId && !f.isDead &&
-          Math.abs(f.position.x - char.position.x) + Math.abs(f.position.y - char.position.y) <= 1
-        );
-        if (!friendlyNearby) visible = false;
+    // Set entity visibility
+    for (const [heroId, entity] of this.heroEntities) {
+      const hero = this.state.heroes[heroId];
+      if (hero.team === this.myTeam) {
+        entity.setFogVisible(true);
+      } else {
+        const key = `${hero.position.x},${hero.position.y}`;
+        entity.setFogVisible(this.visibleTiles.has(key));
       }
-      // Bark: enemy spotted when first becoming visible
-      if (visible && !entity.fogVisible && !char.isDead) {
-        const nearestAlly = Array.from(this.charData.values())
-          .filter(c => c.owner === this.playerId && !c.isDead)
-          .sort((a, b) =>
-            this.tileDist(a.position, char.position) - this.tileDist(b.position, char.position)
-          )[0];
-        if (nearestAlly) {
-          this.triggerBark(nearestAlly, 'enemy_spotted');
+    }
+
+    for (const [unitId, entity] of this.unitEntities) {
+      const unit = this.state.units.find(u => u.id === unitId);
+      if (!unit) continue;
+      if (unit.team === this.myTeam) {
+        entity.setFogVisible(true);
+      } else {
+        const key = `${unit.position.x},${unit.position.y}`;
+        entity.setFogVisible(this.visibleTiles.has(key));
+      }
+    }
+  }
+
+  private revealArea(center: Position, radius: number) {
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        if (dx * dx + dy * dy > radius * radius) continue;
+        const x = center.x + dx;
+        const y = center.y + dy;
+        if (x >= 0 && x < MAP_WIDTH && y >= 0 && y < MAP_HEIGHT) {
+          this.visibleTiles.add(`${x},${y}`);
         }
       }
-      entity.setFogVisible(visible);
-    });
-
-    // Hide pickups in fog — only show if currently visible
-    for (const pickup of this.pickups) {
-      if (!pickup.active) continue;
-      const key = `${pickup.position.x},${pickup.position.y}`;
-      const visible = this.visibleTiles.has(key);
-      if (pickup.sprite) pickup.sprite.setVisible(visible);
-      if (pickup.label) pickup.label.setVisible(visible);
     }
   }
 
+  // ─── ENTITY SYNC ────────────────────────────────────────
 
-  private hasLineOfSight(x1: number, y1: number, x2: number, y2: number): boolean {
-    const dx = Math.abs(x2 - x1);
-    const dy = Math.abs(y2 - y1);
-    const sx = x1 < x2 ? 1 : -1;
-    const sy = y1 < y2 ? 1 : -1;
-    let err = dx - dy;
-    let cx = x1, cy = y1;
+  private syncEntities() {
+    // Update hero entities from state
+    for (const [heroId, entity] of this.heroEntities) {
+      const hero = this.state.heroes[heroId];
+      entity.updateFromState(hero);
 
-    while (cx !== x2 || cy !== y2) {
-      const e2 = 2 * err;
-      if (e2 > -dy) { err -= dy; cx += sx; }
-      if (e2 < dx) { err += dx; cy += sy; }
-      if (cx === x2 && cy === y2) break;
-      if (cx >= 0 && cx < MAP_WIDTH && cy >= 0 && cy < MAP_HEIGHT) {
-        const t = this.gameMap.tiles[cy][cx];
-        if (t === 'rock' || t === 'ruins' || t === 'gate_closed') return false;
+      if (hero.isDead) {
+        entity.showRespawning(hero.respawnTimer);
       }
     }
-    return true;
+
+    // Update unit entities
+    for (const [unitId, entity] of this.unitEntities) {
+      const unit = this.state.units.find(u => u.id === unitId);
+      if (unit && !unit.isDead) {
+        entity.updateHp(unit.currentHp, unit.maxHp);
+      }
+    }
   }
 
-  // ─── GAME LOOP ──────────────────────────────────────────────────
-
-  private startGameLoop() {
-    this.secondTimer = this.time.addEvent({
-      delay: 1000,
-      callback: () => this.onSecondTick(),
-      loop: true,
-    });
-
-    this.gameTickTimer = this.time.addEvent({
-      delay: TICK_RATE,
-      callback: () => this.onGameTick(),
-      loop: true,
-    });
-
-    this.moveTickTimer = this.time.addEvent({
-      delay: MOVE_TICK,
-      callback: () => this.onMoveTick(),
-      loop: true,
-    });
+  private cleanupDeadUnits() {
+    const deadUnits = this.state.units.filter(u => u.isDead);
+    for (const dead of deadUnits) {
+      const entity = this.unitEntities.get(dead.id);
+      if (entity) {
+        entity.destroy();
+        this.unitEntities.delete(dead.id);
+      }
+    }
+    this.state.units = this.state.units.filter(u => !u.isDead);
   }
 
-  private onSecondTick() {
+  // ─── WIN CONDITION ───────────────────────────────────────
+
+  private checkWinCondition() {
     if (this.gameOver) return;
 
-    this.gameTimeRemaining--;
-    this.elapsedSeconds++;
-    this.updateTimerDisplay();
-    this.updateGamePhase();
-
-    // Economy: passive income + mining
-    this.tickEconomy();
-
-    // Respawn timers
-    this.charData.forEach((char, id) => {
-      if (char.isDead && (char.respawnTimer ?? 0) > 0) {
-        char.respawnTimer = (char.respawnTimer ?? 0) - 1;
-        const entity = this.characters.get(id);
-        if (entity) entity.showRespawning(char.respawnTimer!);
-        if (char.respawnTimer! <= 0) this.respawnCharacter(char);
-      }
-    });
-
-    // Morale decay: heroes ignored while hurt get morale down
-    this.tickMorale();
-    this.tickGambitAI();
-
-    this.tickCooldowns();
-    this.tickPOIRespawns();
-    this.tickBarricadeDecay();
-
-    // Tick pickup respawns
-    for (const pickup of this.pickups) {
-      if (!pickup.active && pickup.respawnTimer > 0) {
-        pickup.respawnTimer--;
-        if (pickup.respawnTimer <= 0) {
-          pickup.active = true;
-          if (pickup.sprite) pickup.sprite.setVisible(true);
-          if (pickup.label) pickup.label.setVisible(true);
-        }
-      }
-    }
-
-    // Domination: score points for owned control points each second
-    this.tickDominationScoring();
-
-    if (this.gameTimeRemaining <= 0) {
-      const winner = this.domScore1 > this.domScore2 ? this.playerId
-        : this.domScore2 > this.domScore1 ? this.opponentId
-        : this.getHpLeader();
-      this.endGame(winner, 'time_up');
-    }
-  }
-
-  private onGameTick() {
-    if (this.gameOver) return;
-
-    this.charData.forEach((char) => {
-      if (char.isDead) return;
-
-      // Check stun - skip actions
-      if (char.effects.some(e => e.type === 'stun')) {
-        const entity = this.characters.get(char.id);
-        if (entity) entity.setOrderText('STUNNED');
-        return;
-      }
-
-      // Pop from order queue if no current order
-      if (!char.currentOrder) {
-        const queue = this.orderQueues.get(char.id);
-        if (queue && queue.length > 0) {
-          char.currentOrder = queue.shift()!;
-          char.path = [];
-          const entity = this.characters.get(char.id);
-          if (entity) entity.setOrderText(this.getOrderLabel(char.currentOrder));
-        }
-      }
-
-      this.executeAutoActions(char);
-    });
-
-    this.checkPickupCollisions();
-    this.updatePOIs();
-    this.updateChanneling();
-    this.updateBarricadesAndTraps();
-    this.updateControlPoints();
-    this.updateFogOfWar();
-
-    this.characters.forEach((entity, id) => {
-      const data = this.charData.get(id);
-      if (data) {
-        entity.updateFromState(data);
-        entity.updateEffectAuras(data.effects);
-      }
-    });
-
-    this.renderPaths();
-    this.updateCharViewports();
-    this.updateStatusBar();
-    this.updateAbilityPanel();
-
-    // Host pushes state to Firebase for the guest
-    if (!this.isLocal && this.isHost) {
-      this.pushSyncState();
-    }
-  }
-
-  private onMoveTick() {
-    if (this.gameOver) return;
-
-    this.charData.forEach((char, id) => {
-      if (char.isDead) return;
-      // Skip movement if stunned
-      if (char.effects.some(e => e.type === 'stun')) return;
-      // Slow effect: skip every other move tick
-      if (char.effects.some(e => e.type === 'slow')) {
-        if (Math.random() < 0.5) return; // 50% chance to skip
-      }
-      // Track tile changes for forest ambush reset
-      const tileKey = `${char.position.x},${char.position.y}`;
-      const prevTile = this.lastCharTile.get(id);
-      if (prevTile && prevTile !== tileKey) {
-        this.forestAmbushUsed.delete(id); // Reset ambush on tile change
-      }
-      this.lastCharTile.set(id, tileKey);
-
-      // Check if character stepped on a switch
-      const currentTile = this.gameMap.tiles[char.position.y]?.[char.position.x];
-      if (currentTile === 'switch') {
-        this.triggerSwitch(char.position);
-      }
-
-      // Speed boost: double move (move twice per tick)
-      const cpBuffs = this.getTeamBuffs(char.owner);
-      const hasSpeedBoost = char.effects.some(e => e.type === 'speed_boost') || cpBuffs.speed > 1;
-
-      const entity = this.characters.get(id);
-      if (!entity || entity.isMoving) return;
-
-      const doMove = () => {
-        if (char.path && char.path.length > 0) {
-          const next = char.path.shift()!;
-          if (isPassable(this.gameMap.tiles[next.y]?.[next.x])) {
-            entity.stepToTile(next.x, next.y);
-            char.position = { ...next };
-          } else {
-            char.path = []; // path invalidated
-          }
-        } else if (char.currentOrder) {
-          this.recalculatePath(char);
-        }
-      };
-
-      doMove();
-      // Speed boost: schedule a second move
-      if (hasSpeedBoost && char.path && char.path.length > 0) {
-        this.time.delayedCall(MOVE_TICK / 2, () => {
-          if (!entity.isMoving && char.path && char.path.length > 0) {
-            const next = char.path.shift()!;
-            if (isPassable(this.gameMap.tiles[next.y]?.[next.x])) {
-              entity.stepToTile(next.x, next.y);
-              char.position = { ...next };
-            }
-          }
-        });
-      }
-    });
-  }
-
-  // ─── SWITCH / GATE SYSTEM ──────────────────────────────────────
-
-  private triggerSwitch(pos: Position) {
-    const key = `${pos.x},${pos.y}`;
-    if (this.activatedSwitches.has(key)) return; // debounce
-    this.activatedSwitches.add(key);
-    this.time.delayedCall(2000, () => this.activatedSwitches.delete(key));
-
-    for (const link of this.switchGateLinks) {
-      if (link.switchPos.x === pos.x && link.switchPos.y === pos.y) {
-        for (const gp of link.gatePositions) {
-          const current = this.gameMap.tiles[gp.y]?.[gp.x];
-          if (current === 'gate_closed') {
-            this.gameMap.tiles[gp.y][gp.x] = 'gate_open';
-          } else if (current === 'gate_open') {
-            this.gameMap.tiles[gp.y][gp.x] = 'gate_closed';
-          }
-          // Update sprite texture
-          if (this.tileSprites[gp.y]?.[gp.x]) {
-            this.tileSprites[gp.y][gp.x].setTexture(`tile_${this.gameMap.tiles[gp.y][gp.x]}`);
-          }
-        }
-        // Visual feedback on switch
-        const wx = pos.x * TILE_SIZE + TILE_SIZE / 2;
-        const wy = pos.y * TILE_SIZE + TILE_SIZE / 2;
-        const flash = this.add.circle(wx, wy, 16, 0xFFAA33, 0.5).setDepth(5);
-        this.tweens.add({
-          targets: flash, alpha: 0, scale: 2, duration: 400,
-          onComplete: () => flash.destroy(),
-        });
-        break;
-      }
-    }
-  }
-
-  // ─── ORDER EXECUTION ───────────────────────────────────────────
-
-  private recalculatePath(char: Character) {
-    const order = char.currentOrder;
-    if (!order) return;
-    const occupied = this.getOccupiedPositions(char.id);
-
-    switch (order.type) {
-      case 'move':
-      case 'capture': {
-        if (!order.targetPosition) return;
-        if (this.tileDist(char.position, order.targetPosition) <= 1) {
-          char.currentOrder = null;
-          const entity = this.characters.get(char.id);
-          if (entity) entity.setOrderText('idle');
-          return;
-        }
-        char.path = findPath(this.gameMap.tiles, char.position, order.targetPosition,
-          char.stats.speed + 2, occupied);
-        break;
-      }
-      case 'patrol': {
-        if (!order.targetPosition) return;
-        if (this.tileDist(char.position, order.targetPosition) <= 1) {
-          const origin = (order as any)._patrolOrigin || char.position;
-          (order as any)._patrolOrigin = { ...order.targetPosition };
-          order.targetPosition = { ...origin };
-        }
-        if (order.targetPosition) {
-          char.path = findPath(this.gameMap.tiles, char.position, order.targetPosition,
-            char.stats.speed + 2, occupied);
-        }
-        break;
-      }
-      case 'defend':
-      case 'hold': {
-        char.path = [];
-        break;
-      }
-      case 'attack': {
-        if (!order.targetCharacterId) return;
-        const target = this.charData.get(order.targetCharacterId);
-        if (!target || target.isDead) {
-          // Auto-retarget nearest enemy
-          const enemies = Array.from(this.charData.values())
-            .filter(c => c.owner !== char.owner && !c.isDead);
-          if (enemies.length > 0) {
-            const nearest = this.findNearest(char.position, enemies);
-            order.targetCharacterId = nearest.id;
-          } else {
-            char.currentOrder = null;
-          }
-          return;
-        }
-        if (this.tileDist(char.position, target.position) > char.stats.range) {
-          char.path = findPath(this.gameMap.tiles, char.position, target.position,
-            char.stats.speed + 2, occupied);
-        }
-        break;
-      }
-      case 'ability': {
-        if (!order.targetCharacterId || !order.abilityId) return;
-        const target = this.charData.get(order.targetCharacterId);
-        if (!target || target.isDead) { char.currentOrder = null; return; }
-        const cls = CLASSES[char.classId];
-        const ability = cls.abilities.find(a => a.id === order.abilityId);
-        if (!ability) { char.currentOrder = null; return; }
-        if (this.tileDist(char.position, target.position) > ability.range) {
-          char.path = findPath(this.gameMap.tiles, char.position, target.position,
-            char.stats.speed + 2, occupied);
-        }
-        break;
-      }
-      case 'retreat': {
-        const spawn = char.owner === this.playerId
-          ? this.gameMap.spawnP1[0] : this.gameMap.spawnP2[0];
-        if (this.tileDist(char.position, spawn) <= 1) { char.currentOrder = null; return; }
-        char.path = findPath(this.gameMap.tiles, char.position, spawn,
-          char.stats.speed + 2, occupied);
-        break;
-      }
-      case 'escort': {
-        if (!order.targetCharacterId) return;
-        const carrier = this.charData.get(order.targetCharacterId);
-        if (!carrier || carrier.isDead) { char.currentOrder = null; return; }
-        if (this.tileDist(char.position, carrier.position) > 2) {
-          char.path = findPath(this.gameMap.tiles, char.position, carrier.position,
-            char.stats.speed + 2, occupied);
-        }
-        break;
-      }
-      case 'control': {
-        if (!order.targetPosition) return;
-        if (this.tileDist(char.position, order.targetPosition) <= 1) {
-          return;
-        }
-        char.path = findPath(this.gameMap.tiles, char.position, order.targetPosition,
-          char.stats.speed + 2, occupied);
-        break;
-      }
-      case 'scout': {
-        // Find nearest lookout
-        const lookout = this.pois
-          .filter(p => p.type === 'lookout' && p.active)
-          .sort((a, b) => this.tileDist(char.position, a.position) - this.tileDist(char.position, b.position))[0];
-        if (!lookout) { char.currentOrder = null; return; }
-        if (this.tileDist(char.position, lookout.position) <= 0) return; // at position, executeAutoActions handles channel
-        char.path = findPath(this.gameMap.tiles, char.position, lookout.position,
-          char.stats.speed + 2, occupied);
-        break;
-      }
-      case 'loot': {
-        // Find nearest active cache
-        const cache = this.pois
-          .filter(p => p.type === 'treasure_cache' && p.active)
-          .sort((a, b) => this.tileDist(char.position, a.position) - this.tileDist(char.position, b.position))[0];
-        if (!cache) { char.currentOrder = null; return; }
-        if (this.tileDist(char.position, cache.position) <= 0) return;
-        char.path = findPath(this.gameMap.tiles, char.position, cache.position,
-          char.stats.speed + 2, occupied);
-        break;
-      }
-      case 'build':
-      case 'set_trap': {
-        // Build/trap at target position or current position
-        if (order.targetPosition && this.tileDist(char.position, order.targetPosition) > 0) {
-          char.path = findPath(this.gameMap.tiles, char.position, order.targetPosition,
-            char.stats.speed + 2, occupied);
-        }
-        break;
-      }
-      case 'mine': {
-        // Find nearest mine node and path to it
-        const mine = this.mineNodes
-          .filter(m => m.currentGold > 0 && m.activatePhase <= this.gamePhase)
-          .sort((a, b) => this.tileDist(char.position, a.position) - this.tileDist(char.position, b.position))[0];
-        if (!mine) { char.currentOrder = null; return; }
-        if (this.tileDist(char.position, mine.position) <= 1) return; // at mine, auto-actions handle channeling
-        char.path = findPath(this.gameMap.tiles, char.position, mine.position,
-          char.stats.speed + 2, occupied);
-        break;
-      }
-      case 'build_tower': {
-        // Find nearest empty tower site and path to it
-        const site = this.towerSites
-          .filter(s => !s.occupied && s.activatePhase <= this.gamePhase)
-          .sort((a, b) => this.tileDist(char.position, a.position) - this.tileDist(char.position, b.position))[0];
-        if (!site) { char.currentOrder = null; return; }
-        if (this.tileDist(char.position, site.position) <= 1) return;
-        char.path = findPath(this.gameMap.tiles, char.position, site.position,
-          char.stats.speed + 2, occupied);
-        break;
-      }
-      case 'praise': {
-        // Handled instantly in local parser, clear order
-        char.currentOrder = null;
-        break;
-      }
-      case 'use_item': {
-        // Instant - handled in executeAutoActions
-        break;
-      }
-    }
-  }
-
-  private getEffectiveRange(char: Character): number {
-    let range = char.stats.range;
-    // Hill range bonus: ranged units on hills get +1 range
-    if (range >= 2 && this.gameMap.tiles[char.position.y]?.[char.position.x] === 'hill') {
-      range += 1;
-    }
-    return range;
-  }
-
-  private isConcealed(char: Character): boolean {
-    const tile = this.gameMap.tiles[char.position.y]?.[char.position.x];
-    if (tile !== 'bush') return false;
-    // Concealed unless an enemy is within 1 tile
-    return !Array.from(this.charData.values()).some(e =>
-      e.owner !== char.owner && !e.isDead &&
-      Math.abs(e.position.x - char.position.x) + Math.abs(e.position.y - char.position.y) <= 1
-    );
-  }
-
-  private executeAutoActions(char: Character) {
-    if (char.isDead) return;
-    // Stunned characters can't act
-    if (char.effects.some(e => e.type === 'stun')) return;
-    // Skip if channeling
-    if (char.channelActivity) return;
-
-    // Handle activity orders
-    if (char.currentOrder) {
-      const order = char.currentOrder;
-
-      // Use item - instant
-      if (order.type === 'use_item' && order.itemId) {
-        this.useConsumable(char, order.itemId);
-        char.currentOrder = null;
-        return;
-      }
-
-      // Scout - at lookout position, start channeling
-      if (order.type === 'scout') {
-        const lookout = this.pois.find(p =>
-          p.type === 'lookout' && p.active &&
-          this.tileDist(char.position, p.position) <= 0
-        );
-        if (lookout) {
-          this.startChannel(char, 'scout');
-          return;
-        }
-      }
-
-      // Loot - at cache position, start channeling
-      if (order.type === 'loot') {
-        const cache = this.pois.find(p =>
-          p.type === 'treasure_cache' && p.active &&
-          this.tileDist(char.position, p.position) <= 0
-        );
-        if (cache) {
-          this.startChannel(char, 'loot');
-          return;
-        }
-      }
-
-      // Mine - at mine node, start mining (continuous)
-      if (order.type === 'mine' && !char.channelActivity) {
-        const nearMine = this.mineNodes.find(m =>
-          m.currentGold > 0 && m.activatePhase <= this.gamePhase &&
-          this.tileDist(char.position, m.position) <= 1
-        );
-        if (nearMine) {
-          this.startChannel(char, 'mine');
-          return;
-        }
-      }
-
-      // Build tower - at tower site, spend gold and start building
-      if (order.type === 'build_tower' && !char.channelActivity) {
-        const nearSite = this.towerSites.find(s =>
-          !s.occupied && s.activatePhase <= this.gamePhase &&
-          this.tileDist(char.position, s.position) <= 1
-        );
-        if (nearSite && this.spendGold(TOWER_COST)) {
-          nearSite.occupied = true;
-          this.startChannel(char, 'build_tower');
-          return;
-        }
-      }
-
-      // Build - at any position, start channeling
-      if (order.type === 'build' && !char.channelActivity) {
-        this.startChannel(char, 'build');
-        return;
-      }
-
-      // Set trap - at any position, start channeling
-      if (order.type === 'set_trap' && !char.channelActivity) {
-        this.startChannel(char, 'trap');
-        return;
-      }
-
-      // Control order at owned CP - if CP already owned, try to upgrade
-      if (order.type === 'control' && order.targetPosition) {
-        const cp = this.controlPoints.find(c =>
-          c.position.x === order.targetPosition!.x &&
-          c.position.y === order.targetPosition!.y
-        );
-        if (cp && cp.owner === (char.owner === this.playerId ? 'player1' : 'player2')
-          && !(cp as any).upgraded
-          && this.tileDist(char.position, cp.position) <= 1) {
-          this.startChannel(char, 'upgrade_cp');
-          return;
-        }
-      }
-    }
-
-    const enemies = Array.from(this.charData.values())
-      .filter(c => c.owner !== char.owner && !c.isDead);
-
-    // Execute ability order if in range
-    if (char.currentOrder?.type === 'ability' && char.currentOrder.abilityId) {
-      const target = char.currentOrder.targetCharacterId
-        ? this.charData.get(char.currentOrder.targetCharacterId) : null;
-      if (target && !target.isDead) {
-        const cls = CLASSES[char.classId];
-        const ability = cls.abilities.find(a => a.id === char.currentOrder!.abilityId);
-        if (ability && this.tileDist(char.position, target.position) <= ability.range) {
-          this.resolveAbility(char, ability.id, target.id);
-          char.currentOrder = null; // ability is one-shot
-          const entity = this.characters.get(char.id);
-          if (entity) entity.setOrderText('idle');
-          return;
-        }
-      }
-    }
-
-    const effectiveRange = this.getEffectiveRange(char);
-
-    // Prioritize ordered attack target
-    if (char.currentOrder?.type === 'attack' && char.currentOrder.targetCharacterId) {
-      const target = this.charData.get(char.currentOrder.targetCharacterId);
-      if (target && !target.isDead && !this.isConcealed(target)
-        && this.tileDist(char.position, target.position) <= effectiveRange) {
-        this.resolveAutoAttack(char, target);
-        return;
-      }
-    }
-
-    // Auto-attack nearest enemy in range (skip concealed)
-    for (const enemy of enemies) {
-      if (this.isConcealed(enemy)) continue;
-      if (this.tileDist(char.position, enemy.position) <= effectiveRange) {
-        this.resolveAutoAttack(char, enemy);
-        break;
-      }
-    }
-  }
-
-  private resolveAutoAttack(attacker: Character, target: Character) {
-    // Attack cooldown: limit attack speed
-    const now = this.time.now;
-    const lastAtk = this.lastAttackTime.get(attacker.id) || 0;
-    if (now - lastAtk < ATTACK_INTERVAL) return;
-    this.lastAttackTime.set(attacker.id, now);
-
-    const targetEntity = this.characters.get(target.id);
-    if (!targetEntity) return;
-
-    let baseDamage = attacker.stats.attack;
-
-    // Damage boost effect
-    if (attacker.effects.some(e => e.type === 'damage_boost')) {
-      baseDamage = Math.round(baseDamage * 1.5);
-    }
-
-    let defense = target.stats.defense;
-    // Defense debuff on target
-    const defDebuff = target.effects.find(e => e.type === 'defense_debuff');
-    if (defDebuff) {
-      defense = Math.round(defense * 0.6); // 40% reduction
-    }
-
-    let damage = Math.max(1, Math.round(baseDamage * (100 / (100 + defense))));
-
-    // Terrain modifiers
-    const attackerTile = this.gameMap.tiles[attacker.position.y]?.[attacker.position.x];
-    const defenderTile = this.gameMap.tiles[target.position.y]?.[target.position.x];
-    if (attackerTile === 'hill') damage = Math.round(damage * 1.25);
-    if (defenderTile === 'forest') damage = Math.round(damage * 0.85);
-    if (defenderTile === 'bush') damage = Math.round(damage * 0.9);
-
-    // Forest ambush: first attack from forest = +30% damage
-    if (attackerTile === 'forest' && !this.forestAmbushUsed.has(attacker.id)) {
-      damage = Math.round(damage * 1.3);
-      this.forestAmbushUsed.add(attacker.id);
-    }
-
-    // Control point buffs
-    const attackerBuffs = this.getTeamBuffs(attacker.owner);
-    const defenderBuffs = this.getTeamBuffs(target.owner);
-    if (attackerBuffs.damage > 1) damage = Math.round(damage * attackerBuffs.damage);
-    if (defenderBuffs.defense > 1) damage = Math.max(1, Math.round(damage / defenderBuffs.defense));
-
-    // Morale penalty: shaken heroes deal 10% less damage
-    if (attacker.morale === 'shaken') {
-      damage = Math.round(damage * 0.9);
-    }
-
-    target.currentHp = Math.max(0, target.currentHp - damage);
-
-    if (targetEntity.fogVisible || target.owner === this.playerId) {
-      targetEntity.showDamage(damage);
-    }
-
-    this.showAttackVFX(attacker, target);
-    this.sound_.playAttackHit();
-
-    // Bark: taking damage
-    this.triggerBark(target, 'taking_damage');
-
-    // Bark: low HP warning
-    if (target.currentHp > 0 && target.currentHp < target.stats.hp * 0.3) {
-      this.triggerBark(target, 'low_hp');
-      // Morale: drop to shaken if hit hard while already low
-      if (target.morale === 'confident') {
-        target.morale = 'shaken';
-        target.moraleTimer = 0;
-      }
-    }
-
-    if (target.currentHp <= 0) {
-      this.killCharacter(target, attacker.id);
-      this.sound_.playKill();
-    }
-  }
-
-  private killCharacter(char: Character, killerId?: string) {
-    char.isDead = true;
-    // Anti-snowball: losing team respawns 3s faster
-    const isLosingTeam = char.owner === this.playerId
-      ? (this.isHost ? this.domScore1 < this.domScore2 : this.domScore2 < this.domScore1)
-      : (this.isHost ? this.domScore2 < this.domScore1 : this.domScore1 < this.domScore2);
-    char.respawnTimer = isLosingTeam ? Math.max(5, RESPAWN_TIME - 3) : RESPAWN_TIME;
-    char.path = [];
-    char.currentOrder = null;
-    char.channelActivity = null;
-    const queue = this.orderQueues.get(char.id);
-    if (queue) queue.length = 0;
-
-    // Grant XP to killer + bark
-    if (killerId) {
-      const killer = this.charData.get(killerId);
-      if (killer) {
-        this.grantXP(killer, XP_KILL);
-        this.triggerBark(killer, 'got_kill');
-      }
-    }
-
-    // Bark: ally down — nearby allies react
-    const nearbyAllies = Array.from(this.charData.values()).filter(c =>
-      c.id !== char.id && c.owner === char.owner && !c.isDead &&
-      this.tileDist(c.position, char.position) <= 5
-    );
-    for (const ally of nearbyAllies) {
-      this.triggerBark(ally, 'ally_down');
-      // Morale: seeing ally die makes you shaken
-      if (ally.morale === 'confident' && Math.random() < 0.5) {
-        ally.morale = 'shaken';
-        ally.moraleTimer = 0;
-      }
-    }
-
-    const entity = this.characters.get(char.id);
-    if (entity) entity.showRespawning(char.respawnTimer!);
-  }
-
-  private respawnCharacter(char: Character) {
-    char.isDead = false;
-    char.currentHp = char.stats.hp;
-    char.respawnTimer = 0;
-    char.effects = [];
-    char.cooldowns = {};
-
-    const spawns = char.owner === this.playerId ? this.gameMap.spawnP1 : this.gameMap.spawnP2;
-    char.position = { ...spawns[Math.floor(Math.random() * spawns.length)] };
-
-    const entity = this.characters.get(char.id);
-    if (entity) {
-      entity.hideRespawn();
-      entity.snapToPosition();
-      entity.refreshVisuals();
-    }
-  }
-
-  // ─── ABILITY RESOLUTION ─────────────────────────────────────────
-
-  private resolveAbility(char: Character, abilityId: string, targetId?: string) {
-    const cls = CLASSES[char.classId];
-    const ability = cls.abilities.find(a => a.id === abilityId);
-    if (!ability) return;
-
-    const cd = char.cooldowns[ability.id] || 0;
-    if (cd > 0) return;
-    char.cooldowns[ability.id] = ability.cooldown;
-
-    const casterEntity = this.characters.get(char.id);
-
-    // Visual: flash caster blue
-    if (casterEntity) {
-      casterEntity.sprite.setTint(0x6666ff);
-      this.time.delayedCall(300, () => casterEntity.sprite.clearTint());
-    }
-
-    this.sound_.playAbilityCast();
-
-    // Damage
-    if (ability.damage && targetId) {
-      const target = this.charData.get(targetId);
-      if (target && !target.isDead) {
-        const targetEntity = this.characters.get(targetId);
-        let damage = ability.damage + Math.round(char.stats.magic * 0.5);
-        // Damage boost
-        if (char.effects.some(e => e.type === 'damage_boost')) {
-          damage = Math.round(damage * 1.5);
-        }
-        // Water fire penalty: fireball does -20% if target is adjacent to water
-        if (abilityId.includes('fireball') || abilityId.includes('fire')) {
-          const tx = target.position.x;
-          const ty = target.position.y;
-          const adjWater = [[0,1],[0,-1],[1,0],[-1,0]].some(([dx,dy]) => {
-            const nx = tx+dx, ny = ty+dy;
-            return nx >= 0 && nx < MAP_WIDTH && ny >= 0 && ny < MAP_HEIGHT
-              && this.gameMap.tiles[ny][nx] === 'water';
-          });
-          if (adjWater) damage = Math.round(damage * 0.8);
-        }
-        // Control point damage buff
-        const atkBuffs = this.getTeamBuffs(char.owner);
-        if (atkBuffs.damage > 1) damage = Math.round(damage * atkBuffs.damage);
-
-        target.currentHp = Math.max(0, target.currentHp - damage);
-        if (targetEntity) targetEntity.showDamage(damage);
-        this.showAbilityVFX(char, target, abilityId);
-        if (target.currentHp <= 0) {
-          this.killCharacter(target, char.id);
-          this.sound_.playKill();
-        }
-
-        // Apply ability effects to target
-        if (ability.effect) {
-          this.applyAbilityEffect(target, ability.effect);
-        }
-      }
-    }
-
-    // Healing
-    if (ability.healing) {
-      const heal = ability.healing + Math.round(char.stats.magic * 0.3);
-      if (ability.damage) {
-        // Self-heal (Drain Life, Divine Smite)
-        char.currentHp = Math.min(char.stats.hp, char.currentHp + heal);
-        if (casterEntity) casterEntity.showHealing(heal);
-      } else if (targetId) {
-        // Heal target (Healing Light)
-        const target = this.charData.get(targetId);
-        if (target && !target.isDead) {
-          const targetEntity = this.characters.get(targetId);
-          target.currentHp = Math.min(target.stats.hp, target.currentHp + heal);
-          if (targetEntity) targetEntity.showHealing(heal);
-        }
-      }
-    }
-
-    // Non-damage abilities with effects (rare but handle it)
-    if (!ability.damage && ability.effect && targetId) {
-      const target = this.charData.get(targetId);
-      if (target) this.applyAbilityEffect(target, ability.effect);
-    }
-  }
-
-  private applyAbilityEffect(target: Character, effect: any) {
-    switch (effect.type) {
-      case 'stun':
-        target.effects.push({ type: 'stun', duration: effect.duration, value: 1 });
-        this.showAnnouncement(`${target.name} STUNNED!`, '#FFD93D');
-        break;
-      case 'slow':
-        target.effects.push({ type: 'slow', duration: effect.duration, value: effect.factor || 0.5 });
-        break;
-      case 'debuff':
-        target.effects.push({ type: 'defense_debuff', duration: effect.duration, value: effect.amount || 5 });
-        break;
-    }
-  }
-
-  // ─── COMMAND HANDLING ──────────────────────────────────────────
-
-  private async handleCommand(rawText: string) {
-    if (this.gameOver) return;
-
-    // If a character is selected, prefix their name so parsers know who to command
-    let commandText = rawText;
-    if (this.selectedCharId) {
-      const selChar = this.charData.get(this.selectedCharId);
-      if (selChar && !selChar.isDead) {
-        const hasNameRef = rawText.toLowerCase().includes(selChar.name.toLowerCase());
-        if (!hasNameRef) {
-          commandText = `${selChar.name}: ${rawText}`;
-        }
-      }
-    }
-
-    const now = Date.now();
-    if (now - this.lastCommandTime < COMMAND_COOLDOWN) {
-      // Queue command for when cooldown expires
-      this.pendingCommands.push(commandText);
-      const remaining = Math.ceil((COMMAND_COOLDOWN - (now - this.lastCommandTime)) / 1000);
-      this.addCommandLog('You', `${rawText} (queued, ${remaining}s)`, 'queued');
-      return;
-    }
-
-    this.executeCommands(commandText);
-  }
-
-  private async executeCommands(commandText: string) {
-    this.lastCommandTime = Date.now();
-    this.commandCooldownRemaining = COMMAND_COOLDOWN;
-
-    this.addCommandLog('You', commandText, 'processing');
-
-    let orders: RemoteOrderPayload[] = [];
-    try {
-      if (this.hasGemini) {
-        const result = await parseCommandWithGemini(
-          commandText, this.charData, this.playerId, MAP_WIDTH, MAP_HEIGHT, this.ctf,
-          this.controlPoints, this.gameMap.tiles, this.pois,
-        );
-        orders = this.applyParsedOrders(result);
-        this.updateCommandLogResult(result.narration || 'Orders issued!');
+    let winner: string | undefined;
+    let reason: 'base_destroyed' | 'time_up' = 'base_destroyed';
+
+    if (this.state.bases.player1.hp <= 0) {
+      winner = 'player2';
+    } else if (this.state.bases.player2.hp <= 0) {
+      winner = 'player1';
+    } else if (this.state.meta.timeRemaining <= 0) {
+      reason = 'time_up';
+      if (this.state.bases.player1.hp > this.state.bases.player2.hp) {
+        winner = 'player1';
+      } else if (this.state.bases.player2.hp > this.state.bases.player1.hp) {
+        winner = 'player2';
       } else {
-        orders = this.parseCommandLocally(commandText);
-        this.updateCommandLogResult('Orders issued!');
-      }
-      // Guest: send parsed orders to host via Firebase
-      if (!this.isLocal && !this.isHost && orders.length > 0) {
-        this.firebase.sendRemoteOrders(this.gameId, this.playerId, orders);
-      }
-    } catch (err) {
-      console.error('Command error:', err);
-      try {
-        const fallbackOrders = this.parseCommandLocally(commandText);
-        if (this.hasGemini) {
-          console.warn('[AI] Gemini failed, falling back to local parser:', (err as Error).message);
-          this.updateCommandLogResult(`(AI error: ${(err as Error).message.slice(0, 60)} — used local parser)`);
-        } else {
-          this.updateCommandLogResult('Orders issued!');
-        }
-        if (!this.isLocal && !this.isHost && fallbackOrders.length > 0) {
-          this.firebase.sendRemoteOrders(this.gameId, this.playerId, fallbackOrders);
-        }
-      } catch {
-        this.updateCommandLogResult('Error: ' + (err as Error).message);
+        winner = 'draw';
       }
     }
 
-    this.updateCooldownDisplay();
-  }
-
-  private applyParsedOrders(result: GeminiParseResult): RemoteOrderPayload[] {
-    const seenChars = new Set<string>();
-    const collectedOrders: RemoteOrderPayload[] = [];
-
-    for (const action of result.actions) {
-      const char = this.charData.get(action.characterId);
-      if (!char || char.isDead || char.owner !== this.playerId) continue;
-
-      const order: CharacterOrder = {
-        type: action.type as CharacterOrder['type'],
-        targetPosition: action.targetPosition,
-        targetCharacterId: action.targetCharacterId,
-        abilityId: action.abilityId,
-        itemId: action.itemId as ConsumableId | undefined,
-      };
-
-      // Queue if this char already got a primary order or if explicitly queued
-      const isQueued = action.queued || seenChars.has(action.characterId);
-      seenChars.add(action.characterId);
-
-      if (isQueued) {
-        const queue = this.orderQueues.get(char.id);
-        if (queue && queue.length < 3) {
-          queue.push(order);
-          collectedOrders.push({ characterId: char.id, order, queued: true });
-        }
-      } else {
-        // Store patrol origin so the character paces back and forth
-        if (order.type === 'patrol') {
-          (order as any)._patrolOrigin = { ...char.position };
-        }
-        char.currentOrder = order;
-        char.path = [];
-        collectedOrders.push({ characterId: char.id, order, queued: false });
-        // Clear old queue
-        const queue = this.orderQueues.get(char.id);
-        if (queue) queue.length = 0;
-
-        if (action.type === 'ability' && action.abilityId) {
-          // Don't resolve immediately - let the game tick handle range check
-        }
-
-        const entity = this.characters.get(char.id);
-        if (entity) {
-          const queueLen = this.orderQueues.get(char.id)?.length || 0;
-          const label = this.getOrderLabel(order) + (queueLen > 0 ? ` (+${queueLen})` : '');
-          entity.setOrderText(label);
-        }
-
-        // Trigger bark so characters respond with TTS
-        if (order.type === 'attack' || order.type === 'ability') {
-          this.triggerBark(char, 'order_attack');
-        } else if (order.type === 'defend' || order.type === 'hold') {
-          this.triggerBark(char, 'order_defend');
-        } else if (order.type === 'move' || order.type === 'retreat' || order.type === 'patrol') {
-          this.triggerBark(char, 'order_move');
-        }
-      }
-    }
-    return collectedOrders;
-  }
-
-  private getOrderLabel(order: CharacterOrder): string {
-    switch (order.type) {
-      case 'move': return 'MOVE';
-      case 'attack': {
-        const t = order.targetCharacterId ? this.charData.get(order.targetCharacterId) : null;
-        return t ? `ATK ${t.name.split(' ')[0]}` : 'ATK';
-      }
-      case 'ability': {
-        if (order.abilityId) {
-          // Find ability name from any class
-          for (const cls of Object.values(CLASSES)) {
-            const a = cls.abilities.find(ab => ab.id === order.abilityId);
-            if (a) return a.name;
-          }
-        }
-        return 'ABL';
-      }
-      case 'capture': return 'CAPTURE';
-      case 'defend': return 'DEFEND';
-      case 'retreat': return 'RETREAT';
-      case 'escort': return 'ESCORT';
-      case 'patrol': return 'PATROL';
-      case 'control': return 'CONTROL';
-      case 'scout': return 'SCOUT';
-      case 'loot': return 'LOOT';
-      case 'build': return 'BUILD';
-      case 'set_trap': return 'TRAP';
-      case 'use_item': {
-        if (order.itemId) return `USE ${CONSUMABLES[order.itemId].name}`;
-        return 'USE ITEM';
-      }
-      default: return '';
+    if (winner) {
+      this.gameOver = true;
+      this.state.meta.status = 'finished';
+      this.state.meta.winner = winner;
+      this.state.meta.winReason = reason;
+      this.showGameOver(winner, reason);
     }
   }
 
-  // ─── LOCAL PARSER ───────────────────────────────────────────────
+  private showGameOver(winner: string, reason: string) {
+    const { width, height } = this.cameras.main;
+    const isWin = winner === this.myTeam;
+    const title = winner === 'draw' ? 'DRAW!' : isWin ? 'VICTORY!' : 'DEFEAT!';
+    const color = winner === 'draw' ? '#FFD93D' : isWin ? '#45E6B0' : '#FF6B6B';
 
-  private parseCommandLocally(rawText: string): RemoteOrderPayload[] {
-    const collectedOrders: RemoteOrderPayload[] = [];
-    const thenParts = rawText.split(/\s+then\s+/i);
-    for (let partIdx = 0; partIdx < thenParts.length; partIdx++) {
-      const isQueued = partIdx > 0;
-      const clauses = this.splitClauses(thenParts[partIdx]);
-      for (const clause of clauses) {
-        collectedOrders.push(...this.parseCommandPart(clause.trim(), isQueued));
-      }
-    }
-    return collectedOrders;
+    const overlay = this.add.rectangle(width / 2, height / 2, width, height, 0x000000, 0.7)
+      .setScrollFactor(0).setDepth(200);
+
+    this.add.text(width / 2, height / 2 - 30, title, {
+      fontSize: '48px',
+      color,
+      fontFamily: '"Fredoka", sans-serif',
+      fontStyle: 'bold',
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(201);
+
+    const reasonText = reason === 'base_destroyed' ? 'Base Destroyed!' : 'Time Up!';
+    this.add.text(width / 2, height / 2 + 20, reasonText, {
+      fontSize: '18px',
+      color: '#cbb8ee',
+      fontFamily: '"Nunito", sans-serif',
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(201);
+
+    // Stop ticks
+    if (this.secondTimer) this.secondTimer.destroy();
+    if (this.gameTickTimer) this.gameTickTimer.destroy();
+    if (this.moveTickTimer) this.moveTickTimer.destroy();
   }
 
-  private splitClauses(text: string): string[] {
-    const parts = text.split(/\s*,\s*/);
-    const myChars = Array.from(this.charData.values())
-      .filter(c => c.owner === this.playerId && !c.isDead);
-    const charTokens = new Set<string>();
-    for (const char of myChars) {
-      charTokens.add(CLASSES[char.classId].name.toLowerCase());
-      for (const w of char.name.toLowerCase().split(/\s+/)) {
-        if (w.length > 2) charTokens.add(w);
-      }
-    }
-    charTokens.add('all');
-    charTokens.add('everyone');
-    charTokens.add('my');
-    charTokens.add('the');
+  // ─── HELPERS ─────────────────────────────────────────────
 
-    const result: string[] = [];
-    for (const part of parts) {
-      const andPattern = /\s+and\s+/gi;
-      let match;
-      let lastIdx = 0;
-      const splits: string[] = [];
-      while ((match = andPattern.exec(part)) !== null) {
-        const after = part.slice(match.index + match[0].length).toLowerCase().trim();
-        const firstWord = after.split(/\s+/)[0];
-        if (charTokens.has(firstWord)) {
-          splits.push(part.slice(lastIdx, match.index));
-          lastIdx = match.index + match[0].length;
-        }
-      }
-      splits.push(part.slice(lastIdx));
-      result.push(...splits.filter(s => s.trim().length > 0));
-    }
-    return result.length > 0 ? result : [text];
+  private getMyHeroIds(): string[] {
+    return Object.keys(this.state.heroes).filter(id => this.state.heroes[id].team === this.myTeam);
   }
 
-  private resolveCharTargets(text: string, myChars: Character[]): Character[] {
-    if (text.includes('all') || text.includes('everyone')) return myChars;
-    const matched: Character[] = [];
-    for (const char of myChars) {
-      const cls = CLASSES[char.classId].name.toLowerCase();
-      const name = char.name.toLowerCase();
-      if (text.includes(cls) || text.includes(name)) {
-        matched.push(char);
-      }
-    }
-    return matched.length > 0 ? matched : myChars;
-  }
-
-  private resolveEnemyTarget(text: string, attackerPos: Position, enemyChars: Character[]): Character | undefined {
-    if (enemyChars.length === 0) return undefined;
-    for (const enemy of enemyChars) {
-      if (text.includes(CLASSES[enemy.classId].name.toLowerCase())
-        || text.includes(enemy.name.toLowerCase())) {
-        return enemy;
-      }
-    }
-    if (text.includes('weakest') || text.includes('lowest') || text.includes('weak')) {
-      return enemyChars.reduce((a, b) => a.currentHp / a.stats.hp < b.currentHp / b.stats.hp ? a : b);
-    }
-    if (text.includes('strongest') || text.includes('highest') || text.includes('strong')) {
-      return enemyChars.reduce((a, b) => a.currentHp / a.stats.hp > b.currentHp / b.stats.hp ? a : b);
-    }
-    if (text.includes('nearest') || text.includes('closest')) {
-      return this.findNearest(attackerPos, enemyChars);
-    }
-    return enemyChars[0];
-  }
-
-  private parseMoveTarget(text: string, char: Character, enemyChars: Character[]): Position {
-    const coordMatch = text.match(/(?:to\s+)?(\d{1,2})\s*[,\s]\s*(\d{1,2})/);
-    if (coordMatch) {
-      return {
-        x: Phaser.Math.Clamp(parseInt(coordMatch[1]), 0, MAP_WIDTH - 1),
-        y: Phaser.Math.Clamp(parseInt(coordMatch[2]), 0, MAP_HEIGHT - 1),
-      };
-    }
-    if (text.includes('center') || text.includes('middle')) {
-      return { x: Math.floor(MAP_WIDTH / 2), y: Math.floor(MAP_HEIGHT / 2) };
-    }
-    // Directional: go all the way to the edge so they keep walking until blocked
-    if (text.includes('up') || text.includes('north')) {
-      return { x: char.position.x, y: 0 };
-    }
-    if (text.includes('down') || text.includes('south')) {
-      return { x: char.position.x, y: MAP_HEIGHT - 1 };
-    }
-    if (text.includes('left') || text.includes('west')) {
-      return { x: 0, y: char.position.y };
-    }
-    if (text.includes('right') || text.includes('east')) {
-      return { x: MAP_WIDTH - 1, y: char.position.y };
-    }
-    if (text.includes('flank') && enemyChars.length > 0) {
-      const nearest = this.findNearest(char.position, enemyChars);
-      const dx = char.position.x - nearest.position.x;
-      return dx >= 0
-        ? { x: Math.min(MAP_WIDTH - 1, nearest.position.x + 5), y: nearest.position.y }
-        : { x: Math.max(0, nearest.position.x - 5), y: nearest.position.y };
-    }
-    if (text.includes('behind') && enemyChars.length > 0) {
-      const nearest = this.findNearest(char.position, enemyChars);
-      const dx = nearest.position.x - char.position.x;
-      const dy = nearest.position.y - char.position.y;
-      return {
-        x: Phaser.Math.Clamp(nearest.position.x + Math.sign(dx) * 3, 0, MAP_WIDTH - 1),
-        y: Phaser.Math.Clamp(nearest.position.y + Math.sign(dy) * 3, 0, MAP_HEIGHT - 1),
-      };
-    }
-    if (text.includes('enemy') || text.includes('opponent')) {
-      if (enemyChars.length > 0) return this.findNearest(char.position, enemyChars).position;
-    }
-    if (text.includes('home') || text.includes('our base') || text.includes('my base')) {
-      return this.mySpawns[1];
-    }
-    if (text.includes('their base') || text.includes('enemy base')) {
-      return this.enemySpawns[1];
-    }
-    const dir = char.position.x < MAP_WIDTH / 2 ? 1 : -1;
-    return { x: char.position.x + dir * 8, y: char.position.y };
-  }
-
-  private parseCommandPart(rawText: string, queued: boolean): RemoteOrderPayload[] {
-    const text = rawText.toLowerCase();
-    const myChars = Array.from(this.charData.values())
-      .filter(c => c.owner === this.playerId && !c.isDead);
-    const enemyChars = Array.from(this.charData.values())
-      .filter(c => c.owner !== this.playerId && !c.isDead);
-    if (myChars.length === 0) return [];
-
-    // If a character is selected, commands go to them unless text explicitly names someone else
-    let targetChars: Character[];
-    if (this.selectedCharId) {
-      const selectedChar = this.charData.get(this.selectedCharId);
-      if (selectedChar && !selectedChar.isDead && selectedChar.owner === this.playerId) {
-        // Check if command explicitly references a different character
-        const explicitTargets = this.resolveCharTargets(text, myChars);
-        const explicitlyNamed = explicitTargets.length < myChars.length; // user named specific chars
-        targetChars = explicitlyNamed ? explicitTargets : [selectedChar];
-      } else {
-        targetChars = this.resolveCharTargets(text, myChars);
-      }
-    } else {
-      targetChars = this.resolveCharTargets(text, myChars);
-    }
-    const affectedChars = new Set<string>();
-
-    const partOrders: RemoteOrderPayload[] = [];
-    const setOrder = (char: Character, order: CharacterOrder) => {
-      if (order.type === 'patrol') {
-        (order as any)._patrolOrigin = { ...char.position };
-      }
-      if (queued) {
-        const queue = this.orderQueues.get(char.id);
-        if (queue && queue.length < 3) queue.push(order);
-      } else {
-        char.currentOrder = order;
-        char.path = [];
-        const q = this.orderQueues.get(char.id);
-        if (q) q.length = 0;
-      }
-      affectedChars.add(char.id);
-      partOrders.push({ characterId: char.id, order, queued });
-
-      // Trigger order bark based on order type
-      if (order.type === 'attack' || order.type === 'ability') {
-        this.triggerBark(char, 'order_attack');
-      } else if (order.type === 'defend' || order.type === 'hold') {
-        this.triggerBark(char, 'order_defend');
-      } else if (order.type === 'move' || order.type === 'retreat' || order.type === 'patrol') {
-        this.triggerBark(char, 'order_move');
-      }
-    };
-
-    // ── Praise ─────────────────────────────────────────────────────
-    if (text.includes('good job') || text.includes('nice work') || text.includes('well done')
-      || text.includes('great job') || text.includes('praise') || text.includes('nice one')) {
-      for (const char of targetChars) {
-        this.handlePraise(char.id);
-      }
-      this.updateOrderLabels(affectedChars);
-      return partOrders;
-    }
-    // ── Mine ──────────────────────────────────────────────────────
-    else if (text.includes('mine') || text.includes('gather') || text.includes('collect gold')) {
-      for (const char of targetChars) setOrder(char, { type: 'mine' as any });
-      this.updateOrderLabels(affectedChars);
-      return partOrders;
-    }
-    // ── Build tower ──────────────────────────────────────────────
-    else if (text.includes('build tower') || text.includes('tower')) {
-      if (this.getMyGold() >= TOWER_COST) {
-        for (const char of targetChars) setOrder(char, { type: 'build_tower' as any });
-      } else {
-        this.addCommandLog('System', `Not enough gold! Need ${TOWER_COST}g (have ${Math.floor(this.getMyGold())}g)`, 'warning');
-      }
-      this.updateOrderLabels(affectedChars);
-      return partOrders;
-    }
-    // ── Use consumable item ─────────────────────────────────────────
-    if (text.includes('use ') || text.includes('drink ') || text.includes('throw ') || text.includes('activate ')) {
-      for (const char of targetChars) {
-        // Try to match item name from inventory
-        for (const itemId of char.inventory) {
-          const def = CONSUMABLES[itemId];
-          if (text.includes(def.name.toLowerCase()) || text.includes(itemId.replace(/_/g, ' '))) {
-            setOrder(char, { type: 'use_item', itemId });
-            break;
-          }
-        }
-        // Fallback: use first item in inventory
-        if (!affectedChars.has(char.id) && char.inventory.length > 0) {
-          if (text.includes('potion') || text.includes('elixir') || text.includes('bomb')
-            || text.includes('horn') || text.includes('scroll') || text.includes('flare')
-            || text.includes('banner') || text.includes('item')) {
-            setOrder(char, { type: 'use_item', itemId: char.inventory[0] });
-          }
-        }
-      }
-      if (affectedChars.size > 0) {
-        this.updateOrderLabels(affectedChars);
-        return partOrders;
-      }
-    }
-
-    // ── Scout / lookout ───────────────────────────────────────────
-    if (text.includes('scout') || text.includes('lookout') || text.includes('watchtower')) {
-      for (const char of targetChars) setOrder(char, { type: 'scout' });
-      this.updateOrderLabels(affectedChars);
-      return partOrders;
-    }
-
-    // ── Loot / treasure / cache ──────────────────────────────────
-    if (text.includes('loot') || text.includes('treasure') || text.includes('cache') || text.includes('chest')) {
-      for (const char of targetChars) setOrder(char, { type: 'loot' });
-      this.updateOrderLabels(affectedChars);
-      return partOrders;
-    }
-
-    // ── Build barricade ──────────────────────────────────────────
-    if (text.includes('build') || text.includes('barricade') || text.includes('fortify')) {
-      for (const char of targetChars) setOrder(char, { type: 'build' });
-      this.updateOrderLabels(affectedChars);
-      return partOrders;
-    }
-
-    // ── Set trap ─────────────────────────────────────────────────
-    if (text.includes('trap') || text.includes('snare')) {
-      for (const char of targetChars) setOrder(char, { type: 'set_trap' });
-      this.updateOrderLabels(affectedChars);
-      return partOrders;
-    }
-
-    // ── Spread out / split up ──────────────────────────────────────
-    if (text.includes('spread') || text.includes('split up') || text.includes('scatter')) {
-      const cx = targetChars.reduce((s, c) => s + c.position.x, 0) / targetChars.length;
-      const cy = targetChars.reduce((s, c) => s + c.position.y, 0) / targetChars.length;
-      const angleStep = (Math.PI * 2) / targetChars.length;
-      targetChars.forEach((char, i) => {
-        const angle = angleStep * i;
-        setOrder(char, { type: 'move', targetPosition: {
-          x: Phaser.Math.Clamp(Math.round(cx + Math.cos(angle) * 6), 0, MAP_WIDTH - 1),
-          y: Phaser.Math.Clamp(Math.round(cy + Math.sin(angle) * 6), 0, MAP_HEIGHT - 1),
-        }});
-      });
-      this.updateOrderLabels(affectedChars);
-      return partOrders;
-    }
-
-    // ── Capture / control point / take point ─────────────────────────
-    if (text.includes('control point') || text.includes('take the point') || text.includes('capture point')
-      || text.includes('capture') || text.includes('take point') || text.includes('go to point')
-      || text.includes('cap ')) {
-      const unowned = this.controlPoints
-        .filter(cp => cp.owner !== this.myTeam)
-        .sort((a, b) => this.tileDist(targetChars[0].position, a.position) - this.tileDist(targetChars[0].position, b.position));
-      const targetCP = unowned[0] || this.controlPoints[1];
-      for (const char of targetChars) setOrder(char, { type: 'control', targetPosition: targetCP.position });
-      this.updateOrderLabels(affectedChars);
-      return partOrders;
-    }
-
-    // ── Go home / retreat to base ─────────────────────────────────
-    if (text.includes('bring it home') || text.includes('come home') || text.includes('go home')
-      || text.includes('return to base') || text.includes('go to base')) {
-      for (const char of targetChars) setOrder(char, { type: 'move', targetPosition: this.mySpawns[1] });
-      this.updateOrderLabels(affectedChars);
-      return partOrders;
-    }
-    // ── Escort / protect / follow ally ─────────────────────────────
-    else if (text.includes('escort') || text.includes('guard carrier')
-      || text.includes('protect') || text.includes('follow')) {
-      let escortTarget: Character | undefined;
-      for (const char of myChars) {
-        const cls = CLASSES[char.classId].name.toLowerCase();
-        const name = char.name.toLowerCase();
-        if ((text.includes(cls) || text.includes(name))
-          && !targetChars.includes(char)) {
-          escortTarget = char;
-          break;
-        }
-      }
-      if (!escortTarget) escortTarget = myChars[0]; // default to first ally
-      if (escortTarget) {
-        for (const char of targetChars) {
-          if (char.id !== escortTarget.id) setOrder(char, { type: 'escort', targetCharacterId: escortTarget.id });
-        }
-      }
-    }
-    // ── Focus fire ─────────────────────────────────────────────────
-    else if (text.includes('focus')) {
-      const target = this.resolveEnemyTarget(text, targetChars[0].position, enemyChars);
-      if (target) {
-        for (const char of targetChars) setOrder(char, { type: 'attack', targetCharacterId: target.id });
-      }
-    }
-    // ── Attack / fight ─────────────────────────────────────────────
-    else if (text.includes('attack') || text.includes('hit') || text.includes('strike')
-      || text.includes('kill') || text.includes('fight') || text.includes('engage')) {
-      for (const char of targetChars) {
-        const target = this.resolveEnemyTarget(text, char.position, enemyChars);
-        if (target) setOrder(char, { type: 'attack', targetCharacterId: target.id });
-      }
-    }
-    // ── Ability / spell / cast ─────────────────────────────────────
-    else if (text.includes('ability') || text.includes('skill') || text.includes('spell')
-      || text.includes('cast') || text.includes('use')) {
-      for (const char of targetChars) {
-        const cls = CLASSES[char.classId];
-        let abilityToUse = cls.abilities[0];
-        for (const ability of cls.abilities) {
-          if (text.includes(ability.name.toLowerCase()) || text.includes(ability.id.replace(/_/g, ' '))) {
-            abilityToUse = ability; break;
-          }
-        }
-        if (abilityToUse) {
-          const target = (abilityToUse.healing && !abilityToUse.damage)
-            ? myChars.reduce((a, b) => a.currentHp / a.stats.hp < b.currentHp / b.stats.hp ? a : b)
-            : this.resolveEnemyTarget(text, char.position, enemyChars);
-          if (target) setOrder(char, { type: 'ability', targetCharacterId: target.id, abilityId: abilityToUse.id });
-        }
-      }
-    }
-    // ── Heal (with optional target ally) ───────────────────────────
-    else if (text.includes('heal') || text.includes('restore') || text.includes('cure')) {
-      let healTarget: Character | undefined;
-      for (const char of myChars) {
-        const cls = CLASSES[char.classId].name.toLowerCase();
-        const name = char.name.toLowerCase();
-        if (!targetChars.includes(char)
-          && (text.includes(cls) || text.includes(name))) {
-          healTarget = char;
-          break;
-        }
-      }
-      if (!healTarget) healTarget = myChars.reduce((a, b) => a.currentHp / a.stats.hp < b.currentHp / b.stats.hp ? a : b);
-      for (const char of targetChars) {
-        const healAbility = CLASSES[char.classId].abilities.find(a => a.healing && !a.damage);
-        if (healAbility) setOrder(char, { type: 'ability', targetCharacterId: healTarget.id, abilityId: healAbility.id });
-      }
-    }
-    // ── Move / go / walk (+ flank, behind, coordinates) ────────────
-    else if (text.includes('move') || text.includes('go') || text.includes('walk')
-      || text.includes('run') || text.includes('advance') || text.includes('forward')
-      || text.includes('flank') || text.includes('behind') || /\d{1,2}\s*[,\s]\s*\d{1,2}/.test(text)) {
-      for (const char of targetChars) setOrder(char, { type: 'move', targetPosition: this.parseMoveTarget(text, char, enemyChars) });
-    }
-    // ── Patrol ──────────────────────────────────────────────────────
-    else if (text.includes('patrol')) {
-      for (const char of targetChars) setOrder(char, { type: 'patrol', targetPosition: this.parseMoveTarget(text, char, enemyChars) });
-    }
-    // ── Defend / guard / hold ──────────────────────────────────────
-    else if (text.includes('defend') || text.includes('guard') || text.includes('hold')) {
-      for (const char of targetChars) setOrder(char, { type: 'defend' });
-    }
-    // ── Retreat / fall back ────────────────────────────────────────
-    else if (text.includes('retreat') || text.includes('back') || text.includes('base')
-      || text.includes('fall back') || text.includes('disengage')) {
-      for (const char of targetChars) setOrder(char, { type: 'retreat' });
-    }
-    // ── Default: move toward nearest unowned control point ──────────
-    else {
-      const unowned = this.controlPoints
-        .filter(cp => cp.owner !== this.myTeam)
-        .sort((a, b) => this.tileDist(targetChars[0].position, a.position) - this.tileDist(targetChars[0].position, b.position));
-      const targetCP = unowned[0] || this.controlPoints[1];
-      for (const char of targetChars) setOrder(char, { type: 'control', targetPosition: targetCP.position });
-    }
-
-    this.updateOrderLabels(affectedChars);
-    return partOrders;
-  }
-
-  private updateOrderLabels(charIds: Set<string>) {
-    for (const id of charIds) {
-      const char = this.charData.get(id);
-      const entity = this.characters.get(id);
-      if (entity && char?.currentOrder) {
-        const queueLen = this.orderQueues.get(id)?.length || 0;
-        const label = this.getOrderLabel(char.currentOrder) + (queueLen > 0 ? ` (+${queueLen})` : '');
-        entity.setOrderText(label);
-      }
-    }
-  }
-
-  // ─── CONTROL POINTS ────────────────────────────────────────────
-
-  private initControlPoints() {
-    const defs = this.gameMap.controlPointDefs;
-    const positions = this.gameMap.controlPointPositions;
-    const defaultBuffs = [
-      { type: 'speed' as const, value: 1.1, label: '+10% Speed' },
-      { type: 'damage' as const, value: 1.15, label: '+15% Damage' },
-      { type: 'defense' as const, value: 1.1, label: '+10% Defense' },
-    ];
-
-    for (let i = 0; i < positions.length; i++) {
-      const def = defs?.[i];
-      const cp: ControlPoint = {
-        id: def?.id || `cp_${i}`,
-        name: def?.name || `Point ${String.fromCharCode(65 + i)}`,
-        position: positions[i],
-        radius: def?.radius || 2,
-        owner: null,
-        captureProgress: 0,
-        capturingTeam: null,
-        buff: def?.buff || defaultBuffs[i],
-      };
-      this.controlPoints.push(cp);
-
-      // Visual: pulsing circle
-      const px = positions[i].x * TILE_SIZE + TILE_SIZE / 2;
-      const py = positions[i].y * TILE_SIZE + TILE_SIZE / 2;
-      const container = this.add.container(px, py);
-
-      const ringRadius = (cp.radius || 2) * TILE_SIZE / 2;
-      const ring = this.add.graphics();
-      ring.lineStyle(2, 0xffffff, 0.5);
-      ring.strokeCircle(0, 0, ringRadius);
-      container.add(ring);
-
-      const fill = this.add.graphics();
-      fill.setData('fill', fill);
-      container.add(fill);
-
-      const isCenterCP = i === 1;
-      const nameLabel = this.add.text(0, -18, cp.name, {
-        fontSize: '8px', color: '#fff', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
-      }).setOrigin(0.5);
-      container.add(nameLabel);
-      const label = this.add.text(0, 16, cp.buff.label, {
-        fontSize: '7px', color: '#ccc', fontFamily: 'monospace',
-      }).setOrigin(0.5);
-      container.add(label);
-
-      const rewardText = isCenterCP ? '2x Score +40XP' : '+Score +40XP';
-      const rewardLabel = this.add.text(0, 24, rewardText, {
-        fontSize: '6px', color: '#FFD93D', fontFamily: '"Nunito", sans-serif',
-      }).setOrigin(0.5);
-      container.add(rewardLabel);
-
-      container.setDepth(7);
-      container.setData('ring', ring);
-      container.setData('fillGfx', fill);
-
-      this.tweens.add({
-        targets: ring,
-        alpha: { from: 0.3, to: 0.7 },
-        duration: 1200,
-        yoyo: true,
-        repeat: -1,
-      });
-
-      this.cpSprites.set(cp.id, container);
-    }
-  }
-
-  private updateControlPoints() {
-    for (const cp of this.controlPoints) {
-      const nearby: Record<string, number> = { player1: 0, player2: 0 };
-      this.charData.forEach(char => {
-        if (char.isDead) return;
-        if (this.tileDist(char.position, cp.position) <= (cp.radius || 2)) {
-          const team = char.owner === this.playerId ? 'player1' : 'player2';
-          nearby[team]++;
-        }
-      });
-
-      const p1 = nearby.player1;
-      const p2 = nearby.player2;
-
-      if (p1 > 0 && p2 > 0) {
-        // Contested - no progress
-      } else if (p1 > 0) {
-        if (cp.owner === 'player1') {
-          // Already owned, maintain
-        } else {
-          cp.capturingTeam = 'player1';
-          cp.captureProgress = Math.min(100, cp.captureProgress + 3);
-          if (cp.captureProgress >= 100) {
-            cp.owner = 'player1';
-            cp.captureProgress = 100;
-            this.sound_.playControlCapture();
-            this.showAnnouncement(`POINT CAPTURED: ${cp.buff.label}`, '#4488ff');
-            // Grant XP to nearby allies
-            this.charData.forEach(c => {
-              if (c.owner === this.playerId && !c.isDead && this.tileDist(c.position, cp.position) <= 2) {
-                this.grantXP(c, XP_CAPTURE_CP);
-              }
-            });
-          }
-        }
-      } else if (p2 > 0) {
-        if (cp.owner === 'player2') {
-          // Already owned, maintain
-        } else {
-          cp.capturingTeam = 'player2';
-          cp.captureProgress = Math.min(100, cp.captureProgress + 3);
-          if (cp.captureProgress >= 100) {
-            cp.owner = 'player2';
-            cp.captureProgress = 100;
-            this.sound_.playControlCapture();
-            this.showAnnouncement(`ENEMY CAPTURED POINT: ${cp.buff.label}`, '#FF6B6B');
-          }
-        }
-      } else {
-        // Empty - decay
-        if (cp.captureProgress > 0 && !cp.owner) {
-          cp.captureProgress = Math.max(0, cp.captureProgress - 2);
-          if (cp.captureProgress === 0) cp.capturingTeam = null;
-        }
-      }
-
-      // Update visual
-      const container = this.cpSprites.get(cp.id);
-      if (container) {
-        const fillGfx = container.getData('fillGfx') as Phaser.GameObjects.Graphics;
-        fillGfx.clear();
-        if (cp.captureProgress > 0) {
-          const color = cp.capturingTeam === 'player1' ? 0x4444ff :
-            cp.capturingTeam === 'player2' ? 0xff4444 : 0xffffff;
-          const alpha = 0.1 + (cp.captureProgress / 100) * 0.4;
-          fillGfx.fillStyle(color, alpha);
-          fillGfx.fillCircle(0, 0, 12 * (cp.captureProgress / 100));
-        }
-        if (cp.owner) {
-          const ring = container.getData('ring') as Phaser.GameObjects.Graphics;
-          ring.clear();
-          const ownerColor = cp.owner === 'player1' ? 0x4444ff : 0xff4444;
-          ring.lineStyle(2, ownerColor, 0.8);
-          ring.strokeCircle(0, 0, 14);
-        }
-      }
-    }
-  }
-
-  private getTeamBuffs(owner: string): { speed: number; damage: number; defense: number } {
-    const team = owner === this.playerId ? 'player1' : 'player2';
-    const buffs = { speed: 1, damage: 1, defense: 1 };
-    for (const cp of this.controlPoints) {
-      if (cp.owner === team) {
-        if (cp.buff.type === 'speed') buffs.speed *= cp.buff.value;
-        if (cp.buff.type === 'damage') buffs.damage *= cp.buff.value;
-        if (cp.buff.type === 'defense') buffs.defense *= cp.buff.value;
-      }
-    }
-    return buffs;
-  }
-
-  // ─── VFX ──────────────────────────────────────────────────────────
-
-  private showAttackVFX(attacker: Character, target: Character) {
-    const atkEntity = this.characters.get(attacker.id);
-    const tgtEntity = this.characters.get(target.id);
-    if (!atkEntity || !tgtEntity) return;
-    if (!tgtEntity.fogVisible && target.owner !== this.playerId) return;
-
-    if (attacker.stats.range >= 2) {
-      // Ranged: projectile dot
-      const dot = this.add.circle(atkEntity.sprite.x, atkEntity.sprite.y, 3, 0xffaa44).setDepth(20);
-      this.tweens.add({
-        targets: dot,
-        x: tgtEntity.sprite.x, y: tgtEntity.sprite.y,
-        duration: 200,
-        onComplete: () => dot.destroy(),
-      });
-    } else {
-      // Melee: impact flash
-      const flash = this.add.circle(tgtEntity.sprite.x, tgtEntity.sprite.y, 8, 0xffffff, 0.6).setDepth(20);
-      this.tweens.add({
-        targets: flash,
-        alpha: 0, scaleX: 1.5, scaleY: 1.5,
-        duration: 200,
-        onComplete: () => flash.destroy(),
-      });
-    }
-  }
-
-  private showAbilityVFX(caster: Character, target: Character, abilityId: string) {
-    const casterEntity = this.characters.get(caster.id);
-    const tgtEntity = this.characters.get(target.id);
-    if (!casterEntity || !tgtEntity) return;
-
-    if (abilityId.includes('fireball') || abilityId.includes('fire')) {
-      // Fireball projectile
-      const proj = this.add.circle(casterEntity.sprite.x, casterEntity.sprite.y, 5, 0xff6600).setDepth(20);
-      this.tweens.add({
-        targets: proj,
-        x: tgtEntity.sprite.x, y: tgtEntity.sprite.y,
-        duration: 300,
-        onComplete: () => {
-          // Explosion
-          const exp = this.add.circle(tgtEntity.sprite.x, tgtEntity.sprite.y, 4, 0xff4400, 0.8).setDepth(20);
-          this.tweens.add({
-            targets: exp,
-            scaleX: 3, scaleY: 3, alpha: 0,
-            duration: 300,
-            onComplete: () => exp.destroy(),
-          });
-          proj.destroy();
-        },
-      });
-    } else if (abilityId.includes('heal')) {
-      // Heal particles
-      for (let i = 0; i < 5; i++) {
-        const p = this.add.circle(
-          tgtEntity.sprite.x + (Math.random() - 0.5) * 20,
-          tgtEntity.sprite.y + 10,
-          3, 0x44ff88, 0.8
-        ).setDepth(20);
-        this.tweens.add({
-          targets: p,
-          y: p.y - 25 - Math.random() * 15,
-          alpha: 0,
-          duration: 600 + Math.random() * 200,
-          delay: i * 60,
-          onComplete: () => p.destroy(),
-        });
-      }
-    } else if (abilityId.includes('stun') || abilityId.includes('smite')) {
-      // Stun flash
-      const flash = this.add.circle(tgtEntity.sprite.x, tgtEntity.sprite.y, 16, 0xffff00, 0.6).setDepth(20);
-      this.tweens.add({
-        targets: flash,
-        alpha: 0, scaleX: 2, scaleY: 2,
-        duration: 300,
-        onComplete: () => flash.destroy(),
-      });
-    } else if (abilityId.includes('drain')) {
-      // Drain arc
-      const arc = this.add.graphics().setDepth(20);
-      arc.lineStyle(2, 0xaa44ff, 0.8);
-      arc.lineBetween(tgtEntity.sprite.x, tgtEntity.sprite.y, casterEntity.sprite.x, casterEntity.sprite.y);
-      this.tweens.add({
-        targets: arc,
-        alpha: 0,
-        duration: 400,
-        onComplete: () => arc.destroy(),
-      });
-    } else {
-      // Generic: projectile
-      const proj = this.add.circle(casterEntity.sprite.x, casterEntity.sprite.y, 4, 0x8888ff).setDepth(20);
-      this.tweens.add({
-        targets: proj,
-        x: tgtEntity.sprite.x, y: tgtEntity.sprite.y,
-        duration: 250,
-        onComplete: () => proj.destroy(),
-      });
-    }
-  }
-
-  // ─── PATH VISUALIZATION ───────────────────────────────────────────
-
-  private renderPaths() {
-    this.pathGraphics.clear();
-    this.charData.forEach((char) => {
-      if (char.owner !== this.playerId || char.isDead) return;
-      if (!char.path || char.path.length === 0) return;
-
-      this.pathGraphics.lineStyle(1.5, 0x44ff88, 0.3);
-      const sx = char.position.x * TILE_SIZE + TILE_SIZE / 2;
-      const sy = char.position.y * TILE_SIZE + TILE_SIZE / 2;
-      this.pathGraphics.beginPath();
-      this.pathGraphics.moveTo(sx, sy);
-      for (const p of char.path) {
-        this.pathGraphics.lineTo(p.x * TILE_SIZE + TILE_SIZE / 2, p.y * TILE_SIZE + TILE_SIZE / 2);
-      }
-      this.pathGraphics.strokePath();
-
-      // Destination dot
-      const last = char.path[char.path.length - 1];
-      this.pathGraphics.fillStyle(0x44ff88, 0.5);
-      this.pathGraphics.fillCircle(last.x * TILE_SIZE + TILE_SIZE / 2, last.y * TILE_SIZE + TILE_SIZE / 2, 4);
-    });
-  }
-
-  // ─── CHARACTER VIEWPORTS ──────────────────────────────────────────
-
-  private updateCharViewports() {
-    this.charViewports.update(this.charData, this.characters);
-  }
-
-
-  // ─── ECONOMY ──────────────────────────────────────────────────
-
-  private tickEconomy() {
-    const myEcon = this.isHost ? this.economy.player1 : this.economy.player2;
-    const oppEcon = this.isHost ? this.economy.player2 : this.economy.player1;
-
-    // Base passive income
-    let myIncome = BASE_INCOME_PER_SEC;
-    let oppIncome = BASE_INCOME_PER_SEC;
-
-    // Double income at Phase 4 (4:00 = 240s elapsed)
-    const incomeMultiplier = this.gamePhase >= 4 ? 2 : 1;
-
-    // Upkeep penalty: team with more alive units/followers mines 15% slower
-    const myUnitCount = Array.from(this.charData.values()).filter(c => c.owner === this.playerId && !c.isDead).length
-      + this.followers.filter(f => f.ownerTeam === (this.isHost ? 'player1' : 'player2') && !f.isDead).length;
-    const oppUnitCount = Array.from(this.charData.values()).filter(c => c.owner !== this.playerId && !c.isDead).length
-      + this.followers.filter(f => f.ownerTeam !== (this.isHost ? 'player1' : 'player2') && !f.isDead).length;
-    const myUpkeep = myUnitCount > oppUnitCount ? 0.85 : 1;
-    const oppUpkeep = oppUnitCount > myUnitCount ? 0.85 : 1;
-
-    // Safe mine slowdown at Phase 3+ (force expansion to center)
-    const safeMineSlowdown = this.gamePhase >= 3 ? 0.5 : 1;
-
-    // Mining income from characters at mine nodes
-    this.charData.forEach(char => {
-      if (char.isDead) return;
-      if (char.channelActivity?.type === 'mine') {
-        // Check if this is a safe mine
-        const nearMine = this.mineNodes.find(m =>
-          this.tileDist(char.position, m.position) <= 1
-        );
-        const mineSlowdown = nearMine?.type === 'safe' ? safeMineSlowdown : 1;
-        const rate = MINE_RATE_PER_SEC * incomeMultiplier * mineSlowdown;
-        if (char.owner === this.playerId) {
-          myIncome += rate * myUpkeep;
-        } else {
-          oppIncome += rate * oppUpkeep;
-        }
-      }
-    });
-
-    myEcon.income = myIncome;
-    oppEcon.income = oppIncome;
-    myEcon.upkeepPenalty = myUpkeep;
-    oppEcon.upkeepPenalty = oppUpkeep;
-
-    myEcon.gold += myIncome;
-    oppEcon.gold += oppIncome;
-  }
-
-  private getMyGold(): number {
-    return this.isHost ? this.economy.player1.gold : this.economy.player2.gold;
-  }
-
-  private spendGold(amount: number): boolean {
-    const econ = this.isHost ? this.economy.player1 : this.economy.player2;
-    if (econ.gold < amount) return false;
-    econ.gold -= amount;
-    return true;
-  }
-
-  // ─── GAME PHASE ────────────────────────────────────────────────
-
-  private updateGamePhase() {
-    const prev = this.gamePhase;
-    if (this.elapsedSeconds >= 250) {
-      this.gamePhase = 4;
-    } else if (this.elapsedSeconds >= 180) {
-      this.gamePhase = 3;
-    } else if (this.elapsedSeconds >= 90) {
-      this.gamePhase = 2;
-    } else {
-      this.gamePhase = 1;
-    }
-
-    if (this.gamePhase !== prev) {
-      this.onPhaseChange(this.gamePhase);
-    }
-  }
-
-  private getPhaseLabel(): string {
-    switch (this.gamePhase) {
-      case 1: return 'EARLY GAME';
-      case 2: return 'MID GAME';
-      case 3: return 'LATE GAME';
-      case 4: return 'OVERTIME';
-      default: return '';
-    }
-  }
-
-  private onPhaseChange(phase: MapPhase) {
-    switch (phase) {
-      case 2:
-        this.showAnnouncement('MID GAME — Camps & rich mines open!', '#FFD93D');
-        break;
-      case 3:
-        this.showAnnouncement('LATE GAME — Safe mines slow, fight for center!', '#FF9F43');
-        break;
-      case 4:
-        this.showAnnouncement('OVERTIME — Double income, final push!', '#FF6B6B');
-        break;
-    }
-  }
-
-  // ─── MORALE & BARKS ───────────────────────────────────────────
-
-  private tickMorale() {
-    this.charData.forEach((char) => {
-      if (char.isDead) return;
-
-      // Morale recovery: near allies or at full health
-      const nearAlly = Array.from(this.charData.values()).some(c =>
-        c.id !== char.id && c.owner === char.owner && !c.isDead &&
-        this.tileDist(c.position, char.position) <= 3
-      );
-
-      if (char.morale === 'shaken') {
-        char.moraleTimer = (char.moraleTimer ?? 0) + 1;
-        // Recover if near allies, high HP, or 15s passed
-        if (nearAlly || char.currentHp > char.stats.hp * 0.7 || (char.moraleTimer ?? 0) >= 15) {
-          char.morale = 'confident';
-          char.moraleTimer = 0;
-        }
-      }
-
-      // Ignored while hurt: if below 40% HP for 10+ seconds without praise
-      if (char.owner === this.playerId && char.currentHp < char.stats.hp * 0.4) {
-        const timeSincePraise = Date.now() - (char.lastPraised ?? 0);
-        if (timeSincePraise > 10000 && char.morale === 'confident') {
-          this.triggerBark(char, 'ignored_while_hurt');
-        }
-      }
-    });
-  }
-
-  private tickGambitAI() {
-    // Disabled — player controls all characters directly
-    return;
-    // Only run gambit for own characters on the host (or local)
-    if (!this.isHost && !this.isLocal) return;
-
-    const myChars = Array.from(this.charData.values())
-      .filter(c => c.owner === this.playerId && !c.isDead);
-    const enemies = Array.from(this.charData.values())
-      .filter(c => c.owner !== this.playerId && !c.isDead);
-
-    // Find available mine positions
-    const minePositions = this.mineNodes
-      .filter(m => m.currentGold > 0 && m.activatePhase <= this.gamePhase)
-      .map(m => m.position);
-
-    // Find healing well position
-    const healingWell = this.pois.find(p => p.type === 'healing_well' && p.active);
-    const basePos = this.isHost ? this.gameMap.spawnP1[0] : this.gameMap.spawnP2[0];
-
-    for (const char of myChars) {
-      // Skip the active hero — player controls via WASD
-      if (char.id === this.activeHeroId) continue;
-      // Skip if character has a player-assigned order and isn't idle
-      // (gambit only overrides idle or completed orders)
-
-      const ctx: GambitContext = {
-        char,
-        allies: myChars,
-        enemies,
-        activeHeroId: this.activeHeroId,
-        gold: this.getMyGold(),
-        gamePhase: this.gamePhase,
-        minePositions,
-        healingWellPos: healingWell?.position,
-        basePosition: basePos,
-        tileAt: (x, y) => this.gameMap.tiles[y]?.[x] || 'rock',
-      };
-
-      const order = getGambitOrder(ctx);
-      if (order) {
-        char.currentOrder = order;
-        char.path = [];
-      }
-    }
-  }
-
-  private triggerBark(char: Character, trigger: import('@prompt-battle/shared').BarkTrigger) {
-    if (char.owner !== this.playerId) return; // Only show barks for own team
-    const now = Date.now();
-    const lastBark = this.lastBarkTime.get(char.id) || 0;
-    if (now - lastBark < BARK_COOLDOWN * 1000) return;
-
-    if (!char.personality) return;
-    const text = getBark(char.personality, trigger);
-    if (!text) return;
-
-    this.lastBarkTime.set(char.id, now);
-    const entity = this.characters.get(char.id);
-    if (entity) {
-      entity.showBark(text);
-      this.tts.speak(char.id, text);
-    }
-  }
-
-  private handlePraise(charId: string) {
-    const char = this.charData.get(charId);
-    if (!char || char.isDead || char.owner !== this.playerId) return;
-
-    char.lastPraised = Date.now();
-    // Morale boost
-    if (char.morale === 'shaken') {
-      char.morale = 'confident';
-      char.moraleTimer = 0;
-    }
-
-    // Temporary damage buff (+15% for 10s)
-    char.effects.push({ type: 'damage_boost', duration: 10, value: 1.15 });
-
-    this.triggerBark(char, 'praised');
-    this.addCommandLog('System', `${char.name} was praised! +15% damage for 10s`, 'praise');
-  }
-
-  // ─── UTILITIES ──────────────────────────────────────────────────
-
-  private findNearest(from: Position, targets: Character[]): Character {
-    let nearest = targets[0];
-    let minDist = Infinity;
-    for (const t of targets) {
-      const dist = this.tileDist(from, t.position);
-      if (dist < minDist) { minDist = dist; nearest = t; }
-    }
-    return nearest;
+  private getSelectedHero(): Hero | null {
+    const ids = this.getMyHeroIds();
+    return ids[this.selectedHeroIdx] ? this.state.heroes[ids[this.selectedHeroIdx]] : null;
   }
 
   private tileDist(a: Position, b: Position): number {
     return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
   }
 
-  private getOccupiedPositions(excludeId?: string): Set<string> {
-    const occupied = new Set<string>();
-    this.charData.forEach((c) => {
-      if (!c.isDead && c.id !== excludeId) occupied.add(`${c.position.x},${c.position.y}`);
-    });
-    return occupied;
-  }
+  // ─── PHASER UPDATE ───────────────────────────────────────
 
-  private tickCooldowns() {
-    this.charData.forEach(char => {
-      for (const id of Object.keys(char.cooldowns)) {
-        if (char.cooldowns[id] > 0) char.cooldowns[id]--;
-      }
-      char.effects = char.effects.filter(e => { e.duration--; return e.duration > 0; });
-    });
-  }
-
-  private getHpLeader(): string {
-    let myHp = 0, oppHp = 0;
-    this.charData.forEach(c => {
-      if (c.owner === this.playerId) myHp += c.currentHp;
-      else oppHp += c.currentHp;
-    });
-    return myHp >= oppHp ? this.playerId : this.opponentId;
-  }
-
-  // ─── CHARACTER SELECTION ───────────────────────────────────────
-
-  private selectCharacter(charId: string | null) {
-    this.characters.forEach(c => c.deselect());
-    this.selectedCharId = charId;
-
-    if (charId) {
-      const entity = this.characters.get(charId);
-      const char = this.charData.get(charId);
-      if (entity && char) {
-        entity.select();
-        this.selectedCharLabel.setText(`Commanding: ${char.name} [Q/E cycle, 1-3 abilities, Esc=all]`);
-        this.cameras.main.centerOn(entity.sprite.x, entity.sprite.y);
-      }
-    } else {
-      this.selectedCharLabel.setText('Commanding: ALL [Q/E cycle, click=select]');
-    }
-    this.updateAbilityPanel();
-  }
-
-  private cycleSelectedChar(direction: number) {
-    const myCharIds = Array.from(this.charData.entries())
-      .filter(([, c]) => c.owner === this.playerId && !c.isDead)
-      .map(([id]) => id);
-    if (myCharIds.length === 0) return;
-
-    if (!this.selectedCharId) {
-      this.selectCharacter(direction > 0 ? myCharIds[0] : myCharIds[myCharIds.length - 1]);
-      return;
+  update(_time: number, _delta: number) {
+    // Update follower preUpdate for lerp
+    for (const [, entity] of this.unitEntities) {
+      entity.preUpdate();
     }
 
-    const idx = myCharIds.indexOf(this.selectedCharId);
-    let nextIdx = idx + direction;
-    if (nextIdx < 0) nextIdx = myCharIds.length - 1;
-    if (nextIdx >= myCharIds.length) nextIdx = 0;
-    this.selectCharacter(myCharIds[nextIdx]);
-  }
-
-  // ─── ABILITY HOTKEYS ─────────────────────────────────────────────
-
-  private useAbilityHotkey(index: number) {
-    if (!this.selectedCharId) return;
-    const char = this.charData.get(this.selectedCharId);
-    if (!char || char.isDead || char.owner !== this.playerId) return;
-
-    const cls = CLASSES[char.classId];
-    const ability = cls.abilities[index];
-    if (!ability) return;
-
-    // Check cooldown
-    const cd = char.cooldowns[ability.id] || 0;
-    if (cd > 0) {
-      this.showAnnouncement(`${ability.name} on cooldown (${cd}s)`, '#FFD93D');
-      return;
-    }
-
-    // Find target: healing → lowest HP ally, offensive → nearest visible enemy
-    let targetId: string | undefined;
-    if (ability.healing && !ability.damage) {
-      const allies = Array.from(this.charData.values())
-        .filter(c => c.owner === this.playerId && !c.isDead);
-      if (allies.length > 0) {
-        targetId = allies.reduce((a, b) =>
-          a.currentHp / a.stats.hp < b.currentHp / b.stats.hp ? a : b,
-        ).id;
-      }
-    } else {
-      const enemies = Array.from(this.charData.values())
-        .filter(c => c.owner !== this.playerId && !c.isDead);
-      const visible = enemies.filter(e => {
-        const entity = this.characters.get(e.id);
-        return entity && entity.fogVisible;
-      });
-      if (visible.length > 0) {
-        targetId = this.findNearest(char.position, visible).id;
-      } else if (enemies.length > 0) {
-        targetId = this.findNearest(char.position, enemies).id;
-      }
-    }
-
-    if (!targetId) return;
-
-    const order: CharacterOrder = {
-      type: 'ability',
-      abilityId: ability.id,
-      targetCharacterId: targetId,
-    };
-    char.currentOrder = order;
-    char.path = [];
-    const queue = this.orderQueues.get(char.id);
-    if (queue) queue.length = 0;
-
-    const entity = this.characters.get(char.id);
-    if (entity) entity.setOrderText(ability.name);
-
-    // Guest: send the order to the host
-    if (!this.isLocal && !this.isHost) {
-      this.firebase.sendRemoteOrders(this.gameId, this.playerId, [
-        { characterId: char.id, order, queued: false },
-      ]);
-    }
-
-    this.updateAbilityPanel();
-  }
-
-  // ─── CAMERA ─────────────────────────────────────────────────────
-
-  private setupCameraControls() {
-    const cursors = this.input.keyboard!.createCursorKeys();
-    const wasd = {
-      up: this.input.keyboard!.addKey('W'),
-      down: this.input.keyboard!.addKey('S'),
-      left: this.input.keyboard!.addKey('A'),
-      right: this.input.keyboard!.addKey('D'),
-    };
-
-    const EDGE_THRESHOLD = 40; // pixels from window edge to trigger scroll
-    const EDGE_SPEED = 16;
-    const KEY_SPEED = 12;
-
-    // Track raw window-level mouse position for edge-scroll
-    let windowMouseX = -1;
-    let windowMouseY = -1;
-    let mouseInWindow = false;
-    const onWindowMouseMove = (e: MouseEvent) => {
-      windowMouseX = e.clientX;
-      windowMouseY = e.clientY;
-      mouseInWindow = true;
-    };
-    const onMouseLeave = () => {
-      mouseInWindow = false;
-    };
-    window.addEventListener('mousemove', onWindowMouseMove);
-    document.addEventListener('mouseleave', onMouseLeave);
-    this.events.once('shutdown', () => {
-      window.removeEventListener('mousemove', onWindowMouseMove);
-      document.removeEventListener('mouseleave', onMouseLeave);
-    });
-    this.events.once('destroy', () => {
-      window.removeEventListener('mousemove', onWindowMouseMove);
-      document.removeEventListener('mouseleave', onMouseLeave);
-    });
-
-    // Tab key to cycle active hero (WASD control)
-    const tabKey = this.input.keyboard!.addKey('TAB');
-    tabKey.on('down', () => {
-      this.cycleActiveHero();
-    });
-
-    // Accumulator for WASD movement ticks
-    let wasdMoveAccum = 0;
-    const WASD_MOVE_INTERVAL = 200; // ms between tile movements
-
-    this.events.on('update', (_time: number, delta: number) => {
+    // Update minimap
+    if (this.miniMap && this.state) {
       const cam = this.cameras.main;
-
-      // Skip keyboard controls when a text input is focused
-      const tag = (document.activeElement as HTMLElement)?.tagName;
-      const inputFocused = tag === 'INPUT' || tag === 'TEXTAREA';
-
-      const wDown = !inputFocused && wasd.up.isDown;
-      const sDown = !inputFocused && wasd.down.isDown;
-      const aDown = !inputFocused && wasd.left.isDown;
-      const dDown = !inputFocused && wasd.right.isDown;
-
-      // WASD hero movement when active hero is set
-      if (this.activeHeroId && (wDown || sDown || aDown || dDown)) {
-        wasdMoveAccum += delta;
-        if (wasdMoveAccum >= WASD_MOVE_INTERVAL) {
-          wasdMoveAccum = 0;
-          this.moveActiveHeroWASD(wDown, sDown, aDown, dDown);
-        }
-        // Camera follows active hero
-        const hero = this.charData.get(this.activeHeroId);
-        if (hero) {
-          cam.scrollX += (hero.position.x * TILE_SIZE + TILE_SIZE / 2 - cam.scrollX - cam.width / 2) * 0.1;
-          cam.scrollY += (hero.position.y * TILE_SIZE + TILE_SIZE / 2 - cam.scrollY - cam.height / 2) * 0.1;
-        }
-      } else {
-        wasdMoveAccum = 0;
-        // Keyboard panning (arrows always work, WASD pans when no active hero)
-        if (!this.activeHeroId) {
-          if (aDown) cam.scrollX -= KEY_SPEED;
-          if (dDown) cam.scrollX += KEY_SPEED;
-          if (wDown) cam.scrollY -= KEY_SPEED;
-          if (sDown) cam.scrollY += KEY_SPEED;
-        }
-      }
-
-      // Arrow keys always pan camera
-      if (cursors.left.isDown) cam.scrollX -= KEY_SPEED;
-      if (cursors.right.isDown) cam.scrollX += KEY_SPEED;
-      if (cursors.up.isDown) cam.scrollY -= KEY_SPEED;
-      if (cursors.down.isDown) cam.scrollY += KEY_SPEED;
-
-      // Edge-of-screen panning — uses raw window mouse position so it works
-      // based on the full browser window, not the Phaser viewport
-      const mx = windowMouseX;
-      const my = windowMouseY;
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-
-      // Edge-of-screen panning (skip bottom 120px where hero bar lives)
-      // Only pan when mouse is actually inside the window
-      const heroBarHeight = 120;
-      if (mouseInWindow && mx >= 0 && my >= 0) {
-        if (mx <= EDGE_THRESHOLD) cam.scrollX -= EDGE_SPEED * (1 - mx / EDGE_THRESHOLD);
-        if (mx >= w - EDGE_THRESHOLD) cam.scrollX += EDGE_SPEED * (1 - (w - mx) / EDGE_THRESHOLD);
-        if (my <= EDGE_THRESHOLD) cam.scrollY -= EDGE_SPEED * (1 - my / EDGE_THRESHOLD);
-        if (my >= h - heroBarHeight - EDGE_THRESHOLD && my < h - heroBarHeight) {
-          cam.scrollY += EDGE_SPEED * (1 - (h - heroBarHeight - my) / EDGE_THRESHOLD);
-        }
-      }
-    });
-
-    let dragStartX = 0, dragStartY = 0;
-    let isDragging = false;
-    let clickedViewport = false;
-    this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
-      dragStartX = p.x;
-      dragStartY = p.y;
-      isDragging = false;
-      clickedViewport = false;
-      // Check if left-click landed on a viewport (handle on pointerup if no drag)
-      if (p.leftButtonDown() && this.charViewports) {
-        clickedViewport = !!this.charViewports.handleClick(p.x, p.y);
-      }
-    });
-    this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
-      if (!p.isDown) return;
-      const dx = p.x - dragStartX;
-      const dy = p.y - dragStartY;
-      // Start dragging after a small threshold to distinguish from clicks
-      if (!isDragging && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
-        isDragging = true;
-      }
-      if (isDragging) {
-        this.cameras.main.scrollX -= (p.x - dragStartX) / this.cameras.main.zoom;
-        this.cameras.main.scrollY -= (p.y - dragStartY) / this.cameras.main.zoom;
-        dragStartX = p.x;
-        dragStartY = p.y;
-      }
-    });
-    this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
-      // If it was a click (not a drag) on a viewport, snap camera there
-      if (!isDragging && clickedViewport && this.charViewports) {
-        const snapTo = this.charViewports.handleClick(p.x, p.y);
-        if (snapTo) {
-          const entity = this.characters.get(snapTo);
-          if (entity) this.cameras.main.centerOn(entity.sprite.x, entity.sprite.y);
-        }
-      }
-      isDragging = false;
-      clickedViewport = false;
-    });
-    this.input.on('wheel', (_p: unknown, _gx: unknown, _gy: unknown, _gz: unknown, dy: number) => {
-      // Smooth scroll-to-zoom: scale factor relative to current zoom so it feels natural at all levels
-      const zoomDelta = -dy * 0.0015 * this.cameras.main.zoom;
-      this.cameras.main.zoom = Phaser.Math.Clamp(this.cameras.main.zoom + zoomDelta, 0.35, 3);
-    });
-  }
-
-  // ─── HUD ────────────────────────────────────────────────────────
-
-  private createPhaserHUD() {
-    const { width } = this.cameras.main;
-
-    this.timerText = this.add.text(width / 2, 8, '5:00', {
-      fontSize: '22px',
-      color: '#fff',
-      fontFamily: '"Fredoka", sans-serif',
-      fontStyle: 'bold',
-    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100);
-
-    // Gold display — left of timer
-    this.goldText = this.add.text(width / 2 - 80, 12, '💰 0', {
-      fontSize: '14px',
-      color: '#FFD700',
-      fontFamily: '"Nunito", sans-serif',
-      fontStyle: 'bold',
-    }).setOrigin(1, 0).setScrollFactor(0).setDepth(100);
-
-    // Phase display — right of timer
-    this.phaseText = this.add.text(width / 2 + 80, 12, 'EARLY GAME', {
-      fontSize: '14px',
-      color: '#45E6B0',
-      fontFamily: '"Nunito", sans-serif',
-      fontStyle: 'bold',
-    }).setOrigin(0, 0).setScrollFactor(0).setDepth(100);
-
-    // Active hero indicator — prominent bar at top-left
-    this.activeHeroText = this.add.text(8, 8, '', {
-      fontSize: '14px',
-      color: '#FFD93D',
-      fontFamily: '"Fredoka", sans-serif',
-      fontStyle: 'bold',
-      backgroundColor: '#1a1a2eDD',
-      padding: { x: 10, y: 5 },
-    }).setScrollFactor(0).setDepth(100);
-
-    this.scoreText = this.add.text(width / 2, 32, '0 - 0', {
-      fontSize: '15px',
-      color: '#cbb8ee',
-      fontFamily: '"Nunito", sans-serif',
-      fontStyle: 'bold',
-    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100);
-
-    this.objectiveText = this.add.text(width / 2, 50, `DOMINATION — First to ${DOM_POINTS_TO_WIN}`, {
-      fontSize: '11px',
-      color: '#FF6B9D',
-      fontFamily: '"Fredoka", sans-serif',
-      letterSpacing: 2,
-    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100);
-
-    const { height } = this.cameras.main;
-    this.cooldownBar = this.add.graphics().setScrollFactor(0).setDepth(100);
-    this.cooldownText = this.add.text(width / 2, height - 80, 'READY', {
-      fontSize: '12px',
-      color: '#45E6B0',
-      fontFamily: '"Nunito", sans-serif',
-      fontStyle: 'bold',
-    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100);
-  }
-
-  // ─── WASD HERO CONTROL ──────────────────────────────────────────
-
-  private cycleActiveHero() {
-    const myCharIds = Array.from(this.charData.entries())
-      .filter(([, c]) => c.owner === this.playerId && !c.isDead)
-      .map(([id]) => id);
-    if (myCharIds.length === 0) return;
-
-    if (!this.activeHeroId) {
-      this.activeHeroId = myCharIds[0];
-    } else {
-      const idx = myCharIds.indexOf(this.activeHeroId);
-      this.activeHeroId = myCharIds[(idx + 1) % myCharIds.length];
-    }
-
-    // Mark the active hero on the character data
-    this.charData.forEach((c) => { c.isActiveHero = false; });
-    const activeChar = this.charData.get(this.activeHeroId);
-    if (activeChar) {
-      activeChar.isActiveHero = true;
-      this.selectCharacter(this.activeHeroId);
-      this.addCommandLog('System', `Now controlling: ${activeChar.name}`, 'system');
-    }
-  }
-
-  private getMyAliveCharIds(): string[] {
-    return Array.from(this.charData.entries())
-      .filter(([, c]) => c.owner === this.playerId && !c.isDead)
-      .map(([id]) => id);
-  }
-
-  /** All my characters (including dead) in draft order */
-  private getMyCharIds(): string[] {
-    return Array.from(this.charData.entries())
-      .filter(([, c]) => c.owner === this.playerId)
-      .map(([id]) => id);
-  }
-
-  private selectHeroByIndex(index: number) {
-    const myCharIds = this.getMyCharIds();
-    if (index >= myCharIds.length) return;
-    const charId = myCharIds[index];
-    const char = this.charData.get(charId);
-    if (!char || char.isDead) return;
-    this.selectHeroByCharId(charId);
-  }
-
-  private selectHeroByCharId(charId: string) {
-    // Set as active hero (WASD controlled)
-    this.charData.forEach((c) => { c.isActiveHero = false; });
-    this.activeHeroId = charId;
-    const char = this.charData.get(charId);
-    if (char) {
-      char.isActiveHero = true;
-      this.selectCharacter(charId);
-
-      // Snap camera to hero
-      const entity = this.characters.get(charId);
-      if (entity) {
-        this.cameras.main.centerOn(entity.sprite.x, entity.sprite.y);
-      }
-    }
-    this.updateHeroBar();
-  }
-
-  private buildHeroBar() {
-    const heroRow = document.getElementById('hero-row');
-    if (!heroRow) return;
-    heroRow.innerHTML = '';
-
-    const myCharIds = this.getMyCharIds();
-    const ANIMAL_ICONS: Record<string, string> = {
-      wolf: '🐺', lion: '🦁', turtle: '🐢', elephant: '🐘',
-      cheetah: '🐆', falcon: '🦅', owl: '🦉', phoenix: '🔥',
-      chameleon: '🦎', spider: '🕷️',
-      bear: '🐻', tiger: '🐯', eagle: '🦅', rhino: '🦏',
-      armadillo: '🐾', crab: '🦀', hare: '🐇', fox: '🦊',
-      horse: '🐴', raven: '🐦‍⬛', dragon: '🐉', serpent: '🐍',
-      scorpion: '🦂', bat: '🦇', cat: '🐱',
-    };
-
-    myCharIds.forEach((charId, i) => {
-      const char = this.charData.get(charId)!;
-      const cls = CLASSES[char.classId];
-      const icon = ANIMAL_ICONS[char.animalId] || '🐾';
-
-      const slot = document.createElement('div');
-      slot.className = 'hero-slot' + (charId === this.activeHeroId ? ' active' : '') + (char.isDead ? ' dead' : '');
-      slot.dataset.charId = charId;
-      slot.dataset.index = String(i);
-
-      const hpPct = Math.round((char.currentHp / char.stats.hp) * 100);
-      const hpClass = hpPct < 30 ? 'low' : hpPct < 60 ? 'mid' : '';
-
-      slot.innerHTML = `
-        <div class="hotkey">${i + 1}</div>
-        <div class="hero-icon">${icon}</div>
-        <div class="hero-info">
-          <div class="hero-name">${char.name}</div>
-          <div class="hero-class">${cls?.name || char.classId} (${cls?.role || ''})</div>
-          <div class="hero-hp-bar"><div class="hero-hp-fill ${hpClass}" style="width:${hpPct}%"></div></div>
-        </div>
-      `;
-
-      slot.addEventListener('click', () => this.selectHeroByIndex(i));
-      heroRow.appendChild(slot);
-    });
-
-    // Voice section
-    const voiceSection = document.createElement('div');
-    voiceSection.className = 'voice-section';
-    voiceSection.innerHTML = `
-      <span style="font-size:18px">🎙️</span>
-      <div class="voice-label">Hold [Space] to speak</div>
-      <div class="voice-transcript" id="voice-transcript"></div>
-    `;
-    heroRow.appendChild(voiceSection);
-
-    this.updateAbilityBar();
-  }
-
-  private updateHeroBar() {
-    const heroRow = document.getElementById('hero-row');
-    if (!heroRow) return;
-    const myCharIds = this.getMyCharIds();
-
-    myCharIds.forEach((charId, i) => {
-      const char = this.charData.get(charId);
-      if (!char) return;
-      const slot = heroRow.querySelector(`[data-index="${i}"]`) as HTMLElement;
-      if (!slot) return;
-
-      const isActive = charId === this.activeHeroId;
-      slot.className = 'hero-slot' + (isActive ? ' active' : '') + (char.isDead ? ' dead' : '');
-
-      const hpPct = Math.round((char.currentHp / char.stats.hp) * 100);
-      const hpClass = hpPct < 30 ? 'low' : hpPct < 60 ? 'mid' : '';
-      const fill = slot.querySelector('.hero-hp-fill') as HTMLElement;
-      if (fill) {
-        fill.style.width = `${hpPct}%`;
-        fill.className = `hero-hp-fill ${hpClass}`;
-      }
-    });
-
-    this.updateAbilityBar();
-  }
-
-  private updateAbilityBar() {
-    const bar = document.getElementById('ability-bar');
-    if (!bar) return;
-    bar.innerHTML = '';
-
-    if (!this.activeHeroId) return;
-    const char = this.charData.get(this.activeHeroId);
-    if (!char) return;
-
-    const cls = CLASSES[char.classId];
-    if (!cls) return;
-
-    const keys = ['Q', 'E', 'R'];
-    cls.abilities.forEach((ability, i) => {
-      const cd = char.cooldowns[ability.id] || 0;
-      const btn = document.createElement('div');
-      btn.className = 'ability-btn' + (cd > 0 ? ' on-cooldown' : '');
-      btn.innerHTML = `
-        <span class="ability-key">${keys[i] || ''}</span>
-        <span class="ability-name">${ability.name}</span>
-        <span class="ability-cd ${cd > 0 ? 'cooldown' : 'ready'}">${cd > 0 ? cd + 's' : 'READY'}</span>
-      `;
-      btn.addEventListener('click', () => this.useAbilityHotkey(i));
-      bar.appendChild(btn);
-    });
-  }
-
-  private moveActiveHeroWASD(up: boolean, down: boolean, left: boolean, right: boolean) {
-    if (!this.activeHeroId) return;
-    const char = this.charData.get(this.activeHeroId);
-    if (!char || char.isDead) return;
-
-    let dx = 0, dy = 0;
-    if (left) dx = -1;
-    else if (right) dx = 1;
-    if (up) dy = -1;
-    else if (down) dy = 1;
-
-    const newX = char.position.x + dx;
-    const newY = char.position.y + dy;
-
-    // Bounds check
-    if (newX < 0 || newX >= MAP_WIDTH || newY < 0 || newY >= MAP_HEIGHT) return;
-
-    // Passability check
-    if (!isPassable(this.gameMap.tiles[newY]?.[newX])) return;
-
-    // Clear any existing order — WASD overrides AI
-    char.currentOrder = null;
-    char.path = [];
-    char.channelActivity = null;
-
-    // Move directly
-    char.position = { x: newX, y: newY };
-    const entity = this.characters.get(this.activeHeroId);
-    if (entity) {
-      entity.snapToPosition();
-      entity.setOrderText('WASD');
-    }
-
-    // Auto-attack: if enemy in range, attack it
-    const adjEnemy = Array.from(this.charData.values()).find(e =>
-      e.owner !== char.owner && !e.isDead &&
-      Math.abs(e.position.x - newX) + Math.abs(e.position.y - newY) <= char.stats.range
-    );
-    if (adjEnemy) {
-      this.resolveAutoAttack(char, adjEnemy);
-    }
-  }
-
-  private updateTimerDisplay() {
-    const mins = Math.floor(this.gameTimeRemaining / 60);
-    const secs = this.gameTimeRemaining % 60;
-    this.timerText.setText(`${mins}:${secs.toString().padStart(2, '0')}`);
-    if (this.gameTimeRemaining <= 30) this.timerText.setColor('#FF6B6B');
-    else if (this.gameTimeRemaining <= 60) this.timerText.setColor('#FFD93D');
-
-    // Update gold display
-    const gold = Math.floor(this.getMyGold());
-    const income = Math.floor(this.isHost ? this.economy.player1.income : this.economy.player2.income);
-    this.goldText.setText(`\u2B25 ${gold} (+${income}/s)`);
-
-    // Update phase display with descriptive name
-    const phaseColors = ['#45E6B0', '#45E6B0', '#FFD93D', '#FF9F43', '#FF6B6B'];
-    this.phaseText.setText(this.getPhaseLabel());
-    this.phaseText.setColor(phaseColors[this.gamePhase] || '#45E6B0');
-
-    // Update active hero indicator — prominent and clear
-    if (this.activeHeroId) {
-      const hero = this.charData.get(this.activeHeroId);
-      if (hero) {
-        const cls = CLASSES[hero.classId];
-        const hpPct = Math.round((hero.currentHp / hero.stats.hp) * 100);
-        this.activeHeroText.setText(`\u258E COMMANDING: ${hero.name} (${cls?.name || hero.classId}) HP:${hpPct}% [Tab]`);
-      }
-    } else {
-      this.activeHeroText.setText('\u258E [1/2/3] to select a hero');
-    }
-
-    // Update HTML hero bar
-    this.updateHeroBar();
-  }
-
-  private updateScoreDisplay() {
-    const myTeam = this.isHost ? 'player1' : 'player2';
-    const cpDots = this.controlPoints.map(cp => {
-      if (cp.owner === myTeam) return '\u25CF';
-      if (cp.owner && cp.owner !== myTeam) return '\u25CF';
-      return '\u25CB';
-    }).join(' ');
-    const myScore = this.isHost ? this.domScore1 : this.domScore2;
-    const oppScore = this.isHost ? this.domScore2 : this.domScore1;
-    this.scoreText.setText(`${myScore} - ${oppScore}  ${cpDots}`);
-  }
-
-  private updateCooldownDisplay() {
-    this.cooldownBar.clear();
-    this.cooldownText.setText('');
-  }
-
-  private showAnnouncement(text: string, color: string) {
-    const { width, height } = this.cameras.main;
-    const announce = this.add.text(width / 2, height / 2 - 40, text, {
-      fontSize: '30px',
-      color,
-      fontFamily: '"Fredoka", sans-serif',
-      fontStyle: 'bold',
-      backgroundColor: '#0D0A18CC',
-      padding: { x: 20, y: 8 },
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(200).setAlpha(0);
-
-    this.tweens.add({
-      targets: announce,
-      alpha: 1,
-      scaleX: { from: 0.5, to: 1 },
-      scaleY: { from: 0.5, to: 1 },
-      duration: 300,
-      ease: 'Back.easeOut',
-    });
-    this.tweens.add({
-      targets: announce,
-      alpha: 0,
-      y: height / 2 - 80,
-      duration: 600,
-      delay: 1500,
-      onComplete: () => announce.destroy(),
-    });
-  }
-
-  // ─── STATE ──────────────────────────────────────────────────────
-
-  private endGame(winner: string, reason: string) {
-    if (this.gameOver) return;
-    this.gameOver = true;
-    this.tts.stop();
-
-    // Host: notify guest of game over
-    if (!this.isLocal && this.isHost) {
-      const characters: Record<string, Character> = {};
-      this.charData.forEach((ch, id) => { characters[id] = ch; });
-      const orderQueues: Record<string, CharacterOrder[]> = {};
-      this.orderQueues.forEach((q, id) => { orderQueues[id] = [...q]; });
-      this.firebase.pushSyncState(this.gameId, {
-        characters,
-        ctf: this.ctf,
-        timeRemaining: this.gameTimeRemaining,
-        controlPoints: this.controlPoints,
-        orderQueues,
-        domScore1: this.domScore1,
-        domScore2: this.domScore2,
-        gameOver: true,
-        winner,
-        winReason: reason,
+      this.miniMap.update(this.state, {
+        x: cam.scrollX,
+        y: cam.scrollY,
+        w: cam.width,
+        h: cam.height,
       });
     }
-
-    if (this.gameTickTimer) this.gameTickTimer.destroy();
-    if (this.moveTickTimer) this.moveTickTimer.destroy();
-    if (this.secondTimer) this.secondTimer.destroy();
-
-    this.heroBarEl.style.display = 'none';
-    this.commandLogEl.style.display = 'none';
-    this.statusBarEl.style.display = 'none';
-    this.abilityPanelEl.style.display = 'none';
-    this.commandInput.destroy();
-
-    const winText = reason === 'domination' ? 'DOMINATION!' : 'TIME UP!';
-    this.showAnnouncement(winText, winner === this.playerId ? '#45E6B0' : '#FF6B6B');
-
-    this.time.delayedCall(2000, () => {
-      this.cameras.main.fadeOut(500, 5, 5, 16);
-      this.cameras.main.once('camerafadeoutcomplete', () => {
-        const myScore = this.isHost ? this.domScore1 : this.domScore2;
-        const oppScore = this.isHost ? this.domScore2 : this.domScore1;
-        this.scene.start('ResultScene', {
-          winner,
-          playerId: this.playerId,
-          isLocal: this.isLocal,
-          score: `${myScore} - ${oppScore}`,
-        });
-      });
-    });
   }
-
-  private addCommandLog(sender: string, text: string, status: string) {
-    const entry = document.createElement('div');
-    entry.className = 'log-entry';
-    const color = sender === 'System' ? '#FFD93D' : '#aaa';
-    entry.innerHTML = `
-      <span class="player" style="color:${color}">${sender}:</span>
-      <span class="text">${text}</span>
-      <div class="result ${status === 'processing' ? 'processing-indicator' : ''}">${status === 'processing' ? 'Processing...' : status}</div>
-    `;
-    this.commandLogEl.appendChild(entry);
-    this.commandLogEl.scrollTop = this.commandLogEl.scrollHeight;
-  }
-
-  private updateCommandLogResult(result: string) {
-    const lastEntry = this.commandLogEl.lastElementChild;
-    if (lastEntry) {
-      const resultEl = lastEntry.querySelector('.result');
-      if (resultEl) {
-        resultEl.textContent = result;
-        resultEl.classList.remove('processing-indicator');
-      }
-    }
-  }
-
-  private updateStatusBar() {
-    const myChars = Array.from(this.charData.values()).filter(c => c.owner === this.playerId);
-    const oppChars = Array.from(this.charData.values()).filter(c => c.owner !== this.playerId)
-      .filter(c => {
-        const entity = this.characters.get(c.id);
-        return c.isDead || (entity && entity.fogVisible);
-      });
-
-    const effectMeta: Record<string, { color: string; label: string }> = {
-      stun: { color: '#FF6B6B', label: 'STUN' },
-      slow: { color: '#6CC4FF', label: 'SLOW' },
-      speed_boost: { color: '#FFD93D', label: 'SPD+' },
-      damage_boost: { color: '#FF9F43', label: 'DMG+' },
-      defense_debuff: { color: '#C98FFF', label: 'DEF-' },
-    };
-
-    const renderCard = (c: Character, isAlly: boolean) => {
-      const cls = CLASSES[c.classId];
-      const side = isAlly ? 'ally' : 'enemy';
-      const pct = Math.max(0, (c.currentHp / c.stats.hp) * 100);
-      const ability = cls.abilities[0];
-      const cd = ability ? (c.cooldowns[ability.id] || 0) : 0;
-
-      let card = `<div class="char-card ${side}${c.isDead ? ' dead' : ''}">`;
-      card += `<div class="char-info">`;
-
-      // Row 1: name + class + level
-      card += `<div class="char-name" style="color:${isAlly ? '#6CC4FF' : '#FF8EC8'}">${c.name}`;
-      card += ` <span style="color:#FFD93D;font-size:10px">Lv.${c.level}</span>`;
-      card += `</div>`;
-      card += `<div class="char-class">${cls.name}</div>`;
-
-      if (c.isDead) {
-        card += `<div style="color:#FF6B6B;font-size:11px;font-weight:700">DEAD (${c.respawnTimer ?? 0}s)</div>`;
-      } else {
-        // Row 2: HP bar
-        card += `<div class="char-hp-row">`;
-        card += `<div class="hp-bar"><div class="hp-fill ${side}" style="width:${pct}%"></div></div>`;
-        card += `<span class="hp-text">${c.currentHp}/${c.stats.hp}</span>`;
-        card += `</div>`;
-
-        // Row 2.5: XP bar (allies only)
-        if (isAlly && c.level < 5) {
-          const xpNeeded = XP_THRESHOLDS[c.level] ?? 999;
-          const prevXp = XP_THRESHOLDS[c.level - 1] ?? 0;
-          const xpProgress = Math.min(100, ((c.xp - prevXp) / (xpNeeded - prevXp)) * 100);
-          card += `<div class="char-xp-row">`;
-          card += `<div class="xp-bar"><div class="xp-fill" style="width:${xpProgress}%"></div></div>`;
-          card += `<span class="xp-text">${c.xp}/${xpNeeded} XP</span>`;
-          card += `</div>`;
-        }
-
-        // Row 3: ability + cooldown (allies only show full detail)
-        if (ability) {
-          card += `<div class="char-ability-row">`;
-          card += `<span class="ability-name">${ability.name}</span>`;
-          card += `<span class="ability-cd ${cd > 0 ? 'on-cd' : 'ready'}">${cd > 0 ? cd + 's' : 'READY'}</span>`;
-          card += `</div>`;
-        }
-
-        // Row 3.5: Inventory (allies only)
-        if (isAlly && c.inventory.length > 0) {
-          card += `<div class="char-inventory">`;
-          c.inventory.forEach(itemId => {
-            const def = CONSUMABLES[itemId];
-            card += `<span class="inv-item" title="${def.name}: ${def.description}">${def.icon} ${def.name}</span>`;
-          });
-          card += `</div>`;
-        } else if (isAlly) {
-          card += `<div class="char-inventory"><span style="color:#666;font-size:9px">No items</span></div>`;
-        }
-
-        // Row 4: effects
-        if (c.effects.length > 0) {
-          card += `<div class="char-effects">`;
-          c.effects.forEach(e => {
-            const meta = effectMeta[e.type] || { color: '#888', label: e.type };
-            card += `<span class="effect-badge" style="color:${meta.color}">${meta.label} ${e.duration}s</span>`;
-          });
-          card += `</div>`;
-        }
-
-        // Row 5: current order + channel progress (allies only)
-        if (isAlly) {
-          const order = c.currentOrder;
-          const queueLen = this.orderQueues.get(c.id)?.length || 0;
-          const queueSuffix = queueLen > 0 ? ` +${queueLen}` : '';
-          let orderText = order ? this.getOrderLabel(order) : 'idle';
-          // Channel progress bar
-          if (c.channelActivity) {
-            const total = this.getChannelTotal(c.channelActivity.type);
-            const progress = Math.round(((total - c.channelActivity.ticksRemaining) / total) * 100);
-            const timeLeft = Math.ceil(c.channelActivity.ticksRemaining * TICK_RATE / 1000);
-            const channelRewardMap: Record<string, string> = {
-              scout: 'Reveal map +20XP',
-              loot: 'Random item +30XP',
-              build: 'Barricade (60s)',
-              trap: 'Hidden trap (25dmg+stun)',
-              upgrade_cp: 'Buff x1.5',
-              mine: 'Gold income',
-              build_tower: 'Defensive tower',
-            };
-            const reward = channelRewardMap[c.channelActivity.type] || '';
-            orderText = `${c.channelActivity.type.toUpperCase()} ${progress}% (${timeLeft}s) → ${reward}`;
-            card += `<div class="char-channel">`;
-            card += `<div class="channel-bar"><div class="channel-fill" style="width:${progress}%"></div></div>`;
-            card += `</div>`;
-          }
-          card += `<div class="char-order">${orderText}${queueSuffix}</div>`;
-        }
-      }
-
-      card += `</div></div>`;
-      return card;
-    };
-
-    let html = '<div style="display:flex;justify-content:space-between;width:100%;gap:16px">';
-    html += `<div class="team-section">${myChars.map(c => renderCard(c, true)).join('')}</div>`;
-    if (oppChars.length > 0) {
-      html += `<div class="team-section">${oppChars.map(c => renderCard(c, false)).join('')}</div>`;
-    }
-    html += '</div>';
-    this.statusBarEl.innerHTML = html;
-  }
-
-  private updateAbilityPanel() {
-    const myChars = Array.from(this.charData.values()).filter(c => c.owner === this.playerId);
-
-    let html = '<h3>Your Team</h3>';
-    myChars.forEach(c => {
-      const cls = CLASSES[c.classId];
-      const isAlive = !c.isDead;
-
-      html += `<div class="ap-char" style="opacity:${isAlive ? 1 : 0.4}">`;
-      html += `<div class="ap-char-name">${c.name}</div>`;
-      html += `<div class="ap-char-class">${cls.name}</div>`;
-
-      const isSelected = c.id === this.selectedCharId;
-      cls.abilities.forEach((ability, i) => {
-        const cd = c.cooldowns[ability.id] || 0;
-        const hotkey = isSelected ? `<span class="ap-hotkey">[${i + 1}]</span> ` : '';
-        html += `<div class="ap-ability${isSelected ? ' selected' : ''}">`;
-        html += `<div class="ap-ability-name">${hotkey}${ability.name}</div>`;
-        html += `<div class="ap-ability-desc">${ability.description}</div>`;
-        html += `<div class="ap-ability-cd ${cd > 0 ? 'cooldown' : 'ready'}">${cd > 0 ? `CD: ${cd}s` : 'READY'}</div>`;
-        html += `</div>`;
-      });
-
-      const order = c.currentOrder;
-      const queue = this.orderQueues.get(c.id) || [];
-
-      html += `<div class="ap-order">`;
-      if (c.isDead) {
-        html += `<div class="ap-order-current" style="color:#FF6B6B">DEAD (${c.respawnTimer ?? 0}s)</div>`;
-      } else if (order) {
-        html += `<div class="ap-order-current">${this.getOrderLabel(order)}</div>`;
-      } else {
-        html += `<div class="ap-order-current" style="color:#888">idle</div>`;
-      }
-      queue.forEach((q, i) => {
-        html += `<div class="ap-order-queued">${i + 1}. ${this.getOrderLabel(q)}</div>`;
-      });
-      html += `</div>`;
-
-      if (c.effects.length > 0) {
-        html += `<div class="ap-effects">`;
-        const effectMeta: Record<string, { color: string; name: string }> = {
-          stun: { color: '#FF6B6B', name: 'STUN' },
-          slow: { color: '#4488ff', name: 'SLOW' },
-          speed_boost: { color: '#FFD93D', name: 'SPD+' },
-          damage_boost: { color: '#ff6600', name: 'DMG+' },
-          defense_debuff: { color: '#aa44ff', name: 'DEF-' },
-        };
-        c.effects.forEach(e => {
-          const meta = effectMeta[e.type] || { color: '#888', name: e.type };
-          html += `<span style="color:${meta.color}">${meta.name} (${e.duration}s)</span> `;
-        });
-        html += `</div>`;
-      }
-
-      html += `</div>`;
-    });
-
-    const visibleEnemies = Array.from(this.charData.values())
-      .filter(c => c.owner !== this.playerId)
-      .filter(c => {
-        const entity = this.characters.get(c.id);
-        return c.isDead || (entity && entity.fogVisible);
-      });
-
-    if (visibleEnemies.length > 0) {
-      html += '<h3 style="margin-top:8px">Enemies</h3>';
-      visibleEnemies.forEach(c => {
-        const cls = CLASSES[c.classId];
-        html += `<div class="ap-char enemy" style="opacity:${c.isDead ? 0.4 : 1}">`;
-        html += `<div class="ap-char-name">${c.name}</div>`;
-        html += `<div class="ap-char-class">${cls.name}</div>`;
-        if (!c.isDead) {
-          const pct = Math.round((c.currentHp / c.stats.hp) * 100);
-          html += `<div style="font-size:10px;color:${pct > 50 ? '#66dd88' : '#ff8844'}">${c.currentHp}/${c.stats.hp} HP</div>`;
-        } else {
-          html += `<div style="font-size:10px;color:#FF6B6B">DEAD</div>`;
-        }
-        html += `</div>`;
-      });
-    }
-
-    this.abilityPanelEl.innerHTML = html;
-  }
-
-  update() {
-    if (this.commandCooldownRemaining > 0) {
-      const prev = this.commandCooldownRemaining;
-      this.commandCooldownRemaining = Math.max(0,
-        (this.lastCommandTime + COMMAND_COOLDOWN) - Date.now());
-      this.updateCooldownDisplay();
-      if (prev > 0 && this.commandCooldownRemaining === 0) {
-        this.sound_.playCommandReady();
-        // Flush any commands queued during cooldown as one combined call
-        if (this.pendingCommands.length > 0) {
-          const combined = this.pendingCommands.join(', ');
-          this.pendingCommands = [];
-          this.executeCommands(combined);
-        }
-      }
-    }
-  }
-
-  shutdown() {
-    this.heroBarEl.style.display = 'none';
-    this.commandLogEl.style.display = 'none';
-    this.statusBarEl.style.display = 'none';
-    this.abilityPanelEl.style.display = 'none';
-    this.commandInput?.destroy();
-    this.tts.destroy();
-    if (this.gameTickTimer) this.gameTickTimer.destroy();
-    if (this.moveTickTimer) this.moveTickTimer.destroy();
-    if (this.secondTimer) this.secondTimer.destroy();
-    if (this.charViewports) this.charViewports.destroy();
-  }
-  // ─── ONLINE SYNC ──────────────────────────────────────────────
-
-  private pushSyncState() {
-    const characters: Record<string, Character> = {};
-    this.charData.forEach((char, id) => {
-      characters[id] = char;
-    });
-    const orderQueues: Record<string, CharacterOrder[]> = {};
-    this.orderQueues.forEach((queue, id) => {
-      orderQueues[id] = [...queue];
-    });
-    const snapshot: SyncSnapshot = {
-      characters,
-      ctf: this.ctf,
-      timeRemaining: this.gameTimeRemaining,
-      controlPoints: this.controlPoints,
-      orderQueues,
-      domScore1: this.domScore1,
-      domScore2: this.domScore2,
-    };
-    if (this.gameOver) {
-      snapshot.gameOver = true;
-    }
-    this.firebase.pushSyncState(this.gameId, snapshot).catch(err => {
-      console.error('[Sync] Failed to push state:', err);
-    });
-  }
-
-  private applyRemoteOrders(playerId: string, orders: RemoteOrderPayload[]) {
-    const affectedChars = new Set<string>();
-    for (const o of orders) {
-      const char = this.charData.get(o.characterId);
-      if (!char || char.isDead || char.owner !== playerId) continue;
-
-      if (o.queued) {
-        const queue = this.orderQueues.get(char.id);
-        if (queue && queue.length < 3) queue.push(o.order);
-      } else {
-        char.currentOrder = o.order;
-        char.path = [];
-        const q = this.orderQueues.get(char.id);
-        if (q) q.length = 0;
-      }
-      affectedChars.add(char.id);
-    }
-
-    // Update visuals
-    for (const id of affectedChars) {
-      const char = this.charData.get(id);
-      const entity = this.characters.get(id);
-      if (entity && char?.currentOrder) {
-        const queueLen = this.orderQueues.get(id)?.length || 0;
-        const label = this.getOrderLabel(char.currentOrder) + (queueLen > 0 ? ' (+' + queueLen + ')' : '');
-        entity.setOrderText(label);
-      }
-    }
-    this.addCommandLog('Opponent', 'issued orders', 'success');
-  }
-
-  private applySyncState(state: SyncSnapshot) {
-    // Check for game over from host
-    if (state.gameOver && state.winner) {
-      this.endGame(state.winner, state.winReason || 'unknown');
-      return;
-    }
-
-    // Update characters
-    for (const [id, charState] of Object.entries(state.characters)) {
-      const prev = this.charData.get(id);
-      // Firebase drops empty objects/arrays — ensure defaults
-      if (!charState.cooldowns) charState.cooldowns = {};
-      if (!charState.effects) charState.effects = [];
-      if (!charState.inventory) charState.inventory = [];
-      this.charData.set(id, charState);
-
-      const entity = this.characters.get(id);
-      if (!entity) continue;
-
-      // Update name (host may have different generated names)
-      entity.updateFromState(charState);
-      entity.updateEffectAuras(charState.effects);
-
-      // Animate position changes
-      const prevPos = prev?.position;
-      if (prevPos && (prevPos.x !== charState.position.x || prevPos.y !== charState.position.y)) {
-        entity.data.position = charState.position;
-        if (!entity.isMoving) {
-          entity.stepToTile(charState.position.x, charState.position.y);
-        }
-      } else {
-        entity.snapToPosition();
-      }
-
-      // Order text
-      if (charState.currentOrder) {
-        entity.setOrderText(this.getOrderLabel(charState.currentOrder));
-      } else {
-        entity.setOrderText('idle');
-      }
-
-      // Respawn visuals
-      if (charState.isDead) {
-        entity.showRespawning(charState.respawnTimer ?? 0);
-      } else if (prev?.isDead && !charState.isDead) {
-        entity.hideRespawn();
-      }
-
-      // Flag carrier
-      entity.showFlagCarrier(!!charState.hasFlag);
-    }
-
-    // Update order queues
-    if (state.orderQueues) {
-      for (const [id, queue] of Object.entries(state.orderQueues)) {
-        this.orderQueues.set(id, [...queue]);
-      }
-    }
-
-    // Update domination scores from server state
-    if (state.ctf) {
-      this.ctf = state.ctf;
-    }
-
-    // Update timer
-    if (state.timeRemaining !== undefined) {
-      this.gameTimeRemaining = state.timeRemaining;
-      this.updateTimerDisplay();
-    }
-
-    // Update control points
-    if (state.controlPoints) {
-      this.controlPoints = state.controlPoints;
-      // Update CP visuals for guest
-      for (const cp of this.controlPoints) {
-        const container = this.cpSprites.get(cp.id);
-        if (!container) continue;
-        const ring = container.getData('ring') as Phaser.GameObjects.Graphics;
-        if (ring && cp.owner) {
-          ring.clear();
-          const ownerColor = cp.owner === 'player1' ? 0x4444ff : 0xff4444;
-          ring.lineStyle(2, ownerColor, 0.8);
-          ring.strokeCircle(0, 0, 14);
-        }
-        const fillGfx = container.getData('fillGfx') as Phaser.GameObjects.Graphics;
-        if (fillGfx) {
-          fillGfx.clear();
-          if (cp.captureProgress > 0) {
-            const color = cp.capturingTeam === 'player1' ? 0x4444ff :
-              cp.capturingTeam === 'player2' ? 0xff4444 : 0xffffff;
-            fillGfx.fillStyle(color, 0.4);
-            const angle = (cp.captureProgress / 100) * Math.PI * 2;
-            fillGfx.slice(0, 0, 10, 0, angle, false);
-            fillGfx.fillPath();
-          }
-        }
-      }
-    }
-
-    // Update domination scores
-    if (state.domScore1 !== undefined) this.domScore1 = state.domScore1;
-    if (state.domScore2 !== undefined) this.domScore2 = state.domScore2;
-
-    // Update visuals
-    this.updateScoreDisplay();
-    this.updateFogOfWar();
-    this.updateCharViewports();
-    this.updateStatusBar();
-    this.updateAbilityPanel();
-    this.renderPaths();
-  }
-
-
 }

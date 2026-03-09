@@ -1,26 +1,27 @@
 import Phaser from 'phaser';
-import { Follower, FollowerType } from '@prompt-battle/shared';
+import { AnimalUnit, AnimalType, UNIT_DEFS } from '@prompt-battle/shared';
 import { TILE_SIZE } from '../map/MapGenerator';
 
-const FOLLOWER_EMOJIS: Record<FollowerType, string> = {
-  wolf: '\uD83D\uDC3A',
-  hawk: '\uD83E\uDD85',
-  militia: '\u2694\uFE0F',
+const UNIT_EMOJIS: Record<AnimalType, string> = {
+  rabbit: '🐇', parrot: '🦜', wolf: '🐺', falcon: '🦅', goat: '🐐',
+  bear: '🐻', viper: '🐍', deer: '🦌', elephant: '🐘', lion: '🦁',
 };
 
-const FOLLOWER_COLORS: Record<FollowerType, number> = {
-  wolf: 0x8B4513,
-  hawk: 0x87CEEB,
-  militia: 0x808080,
+const UNIT_COLORS: Record<AnimalType, number> = {
+  rabbit: 0xCCBB99, parrot: 0x44CC44, wolf: 0x888888, falcon: 0x8B6B3A, goat: 0xDDDDCC,
+  bear: 0x8B4513, viper: 0x55AA55, deer: 0xCC8844, elephant: 0x999999, lion: 0xDDAA44,
 };
 
-const RADIUS = 10;
-const HP_BAR_WIDTH = 30;
-const HP_BAR_HEIGHT = 4;
-const LERP_FACTOR = 0.15;
+const RADIUS = 8;
+const HP_BAR_WIDTH = 20;
+const HP_BAR_HEIGHT = 3;
+const LERP_FACTOR = 0.12;
 
 export class FollowerEntity extends Phaser.GameObjects.Container {
-  public followerType: FollowerType;
+  public unitId: string;
+  public unitType: AnimalType;
+  public team: 'player1' | 'player2';
+
   private circle: Phaser.GameObjects.Arc;
   private label: Phaser.GameObjects.Text;
   private hpBarBg: Phaser.GameObjects.Rectangle;
@@ -28,63 +29,60 @@ export class FollowerEntity extends Phaser.GameObjects.Container {
   private targetX: number;
   private targetY: number;
 
-  constructor(scene: Phaser.Scene, follower: Follower) {
-    const px = follower.position.x * TILE_SIZE + TILE_SIZE / 2;
-    const py = follower.position.y * TILE_SIZE + TILE_SIZE / 2;
+  constructor(scene: Phaser.Scene, unit: AnimalUnit) {
+    const px = unit.position.x * TILE_SIZE + TILE_SIZE / 2;
+    const py = unit.position.y * TILE_SIZE + TILE_SIZE / 2;
     super(scene, px, py);
 
-    this.followerType = follower.type;
+    this.unitId = unit.id;
+    this.unitType = unit.type;
+    this.team = unit.team;
     this.targetX = px;
     this.targetY = py;
 
-    // Colored circle
-    const color = FOLLOWER_COLORS[follower.type];
-    this.circle = scene.add.circle(0, 0, RADIUS, color);
-    this.circle.setStrokeStyle(1.5, 0x000000, 0.6);
+    // Team-tinted circle
+    const teamColor = unit.team === 'player1' ? 0x4499FF : 0xFF5555;
+    const baseColor = UNIT_COLORS[unit.type];
+
+    this.circle = scene.add.circle(0, 0, RADIUS, baseColor);
+    this.circle.setStrokeStyle(1.5, teamColor, 0.8);
     this.add(this.circle);
 
-    // Emoji label centered on circle
-    const emoji = FOLLOWER_EMOJIS[follower.type];
+    // Animal emoji
+    const emoji = UNIT_EMOJIS[unit.type];
     this.label = scene.add.text(0, -1, emoji, {
       fontSize: '10px',
     }).setOrigin(0.5);
     this.add(this.label);
 
-    // HP bar background
-    this.hpBarBg = scene.add.rectangle(0, RADIUS + 4, HP_BAR_WIDTH, HP_BAR_HEIGHT, 0x000000, 0.7);
-    this.hpBarBg.setOrigin(0.5);
+    // HP bar
+    this.hpBarBg = scene.add.rectangle(0, RADIUS + 3, HP_BAR_WIDTH, HP_BAR_HEIGHT, 0x000000, 0.7).setOrigin(0.5);
     this.add(this.hpBarBg);
-
-    // HP bar fill
-    this.hpBarFill = scene.add.rectangle(0, RADIUS + 4, HP_BAR_WIDTH, HP_BAR_HEIGHT, color);
-    this.hpBarFill.setOrigin(0.5);
+    this.hpBarFill = scene.add.rectangle(0, RADIUS + 3, HP_BAR_WIDTH, HP_BAR_HEIGHT, baseColor).setOrigin(0.5);
     this.add(this.hpBarFill);
 
-    this.updateHp(follower.currentHp, follower.stats.hp);
-
-    this.setDepth(10);
+    this.updateHp(unit.currentHp, unit.maxHp);
+    this.setDepth(9);
     scene.add.existing(this);
   }
 
-  syncPosition(x: number, y: number): void {
-    this.targetX = x * TILE_SIZE + TILE_SIZE / 2;
-    this.targetY = y * TILE_SIZE + TILE_SIZE / 2;
+  syncPosition(tileX: number, tileY: number): void {
+    // Add slight offset based on unit id hash for spread
+    const hash = this.unitId.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+    const offsetX = ((hash % 7) - 3) * 3;
+    const offsetY = (((hash >> 3) % 7) - 3) * 3;
+    this.targetX = tileX * TILE_SIZE + TILE_SIZE / 2 + offsetX;
+    this.targetY = tileY * TILE_SIZE + TILE_SIZE / 2 + offsetY;
   }
 
   updateHp(current: number, max: number): void {
     const ratio = Math.max(0, Math.min(1, current / max));
-    const fillW = HP_BAR_WIDTH * ratio;
-    this.hpBarFill.setDisplaySize(fillW, HP_BAR_HEIGHT);
-
-    // Color: green when healthy, yellow when mid, red when low
-    const color = ratio > 0.5
-      ? FOLLOWER_COLORS[this.followerType]
-      : ratio > 0.25 ? 0xFFD93D : 0xFF6B6B;
+    this.hpBarFill.setDisplaySize(HP_BAR_WIDTH * ratio, HP_BAR_HEIGHT);
+    const color = ratio > 0.5 ? UNIT_COLORS[this.unitType] : ratio > 0.25 ? 0xFFD93D : 0xFF6B6B;
     this.hpBarFill.setFillStyle(color);
   }
 
   preUpdate(): void {
-    // Smooth lerp toward target position
     const dx = this.targetX - this.x;
     const dy = this.targetY - this.y;
     if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
@@ -94,6 +92,10 @@ export class FollowerEntity extends Phaser.GameObjects.Container {
       this.x = this.targetX;
       this.y = this.targetY;
     }
+  }
+
+  setFogVisible(visible: boolean) {
+    this.setAlpha(visible ? 1 : 0);
   }
 
   destroy(): void {

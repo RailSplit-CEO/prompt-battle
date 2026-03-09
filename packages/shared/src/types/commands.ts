@@ -8,11 +8,10 @@ export interface RawCommand {
 }
 
 export interface ParsedAction {
-  characterRef: string;
+  heroId: string;
   action: ActionType;
-  targetRef?: string;
+  targetId?: string;
   targetPosition?: Position;
-  abilityId?: string;
 }
 
 export interface ParsedCommand {

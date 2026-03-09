@@ -1,143 +1,201 @@
-import { ClassId, AnimalId, Stats } from './characters';
+// ═══════════════════════════════════════════════════════
+// ANIMAL ARMY - Simplified Game State
+// ═══════════════════════════════════════════════════════
 
 export interface Position {
   x: number;
   y: number;
 }
 
-export interface ActiveEffect {
-  type: string;
-  duration: number;
-  value?: number;
-}
+// ─── Animal Types ────────────────────────────────────────
+export type AnimalType =
+  | 'rabbit' | 'parrot' | 'wolf' | 'falcon' | 'goat'
+  | 'bear' | 'viper' | 'deer' | 'elephant' | 'lion';
 
-// ─── Consumables ────────────────────────────────────────────────
-export type ConsumableId =
-  | 'siege_bomb' | 'smoke_bomb' | 'battle_horn'
-  | 'haste_elixir' | 'iron_skin' | 'vision_flare'
-  | 'rally_banner' | 'purge_scroll';
+export type UnitRole = 'swift_melee' | 'ranged' | 'melee_dps' | 'ranged_dps'
+  | 'healer' | 'tank' | 'ranged_dot' | 'support' | 'elite_tank' | 'elite_melee';
 
-export interface ConsumableDefinition {
-  id: ConsumableId;
-  name: string;
-  description: string;
-  icon: string;
-  category: 'combat' | 'strategic' | 'personal';
-}
+export type CampTier = 1 | 2 | 3 | 4;
 
-// ─── Character ──────────────────────────────────────────────────
-export interface Character {
+// ─── Hero System ─────────────────────────────────────────
+export type HeroPassive = 'rally_leader' | 'iron_will' | 'swift_command';
+
+export interface Hero {
   id: string;
-  owner: string;
-  classId: ClassId;
-  animalId: AnimalId;
   name: string;
-  stats: Stats;
-  baseStats: Stats;      // stats before level scaling
+  team: 'player1' | 'player2';
+  passive: HeroPassive;
   currentHp: number;
+  maxHp: number;
+  attack: number;
+  defense: number;
+  speed: number;
+  range: number;
   position: Position;
-  cooldowns: Record<string, number>;
-  effects: ActiveEffect[];
   isDead: boolean;
-  // Leveling
-  level: number;          // 1-5
-  xp: number;            // current XP
-  // Inventory
-  inventory: ConsumableId[];  // max 2 slots
-  // Activity channeling
-  channelActivity?: {
-    type: 'scout' | 'loot' | 'build' | 'trap' | 'upgrade_cp' | 'mine' | 'build_tower';
-    ticksRemaining: number;
-    position: Position;
-  } | null;
-  // Personality & Morale
-  personality?: Personality;
-  morale?: MoraleState;
-  moraleTimer?: number;
-  lastPraised?: number;
-  // Optional real-time fields
-  respawnTimer?: number;
-  currentOrder?: CharacterOrder | null;
-  path?: Position[];
-  hasFlag?: boolean;
-  visionRange?: number;
-  isActiveHero?: boolean;
+  respawnTimer: number;
+  path: Position[];
+  currentOrder: HeroOrder | null;
+  orderQueue: HeroOrder[];
+  upgrades: UpgradeType[];
+  visionRange: number;
+  isActiveHero: boolean;
+  attackCooldown: number;
 }
 
-export interface CharacterOrder {
-  type: 'move' | 'attack' | 'ability' | 'defend' | 'retreat' | 'capture' | 'hold'
-    | 'escort' | 'patrol' | 'control'
-    | 'use_item' | 'scout' | 'loot' | 'build' | 'set_trap'
-    | 'mine' | 'build_tower' | 'praise';
+export const HERO_BASE_STATS = {
+  maxHp: 200,
+  attack: 20,
+  defense: 15,
+  speed: 4,
+  range: 1,
+  visionRange: 8,
+};
+
+export const HERO_RESPAWN_BASE = 10; // seconds
+export const HERO_RESPAWN_COMEBACK_BONUS = 3; // seconds faster for losing team
+
+export interface HeroOrder {
+  type: 'move' | 'attack_camp' | 'attack_structure' | 'attack_hero'
+    | 'attack_base' | 'defend' | 'retreat' | 'hold' | 'attack_unit';
   targetPosition?: Position;
-  targetCharacterId?: string;
-  abilityId?: string;
-  itemId?: ConsumableId;
+  targetId?: string;
 }
 
-// ─── XP / Leveling ──────────────────────────────────────────────
-export const XP_THRESHOLDS = [0, 100, 250, 450, 700]; // XP needed for levels 1-5
-export const LEVEL_STAT_BONUS = 0.08; // +8% all stats per level
+// ─── Passive Descriptions ────────────────────────────────
+export const HERO_PASSIVES: Record<HeroPassive, { name: string; description: string; emoji: string }> = {
+  rally_leader: { name: 'Rally Leader', description: 'Armies spawn 20% faster from captured camps', emoji: '📯' },
+  iron_will: { name: 'Iron Will', description: 'All units gain +15% max HP', emoji: '🛡️' },
+  swift_command: { name: 'Swift Command', description: 'Hero and all units move 15% faster', emoji: '⚡' },
+};
 
-export type GameStatus = 'waiting' | 'drafting' | 'playing' | 'finished';
+// ─── Animal Units ────────────────────────────────────────
+export interface AnimalUnit {
+  id: string;
+  type: AnimalType;
+  ownerId: string;       // hero who owns this unit
+  team: 'player1' | 'player2';
+  currentHp: number;
+  maxHp: number;
+  attack: number;
+  defense: number;
+  speed: number;
+  range: number;
+  position: Position;
+  isDead: boolean;
+  behavior: 'follow' | 'hold' | 'attack' | 'return_to_camp';
+  attackCooldown: number;
+  specialTimer: number;  // for healers (heal tick), vipers (poison tick), etc.
+  targetId?: string;     // current attack target
+  campId?: string;       // which camp spawned this unit
+}
+
+// ─── Camps ───────────────────────────────────────────────
+export interface CampGuard {
+  id: string;
+  hp: number;
+  maxHp: number;
+  attack: number;
+  defense: number;
+  range: number;
+  position: Position;
+  isDead: boolean;
+  attackCooldown: number;
+}
+
+export interface Camp {
+  id: string;
+  name: string;           // alliterative name
+  position: Position;
+  tier: CampTier;
+  animalType: AnimalType;
+  emoji: string;
+  // Guards (neutral enemies to fight)
+  guards: CampGuard[];
+  guardRespawnTimer: number;  // respawn guards when camp goes neutral
+  // Capture state
+  capturedBy: string | null;  // hero ID who captured
+  capturedTeam: 'player1' | 'player2' | null;
+  // Spawning
+  spawnTimer: number;
+  spawnRate: number;          // seconds between spawns
+  // Scaling
+  scalingFactor: number;      // increases over time (1.0 = base)
+  // Vision
+  visionRange: number;
+}
+
+export const CAMP_SCALING_INTERVAL = 60;   // seconds between scaling ticks
+export const CAMP_SCALING_AMOUNT = 0.10;   // +10% per interval
+export const CAMP_NEUTRAL_TIMER = 30;      // seconds after owner dies before camp goes neutral
+
+// ─── Structures ──────────────────────────────────────────
+export type UpgradeType = 'savage_strikes' | 'hardened_hides' | 'mystic_missiles' | 'rapid_reinforcements';
+
+export interface Structure {
+  id: string;
+  name: string;           // alliterative name
+  position: Position;
+  hp: number;
+  maxHp: number;
+  attack: number;
+  range: number;
+  attackCooldown: number;
+  destroyedBy: 'player1' | 'player2' | null;
+  upgradeType: UpgradeType;
+  emoji: string;
+  label: string;           // upgrade label shown on map
+}
+
+export const UPGRADE_EFFECTS: Record<UpgradeType, { name: string; description: string; emoji: string }> = {
+  savage_strikes: { name: 'Savage Strikes', description: '+25% attack damage for all units', emoji: '⚔️' },
+  hardened_hides: { name: 'Hardened Hides', description: '+30% max HP for all units', emoji: '🛡️' },
+  mystic_missiles: { name: 'Mystic Missiles', description: 'Melee units gain ranged attack', emoji: '🏹' },
+  rapid_reinforcements: { name: 'Rapid Reinforcements', description: '2x unit spawn rate', emoji: '⏩' },
+};
+
+// ─── Bases ───────────────────────────────────────────────
+export interface Base {
+  position: Position;
+  hp: number;
+  maxHp: number;
+}
+
+export const BASE_MAX_HP = 500;
+
+// ─── Tile Types (simplified) ────────────────────────────
 export type TileType =
-  | 'grass' | 'forest' | 'water' | 'rock' | 'hill' | 'bush' | 'path'
-  | 'bridge' | 'lava' | 'sand' | 'swamp' | 'flowers' | 'mushroom' | 'ruins'
-  | 'gate_open' | 'gate_closed' | 'switch' | 'capture_point';
+  | 'grass' | 'forest' | 'water' | 'hill' | 'path'
+  | 'bridge' | 'sand' | 'river' | 'shore'
+  | 'blue_base' | 'red_base';
 
-export type GameMode = 'domination';
-export type WinReason = 'domination' | 'time_up' | 'elimination' | 'disconnect';
-
-export interface FlagState {
-  position: Position;         // current position on map
-  homePosition: Position;     // where it spawns
-  carrier: string | null;     // character id carrying it, or null
-  isHome: boolean;            // is it at its home base?
-}
-
-export interface CTFState {
-  flag1: FlagState;           // player 1's flag
-  flag2: FlagState;           // player 2's flag
-  score1: number;             // player 1 captures
-  score2: number;             // player 2 captures
-  capturesNeeded: number;     // captures to win (1 for now)
-}
+// ─── Game Meta ───────────────────────────────────────────
+export type GameStatus = 'waiting' | 'playing' | 'finished';
+export type WinReason = 'base_destroyed' | 'time_up' | 'disconnect';
 
 export interface GameMeta {
   player1: string;
   player2: string;
   mapSeed: number;
   status: GameStatus;
-  mode: GameMode;
   currentTurn: number;
   winner?: string;
   winReason?: WinReason;
   createdAt: number;
-  gameDuration: number;       // total game time in seconds (300 = 5 min)
+  gameDuration: number;       // total game time in seconds
   timeRemaining: number;      // seconds left
+  gameTime: number;           // elapsed seconds (for scaling)
 }
 
-export interface DraftPick {
-  playerId: string;
-  classId: ClassId;
-  animalId: AnimalId;
-  pickOrder: number;
-}
+// ─── Commands ────────────────────────────────────────────
+export type ActionType = 'move' | 'attack_camp' | 'attack_structure'
+  | 'attack_hero' | 'attack_base' | 'defend' | 'retreat' | 'hold' | 'attack_unit';
 
-export interface DraftState {
-  picks: DraftPick[];
-  currentPickIndex: number;
-  pickOrder: string[];
-  timer: number;
-  phase: 'picking' | 'done';
-}
-
-export interface GameState {
-  meta: GameMeta;
-  characters: Record<string, Character>;
-  draft: DraftState;
-  ctf: CTFState;
-  commandLog: CommandLogEntry[];
+export interface ResolvedAction {
+  heroId: string;
+  type: ActionType;
+  targetPosition?: Position;
+  targetId?: string;
 }
 
 export interface CommandLogEntry {
@@ -148,191 +206,38 @@ export interface CommandLogEntry {
   actions: ResolvedAction[];
 }
 
-export interface ResolvedAction {
-  characterId: string;
-  type: ActionType;
-  target?: Position | string;
-  abilityId?: string;
-  result?: ActionResult;
-}
-
-export type ActionType = 'move' | 'attack' | 'ability' | 'defend' | 'retreat' | 'hold' | 'capture' | 'escort' | 'patrol' | 'control'
-  | 'use_item' | 'scout' | 'loot' | 'build' | 'set_trap'
-  | 'mine' | 'build_tower' | 'praise';
-
-// ─── Points of Interest ─────────────────────────────────────────
-export interface POI {
-  id: string;
-  type: 'lookout' | 'healing_well' | 'treasure_cache';
-  position: Position;
-  active: boolean;
-  respawnTimer: number;        // seconds until respawn (caches only)
-  channelTime: number;         // ticks to complete channel
-  upgraded?: boolean;          // for CP upgrades
-}
-
-export interface Barricade {
-  id: string;
-  position: Position;
-  owner: string;               // player who built it
-  hp: number;                  // destructible, 80 HP
-  maxHp: number;
-  decayTimer: number;          // seconds until decay
-}
-
-export interface Trap {
-  id: string;
-  position: Position;
-  owner: string;
-  damage: number;
-  stunDuration: number;
-  visible: boolean;            // only visible to owner
-}
-
-export interface ControlPointBuff {
-  type: 'speed' | 'damage' | 'defense';
-  value: number;   // multiplier, e.g. 1.1 = +10%
-  label: string;
-}
-
-export interface ControlPoint {
-  id: string;
-  name: string;
-  position: Position;
-  radius: number;            // tile radius of the capture zone
-  owner: 'player1' | 'player2' | null;
-  captureProgress: number;   // 0-100
-  capturingTeam: 'player1' | 'player2' | null;
-  buff: ControlPointBuff;
-  upgraded?: boolean;
-}
-
-export interface ActionResult {
-  damage?: number;
-  healing?: number;
-  moved?: Position;
-  killed?: string;
-  effectApplied?: string;
-  flagPickedUp?: boolean;
-  flagCaptured?: boolean;
-  flagReturned?: boolean;
-  goldEarned?: number;
-}
-
-// ─── Personality & Morale ────────────────────────────────────────
-export type BoldnessAxis = 'bold' | 'cautious';
-export type LoyaltyAxis = 'loyal' | 'independent';
-export interface Personality {
-  boldness: BoldnessAxis;
-  loyalty: LoyaltyAxis;
-}
-export type MoraleState = 'confident' | 'shaken';
-
-// ─── Follower (companions) ──────────────────────────────────────
-export type FollowerType = 'wolf' | 'hawk' | 'militia';
-export interface Follower {
-  id: string;
-  type: FollowerType;
-  ownerId: string;
-  ownerTeam: string;
-  stats: Stats;
-  currentHp: number;
-  position: Position;
-  isDead: boolean;
-  behavior: 'follow' | 'guard' | 'attack' | 'scout';
-  targetPosition?: Position;
-}
-
-// ─── Economy ────────────────────────────────────────────────────
-export type MapPhase = 1 | 2 | 3 | 4;
-export const MINE_RATE_PER_SEC = 3;
-export const BASE_INCOME_PER_SEC = 1;
-export const TOWER_COST = 200;
-
-export interface PlayerEconomy {
-  gold: number;
-  income: number;
-  upkeepPenalty: number;
-}
-
-export interface MineNode {
-  id: string;
-  name: string;
-  position: Position;
-  type: 'safe' | 'rich';
-  depleted: boolean;
-  goldPerSec: number;
-  currentGold: number;
-  activatePhase: MapPhase;
-  occupiedBy: string | null;
-}
-
-export interface Tower {
-  id: string;
-  position: Position;
-  owner: string;
-  hp: number;
-  maxHp: number;
-  damage: number;
-  range: number;
-}
-
-export interface TowerSite {
-  id: string;
-  name: string;
-  position: Position;
-  builtTower: Tower | null;
-  occupied: boolean;
-  activatePhase: MapPhase;
-}
-
-export interface NeutralCamp {
-  id: string;
-  name: string;
-  position: Position;
-  type: 'easy' | 'hard';
-  activatePhase: MapPhase;
-  cleared: boolean;
-  respawnTimer: number;
-  enemies: CampEnemy[];
-  reward: { gold: number; xp: number; buff?: string };
-}
-
-export interface CampEnemy {
-  id: string;
-  hp: number;
-  maxHp: number;
-  attack: number;
-  position: Position;
-  isDead: boolean;
-}
-
-export interface ScoutingPost {
-  id: string;
-  name: string;
-  position: Position;
-  capturedBy: string | null;
-  visionRadius: number;
-}
-
-// ─── Barks ──────────────────────────────────────────────────────
+// ─── Barks (simplified) ─────────────────────────────────
 export type BarkTrigger =
-  | 'order_attack' | 'order_defend' | 'order_move'
-  | 'taking_damage' | 'got_kill' | 'praised'
-  | 'ignored_while_hurt' | 'ally_down'
-  | 'enemy_spotted' | 'low_hp' | 'mine_depleted';
+  | 'order_attack' | 'order_move' | 'order_defend'
+  | 'taking_damage' | 'got_kill' | 'ally_down'
+  | 'enemy_spotted' | 'low_hp' | 'camp_captured';
 
 export interface BarkEvent {
-  characterId: string;
+  heroId: string;
   text: string;
   trigger: BarkTrigger;
   timestamp: number;
 }
 
-// ─── Named Map Zones ────────────────────────────────────────────
+// ─── Named Map Zones ────────────────────────────────────
 export interface MapZone {
   name: string;
   center: Position;
   radius: number;
-  type: 'mine' | 'camp' | 'tower_site' | 'scouting_post' | 'healing_well' | 'spawn' | 'general';
+  type: 'camp' | 'structure' | 'base' | 'general';
 }
+
+// ─── Overall Game State ─────────────────────────────────
+export interface GameState {
+  meta: GameMeta;
+  heroes: Record<string, Hero>;
+  units: AnimalUnit[];
+  camps: Camp[];
+  structures: Structure[];
+  bases: { player1: Base; player2: Base };
+  commandLog: CommandLogEntry[];
+}
+
+// ─── Max Units ──────────────────────────────────────────
+export const MAX_UNITS = 200;
+export const MAX_UNITS_PER_HERO = 30;

@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { Character, Position } from '@prompt-battle/shared';
+import { Hero, Position } from '@prompt-battle/shared';
 import { CharacterEntity } from '../entities/Character';
 import { TILE_SIZE, MAP_WIDTH, MAP_HEIGHT } from '../map/MapGenerator';
 
@@ -93,7 +93,7 @@ export class CharacterViewports {
   }
 
   update(
-    charData: Map<string, Character>,
+    charData: Map<string, Hero>,
     _charEntities: Map<string, CharacterEntity>,
   ) {
     const mainCam = this.scene.cameras.main;
@@ -106,10 +106,10 @@ export class CharacterViewports {
     // Ensure HUD elements (scrollFactor 0) are hidden in viewport cameras
     this.syncIgnored();
 
-    // Collect alive player characters
+    // Collect alive player heroes
     const myChars: { id: string; pos: Position; wx: number; wy: number; name: string }[] = [];
     charData.forEach((c, id) => {
-      if (c.owner === this.playerId && !c.isDead) {
+      if (c.team === (this.playerId as any) && !c.isDead) {
         myChars.push({
           id,
           pos: c.position,

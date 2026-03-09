@@ -1,7 +1,7 @@
 import { initializeApp, FirebaseApp } from 'firebase/app';
 import { getAuth, signInAnonymously, Auth, User } from 'firebase/auth';
 import { getDatabase, ref, set, get, push, onValue, onChildAdded, update, remove, Database, off, runTransaction, onDisconnect } from 'firebase/database';
-import { DraftPick, Character, CommandResponse, CharacterOrder, CTFState, ControlPoint } from '@prompt-battle/shared';
+import { Hero, HeroOrder, CommandResponse, GameState } from '@prompt-battle/shared';
 
 const firebaseConfig = {
   apiKey: "AIzaSyAT4zIS0piAqGfW5ZTCWnbkQPzyLHNDRHY",
@@ -200,16 +200,16 @@ export class FirebaseSync {
     return snap.val();
   }
 
-  // Draft
-  async submitDraftPick(gameId: string, pick: DraftPick): Promise<void> {
+  // Draft (legacy - not used in Animal Army)
+  async submitDraftPick(gameId: string, pick: any): Promise<void> {
     const pickRef = push(ref(this.db, `games/${gameId}/draft/picks`));
     await set(pickRef, pick);
   }
 
-  onDraftPick(gameId: string, callback: (pick: DraftPick) => void) {
+  onDraftPick(gameId: string, callback: (pick: any) => void) {
     const picksRef = ref(this.db, `games/${gameId}/draft/picks`);
     onChildAdded(picksRef, (snap) => {
-      const pick = snap.val() as DraftPick;
+      const pick = snap.val();
       if (pick) callback(pick);
     });
     this.listeners.push({ ref: picksRef, unsub: () => off(picksRef) });
@@ -234,8 +234,8 @@ export class FirebaseSync {
   }
 
   // Game state sync
-  onGameStateUpdate(gameId: string, callback: (state: Record<string, Character>) => void) {
-    const stateRef = ref(this.db, `games/${gameId}/state/characters`);
+  onGameStateUpdate(gameId: string, callback: (state: Record<string, Hero>) => void) {
+    const stateRef = ref(this.db, `games/${gameId}/state/heroes`);
     onValue(stateRef, (snap) => {
       const state = snap.val();
       if (state) callback(state);
@@ -244,8 +244,8 @@ export class FirebaseSync {
   }
 
   // Update game state
-  async updateGameState(gameId: string, characters: Record<string, Character>): Promise<void> {
-    await update(ref(this.db, `games/${gameId}/state`), { characters });
+  async updateGameState(gameId: string, heroes: Record<string, Hero>): Promise<void> {
+    await update(ref(this.db, `games/${gameId}/state`), { heroes });
   }
 
   async updateGameStatus(gameId: string, status: string, winner?: string): Promise<void> {
@@ -310,22 +310,16 @@ export class FirebaseSync {
 }
 
 export interface SyncSnapshot {
-  characters: Record<string, Character>;
-  ctf: CTFState;
+  heroes: Record<string, Hero>;
   timeRemaining: number;
-  controlPoints: ControlPoint[];
-  orderQueues: Record<string, CharacterOrder[]>;
-  domScore1: number;
-  domScore2: number;
   gameOver?: boolean;
   winner?: string;
   winReason?: string;
 }
 
 export interface RemoteOrderPayload {
-  characterId: string;
-  order: CharacterOrder;
-  queued: boolean;
+  heroId: string;
+  order: HeroOrder;
 }
 
 export interface MatchResult {

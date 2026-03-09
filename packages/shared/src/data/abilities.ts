@@ -1,17 +1,2 @@
-import { CLASSES } from './classes';
-import { Ability } from '../types/characters';
-
-// Export all abilities as a flat lookup
-export const ABILITIES: Record<string, Ability> = {};
-
-for (const cls of Object.values(CLASSES)) {
-  for (const ability of cls.abilities) {
-    ABILITIES[ability.id] = ability;
-  }
-}
-
-export function getAbilitiesForClass(classId: string): Ability[] {
-  const cls = CLASSES[classId];
-  if (!cls) throw new Error(`Unknown class: ${classId}`);
-  return cls.abilities;
-}
+// Abilities removed for Animal Army prototype
+// Unit specials are defined inline in data/units.ts

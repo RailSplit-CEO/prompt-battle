@@ -1,225 +1,188 @@
-import { Character, CharacterOrder, ClassId, Position } from '@prompt-battle/shared';
+// ═══════════════════════════════════════════════════════
+// ANIMAL ARMY - Gambit AI System
+// Auto-controls player 2's heroes with priority-based decisions
+// ═══════════════════════════════════════════════════════
 
-// ─── Context passed to the Gambit AI each tick ──────────────────
+import { Hero, HeroOrder, Camp, Structure, AnimalUnit, Position } from '@prompt-battle/shared';
+
+// ─── Context passed to the AI for each hero decision ───
+
 export interface GambitContext {
-  char: Character;
-  allies: Character[];
-  enemies: Character[];
-  activeHeroId: string | null;
-  gold: number;
-  gamePhase: number;
-  minePositions: Position[];
-  healingWellPos?: Position;
-  basePosition: Position;
-  tileAt: (x: number, y: number) => string;
+  hero: Hero;
+  allies: Hero[];           // alive allied heroes
+  enemies: Hero[];          // alive enemy heroes
+  camps: Camp[];
+  structures: Structure[];
+  units: AnimalUnit[];      // all units on the map
+  enemyBasePos: Position;
+  ownBasePos: Position;
+  gameTime: number;         // elapsed seconds
 }
 
-// ─── Helpers ────────────────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────
 
-function tileDist(a: Position, b: Position): number {
+/** Manhattan distance between two positions. */
+export function tileDist(a: Position, b: Position): number {
   return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 }
 
-function findNearestEnemy(pos: Position, enemies: Character[]): Character | null {
-  let best: Character | null = null;
+/** Count alive units owned by a specific hero. */
+function heroArmySize(heroId: string, units: AnimalUnit[]): number {
+  return units.filter(u => u.ownerId === heroId && !u.isDead).length;
+}
+
+/** Find the nearest item from a list using Manhattan distance. */
+function nearest<T extends { position: Position }>(
+  from: Position,
+  items: T[],
+): T | null {
+  let best: T | null = null;
   let bestDist = Infinity;
+  for (const item of items) {
+    const d = tileDist(from, item.position);
+    if (d < bestDist) {
+      bestDist = d;
+      best = item;
+    }
+  }
+  return best;
+}
+
+/** Find the enemy hero with the lowest HP that is within a given range. */
+function lowestHpEnemyInRange(
+  hero: Hero,
+  enemies: Hero[],
+  range: number,
+): Hero | null {
+  let best: Hero | null = null;
+  let bestHp = Infinity;
   for (const e of enemies) {
     if (e.isDead) continue;
-    const d = tileDist(pos, e.position);
-    if (d < bestDist) { bestDist = d; best = e; }
+    const d = tileDist(hero.position, e.position);
+    if (d <= range && e.currentHp < bestHp) {
+      bestHp = e.currentHp;
+      best = e;
+    }
   }
   return best;
 }
 
-function findLowestHpAlly(allies: Character[]): Character | null {
-  let best: Character | null = null;
-  let bestPct = Infinity;
-  for (const a of allies) {
-    if (a.isDead) continue;
-    const pct = a.currentHp / a.stats.hp;
-    if (pct < bestPct) { bestPct = pct; best = a; }
-  }
-  return best;
+/** Get structures that are still alive and not already destroyed by our team. */
+function attackableStructures(
+  structures: Structure[],
+  heroTeam: 'player1' | 'player2',
+): Structure[] {
+  return structures.filter(s => s.hp > 0 && s.destroyedBy !== heroTeam);
 }
 
-function isInRange(attacker: Character, target: Character): boolean {
-  return tileDist(attacker.position, target.position) <= attacker.stats.range;
+/** Get camps that are not captured by our team. */
+function uncapturedCamps(
+  camps: Camp[],
+  heroTeam: 'player1' | 'player2',
+): Camp[] {
+  return camps.filter(c => c.capturedTeam !== heroTeam);
 }
 
-function findNearestPosition(from: Position, positions: Position[]): Position | null {
-  let best: Position | null = null;
-  let bestDist = Infinity;
-  for (const p of positions) {
-    const d = tileDist(from, p);
-    if (d < bestDist) { bestDist = d; best = p; }
-  }
-  return best;
-}
+// ─── Tuning Constants ───────────────────────────────────
 
-// ─── Default class behaviors ────────────────────────────────────
+const ENGAGE_RANGE = 8;          // tiles to spot an enemy hero
+const ARMY_THRESHOLD = 5;        // units needed to consider "has an army"
+const LOW_HP_PERCENT = 0.30;     // 30% HP threshold for retreat
+const STRUCTURE_PUSH_RANGE = 12; // look for structures within this range when pushing
 
-function defaultBehavior(ctx: GambitContext): CharacterOrder | null {
-  const { char, allies, enemies, activeHeroId, tileAt } = ctx;
+// ─── Main AI Decision Function ──────────────────────────
 
-  switch (char.classId) {
-    // Warrior: charge nearest enemy, tank hits
-    case 'warrior': {
-      const nearest = findNearestEnemy(char.position, enemies);
-      if (nearest && tileDist(char.position, nearest.position) <= 5) {
-        return { type: 'attack', targetCharacterId: nearest.id };
-      }
-      return { type: 'hold' };
-    }
+/**
+ * Returns the next order for a hero controlled by the Gambit AI.
+ * Returns null if the hero is dead or no action change is needed.
+ *
+ * Priority:
+ *  1. Low HP (< 30%) -> Retreat toward own base
+ *  2. Enemy hero in engage range -> Attack lowest HP enemy
+ *  3. Has army (5+ units) -> Push structures / enemy base
+ *  4. Nearby uncaptured camp -> Attack it (prefer lower tier)
+ *  5. Default -> Move toward nearest uncaptured camp
+ */
+export function getGambitOrder(ctx: GambitContext): HeroOrder | null {
+  const { hero, enemies, camps, structures, units, enemyBasePos, ownBasePos } = ctx;
 
-    // Mage: stay at range, cast abilities on nearest enemy
-    case 'mage': {
-      const target = enemies.find(
-        e => !e.isDead && tileDist(char.position, e.position) <= char.stats.range,
-      );
-      if (target) {
-        const abilityReady = Object.entries(char.cooldowns).find(([, cd]) => cd === 0);
-        if (abilityReady) {
-          return { type: 'ability', abilityId: abilityReady[0], targetPosition: target.position };
-        }
-        return { type: 'attack', targetCharacterId: target.id };
-      }
-      return { type: 'hold' };
-    }
+  // Dead heroes do nothing
+  if (hero.isDead) return null;
 
-    // Archer: kite from range, attack furthest reachable enemy
-    case 'archer': {
-      const inRange = enemies.filter(
-        e => !e.isDead && tileDist(char.position, e.position) <= char.stats.range,
-      );
-      if (inRange.length > 0) {
-        // Pick the one furthest away (stay at max range)
-        inRange.sort((a, b) => tileDist(char.position, b.position) - tileDist(char.position, a.position));
-        return { type: 'attack', targetCharacterId: inRange[0].id };
-      }
-      return { type: 'hold' };
-    }
+  const hpPercent = hero.currentHp / hero.maxHp;
+  const armySize = heroArmySize(hero.id, units);
 
-    // Healer: follow lowest HP ally, heal if ability ready
-    case 'healer': {
-      const weakest = findLowestHpAlly(allies.filter(a => a.id !== char.id));
-      const abilityReady = Object.entries(char.cooldowns).find(([, cd]) => cd === 0);
-      if (weakest && weakest.currentHp < weakest.stats.hp && abilityReady) {
-        return { type: 'ability', abilityId: abilityReady[0], targetCharacterId: weakest.id };
-      }
-      if (weakest && weakest.currentHp / weakest.stats.hp < 0.7) {
-        return { type: 'escort', targetCharacterId: weakest.id };
-      }
-      return { type: 'hold' };
-    }
-
-    // Rogue: patrol between cover positions, stealth if available
-    case 'rogue': {
-      const coverPositions: Position[] = [];
-      for (let dx = -5; dx <= 5; dx++) {
-        for (let dy = -5; dy <= 5; dy++) {
-          const tx = char.position.x + dx;
-          const ty = char.position.y + dy;
-          const tile = tileAt(tx, ty);
-          if (tile === 'bush' || tile === 'forest') {
-            coverPositions.push({ x: tx, y: ty });
-          }
-        }
-      }
-      const nearby = enemies.find(
-        e => !e.isDead && tileDist(char.position, e.position) <= 3,
-      );
-      if (nearby) return { type: 'attack', targetCharacterId: nearby.id };
-      const patrolTarget = findNearestPosition(char.position, coverPositions);
-      if (patrolTarget && tileDist(char.position, patrolTarget) > 0) {
-        return { type: 'patrol', targetPosition: patrolTarget };
-      }
-      return { type: 'hold' };
-    }
-
-    // Paladin: defend injured allies, heal aura if ready
-    case 'paladin': {
-      const abilityReady = Object.entries(char.cooldowns).find(([, cd]) => cd === 0);
-      if (abilityReady) {
-        const injured = allies.find(a => !a.isDead && a.currentHp < a.stats.hp);
-        if (injured) return { type: 'ability', abilityId: abilityReady[0] };
-      }
-      const weakest = findLowestHpAlly(allies.filter(a => a.id !== char.id));
-      if (weakest && weakest.currentHp / weakest.stats.hp < 0.7) {
-        return { type: 'defend', targetCharacterId: weakest.id };
-      }
-      return { type: 'hold' };
-    }
-
-    // Necromancer: stay back, cast abilities, attack from range
-    case 'necromancer': {
-      const target = enemies.find(
-        e => !e.isDead && tileDist(char.position, e.position) <= char.stats.range,
-      );
-      if (target) {
-        const abilityReady = Object.entries(char.cooldowns).find(([, cd]) => cd === 0);
-        if (abilityReady) {
-          return { type: 'ability', abilityId: abilityReady[0], targetPosition: target.position };
-        }
-        return { type: 'attack', targetCharacterId: target.id };
-      }
-      return { type: 'hold' };
-    }
-
-    // Bard: follow active hero, buff allies
-    case 'bard': {
-      const activeHero = activeHeroId
-        ? allies.find(a => a.id === activeHeroId && !a.isDead)
-        : null;
-      const abilityReady = Object.entries(char.cooldowns).find(([, cd]) => cd === 0);
-      if (abilityReady) {
-        return { type: 'ability', abilityId: abilityReady[0] };
-      }
-      if (activeHero) return { type: 'escort', targetCharacterId: activeHero.id };
-      return { type: 'hold' };
-    }
-
-    default:
-      return { type: 'hold' };
-  }
-}
-
-// ─── Main Gambit evaluator ──────────────────────────────────────
-
-export function getGambitOrder(ctx: GambitContext): CharacterOrder | null {
-  const { char, enemies, gold, minePositions, healingWellPos, basePosition } = ctx;
-
-  // Skip dead characters or the WASD-controlled hero
-  if (char.isDead || char.isActiveHero) return null;
-
-  const hpPct = char.currentHp / char.stats.hp;
-
-  // 1. IF HP < 30% -> RETREAT toward healing well or base
-  if (hpPct < 0.3) {
-    const retreatTarget = healingWellPos ?? basePosition;
-    return { type: 'retreat', targetPosition: retreatTarget };
+  // ── Priority 1: Low HP -> Retreat ──────────────────────
+  if (hpPercent < LOW_HP_PERCENT) {
+    return {
+      type: 'retreat',
+      targetPosition: ownBasePos,
+    };
   }
 
-  // 2. IF enemy in attack range -> ATTACK highest threat enemy
-  const inRange = enemies.filter(e => !e.isDead && isInRange(char, e));
-  if (inRange.length > 0) {
-    // Highest threat = highest attack stat among those in range
-    inRange.sort((a, b) => b.stats.attack - a.stats.attack);
-    return { type: 'attack', targetCharacterId: inRange[0].id };
+  // ── Priority 2: Enemy hero in range -> Attack ──────────
+  const target = lowestHpEnemyInRange(hero, enemies, ENGAGE_RANGE);
+  if (target) {
+    return {
+      type: 'attack_hero',
+      targetId: target.id,
+      targetPosition: target.position,
+    };
   }
 
-  // 3. IF has active order from player -> EXECUTE that order (keep it)
-  if (char.currentOrder && char.currentOrder.type !== 'hold') {
-    return null; // null = keep current order
-  }
+  // ── Priority 3: Has army -> Push toward enemy ──────────
+  if (armySize >= ARMY_THRESHOLD) {
+    // Look for nearby enemy structures to destroy first
+    const enemyStructures = attackableStructures(structures, hero.team);
+    const nearestStructure = nearest(hero.position, enemyStructures);
 
-  // 4. IF nearby mine available and team gold < 500 -> GO MINE
-  if (gold < 500 && minePositions.length > 0) {
-    const nearestMine = findNearestPosition(char.position, minePositions);
-    if (nearestMine && tileDist(char.position, nearestMine) <= 10) {
-      return { type: 'mine', targetPosition: nearestMine };
+    if (nearestStructure && tileDist(hero.position, nearestStructure.position) <= STRUCTURE_PUSH_RANGE) {
+      return {
+        type: 'attack_structure',
+        targetId: nearestStructure.id,
+        targetPosition: nearestStructure.position,
+      };
     }
+
+    // No nearby structures -- push toward enemy base
+    return {
+      type: 'attack_base',
+      targetPosition: enemyBasePos,
+    };
   }
 
-  // 5. IF idle -> DEFAULT CLASS BEHAVIOR
-  return defaultBehavior(ctx);
+  // ── Priority 4: Nearby uncaptured camp -> Capture ──────
+  const available = uncapturedCamps(camps, hero.team);
+
+  if (available.length > 0) {
+    // Prefer lower tier camps (easier to capture), break ties by distance
+    const sorted = [...available].sort((a, b) => {
+      const tierDiff = a.tier - b.tier;
+      if (tierDiff !== 0) return tierDiff;
+      return tileDist(hero.position, a.position) - tileDist(hero.position, b.position);
+    });
+
+    const bestCamp = sorted[0];
+
+    return {
+      type: 'attack_camp',
+      targetId: bestCamp.id,
+      targetPosition: bestCamp.position,
+    };
+  }
+
+  // ── Priority 5: Default -> Move toward nearest camp ────
+  // All camps captured by our team; roam toward a camp anyway
+  const anyCamp = nearest(hero.position, camps);
+  if (anyCamp) {
+    return {
+      type: 'move',
+      targetPosition: anyCamp.position,
+    };
+  }
+
+  // Nothing to do -- hold position
+  return {
+    type: 'hold',
+  };
 }
