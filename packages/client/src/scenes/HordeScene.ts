@@ -21,7 +21,7 @@ async function parseWithGemini(
   myUnits: { type: string; count: number }[],
   camps: { name: string; animalType: string; owner: string; index: number }[],
   gameTime: number,
-): Promise<HordeCommand | null> {
+): Promise<HordeCommand[] | null> {
   if (!GEMINI_API_KEY) return null;
 
   const unitList = myUnits.map(u => `  ${u.type}: ${u.count} units`).join('\n');
@@ -42,17 +42,22 @@ The player can:
 - Send a specific animal horde (bunnies, wolves, bears, lions, dragons) or "all" to a target
 - Targets: a camp (by animal type or name), the enemy "nexus", their own "base", or "center"
 - Commands like "capture", "attack", "go to", "take", "defend", "retreat"
+- The player can give MULTIPLE commands in one sentence using "and", "then", "while", commas, etc.
+  Examples: "bunnies attack wolf camp and lions go to nexus", "send wolves to bear camp, dragons attack nexus"
 
 PLAYER COMMAND: "${rawText}"
 
-Respond with ONLY valid JSON (no markdown):
-{
-  "subject": "<animal type like bunny/wolf/bear/lion/dragon, or all>",
-  "targetType": "<camp|nexus|base|position|defend>",
-  "targetAnimal": "<animal type of the target camp, if targeting a camp>",
-  "campIndex": <index number of specific camp if mentioned by name, or -1>,
-  "narration": "<One short dramatic sentence about the order>"
-}`;
+Respond with ONLY a valid JSON ARRAY of commands (no markdown). Each command is an object.
+Even for a single command, return an array with one element.
+[
+  {
+    "subject": "<animal type like bunny/wolf/bear/lion/dragon, or all>",
+    "targetType": "<camp|nexus|base|position|defend>",
+    "targetAnimal": "<animal type of the target camp, if targeting a camp>",
+    "campIndex": <index number of specific camp if mentioned by name, or -1>,
+    "narration": "<One short dramatic sentence about the order>"
+  }
+]`;
 
   try {
     const response = await fetch(GEMINI_URL + GEMINI_API_KEY, {
@@ -76,8 +81,10 @@ Respond with ONLY valid JSON (no markdown):
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) return null;
 
-    const parsed = JSON.parse(text) as HordeCommand;
-    return parsed;
+    const parsed = JSON.parse(text);
+    // Accept both array and single object for backwards compat
+    if (Array.isArray(parsed)) return parsed as HordeCommand[];
+    return [parsed] as HordeCommand[];
   } catch (err) {
     console.warn('Gemini parse failed, falling back to local:', err);
     return null;
@@ -113,6 +120,8 @@ interface HUnit {
   sprite: Phaser.GameObjects.Text | null;
   dead: boolean;
   campId: string | null; // if this unit is a camp defender, which camp
+  lungeX: number; // sprite offset during attack lunge
+  lungeY: number;
 }
 
 interface CampDef {
@@ -163,12 +172,14 @@ const WORLD_H = 3200;
 const P1_BASE = { x: 250, y: WORLD_H - 250 };
 const P2_BASE = { x: WORLD_W - 250, y: 250 };
 
+// Each tier is ~10x stronger than the previous
+// 1 wolf ≈ 10 bunnies, 1 bear ≈ 10 wolves, 1 lion ≈ 10 bears, 1 dragon ≈ 10 lions
 const ANIMALS: Record<string, AnimalDef> = {
-  bunny:  { type: 'bunny',  emoji: '🐰', hp: 25,  attack: 5,  speed: 150, tier: 1 },
-  wolf:   { type: 'wolf',   emoji: '🐺', hp: 50,  attack: 12, speed: 130, tier: 2 },
-  bear:   { type: 'bear',   emoji: '🐻', hp: 100, attack: 18, speed: 80,  tier: 3 },
-  lion:   { type: 'lion',   emoji: '🦁', hp: 80,  attack: 22, speed: 120, tier: 4 },
-  dragon: { type: 'dragon', emoji: '🐉', hp: 200, attack: 35, speed: 70,  tier: 5 },
+  bunny:  { type: 'bunny',  emoji: '🐰', hp: 20,    attack: 4,    speed: 160, tier: 1 },
+  wolf:   { type: 'wolf',   emoji: '🐺', hp: 120,   attack: 15,   speed: 140, tier: 2 },
+  bear:   { type: 'bear',   emoji: '🐻', hp: 600,   attack: 50,   speed: 100, tier: 3 },
+  lion:   { type: 'lion',   emoji: '🦁', hp: 2000,  attack: 150,  speed: 120, tier: 4 },
+  dragon: { type: 'dragon', emoji: '🐉', hp: 8000,  attack: 500,  speed: 80,  tier: 5 },
 };
 
 // Generate camps in concentric arcs from each nexus corner
@@ -234,7 +245,7 @@ function makeCamps(): CampDef[] {
 function cap(s: string) { return s[0].toUpperCase() + s.slice(1); }
 
 const CAMP_DEFS = makeCamps();
-const NEXUS_MAX_HP = 2000;
+const NEXUS_MAX_HP = 50000;
 const MAX_UNITS = 80;
 const BASE_SPAWN_MS = 5000;
 const ATTACK_CD_MS = 1500;
@@ -387,7 +398,7 @@ export class HordeScene extends Phaser.Scene {
         targetX: camp.x + Math.cos(wanderAngle) * wanderR,
         targetY: camp.y + Math.sin(wanderAngle) * wanderR,
         attackTimer: 0, sprite: null, dead: false,
-        campId: camp.id,
+        campId: camp.id, lungeX: 0, lungeY: 0,
       });
     }
   }
@@ -647,7 +658,8 @@ export class HordeScene extends Phaser.Scene {
       '',
       '"bunnies attack wolf camp"',
       '"all attack nexus"',
-      '"wolves defend base"',
+      '"bunnies attack wolf camp and lions go to nexus"',
+      '"wolves defend base, dragons attack center"',
     ].join('\n'), {
       fontSize: '10px', color: '#4A6B4A', fontFamily: '"Nunito", sans-serif', lineSpacing: 2, align: 'right',
     }).setOrigin(1, 1).setScrollFactor(0).setDepth(100);
@@ -775,19 +787,92 @@ export class HordeScene extends Phaser.Scene {
     }
   }
 
-  // ─── MOVEMENT (direct, no pathfinding) ───────────────────────
+  // ─── MOVEMENT (horde flocking) ─────────────────────────────
 
   private updateMovement(dt: number) {
+    // Build spatial groups: same type + same team = one horde
+    const hordes = new Map<string, HUnit[]>();
     for (const u of this.units) {
       if (u.dead) continue;
+      const k = `${u.type}_${u.team}`;
+      if (!hordes.has(k)) hordes.set(k, []);
+      hordes.get(k)!.push(u);
+    }
+
+    // Precompute horde centers
+    const hordeCenters = new Map<string, { cx: number; cy: number; count: number }>();
+    for (const [k, group] of hordes) {
+      let sx = 0, sy = 0;
+      for (const u of group) { sx += u.x; sy += u.y; }
+      hordeCenters.set(k, { cx: sx / group.length, cy: sy / group.length, count: group.length });
+    }
+
+    // Flocking strengths by tier — low tier = tight horde, high tier = more independent
+    const COHESION_BY_TIER: Record<number, number> = { 1: 0.7, 2: 0.45, 3: 0.25, 4: 0.15, 5: 0.08 };
+    const SEPARATION_DIST = 22; // min distance before pushing apart
+    const SEPARATION_FORCE = 60; // push-apart strength
+
+    for (const u of this.units) {
+      if (u.dead) continue;
+
+      // Base: move toward target
       const dx = u.targetX - u.x, dy = u.targetY - u.y;
       const d = Math.sqrt(dx * dx + dy * dy);
-      if (d < 5) continue;
+      if (d < 5) continue; // already there
+
       const buffMult = u.team !== 0 ? (1 + this.getBuffs(u.team as 1 | 2).speed) : 1;
       const spd = u.speed * buffMult;
-      const move = Math.min(spd * dt, d);
-      u.x += (dx / d) * move;
-      u.y += (dy / d) * move;
+      let moveX = (dx / d) * spd;
+      let moveY = (dy / d) * spd;
+
+      // Cohesion: steer toward horde center (skip neutral defenders)
+      if (u.team !== 0) {
+        const k = `${u.type}_${u.team}`;
+        const center = hordeCenters.get(k);
+        if (center && center.count > 1) {
+          const tier = ANIMALS[u.type]?.tier || 1;
+          const cohesion = COHESION_BY_TIER[tier] ?? 0.3;
+          const cdx = center.cx - u.x, cdy = center.cy - u.y;
+          const cd = Math.sqrt(cdx * cdx + cdy * cdy);
+          if (cd > 10) {
+            // Stronger pull when farther from group
+            const pull = Math.min(cd * 0.02, 1.0) * cohesion * spd;
+            moveX += (cdx / cd) * pull;
+            moveY += (cdy / cd) * pull;
+          }
+        }
+      }
+
+      // Separation: avoid stacking on nearby same-team units
+      const horde = hordes.get(`${u.type}_${u.team}`);
+      if (horde && horde.length > 1) {
+        let sepX = 0, sepY = 0;
+        for (const o of horde) {
+          if (o === u) continue;
+          const ox = u.x - o.x, oy = u.y - o.y;
+          const od = Math.sqrt(ox * ox + oy * oy);
+          if (od < SEPARATION_DIST && od > 0.1) {
+            const push = (SEPARATION_DIST - od) / SEPARATION_DIST;
+            sepX += (ox / od) * push;
+            sepY += (oy / od) * push;
+          }
+        }
+        moveX += sepX * SEPARATION_FORCE;
+        moveY += sepY * SEPARATION_FORCE;
+      }
+
+      // Apply movement (cap to speed)
+      const moveD = Math.sqrt(moveX * moveX + moveY * moveY);
+      const maxMove = spd * dt;
+      if (moveD > 0) {
+        const scale = Math.min(maxMove, moveD * dt) / moveD;
+        u.x += moveX * scale;
+        u.y += moveY * scale;
+      }
+
+      // Clamp to world bounds
+      u.x = Math.max(0, Math.min(WORLD_W, u.x));
+      u.y = Math.max(0, Math.min(WORLD_H, u.y));
     }
   }
 
@@ -816,13 +901,61 @@ export class HordeScene extends Phaser.Scene {
       if (best) {
         const buffMult = u.team !== 0 ? (1 + this.getBuffs(u.team as 1 | 2).attack) : 1;
         const atk = u.attack * buffMult;
-        best.hp -= atk;
-        if (best.hp <= 0) best.dead = true;
+        const uTier = ANIMALS[u.type]?.tier || 1;
+
+        // Tier 3+ get cleave/splash: damage primary + nearby enemies
+        const splashRadius = uTier >= 5 ? 60 : uTier >= 4 ? 50 : uTier >= 3 ? 40 : 0;
+        const splashTargets: HUnit[] = [best];
+        if (splashRadius > 0) {
+          for (const o of this.units) {
+            if (o === best || o.dead || o.team === u.team) continue;
+            if (u.team === 0 && o.team === 0) continue;
+            if (pdist(o, best) <= splashRadius) splashTargets.push(o);
+          }
+        }
+
+        for (const target of splashTargets) {
+          const dmg = target === best ? atk : atk * 0.5; // half damage for splash
+          target.hp -= dmg;
+          if (target.hp <= 0) target.dead = true;
+
+          // Hit flash — kill old tweens first to prevent alpha stuck low
+          if (target.sprite) {
+            this.tweens.killTweensOf(target.sprite);
+            target.sprite.setAlpha(1);
+            this.tweens.add({
+              targets: target.sprite, alpha: 0.4, duration: 80, yoyo: true,
+              onComplete: () => { if (target.sprite) target.sprite.setAlpha(1); },
+            });
+          }
+        }
         u.attackTimer = ATTACK_CD_MS;
-        if (best.sprite) this.tweens.add({ targets: best.sprite, alpha: 0.3, duration: 80, yoyo: true });
+
+        // Cute lunge toward target
+        const ldx = best.x - u.x, ldy = best.y - u.y;
+        const ld = Math.sqrt(ldx * ldx + ldy * ldy) || 1;
+        const lungeAmt = Math.min(20, ld * 0.4);
+        u.lungeX = (ldx / ld) * lungeAmt;
+        u.lungeY = (ldy / ld) * lungeAmt;
+        // Tween lunge back to zero
+        this.tweens.add({
+          targets: u, lungeX: 0, lungeY: 0,
+          duration: 200, ease: 'Back.easeIn',
+        });
       } else if (nex && nexD <= COMBAT_RANGE && u.team !== 0) {
         nex.hp -= u.attack * (1 + this.getBuffs(u.team as 1 | 2).attack);
         u.attackTimer = ATTACK_CD_MS;
+
+        // Lunge toward nexus
+        const ldx = nex.x - u.x, ldy = nex.y - u.y;
+        const ld = Math.sqrt(ldx * ldx + ldy * ldy) || 1;
+        const lungeAmt = Math.min(20, ld * 0.4);
+        u.lungeX = (ldx / ld) * lungeAmt;
+        u.lungeY = (ldy / ld) * lungeAmt;
+        this.tweens.add({
+          targets: u, lungeX: 0, lungeY: 0,
+          duration: 200, ease: 'Back.easeIn',
+        });
       }
     }
   }
@@ -833,12 +966,14 @@ export class HordeScene extends Phaser.Scene {
     for (const camp of this.camps) {
       const defenders = this.units.filter(u => u.campId === camp.id && u.team === 0 && !u.dead);
 
-      // Make neutral defenders wander near their camp
+      // Make neutral defenders wander slowly near their camp
       for (const d of defenders) {
-        const dist = pdist(d, camp);
-        if (dist > 70 || pdist(d, { x: d.targetX, y: d.targetY }) < 10) {
+        const distToCamp = pdist(d, camp);
+        const distToTarget = pdist(d, { x: d.targetX, y: d.targetY });
+        // Only pick new target when arrived or drifted too far — not every frame
+        if (distToTarget < 8 || distToCamp > 80) {
           const a = Math.random() * Math.PI * 2;
-          const r = 20 + Math.random() * 40;
+          const r = 15 + Math.random() * 35;
           d.targetX = camp.x + Math.cos(a) * r;
           d.targetY = camp.y + Math.sin(a) * r;
         }
@@ -938,8 +1073,9 @@ export class HordeScene extends Phaser.Scene {
       }
       if (!u.sprite) {
         const def = ANIMALS[u.type];
-        const strokeColor = u.team === 0 ? '#AA6600' : u.team === 1 ? '#2266CC' : '#FF2222';
-        const thickness = u.team === 2 ? 4 : 3;
+        // Distinct team colors: gold for neutral, blue for player, bright red for enemy
+        const strokeColor = u.team === 0 ? '#DD8800' : u.team === 1 ? '#3388FF' : '#FF3333';
+        const thickness = u.team === 2 ? 5 : u.team === 0 ? 4 : 3;
         u.sprite = this.add.text(0, 0, def.emoji, {
           fontSize: '22px',
           stroke: strokeColor,
@@ -947,12 +1083,23 @@ export class HordeScene extends Phaser.Scene {
         }).setOrigin(0.5).setDepth(20);
       }
 
-      // Sunflower spiral formation offset
+      // Sunflower spiral formation offset based on stable unit ID
+      // Tighter for horde units (bunnies), wider for big animals
+      const tier = ANIMALS[u.type]?.tier || 1;
+      const tierSpacing = tier <= 1 ? 8 : tier <= 2 ? 12 : tier >= 4 ? 14 : 10;
+      const maxSpread = tier <= 1 ? 35 : tier <= 2 ? 50 : tier >= 4 ? 50 : 40;
+      const a = u.id * GOLDEN_ANGLE;
       const grp = groups.get(`${u.type}_${u.team}`) || [u];
       const idx = grp.indexOf(u);
-      const a = idx * GOLDEN_ANGLE;
-      const r = Math.min(Math.sqrt(idx) * 16, 70);
-      u.sprite.setPosition(u.x + Math.cos(a) * r, u.y + Math.sin(a) * r);
+      const r = Math.min(Math.sqrt(idx) * tierSpacing, maxSpread);
+      const dispX = u.x + Math.cos(a) * r + (u.lungeX || 0);
+      const dispY = u.y + Math.sin(a) * r + (u.lungeY || 0);
+      // Smooth sprite position to avoid jitter
+      const prev = u.sprite;
+      const lerpFactor = 0.3;
+      const sx = prev.x + (dispX - prev.x) * lerpFactor;
+      const sy = prev.y + (dispY - prev.y) * lerpFactor;
+      u.sprite.setPosition(sx, sy);
     }
   }
 
@@ -1054,13 +1201,14 @@ export class HordeScene extends Phaser.Scene {
       targetY = rally.y + Math.sin(a) * r;
     }
 
-    const speedVariance = 0.85 + Math.random() * 0.3;
+    // Tighter speed variance so horde units stay together as a mob
+    const speedVariance = 0.93 + Math.random() * 0.14;
     this.units.push({
       id: this.nextId++, type, team,
       hp: maxHp, maxHp, attack: def.attack, speed: def.speed * speedVariance,
       x, y, targetX, targetY,
       attackTimer: 0, sprite: null, dead: false,
-      campId: null,
+      campId: null, lungeX: 0, lungeY: 0,
     });
   }
 
@@ -1088,7 +1236,10 @@ export class HordeScene extends Phaser.Scene {
 
     for (let i = 0; i < units.length; i++) {
       const a = i * GOLDEN_ANGLE;
-      const r = Math.sqrt(i) * 18;
+      // Tighter spiral for low-tier horde units, wider for big units
+      const tier = ANIMALS[units[i].type]?.tier || 1;
+      const spacing = tier <= 1 ? 10 : tier <= 2 ? 14 : 18;
+      const r = Math.sqrt(i) * spacing;
       units[i].targetX = tx + Math.cos(a) * r;
       units[i].targetY = ty + Math.sin(a) * r;
     }
@@ -1110,16 +1261,23 @@ export class HordeScene extends Phaser.Scene {
       owner: c.owner === 0 ? 'NEUTRAL' : c.owner === team ? 'YOURS' : 'ENEMY',
     }));
 
-    // Try Gemini first
-    const geminiResult = await parseWithGemini(text, myUnits, campCtx, this.gameTime);
+    // Try Gemini first — it handles multi-command in one shot
+    const geminiResults = await parseWithGemini(text, myUnits, campCtx, this.gameTime);
 
-    if (geminiResult) {
-      const result = this.executeGeminiCommand(geminiResult, team);
-      if (result) return;
+    if (geminiResults && geminiResults.length > 0) {
+      let anySuccess = false;
+      for (const cmd of geminiResults) {
+        if (this.executeGeminiCommand(cmd, team)) anySuccess = true;
+      }
+      if (anySuccess) return;
     }
 
-    // Fallback to local regex parsing
-    this.executeLocalCommand(text, team);
+    // Fallback to local regex parsing with compound splitting
+    // Split on "and", "then", "while", commas, semicolons
+    const parts = text.split(/\b(?:and|then|while|also)\b|[,;]/i).map(s => s.trim()).filter(Boolean);
+    for (const part of parts) {
+      this.executeLocalCommand(part, team);
+    }
   }
 
   private executeGeminiCommand(cmd: HordeCommand, team: 1 | 2): boolean {
@@ -1197,6 +1355,17 @@ export class HordeScene extends Phaser.Scene {
       tx = b.x; ty = b.y; found = true;
     }
 
+    // Match specific camp by name+number: "wolf camp 3", "bear camp 12"
+    if (!found) {
+      const campNumMatch = targetPart.match(/(bunny|wolf|bear|lion|dragon)\s*camp\s*(\d+)/i);
+      if (campNumMatch) {
+        const campNum = parseInt(campNumMatch[2]);
+        const c = this.camps.find(c2 => c2.name.toLowerCase().includes(`camp ${campNum}`));
+        if (c) { tx = c.x; ty = c.y; found = true; }
+      }
+    }
+
+    // Match camp by animal type: "wolf camp" → nearest wolf camp not owned by me
     if (!found) {
       for (const [pat, name] of animalPatterns) {
         if (pat.test(targetPart)) {
@@ -1208,6 +1377,7 @@ export class HordeScene extends Phaser.Scene {
       }
     }
 
+    // Match camp by full name words
     if (!found) {
       for (const c of this.camps) {
         const words = c.name.toLowerCase().split(/\s+/).filter(w => w.length > 3);
