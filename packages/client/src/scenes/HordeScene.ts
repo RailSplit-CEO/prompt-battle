@@ -8,6 +8,8 @@ import { FirebaseSync } from '../network/FirebaseSync';
 const GEMINI_API_KEY = (import.meta as any).env?.VITE_GEMINI_API_KEY || '';
 const GEMINI_MODEL = 'gemini-2.0-flash-lite';
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=`;
+let lastGeminiCall = 0;
+const GEMINI_COOLDOWN_MS = 3000; // min 3s between API calls to avoid 429
 
 interface HordeCommand {
   subject: string; // animal type or "all"
@@ -26,6 +28,14 @@ async function parseWithGemini(
   gameTime: number,
 ): Promise<HordeCommand[] | null> {
   if (!GEMINI_API_KEY) return null;
+
+  // Rate limit to avoid 429 Too Many Requests
+  const now = Date.now();
+  if (now - lastGeminiCall < GEMINI_COOLDOWN_MS) {
+    console.log('[Gemini] Rate limited, using local parser');
+    return null;
+  }
+  lastGeminiCall = now;
 
   const unitList = myUnits.map(u => `  ${u.type}: ${u.count} units`).join('\n');
   const campList = camps.map(c =>
@@ -283,9 +293,10 @@ const HARD_COUNTERS: Record<string, string[]> = {
   dragon:    ['phoenix', 'hawk'],    // splash kills phoenix twice, swats hawks
 };
 
-// Procedural map: fill the world with random camps.
-// Tier scales with distance from nearest base — further out = stronger.
-// Seeded RNG so both players get the same map.
+// Procedural map: competitive symmetric layout.
+// Distribution: ~50% T1, ~25% T2, ~12% T3, ~8% T4, ~5% T5
+// Mirror-symmetric across the diagonal (P1↔P2 fair) with camps in all quadrants.
+// Seeded RNG so both players get the same map in multiplayer.
 
 function seededRandom(seed: number) {
   let s = seed;
@@ -295,42 +306,13 @@ function seededRandom(seed: number) {
 function makeCamps(): CampDef[] {
   const camps: CampDef[] = [];
   const rng = seededRandom(42069);
-  const MARGIN = 200;         // keep away from world edges
-  const BASE_CLEAR = 400;     // keep away from nexuses
-  const CAMP_SPACING = 280;   // min distance between camps
-  const TOTAL_CAMPS = 35;     // fill the map
 
-  // All animals grouped by tier, randomly chosen within each tier band
   const TIER_ANIMALS: Record<number, string[]> = {
     1: ['bunny', 'turtle'],
     2: ['wolf', 'scorpion', 'hawk'],
     3: ['bear', 'crocodile'],
     4: ['lion', 'phoenix'],
     5: ['dragon'],
-  };
-
-  const tierByDist = (dist: number): string => {
-    let tier: number;
-    if (dist < 0.18) tier = 1;
-    else if (dist < 0.35) tier = 2;
-    else if (dist < 0.55) tier = 3;
-    else if (dist < 0.78) tier = 4;
-    else tier = 5;
-    const pool = TIER_ANIMALS[tier];
-    return pool[Math.floor(rng() * pool.length)];
-  };
-
-  const placed: { x: number; y: number }[] = [];
-
-  const tooClose = (x: number, y: number) => {
-    // Too close to bases?
-    if (pdist({ x, y }, P1_BASE) < BASE_CLEAR) return true;
-    if (pdist({ x, y }, P2_BASE) < BASE_CLEAR) return true;
-    // Too close to another camp?
-    for (const p of placed) {
-      if (pdist({ x, y }, p) < CAMP_SPACING) return true;
-    }
-    return false;
   };
 
   const BUFF_POOL: { stat: string; value: number }[] = [
@@ -349,38 +331,103 @@ function makeCamps(): CampDef[] {
     bear: 7500, crocodile: 7500, lion: 10000, phoenix: 10000, dragon: 15000,
   };
 
+  // Pre-roll the tier list with correct distribution
+  // 40 camps total (20 mirrored pairs): 50% T1, 25% T2, 12.5% T3, 7.5% T4, 5% T5
+  const tierList: number[] = [];
+  const counts = { 1: 20, 2: 10, 3: 5, 4: 3, 5: 2 }; // = 40
+  for (const [tier, count] of Object.entries(counts)) {
+    for (let i = 0; i < count; i++) tierList.push(Number(tier));
+  }
+  // Shuffle tier list
+  for (let i = tierList.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [tierList[i], tierList[j]] = [tierList[j], tierList[i]];
+  }
+
+  const MARGIN = 180;
+  const BASE_CLEAR = 380;
+  const CAMP_SPACING = 240;
+  const placed: { x: number; y: number }[] = [];
+
+  const tooClose = (x: number, y: number) => {
+    if (pdist({ x, y }, P1_BASE) < BASE_CLEAR) return true;
+    if (pdist({ x, y }, P2_BASE) < BASE_CLEAR) return true;
+    for (const p of placed) {
+      if (pdist({ x, y }, p) < CAMP_SPACING) return true;
+    }
+    return false;
+  };
+
+  // Mirror a point across the map center diagonal (swap relative to center)
+  const cx = WORLD_W / 2, cy = WORLD_H / 2;
+  const mirror = (x: number, y: number): [number, number] => {
+    return [cx + (cx - x), cy + (cy - y)];
+  };
+
+  // Place camps in mirrored pairs for fairness
+  // Half are placed on P1's side, half mirrored to P2's side
+  // Higher tiers go toward the center/contested zones
   let idx = 0;
-  let attempts = 0;
+  let tierIdx = 0;
 
-  while (camps.length < TOTAL_CAMPS && attempts < 2000) {
-    attempts++;
-    const x = MARGIN + rng() * (WORLD_W - 2 * MARGIN);
-    const y = MARGIN + rng() * (WORLD_H - 2 * MARGIN);
+  // Sort tiers so low tiers go near bases, high tiers toward center
+  const sortedTiers = [...tierList].sort((a, b) => a - b);
 
-    if (tooClose(x, y)) continue;
+  for (let i = 0; i < sortedTiers.length && tierIdx < sortedTiers.length; i++) {
+    const tier = sortedTiers[tierIdx];
 
-    // Distance to nearest base, normalized 0-1
-    const d1 = pdist({ x, y }, P1_BASE);
-    const d2 = pdist({ x, y }, P2_BASE);
-    const minDist = Math.min(d1, d2);
-    const maxPossible = pdist(P1_BASE, P2_BASE) / 2; // ~1900
-    const normalized = Math.min(minDist / maxPossible, 1);
+    // Determine placement zone based on tier
+    // T1: near own base (300-900 from base)
+    // T2: mid-range (700-1400 from base)
+    // T3: contested zone (1000-1800 from base)
+    // T4-5: center/deep enemy territory (1300-2200 from base)
+    const minR = tier <= 1 ? 380 : tier <= 2 ? 650 : tier <= 3 ? 950 : 1200;
+    const maxR = tier <= 1 ? 1000 : tier <= 2 ? 1500 : tier <= 3 ? 1900 : 2300;
 
-    const type = tierByDist(normalized);
-    const def = ANIMALS[type];
-    const buff = BUFF_POOL[Math.floor(rng() * BUFF_POOL.length)];
+    let placed1 = false;
+    for (let attempt = 0; attempt < 80; attempt++) {
+      // Generate point at random angle from P1 base, within tier distance range
+      const angle = rng() * Math.PI * 2;
+      const dist = minR + rng() * (maxR - minR);
+      const x = P1_BASE.x + Math.cos(angle) * dist;
+      const y = P1_BASE.y + Math.sin(angle) * dist;
 
-    camps.push({
-      id: `camp_${idx}`,
-      name: `${def.emoji} ${cap(type)} Camp ${++idx}`,
-      type,
-      x: Math.round(x),
-      y: Math.round(y),
-      guards: GUARD_COUNT[type],
-      spawnMs: SPAWN_MS[type],
-      buff,
-    });
-    placed.push({ x, y });
+      // Clamp to world bounds
+      if (x < MARGIN || x > WORLD_W - MARGIN || y < MARGIN || y > WORLD_H - MARGIN) continue;
+      if (tooClose(x, y)) continue;
+
+      // Check the mirrored point too
+      const [mx, my] = mirror(x, y);
+      if (mx < MARGIN || mx > WORLD_W - MARGIN || my < MARGIN || my > WORLD_H - MARGIN) continue;
+      if (tooClose(mx, my)) continue;
+
+      // Both points are valid — place pair
+      const pool = TIER_ANIMALS[tier];
+      const animalType = pool[Math.floor(rng() * pool.length)];
+      const def = ANIMALS[animalType];
+      const buff = BUFF_POOL[Math.floor(rng() * BUFF_POOL.length)];
+      // Mirror gets same animal type for fairness, different buff
+      const buff2 = BUFF_POOL[Math.floor(rng() * BUFF_POOL.length)];
+
+      camps.push({
+        id: `camp_${idx}`, name: `${def.emoji} ${cap(animalType)} Camp ${++idx}`,
+        type: animalType, x: Math.round(x), y: Math.round(y),
+        guards: GUARD_COUNT[animalType], spawnMs: SPAWN_MS[animalType], buff,
+      });
+      placed.push({ x, y });
+
+      camps.push({
+        id: `camp_${idx}`, name: `${def.emoji} ${cap(animalType)} Camp ${++idx}`,
+        type: animalType, x: Math.round(mx), y: Math.round(my),
+        guards: GUARD_COUNT[animalType], spawnMs: SPAWN_MS[animalType], buff: buff2,
+      });
+      placed.push({ x: mx, y: my });
+
+      tierIdx += 2; // consumed 2 from the tier list
+      placed1 = true;
+      break;
+    }
+    if (!placed1) tierIdx += 2; // skip if couldn't place
   }
 
   return camps;
