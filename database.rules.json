@@ -1,12 +1,8 @@
 {
   "rules": {
     "matchmaking": {
-      "queue": {
-        ".read": true,
-        "$playerId": {
-          ".write": "auth != null"
-        }
-      }
+      ".read": "auth != null",
+      ".write": "auth != null"
     },
     "games": {
       "$gameId": {
