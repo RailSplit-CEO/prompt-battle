@@ -4,6 +4,8 @@ import { MenuScene } from './scenes/MenuScene';
 import { DraftScene } from './scenes/DraftScene';
 import { BattleScene } from './scenes/BattleScene';
 import { ResultScene } from './scenes/ResultScene';
+import { JungleLaneScene } from './scenes/JungleLaneScene';
+import { HordeScene } from './scenes/HordeScene';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.WEBGL,
@@ -17,7 +19,7 @@ const config: Phaser.Types.Core.GameConfig = {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  scene: [BootScene, MenuScene, DraftScene, BattleScene, ResultScene],
+  scene: [BootScene, MenuScene, DraftScene, BattleScene, ResultScene, JungleLaneScene, HordeScene],
   physics: {
     default: 'arcade',
     arcade: {

@@ -25,7 +25,7 @@ export class MenuScene extends Phaser.Scene {
     const lineY = subtitleY + 22;
     const playBtnY = lineY + 90;
     const localBtnY = playBtnY + 82;
-    const statusY = localBtnY + 68;
+    const statusY = localBtnY + 230;
 
     // Title shadow (offset behind main title for cartoon depth)
     this.add.text(width / 2 + 4, titleY + 4, 'PROMPT BATTLE', {
@@ -112,8 +112,34 @@ export class MenuScene extends Phaser.Scene {
     });
     localBtn.zone.on('pointerdown', () => this.startLocalTest());
 
+    // Jungle Lane Mode button
+    const jungleBtnY = localBtnY + 82;
+    const jungleBtn = this.createCartoonButton(
+      width / 2, jungleBtnY, 300, 62, 'JUNGLE LANES', 0xFFD93D, false
+    );
+    jungleBtn.container.setAlpha(0).setScale(0.5);
+    this.tweens.add({
+      targets: jungleBtn.container,
+      alpha: 1, scaleX: 1, scaleY: 1,
+      duration: 600, delay: 1000, ease: 'Back.easeOut',
+    });
+    jungleBtn.zone.on('pointerdown', () => this.startJungleLane());
+
+    // Horde Mode button
+    const hordeBtnY = jungleBtnY + 82;
+    const hordeBtn = this.createCartoonButton(
+      width / 2, hordeBtnY, 300, 62, 'HORDE MODE', 0x45E6B0, false
+    );
+    hordeBtn.container.setAlpha(0).setScale(0.5);
+    this.tweens.add({
+      targets: hordeBtn.container,
+      alpha: 1, scaleX: 1, scaleY: 1,
+      duration: 600, delay: 1150, ease: 'Back.easeOut',
+    });
+    hordeBtn.zone.on('pointerdown', () => this.startHordeMode());
+
     // Keyboard shortcut hint
-    const shortcutHint = this.add.text(width / 2, localBtnY + 44, 'Press ENTER to find match', {
+    const shortcutHint = this.add.text(width / 2, hordeBtnY + 44, 'Press ENTER to find match', {
       fontSize: '12px',
       color: '#8B6DB0',
       fontFamily: '"Nunito", sans-serif',
@@ -383,6 +409,20 @@ export class MenuScene extends Phaser.Scene {
       this.statusText.setText('Error: ' + (err as Error).message);
       this.statusText.setColor('#FF6B6B');
     }
+  }
+
+  private startJungleLane() {
+    this.cameras.main.fadeOut(400, 27, 16, 64);
+    this.cameras.main.once('camerafadeoutcomplete', () => {
+      this.scene.start('JungleLaneScene');
+    });
+  }
+
+  private startHordeMode() {
+    this.cameras.main.fadeOut(400, 27, 16, 64);
+    this.cameras.main.once('camerafadeoutcomplete', () => {
+      this.scene.start('HordeScene');
+    });
   }
 
   private async startLocalTest() {
