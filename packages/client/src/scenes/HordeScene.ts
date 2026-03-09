@@ -78,7 +78,9 @@ COMPLEX COMMAND EXAMPLES:
 - "bunnies keep capturing bunny camps" → sweep_camps, subject=bunny, targetAnimal=bunny
 - "send wolves to the closest uncaptured camp" → nearest_camp, qualifier=uncaptured
 - "everyone push nexus" → nexus, subject=all
-- "bunnies attack nearest camp and wolves go to bear camp 5" → TWO commands
+- "attack Bouncy Burrow" → camp, campIndex=(index of Bouncy Burrow from the list)
+- "send wolves to Wailing Woods" → camp, subject=wolf, campIndex=(index of Wailing Woods)
+- "bunnies attack nearest camp and wolves go to Stinger Sands" → TWO commands
 - "attack whatever is closest" → nearest_camp, qualifier=nearest
 - "go capture camps starting from the nearest" → sweep_camps, qualifier=nearest
 - "defend my base with bears" → defend, subject=bear
@@ -91,7 +93,8 @@ RULES:
 - ALWAYS interpret the player's intent — never refuse. Pick the best match.
 - "nearest/closest" = nearest to player base. "furthest/farthest" = furthest.
 - If no specific animal subject, default to "all".
-- If targeting a camp by number/name, use "camp" with campIndex.
+- If targeting a camp by NAME (e.g. "Bouncy Burrow", "Stinger Sands"), use "camp" with campIndex matching that name from the list.
+- Camp names are unique — match partial names too (e.g. "bouncy" = "Bouncy Burrow").
 - If "keep going" / "sweep" / "capture all", use "sweep_camps".
 
 PLAYER COMMAND: "${rawText}"
@@ -308,9 +311,79 @@ function seededRandom(seed: number) {
   return () => { s = (s * 16807 + 0) % 2147483647; return s / 2147483647; };
 }
 
+// Unique alliterative/rhyming camp names per animal — easy to call out by voice
+const CAMP_NAMES: Record<string, string[]> = {
+  bunny: [
+    'Bouncy Burrow', 'Bramble Borough', 'Breezy Bluff', 'Bubbling Brook',
+    'Bashful Basin', 'Bright Bend', 'Buttercup Bay', 'Berry Bramble',
+    'Bumble Bridge', 'Blossom Bank', 'Bunny Bazaar', 'Bristle Bog',
+  ],
+  turtle: [
+    'Tranquil Terrace', 'Tumble Town', 'Twilight Trail', 'Tidal Turn',
+    'Thistle Tor', 'Timber Trench', 'Turtle Tavern', 'Topaz Tower',
+    'Tangled Thicket', 'Tepid Tarn', 'Thunder Trail', 'Tundra Top',
+  ],
+  wolf: [
+    'Wailing Woods', 'Whispering Wilds', 'Windswept Watch', 'Wicked Warren',
+    'Warden Wall', 'Wanderer Way', 'Winter Wake', 'Wolven Weald',
+    'Withered Walk', 'Wild Whistle', 'Warpath West', 'Wooded Wharf',
+  ],
+  scorpion: [
+    'Stinger Sands', 'Scorched Strip', 'Shadow Sting', 'Sunken Spire',
+    'Sand Sweep', 'Silent Strike', 'Sulfur Springs', 'Stone Steppe',
+    'Skull Stretch', 'Searing Scar', 'Serpent Slope', 'Storm Shelf',
+  ],
+  hawk: [
+    'Howling Heights', 'High Hollow', 'Hazy Hilltop', 'Hawk Haven',
+    'Hidden Helm', 'Highland Haunt', 'Halo Hill', 'Horizon Hook',
+    'Hanging Heath', 'Harvest Holt', 'Hero Helm', 'Humble Hearth',
+  ],
+  bear: [
+    'Boulder Basin', 'Blackberry Bluff', 'Brawler Bay', 'Big Bear Bog',
+    'Broken Bridge', 'Brute Barracks', 'Bark Bastion', 'Beast Bunker',
+    'Bitter Bend', 'Blizzard Base', 'Bronze Berm', 'Burly Bank',
+  ],
+  crocodile: [
+    'Croc Creek', 'Crimson Cove', 'Cruel Canyon', 'Crumbling Court',
+    'Crystal Crossing', 'Cobalt Cliff', 'Coral Camp', 'Cursed Cavern',
+    'Copper Crag', 'Cedar Cut', 'Clawed Coast', 'Crater Core',
+  ],
+  lion: [
+    'Lion Lodge', 'Lofty Lair', 'Lonely Ledge', 'Lunar Landing',
+    'Lavender Lake', 'Lightning Leap', 'Lost Lookout', 'Lumber Line',
+    'Lusty Lawn', 'Lantern Lane', 'Legacy Loft', 'Lynx Lagoon',
+  ],
+  phoenix: [
+    'Flame Forge', 'Fiery Falls', 'Furnace Field', 'Flash Frontier',
+    'Frozen Fire', 'Fury Fort', 'Fading Flare', 'Fossil Flat',
+    'Phantom Pyre', 'Phoenix Peak', 'Flickering Fen', 'First Fire',
+  ],
+  dragon: [
+    'Dragon Dome', 'Dread Den', 'Dark Divide', 'Dire Dungeon',
+    'Doom Dale', 'Dragonfire Deep', 'Devil Drop', 'Dust Devil',
+    'Diamond Drift', 'Dusk Domain', 'Demon Ditch', 'Dawn Depths',
+  ],
+};
+
+// Track used names to guarantee uniqueness
+const usedNames: Record<string, number> = {};
+
+function pickCampName(animalType: string, rng: () => number): string {
+  const pool = CAMP_NAMES[animalType] || [`${cap(animalType)} Camp`];
+  // Pick a random name from the pool
+  const idx = Math.floor(rng() * pool.length);
+  const baseName = pool[idx];
+  // Ensure uniqueness — append number if reused
+  usedNames[baseName] = (usedNames[baseName] || 0) + 1;
+  if (usedNames[baseName] > 1) return `${baseName} ${usedNames[baseName]}`;
+  return baseName;
+}
+
 function makeCamps(): CampDef[] {
   const camps: CampDef[] = [];
   const rng = seededRandom(42069);
+  // Reset used names
+  for (const k of Object.keys(usedNames)) delete usedNames[k];
 
   const TIER_ANIMALS: Record<number, string[]> = {
     1: ['bunny', 'turtle'],
@@ -414,15 +487,18 @@ function makeCamps(): CampDef[] {
       // Mirror gets same animal type for fairness, different buff
       const buff2 = BUFF_POOL[Math.floor(rng() * BUFF_POOL.length)];
 
+      const name1 = pickCampName(animalType, rng);
+      const name2 = pickCampName(animalType, rng);
+
       camps.push({
-        id: `camp_${idx}`, name: `${def.emoji} ${cap(animalType)} Camp ${++idx}`,
+        id: `camp_${idx++}`, name: `${def.emoji} ${name1}`,
         type: animalType, x: Math.round(x), y: Math.round(y),
         guards: GUARD_COUNT[animalType], spawnMs: SPAWN_MS[animalType], buff,
       });
       placed.push({ x, y });
 
       camps.push({
-        id: `camp_${idx}`, name: `${def.emoji} ${cap(animalType)} Camp ${++idx}`,
+        id: `camp_${idx++}`, name: `${def.emoji} ${name2}`,
         type: animalType, x: Math.round(mx), y: Math.round(my),
         guards: GUARD_COUNT[animalType], spawnMs: SPAWN_MS[animalType], buff: buff2,
       });
@@ -2073,11 +2149,17 @@ export class HordeScene extends Phaser.Scene {
       }
     }
 
-    // Match camp by full name words
+    // Match camp by unique name (alliterative names like "Bouncy Burrow", "Wailing Woods")
     if (!found) {
+      const fullLo = lo; // search entire command text for camp names
       for (const c of this.camps) {
-        const words = c.name.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-        if (words.some(w => targetPart.includes(w))) { tx = c.x; ty = c.y; found = true; break; }
+        // Strip emoji prefix for matching
+        const cleanName = c.name.replace(/^[^\w]+/, '').toLowerCase();
+        const words = cleanName.split(/\s+/).filter(w => w.length > 2);
+        // Match if any unique word from the camp name appears
+        if (words.some(w => fullLo.includes(w) || targetPart.includes(w))) {
+          tx = c.x; ty = c.y; found = true; break;
+        }
       }
     }
 
