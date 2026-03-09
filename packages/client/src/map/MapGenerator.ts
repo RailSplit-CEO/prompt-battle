@@ -209,17 +209,21 @@ export function generateMap(seed: number): GameMap {
     }
   }
 
-  // Spawn positions (3 per team)
+  // Spawn positions (5 per team)
   const spawnP1: Position[] = [
     { x: 5, y: 35 },
     { x: 4, y: 34 },
     { x: 6, y: 34 },
+    { x: 3, y: 36 },
+    { x: 7, y: 36 },
   ];
 
   const spawnP2: Position[] = [
     { x: 45, y: 5 },
     { x: 44, y: 6 },
     { x: 46, y: 6 },
+    { x: 43, y: 4 },
+    { x: 47, y: 4 },
   ];
 
   // Named zones for camps and structures
@@ -250,7 +254,7 @@ export function generateMap(seed: number): GameMap {
 // ─── Public Utilities ────────────────────────────────────
 
 export function isPassable(tile: TileType): boolean {
-  return tile !== 'water';
+  return tile !== 'water' && tile !== 'river';
 }
 
 export function getMovementCost(tile: TileType): number {

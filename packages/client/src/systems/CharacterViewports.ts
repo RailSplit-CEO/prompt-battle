@@ -54,7 +54,7 @@ export class CharacterViewports {
       .setScrollFactor(0)
       .setDepth(150);
 
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 5; i++) {
       const cam = scene.cameras.add(0, 0, 100, 100, false, `charVP_${i}`);
       cam.setVisible(false);
       cam.setBackgroundColor(0x0D0A18);

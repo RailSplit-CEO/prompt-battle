@@ -8,7 +8,7 @@ interface DraftSceneData {
   isLocal: boolean;
 }
 
-const ALL_PASSIVES: HeroPassive[] = ['rally_leader', 'iron_will', 'swift_command'];
+const ALL_PASSIVES: HeroPassive[] = ['rally_leader', 'iron_will', 'swift_command', 'keen_eye', 'battle_fury'];
 
 interface HeroCard {
   name: string;
@@ -77,11 +77,12 @@ export class DraftScene extends Phaser.Scene {
       letterSpacing: 4,
     }).setOrigin(0.5);
 
-    // Hero card dimensions
-    const cardW = 180;
+    // Hero card dimensions (5 heroes now)
+    const cardW = 140;
     const cardH = 110;
-    const cardGap = 16;
-    const totalCardsW = 3 * cardW + 2 * cardGap;
+    const cardGap = 10;
+    const heroCount = this.myHeroes.length;
+    const totalCardsW = heroCount * cardW + (heroCount - 1) * cardGap;
     const cardsStartX = width / 2 - totalCardsW / 2 + cardW / 2;
 
     // "Your Heroes" section

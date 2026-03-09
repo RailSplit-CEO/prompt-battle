@@ -18,7 +18,7 @@ export type UnitRole = 'swift_melee' | 'ranged' | 'melee_dps' | 'ranged_dps'
 export type CampTier = 1 | 2 | 3 | 4;
 
 // ─── Hero System ─────────────────────────────────────────
-export type HeroPassive = 'rally_leader' | 'iron_will' | 'swift_command';
+export type HeroPassive = 'rally_leader' | 'iron_will' | 'swift_command' | 'keen_eye' | 'battle_fury';
 
 export interface Hero {
   id: string;
@@ -67,6 +67,8 @@ export const HERO_PASSIVES: Record<HeroPassive, { name: string; description: str
   rally_leader: { name: 'Rally Leader', description: 'Armies spawn 20% faster from captured camps', emoji: '📯' },
   iron_will: { name: 'Iron Will', description: 'All units gain +15% max HP', emoji: '🛡️' },
   swift_command: { name: 'Swift Command', description: 'Hero and all units move 15% faster', emoji: '⚡' },
+  keen_eye: { name: 'Keen Eye', description: 'Hero vision +50%, captured camps reveal more area', emoji: '👁️' },
+  battle_fury: { name: 'Battle Fury', description: 'All units deal +20% damage', emoji: '🔥' },
 };
 
 // ─── Animal Units ────────────────────────────────────────

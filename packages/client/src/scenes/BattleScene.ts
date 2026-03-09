@@ -182,12 +182,12 @@ export class BattleScene extends Phaser.Scene {
     resetNames();
 
     const heroes: Record<string, Hero> = {};
-    const passives: HeroPassive[] = ['rally_leader', 'iron_will', 'swift_command'];
+    const passives: HeroPassive[] = ['rally_leader', 'iron_will', 'swift_command', 'keen_eye', 'battle_fury'];
 
     // Player 1 heroes
     const p1Spawns = this.gameMap.spawnP1;
     const p1Configs = heroConfig?.myHeroes ?? passives.map(p => ({ name: generateCharacterName(), passive: p }));
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 5; i++) {
       const id = `p1_hero_${i}`;
       const cfg = p1Configs[i];
       heroes[id] = {
@@ -217,7 +217,7 @@ export class BattleScene extends Phaser.Scene {
     // Player 2 heroes
     const p2Spawns = this.gameMap.spawnP2;
     const p2Configs = heroConfig?.enemyHeroes ?? passives.map(p => ({ name: generateCharacterName(), passive: p }));
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 5; i++) {
       const id = `p2_hero_${i}`;
       const cfg = p2Configs[i];
       heroes[id] = {
@@ -304,6 +304,13 @@ export class BattleScene extends Phaser.Scene {
 
       const container = this.add.container(px, py).setDepth(3);
 
+      // Capture ring (large, visible from distance) — starts gray
+      const ring = this.add.graphics();
+      ring.lineStyle(3, 0x666666, 0.6);
+      ring.strokeCircle(0, 0, 22);
+      container.add(ring);
+      (container as any)._ring = ring;
+
       // Camp marker sprite
       const marker = this.add.sprite(0, 0, 'camp_neutral').setScale(1.2);
       container.add(marker);
@@ -315,12 +322,25 @@ export class BattleScene extends Phaser.Scene {
       // Camp name label
       const label = this.add.text(0, 20, camp.name, {
         fontSize: '7px',
-        color: '#ccc',
+        color: '#888',
         fontFamily: '"Nunito", sans-serif',
         fontStyle: 'bold',
         shadow: { offsetX: 1, offsetY: 1, color: '#000', blur: 2, fill: true, stroke: true },
       }).setOrigin(0.5);
       container.add(label);
+      (container as any)._label = label;
+
+      // Status text (shows "CAPTURED" or "NEUTRAL")
+      const statusText = this.add.text(0, -22, '', {
+        fontSize: '6px',
+        color: '#FFD93D',
+        fontFamily: '"Fredoka", sans-serif',
+        fontStyle: 'bold',
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        padding: { x: 3, y: 1 },
+      }).setOrigin(0.5).setVisible(false);
+      container.add(statusText);
+      (container as any)._statusText = statusText;
 
       this.campSprites.set(camp.id, container);
     }
@@ -485,17 +505,45 @@ export class BattleScene extends Phaser.Scene {
     // Update HTML hero bar
     this.updateHeroBar();
 
-    // Update camp colors
+    // Update camp visuals — ring, label, status for capture state
     for (const camp of this.state.camps) {
       const container = this.campSprites.get(camp.id);
       if (!container) continue;
-      const marker = container.list[0] as Phaser.GameObjects.Sprite;
+
+      const ring = (container as any)._ring as Phaser.GameObjects.Graphics;
+      const label = (container as any)._label as Phaser.GameObjects.Text;
+      const statusText = (container as any)._statusText as Phaser.GameObjects.Text;
+      // marker is after ring in list (index 1)
+      const marker = container.list[1] as Phaser.GameObjects.Sprite;
+
       if (camp.capturedTeam === 'player1') {
         marker.setTexture('camp_p1');
+        ring.clear();
+        ring.lineStyle(3, 0x4499FF, 0.9);
+        ring.strokeCircle(0, 0, 22);
+        ring.fillStyle(0x4499FF, 0.12);
+        ring.fillCircle(0, 0, 22);
+        label.setColor('#6CC4FF');
+        statusText.setText('BLUE').setColor('#6CC4FF').setVisible(true);
+        container.setScale(1.1);
       } else if (camp.capturedTeam === 'player2') {
         marker.setTexture('camp_p2');
+        ring.clear();
+        ring.lineStyle(3, 0xFF5555, 0.9);
+        ring.strokeCircle(0, 0, 22);
+        ring.fillStyle(0xFF5555, 0.12);
+        ring.fillCircle(0, 0, 22);
+        label.setColor('#FF6B6B');
+        statusText.setText('RED').setColor('#FF6B6B').setVisible(true);
+        container.setScale(1.1);
       } else {
         marker.setTexture('camp_neutral');
+        ring.clear();
+        ring.lineStyle(2, 0x666666, 0.4);
+        ring.strokeCircle(0, 0, 22);
+        label.setColor('#888');
+        statusText.setVisible(false);
+        container.setScale(1.0);
       }
     }
   }
@@ -523,7 +571,7 @@ export class BattleScene extends Phaser.Scene {
     const myHeroIds = this.getMyHeroIds();
     for (let i = 0; i < myHeroIds.length; i++) {
       const hero = this.state.heroes[myHeroIds[i]];
-      const passiveEmoji = hero.passive === 'rally_leader' ? '📢' : hero.passive === 'iron_will' ? '🛡️' : '💨';
+      const passiveEmoji = HERO_PASSIVES[hero.passive]?.emoji || '⭐';
 
       const slot = document.createElement('div');
       slot.className = `hero-slot${i === 0 ? ' active' : ''}`;
@@ -610,12 +658,14 @@ export class BattleScene extends Phaser.Scene {
   private setupInput(data: BattleSceneData) {
     // Keyboard
     if (this.input.keyboard) {
-      // Hero selection: 1, 2, 3
+      // Hero selection: 1-5
       this.input.keyboard.on('keydown-ONE', () => this.selectHero(0));
       this.input.keyboard.on('keydown-TWO', () => this.selectHero(1));
       this.input.keyboard.on('keydown-THREE', () => this.selectHero(2));
+      this.input.keyboard.on('keydown-FOUR', () => this.selectHero(3));
+      this.input.keyboard.on('keydown-FIVE', () => this.selectHero(4));
 
-      // Camera: WASD
+      // Camera: WASD + zoom with Q/E + center on hero with F
       const cursors = {
         w: this.input.keyboard.addKey('W'),
         a: this.input.keyboard.addKey('A'),
@@ -623,13 +673,41 @@ export class BattleScene extends Phaser.Scene {
         d: this.input.keyboard.addKey('D'),
       };
 
+      // Zoom in/out with Q/E
+      this.input.keyboard.on('keydown-Q', () => {
+        const cam = this.cameras.main;
+        cam.setZoom(Math.min(cam.zoom + 0.25, 3));
+      });
+      this.input.keyboard.on('keydown-E', () => {
+        const cam = this.cameras.main;
+        cam.setZoom(Math.max(cam.zoom - 0.25, 0.5));
+      });
+
+      // Center camera on selected hero with F
+      this.input.keyboard.on('keydown-F', () => {
+        const hero = this.getSelectedHero();
+        if (hero && !hero.isDead) {
+          this.cameras.main.centerOn(
+            hero.position.x * TILE_SIZE + TILE_SIZE / 2,
+            hero.position.y * TILE_SIZE + TILE_SIZE / 2,
+          );
+        }
+      });
+
       this.events.on('update', () => {
         const cam = this.cameras.main;
-        const speed = 6;
+        const speed = 6 / cam.zoom; // scale speed by zoom
         if (cursors.w.isDown) cam.scrollY -= speed;
         if (cursors.s.isDown) cam.scrollY += speed;
         if (cursors.a.isDown) cam.scrollX -= speed;
         if (cursors.d.isDown) cam.scrollX += speed;
+      });
+
+      // Mouse wheel zoom
+      this.input.on('wheel', (_pointer: any, _gos: any, _dx: number, dy: number) => {
+        const cam = this.cameras.main;
+        const newZoom = Phaser.Math.Clamp(cam.zoom - dy * 0.001, 0.5, 3);
+        cam.setZoom(newZoom);
       });
     }
 
@@ -1285,6 +1363,7 @@ export class BattleScene extends Phaser.Scene {
       let hpBonus = 0;
       let atkBonus = 0;
       if (owner.passive === 'iron_will') hpBonus += 0.15;
+      if (owner.passive === 'battle_fury') atkBonus += 0.20;
       if (owner.upgrades.includes('hardened_hides')) hpBonus += 0.30;
       if (owner.upgrades.includes('savage_strikes')) atkBonus += 0.25;
 
@@ -1464,14 +1543,18 @@ export class BattleScene extends Phaser.Scene {
 
     // Vision from my heroes
     const myHeroes = Object.values(this.state.heroes).filter(h => h.team === this.myTeam && !h.isDead);
+    // Check if any of our heroes has keen_eye
+    const hasKeenEye = myHeroes.some(h => h.passive === 'keen_eye');
     for (const hero of myHeroes) {
-      this.revealArea(hero.position, hero.visionRange);
+      const vr = hero.passive === 'keen_eye' ? Math.round(hero.visionRange * 1.5) : hero.visionRange;
+      this.revealArea(hero.position, vr);
     }
 
     // Vision from my captured camps
     for (const camp of this.state.camps) {
       if (camp.capturedTeam === this.myTeam) {
-        this.revealArea(camp.position, camp.visionRange);
+        const campVision = hasKeenEye ? Math.round(camp.visionRange * 1.3) : camp.visionRange;
+        this.revealArea(camp.position, campVision);
       }
     }
 
