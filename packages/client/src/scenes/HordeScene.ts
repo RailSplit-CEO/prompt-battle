@@ -11,7 +11,6 @@ const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GE
 const GEMINI_MAX_RETRIES = 3;
 
 interface HordeCommand {
-  subject: string; // animal type or "all"
   targetType: 'camp' | 'nearest_camp' | 'sweep_camps' | 'nexus' | 'base' | 'position' | 'defend' | 'retreat';
   targetAnimal?: string; // filter camps by animal type
   campIndex?: number; // specific camp index (-1 = auto-pick)
@@ -33,83 +32,50 @@ async function parseWithGemini(
     `  [${c.index}] ${c.name} (${c.animalType}) - ${c.owner} - dist:${c.dist} - defenders:${c.defenders}`
   ).join('\n');
 
-  const prompt = `You are the command parser for "Horde Capture", a voice-controlled RTS where the player commands animal hordes.
+  const prompt = `You parse voice commands for an RTS game. The player has already selected which army to command (via hotkey). You just determine WHERE to send them.
 
-PLAYER'S ARMIES:
-${unitList || '  (no units yet)'}
-
-MAP CAMPS (sorted by distance from player base):
+CAMPS (sorted by distance from player):
 ${campList}
 
-GAME STATE:
-- Time: ${Math.floor(gameTime / 1000)}s elapsed
-- My nexus HP: ${nexusHp.mine}/50000
-- Enemy nexus HP: ${nexusHp.enemy}/50000
+NEXUS HP: mine=${nexusHp.mine}/50000, enemy=${nexusHp.enemy}/50000
 
-ANIMAL TIERS (each ~10x stronger than previous):
-  T1: bunny, turtle (shell guard - tanky when still)
-  T2: wolf, scorpion (armor pierce - shreds tanks), hawk (dive strike - 2x first hit)
-  T3: bear (splash), crocodile (death roll - 3x dmg to low HP targets)
-  T4: lion (splash), phoenix (rebirth - respawns once at 50% HP)
-  T5: dragon (big splash)
+ACTIONS:
+- "camp": Go to a SPECIFIC camp. Set campIndex from the list above.
+- "nearest_camp": Go to nearest camp matching filters.
+- "sweep_camps": Auto-chain capture ALL matching camps one by one.
+- "nexus": Attack enemy nexus/base/throne.
+- "base"/"defend"/"retreat": Go home / hold position / fall back.
+- "position": Go to map center.
 
-HARD COUNTERS (2x damage): turtle>bunny, scorpion>bear, hawk>scorpion, croc>lion, phoenix>lion, wolf>hawk, dragon>phoenix
+QUALIFIERS (for nearest_camp): nearest, furthest, weakest, uncaptured, enemy
 
-AVAILABLE ACTIONS:
-- "camp": Send units to a SPECIFIC camp by index. Set campIndex.
-- "nearest_camp": Send units to the NEAREST camp matching filters. Use qualifier + targetAnimal.
-- "sweep_camps": Send units to capture ALL camps of a type one by one (auto-chains). Set targetAnimal.
-- "nexus": Attack the enemy nexus/base/throne.
-- "base": Retreat to own base.
-- "defend": Hold position and fight anything nearby.
-- "retreat": Fall back to safety.
-- "position": Move to map center or a described location.
-
-QUALIFIERS (for nearest_camp):
-- "nearest": closest to player base
-- "furthest": furthest from player base
-- "weakest": fewest defenders
-- "uncaptured": not owned by player (neutral or enemy)
-- "enemy": owned by enemy team
-
-COMPLEX COMMAND EXAMPLES:
-- "attack the nearest bunny camp" → nearest_camp, targetAnimal=bunny, qualifier=nearest
-- "capture all the wolf camps" → sweep_camps, targetAnimal=wolf
-- "bunnies keep capturing bunny camps" → sweep_camps, subject=bunny, targetAnimal=bunny
-- "send wolves to the closest uncaptured camp" → nearest_camp, qualifier=uncaptured
-- "everyone push nexus" → nexus, subject=all
-- "attack Bouncy Burrow" → camp, campIndex=(index of Bouncy Burrow from the list)
-- "send wolves to Wailing Woods" → camp, subject=wolf, campIndex=(index of Wailing Woods)
-- "bunnies attack nearest camp and wolves go to Stinger Sands" → TWO commands
-- "attack whatever is closest" → nearest_camp, qualifier=nearest
-- "go capture camps starting from the nearest" → sweep_camps, qualifier=nearest
-- "defend my base with bears" → defend, subject=bear
-- "dragons attack their nexus while bunnies capture camps" → TWO commands
-- "take the weakest camp" → nearest_camp, qualifier=weakest
-- "attack enemy camps" → nearest_camp, qualifier=enemy
+EXAMPLES:
+- "attack Bouncy Burrow" → camp, campIndex=(index of Bouncy Burrow)
+- "go to Wailing Woods" → camp, campIndex=(index of Wailing Woods)
+- "nearest bunny camp" → nearest_camp, targetAnimal=bunny, qualifier=nearest
+- "sweep wolf camps" → sweep_camps, targetAnimal=wolf
+- "attack nexus" → nexus
+- "closest camp" → nearest_camp, qualifier=nearest
+- "weakest camp" → nearest_camp, qualifier=weakest
+- "enemy camps" → nearest_camp, qualifier=enemy
+- "defend" → defend
+- "retreat" → retreat
 
 RULES:
-- One sentence can produce MULTIPLE commands (split compound orders).
-- ALWAYS interpret the player's intent — never refuse. Pick the best match.
-- "nearest/closest" = nearest to player base. "furthest/farthest" = furthest.
-- If no specific animal subject, default to "all".
-- If targeting a camp by NAME (e.g. "Bouncy Burrow", "Stinger Sands"), use "camp" with campIndex matching that name from the list.
-- Camp names are unique — match partial names too (e.g. "bouncy" = "Bouncy Burrow").
-- If "keep going" / "sweep" / "capture all", use "sweep_camps".
+- Output exactly ONE command (army selection is handled separately).
+- Match camp names by partial word (e.g. "bouncy" = "Bouncy Burrow").
+- ALWAYS pick the best interpretation — never refuse.
 
-PLAYER COMMAND: "${rawText}"
+COMMAND: "${rawText}"
 
-Respond with ONLY a valid JSON ARRAY (no markdown):
-[
-  {
-    "subject": "<bunny|turtle|wolf|scorpion|hawk|bear|crocodile|lion|phoenix|dragon|all>",
-    "targetType": "<camp|nearest_camp|sweep_camps|nexus|base|position|defend|retreat>",
-    "targetAnimal": "<bunny|turtle|wolf|scorpion|hawk|bear|crocodile|lion|phoenix|dragon or omit>",
-    "campIndex": <specific camp index or -1>,
-    "qualifier": "<nearest|furthest|weakest|uncaptured|enemy or omit>",
-    "narration": "<One dramatic sentence>"
-  }
-]`;
+JSON ONLY (no markdown):
+{
+  "targetType": "<camp|nearest_camp|sweep_camps|nexus|base|position|defend|retreat>",
+  "targetAnimal": "<bunny|turtle|wolf|scorpion|hawk|bear|crocodile|lion|phoenix|dragon or omit>",
+  "campIndex": <index or -1>,
+  "qualifier": "<nearest|furthest|weakest|uncaptured|enemy or omit>",
+  "narration": "<One dramatic sentence>"
+}`;
 
   const body = JSON.stringify({
     contents: [{ parts: [{ text: prompt }] }],
@@ -1262,8 +1228,13 @@ export class HordeScene extends Phaser.Scene {
 
       const buffMult = u.team !== 0 ? (1 + this.getBuffs(u.team as 1 | 2).speed) : 1;
       const spd = u.speed * buffMult;
-      let moveX = (dx / d) * spd;
-      let moveY = (dy / d) * spd;
+
+      // Primary: always move at full speed toward target
+      const forwardX = (dx / d) * spd;
+      const forwardY = (dy / d) * spd;
+
+      // Lateral nudges (cohesion, separation, avoidance) — added as offsets, never slow down forward speed
+      let nudgeX = 0, nudgeY = 0;
 
       // Cohesion: steer toward horde center (skip neutral defenders)
       if (u.team !== 0) {
@@ -1275,10 +1246,9 @@ export class HordeScene extends Phaser.Scene {
           const cdx = center.cx - u.x, cdy = center.cy - u.y;
           const cd = Math.sqrt(cdx * cdx + cdy * cdy);
           if (cd > 10) {
-            // Stronger pull when farther from group
             const pull = Math.min(cd * 0.02, 1.0) * cohesion * spd;
-            moveX += (cdx / cd) * pull;
-            moveY += (cdy / cd) * pull;
+            nudgeX += (cdx / cd) * pull;
+            nudgeY += (cdy / cd) * pull;
           }
         }
       }
@@ -1286,19 +1256,17 @@ export class HordeScene extends Phaser.Scene {
       // Camp avoidance: steer away from neutral camps the unit is NOT targeting
       if (u.team !== 0) {
         for (const camp of this.camps) {
-          if (camp.owner === u.team) continue; // own camp, no avoidance
+          if (camp.owner === u.team) continue;
           const campDist = pdist(u, camp);
-          const avoidRadius = CAMP_RANGE + 60; // wider than capture range
+          const avoidRadius = CAMP_RANGE + 60;
           if (campDist < avoidRadius && campDist > 5) {
-            // Check if this unit is actually heading TO this camp
             const targetToCamp = pdist({ x: u.targetX, y: u.targetY }, camp);
-            if (targetToCamp < CAMP_RANGE) continue; // targeting this camp, don't avoid
-            // Push away from camp
+            if (targetToCamp < CAMP_RANGE) continue;
             const awayX = u.x - camp.x, awayY = u.y - camp.y;
             const awayD = Math.sqrt(awayX * awayX + awayY * awayY) || 1;
-            const pushStrength = ((avoidRadius - campDist) / avoidRadius) * spd * 0.6;
-            moveX += (awayX / awayD) * pushStrength;
-            moveY += (awayY / awayD) * pushStrength;
+            const pushStrength = ((avoidRadius - campDist) / avoidRadius) * spd * 0.5;
+            nudgeX += (awayX / awayD) * pushStrength;
+            nudgeY += (awayY / awayD) * pushStrength;
           }
         }
       }
@@ -1306,28 +1274,28 @@ export class HordeScene extends Phaser.Scene {
       // Separation: avoid stacking on nearby same-team units
       const horde = hordes.get(`${u.type}_${u.team}`);
       if (horde && horde.length > 1) {
-        let sepX = 0, sepY = 0;
         for (const o of horde) {
           if (o === u) continue;
           const ox = u.x - o.x, oy = u.y - o.y;
           const od = Math.sqrt(ox * ox + oy * oy);
           if (od < SEPARATION_DIST && od > 0.1) {
             const push = (SEPARATION_DIST - od) / SEPARATION_DIST;
-            sepX += (ox / od) * push;
-            sepY += (oy / od) * push;
+            nudgeX += (ox / od) * push * SEPARATION_FORCE;
+            nudgeY += (oy / od) * push * SEPARATION_FORCE;
           }
         }
-        moveX += sepX * SEPARATION_FORCE;
-        moveY += sepY * SEPARATION_FORCE;
       }
 
-      // Apply movement (cap to speed)
+      // Combine: full-speed forward + capped lateral nudges
+      let moveX = forwardX + nudgeX;
+      let moveY = forwardY + nudgeY;
+
+      // Normalize to ensure units always move at full speed (nudges steer, never slow)
       const moveD = Math.sqrt(moveX * moveX + moveY * moveY);
-      const maxMove = spd * dt;
       if (moveD > 0) {
-        const scale = Math.min(maxMove, moveD * dt) / moveD;
-        u.x += moveX * scale;
-        u.y += moveY * scale;
+        const finalSpeed = spd * dt;
+        u.x += (moveX / moveD) * finalSpeed;
+        u.y += (moveY / moveD) * finalSpeed;
       }
 
       // Clamp to world bounds
@@ -1805,17 +1773,14 @@ export class HordeScene extends Phaser.Scene {
       // Guest: send command to host via Firebase
       this.showFeedback('Sending command...', '#FFD93D');
       if (this.firebase && this.gameId) {
-        // Prepend selected army if command doesn't mention one
-        const hasAnimal = /bunn|turtle|wolf|wol[fv]|scorpion|hawk|bear|croc|lion|phoenix|dragon/i.test(text);
-        const enriched = (!hasAnimal && this.selectedArmy !== 'all') ? `${this.selectedArmy}s ${text}` : text;
         this.firebase.sendRemoteOrders(this.gameId, this.playerId || '', [
-          { heroId: '', order: { text: enriched, team: this.myTeam } as any },
+          { heroId: '', order: { text, team: this.myTeam, selectedArmy: this.selectedArmy } as any },
         ]);
       }
       return;
     }
-    // Host or solo: execute locally, using selected army as default subject
-    this.handleCommand(text, this.myTeam, this.selectedArmy);
+    // Host or solo: execute locally
+    this.handleCommand(text, this.myTeam);
   }
 
   /** Host pushes full game state to Firebase for guest to render */
@@ -1935,7 +1900,7 @@ export class HordeScene extends Phaser.Scene {
 
   // ─── COMMAND PARSING ─────────────────────────────────────────
 
-  private async handleCommand(text: string, team: 1 | 2, defaultSubject: string = 'all') {
+  private async handleCommand(text: string, team: 1 | 2) {
     this.showFeedback('Processing command...', '#FFD93D');
 
     // Build rich context for Gemini
@@ -1962,32 +1927,20 @@ export class HordeScene extends Phaser.Scene {
     const enemyNex = this.nexuses.find(n => n.team !== team)!;
     const nexusHp = { mine: Math.round(myNex.hp), enemy: Math.round(enemyNex.hp) };
 
-    // If player has a specific army selected and command doesn't mention an animal, prepend it
-    const hasAnimalMention = /bunn|turtle|wolf|wol[fv]|scorpion|hawk|bear|croc|lion|phoenix|dragon/i.test(text);
-    const enrichedText = (!hasAnimalMention && defaultSubject !== 'all')
-      ? `${defaultSubject}s ${text}` : text;
+    // Try Gemini first
+    const geminiResult = await parseWithGemini(text, myUnits, campCtx, nexusHp, this.gameTime);
 
-    // Try Gemini first — it handles multi-command in one shot
-    const geminiResults = await parseWithGemini(enrichedText, myUnits, campCtx, nexusHp, this.gameTime);
-
-    if (geminiResults && geminiResults.length > 0) {
-      let anySuccess = false;
-      for (const cmd of geminiResults) {
-        if (this.executeGeminiCommand(cmd, team)) anySuccess = true;
-      }
-      if (anySuccess) return;
+    if (geminiResult && geminiResult.length > 0) {
+      // Only use first command — army selection is separate, one command per input
+      if (this.executeGeminiCommand(geminiResult[0], team)) return;
     }
 
-    // Fallback to local regex parsing with compound splitting
-    // Split on "and", "then", "while", commas, semicolons
-    const parts = enrichedText.split(/\b(?:and|then|while|also)\b|[,;]/i).map(s => s.trim()).filter(Boolean);
-    for (const part of parts) {
-      this.executeLocalCommand(part, team);
-    }
+    // Fallback to local regex parsing
+    this.executeLocalCommand(text, team);
   }
 
   private executeGeminiCommand(cmd: HordeCommand, team: 1 | 2): boolean {
-    const subject = cmd.subject || 'all';
+    const subject = this.selectedArmy; // army is selected via Q/E keys, not parsed from voice
     const base = team === 1 ? P1_BASE : P2_BASE;
     let tx = 0, ty = 0, found = false;
 
@@ -2090,58 +2043,48 @@ export class HordeScene extends Phaser.Scene {
 
   private executeLocalCommand(text: string, team: 1 | 2) {
     const lo = text.toLowerCase();
-
-    // Split on action words to separate subject from target
-    const actionWords = /\b(attack|go\s*to|move\s*to|capture|take|defend|retreat|send\s*to|head\s*to)\b/i;
-    const parts = lo.split(actionWords);
-    const subjectPart = parts[0] || '';
-    const targetPart = parts.length > 2 ? parts.slice(2).join(' ') : parts.length > 1 ? parts[1] : lo;
-
-    let subject: string | 'all' = 'all';
-    const animalPatterns: [RegExp, string][] = [
-      [/bunn(y|ies)|rabbit/i, 'bunny'],
-      [/turtle/i, 'turtle'],
-      [/wol(f|ves)/i, 'wolf'],
-      [/scorpion/i, 'scorpion'],
-      [/hawk/i, 'hawk'],
-      [/bear/i, 'bear'],
-      [/croc(odile)?/i, 'crocodile'],
-      [/lion/i, 'lion'],
-      [/phoenix/i, 'phoenix'],
-      [/dragon/i, 'dragon'],
-    ];
-    for (const [pat, name] of animalPatterns) {
-      if (pat.test(subjectPart)) { subject = name; break; }
-    }
-    if (/\ball\b/i.test(subjectPart)) subject = 'all';
+    const subject = this.selectedArmy; // always use selected army
+    const base = team === 1 ? P1_BASE : P2_BASE;
 
     let tx = 0, ty = 0, found = false;
 
-    if (/nexus|throne|enemy\s*base/i.test(targetPart)) {
+    // Nexus / enemy base
+    if (/nexus|throne|enemy\s*base/i.test(lo)) {
       const n = this.nexuses.find(n2 => n2.team !== team)!;
       tx = n.x; ty = n.y; found = true;
     }
 
-    if (!found && /\b(base|home|retreat|defend)\b/i.test(targetPart)) {
-      const b = team === 1 ? P1_BASE : P2_BASE;
-      tx = b.x; ty = b.y; found = true;
+    // Home / defend / retreat
+    if (!found && /\b(base|home|retreat|defend)\b/i.test(lo)) {
+      tx = base.x; ty = base.y; found = true;
     }
 
-    // Match specific camp by name+number: "wolf camp 3", "bear camp 12"
+    // Center / middle
+    if (!found && /center|middle/i.test(lo)) {
+      tx = WORLD_W / 2; ty = WORLD_H / 2; found = true;
+    }
+
+    // Match camp by unique name ("bouncy", "wailing", "stinger", etc.)
     if (!found) {
-      const campNumMatch = targetPart.match(/(bunny|wolf|bear|lion|dragon)\s*camp\s*(\d+)/i);
-      if (campNumMatch) {
-        const campNum = parseInt(campNumMatch[2]);
-        const c = this.camps.find(c2 => c2.name.toLowerCase().includes(`camp ${campNum}`));
-        if (c) { tx = c.x; ty = c.y; found = true; }
+      for (const c of this.camps) {
+        const cleanName = c.name.replace(/^[^\w]+/, '').toLowerCase();
+        const words = cleanName.split(/\s+/).filter(w => w.length > 2);
+        if (words.some(w => lo.includes(w))) {
+          tx = c.x; ty = c.y; found = true; break;
+        }
       }
     }
 
-    // Match camp by animal type: "wolf camp" → nearest wolf camp not owned by me
+    // Match camp by animal type keyword: "wolf camp" → nearest unowned wolf camp
     if (!found) {
+      const animalPatterns: [RegExp, string][] = [
+        [/bunn(y|ies)|rabbit/i, 'bunny'], [/turtle/i, 'turtle'],
+        [/wol(f|ves)/i, 'wolf'], [/scorpion/i, 'scorpion'], [/hawk/i, 'hawk'],
+        [/bear/i, 'bear'], [/croc(odile)?/i, 'crocodile'],
+        [/lion/i, 'lion'], [/phoenix/i, 'phoenix'], [/dragon/i, 'dragon'],
+      ];
       for (const [pat, name] of animalPatterns) {
-        if (pat.test(targetPart)) {
-          const base = team === 1 ? P1_BASE : P2_BASE;
+        if (pat.test(lo)) {
           const cs = this.camps.filter(c => c.animalType === name && c.owner !== team)
             .sort((a, b) => pdist(a, base) - pdist(b, base));
           if (cs.length > 0) { tx = cs[0].x; ty = cs[0].y; found = true; break; }
@@ -2149,35 +2092,14 @@ export class HordeScene extends Phaser.Scene {
       }
     }
 
-    // Match camp by unique name (alliterative names like "Bouncy Burrow", "Wailing Woods")
-    if (!found) {
-      const fullLo = lo; // search entire command text for camp names
-      for (const c of this.camps) {
-        // Strip emoji prefix for matching
-        const cleanName = c.name.replace(/^[^\w]+/, '').toLowerCase();
-        const words = cleanName.split(/\s+/).filter(w => w.length > 2);
-        // Match if any unique word from the camp name appears
-        if (words.some(w => fullLo.includes(w) || targetPart.includes(w))) {
-          tx = c.x; ty = c.y; found = true; break;
-        }
-      }
-    }
-
-    if (!found && /center|middle/i.test(targetPart)) { tx = WORLD_W / 2; ty = WORLD_H / 2; found = true; }
-
-    if (!found && parts.length <= 1) {
-      for (const [pat, name] of animalPatterns) {
-        if (pat.test(lo)) {
-          const base = team === 1 ? P1_BASE : P2_BASE;
-          const cs = this.camps.filter(c => c.animalType === name && c.owner !== team)
-            .sort((a, b) => pdist(a, base) - pdist(b, base));
-          if (cs.length > 0) { tx = cs[0].x; ty = cs[0].y; found = true; subject = 'all'; break; }
-        }
-      }
+    // Fallback: nearest unowned camp
+    if (!found && /nearest|closest|camp/i.test(lo)) {
+      const cs = this.camps.filter(c => c.owner !== team).sort((a, b) => pdist(a, base) - pdist(b, base));
+      if (cs.length > 0) { tx = cs[0].x; ty = cs[0].y; found = true; }
     }
 
     if (!found) {
-      this.showFeedback('Try: "bunnies attack wolf camp" or "all go to nexus"', '#FF6B6B');
+      this.showFeedback('Try: "attack nexus", "nearest camp", or a camp name', '#FF6B6B');
       return;
     }
 
@@ -2187,7 +2109,8 @@ export class HordeScene extends Phaser.Scene {
       return;
     }
     this.sendUnitsTo(sel, tx, ty, true);
-    const label = subject === 'all' ? 'All units' : `${sel.length} ${subject}(s)`;
+    const emoji = subject === 'all' ? '' : (ANIMALS[subject]?.emoji + ' ' || '');
+    const label = subject === 'all' ? 'All units' : `${emoji}${sel.length} ${cap(subject)}(s)`;
     this.showFeedback(`${label} moving out!`, '#45E6B0');
   }
 
