@@ -161,6 +161,7 @@ export class BattleScene extends Phaser.Scene {
 
     // HUD
     this.createHUD();
+    this.buildHeroBar();
 
     // Input
     this.setupInput(data);
@@ -481,6 +482,9 @@ export class BattleScene extends Phaser.Scene {
       }
     }
 
+    // Update HTML hero bar
+    this.updateHeroBar();
+
     // Update camp colors
     for (const camp of this.state.camps) {
       const container = this.campSprites.get(camp.id);
@@ -503,6 +507,101 @@ export class BattleScene extends Phaser.Scene {
     if (hpFill) {
       const ratio = Math.max(0, base.hp / base.maxHp);
       hpFill.setDisplaySize(40 * ratio, 5);
+    }
+  }
+
+  // ─── HTML HERO BAR & VOICE UI ──────────────────────────────
+
+  private buildHeroBar() {
+    const heroBar = document.getElementById('hero-bar');
+    const heroRow = document.getElementById('hero-row');
+    if (!heroBar || !heroRow) return;
+
+    heroRow.innerHTML = '';
+    heroBar.style.display = 'block';
+
+    const myHeroIds = this.getMyHeroIds();
+    for (let i = 0; i < myHeroIds.length; i++) {
+      const hero = this.state.heroes[myHeroIds[i]];
+      const passiveEmoji = hero.passive === 'rally_leader' ? '📢' : hero.passive === 'iron_will' ? '🛡️' : '💨';
+
+      const slot = document.createElement('div');
+      slot.className = `hero-slot${i === 0 ? ' active' : ''}`;
+      slot.id = `hero-slot-${i}`;
+      slot.innerHTML = `
+        <span class="hotkey">${i + 1}</span>
+        <span class="hero-icon">${passiveEmoji}</span>
+        <div class="hero-info">
+          <span class="hero-name">${hero.name}</span>
+          <span class="hero-class">${HERO_PASSIVES[hero.passive].name}</span>
+          <span class="hero-companion" id="hero-army-${i}">Army: 0</span>
+          <div class="hero-hp-bar"><div class="hero-hp-fill" id="hero-hp-${i}" style="width:100%"></div></div>
+        </div>
+      `;
+      slot.addEventListener('click', () => this.selectHero(i));
+      heroRow.appendChild(slot);
+    }
+
+    // Voice section
+    const voiceSection = document.createElement('div');
+    voiceSection.className = 'voice-section';
+    voiceSection.innerHTML = `
+      <span class="voice-label">Hold [Space] to speak</span>
+      <span class="voice-transcript" id="voice-transcript"></span>
+    `;
+    heroRow.appendChild(voiceSection);
+
+    // Command log
+    const cmdLog = document.getElementById('command-log');
+    if (cmdLog) {
+      cmdLog.style.display = 'block';
+      cmdLog.innerHTML = '';
+    }
+  }
+
+  private updateHeroBar() {
+    const myHeroIds = this.getMyHeroIds();
+    for (let i = 0; i < myHeroIds.length; i++) {
+      const hero = this.state.heroes[myHeroIds[i]];
+      const armyCount = this.state.units.filter(u => u.ownerId === hero.id && !u.isDead).length;
+
+      const slot = document.getElementById(`hero-slot-${i}`);
+      if (slot) {
+        slot.className = `hero-slot${i === this.selectedHeroIdx ? ' active' : ''}${hero.isDead ? ' dead' : ''}`;
+      }
+
+      const armyEl = document.getElementById(`hero-army-${i}`);
+      if (armyEl) {
+        armyEl.textContent = hero.isDead
+          ? `Respawn: ${Math.ceil(hero.respawnTimer)}s`
+          : `Army: ${armyCount}`;
+      }
+
+      const hpFill = document.getElementById(`hero-hp-${i}`) as HTMLElement;
+      if (hpFill) {
+        const ratio = hero.isDead ? 0 : (hero.currentHp / hero.maxHp) * 100;
+        hpFill.style.width = `${ratio}%`;
+        hpFill.className = 'hero-hp-fill' + (ratio < 25 ? ' low' : ratio < 50 ? ' mid' : '');
+      }
+    }
+  }
+
+  private addCommandLog(playerLabel: string, rawText: string, result: string) {
+    const cmdLog = document.getElementById('command-log');
+    if (!cmdLog) return;
+
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
+    entry.innerHTML = `
+      <span class="player">${playerLabel}</span>: <span class="text">"${rawText}"</span>
+      <div class="result">${result}</div>
+    `;
+    cmdLog.appendChild(entry);
+    cmdLog.scrollTop = cmdLog.scrollHeight;
+
+    // Keep max 20 entries
+    while (cmdLog.children.length > 20) {
+      cmdLog.removeChild(cmdLog.children[0]);
     }
   }
 
@@ -577,15 +676,20 @@ export class BattleScene extends Phaser.Scene {
       if (this.gameOver || !this.hasGemini) return;
       try {
         const result = await parseCommandWithGemini(rawText, this.state, 'player1');
+        const actionNames: string[] = [];
         for (const action of result.actions) {
           this.issueOrder(action.heroId, {
             type: action.type as any,
             targetId: action.targetId,
             targetPosition: action.targetPosition,
           });
+          const hero = this.state.heroes[action.heroId];
+          actionNames.push(`${hero?.name || '?'} → ${action.type.replace(/_/g, ' ')}`);
         }
+        this.addCommandLog('You', rawText, actionNames.join(', ') || 'No actions');
       } catch (err) {
         console.error('Gemini parse error:', err);
+        this.addCommandLog('You', rawText, 'Failed to parse command');
       }
     });
   }
@@ -657,7 +761,7 @@ export class BattleScene extends Phaser.Scene {
       entity.setOrderText(orderText);
     }
 
-    // Show bark
+    // Show bark + TTS
     const barkTrigger: BarkTrigger | null =
       order.type.startsWith('attack') ? 'order_attack'
         : order.type === 'move' ? 'order_move'
@@ -665,7 +769,13 @@ export class BattleScene extends Phaser.Scene {
             : null;
     if (barkTrigger) {
       const bark = getBark(barkTrigger);
-      if (bark && entity) entity.showBark(bark);
+      if (bark && entity) {
+        entity.showBark(bark);
+        // Only TTS for player heroes
+        if (hero.team === this.myTeam) {
+          this.tts.speak(heroId, bark);
+        }
+      }
     }
   }
 
@@ -961,7 +1071,10 @@ export class BattleScene extends Phaser.Scene {
 
     const entity = this.heroEntities.get(hero.id);
     const bark = getBark('camp_captured');
-    if (bark && entity) entity.showBark(bark);
+    if (bark && entity) {
+      entity.showBark(bark);
+      if (hero.team === this.myTeam) this.tts.speak(hero.id, bark);
+    }
   }
 
   private heroAttackStructure(hero: Hero, structure: Structure) {
@@ -1236,6 +1349,20 @@ export class BattleScene extends Phaser.Scene {
 
     const entity = this.heroEntities.get(hero.id);
     if (entity) entity.showRespawning(hero.respawnTimer);
+
+    // Bark: allies react to death
+    if (hero.team === this.myTeam) {
+      const allyIds = this.getMyHeroIds().filter(id => id !== hero.id && !this.state.heroes[id].isDead);
+      if (allyIds.length > 0) {
+        const allyId = allyIds[0];
+        const bark = getBark('ally_down');
+        const allyEntity = this.heroEntities.get(allyId);
+        if (bark && allyEntity) {
+          allyEntity.showBark(bark);
+          this.tts.speak(allyId, bark);
+        }
+      }
+    }
   }
 
   private respawnHero(hero: Hero) {
