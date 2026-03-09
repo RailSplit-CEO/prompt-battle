@@ -388,9 +388,9 @@ function makeCamps(): CampDef[] {
     [tierList[i], tierList[j]] = [tierList[j], tierList[i]];
   }
 
-  const MARGIN = 180;
-  const BASE_CLEAR = 380;
-  const CAMP_SPACING = 240;
+  const MARGIN = 150;
+  const BASE_CLEAR = 350;
+  const CAMP_SPACING = 320; // wider spacing = more spread out
   const placed: { x: number; y: number }[] = [];
 
   const tooClose = (x: number, y: number) => {
@@ -425,8 +425,8 @@ function makeCamps(): CampDef[] {
     // T2: mid-range (700-1400 from base)
     // T3: contested zone (1000-1800 from base)
     // T4-5: center/deep enemy territory (1300-2200 from base)
-    const minR = tier <= 1 ? 380 : tier <= 2 ? 650 : tier <= 3 ? 950 : 1200;
-    const maxR = tier <= 1 ? 1000 : tier <= 2 ? 1500 : tier <= 3 ? 1900 : 2300;
+    const minR = tier <= 1 ? 350 : tier <= 2 ? 600 : tier <= 3 ? 900 : 1100;
+    const maxR = tier <= 1 ? 1200 : tier <= 2 ? 1800 : tier <= 3 ? 2400 : 2800;
 
     let placed1 = false;
     for (let attempt = 0; attempt < 80; attempt++) {
@@ -545,6 +545,7 @@ export class HordeScene extends Phaser.Scene {
     '7': 'turtle', '8': 'scorpion', '9': 'hawk', '0': 'crocodile',
   };
   private selectionLabel: Phaser.GameObjects.Text | null = null;
+  private armyBarEl: HTMLDivElement | null = null;
 
   // ─── MULTIPLAYER ──────────────────────────────────────────────
   private isOnline = false;
@@ -1024,11 +1025,22 @@ export class HordeScene extends Phaser.Scene {
       fontSize: '16px', color: '#45E6B0', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
     }).setOrigin(0.5).setScrollFactor(0).setDepth(100).setAlpha(0);
 
-    // Army selection indicator (above command input)
-    this.selectionLabel = this.add.text(cam.width / 2, cam.height - 140, '[ 1: ALL ]', {
-      fontSize: '14px', color: '#45E6B0', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
-      stroke: '#000', strokeThickness: 3,
+    // Phaser selection label (minimal, above army bar)
+    this.selectionLabel = this.add.text(cam.width / 2, cam.height - 175, '', {
+      fontSize: '12px', color: '#8BAA8B', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
+      stroke: '#000', strokeThickness: 2,
     }).setOrigin(0.5).setScrollFactor(0).setDepth(100);
+
+    // HTML Army Bar — big visible cards for each animal type
+    const armyBar = document.createElement('div');
+    armyBar.id = 'horde-army-bar';
+    armyBar.style.cssText = `
+      position:absolute;bottom:62px;left:50%;transform:translateX(-50%);
+      display:flex;gap:4px;z-index:101;pointer-events:none;
+      font-family:'Nunito',sans-serif;
+    `;
+    document.getElementById('game-container')!.appendChild(armyBar);
+    this.armyBarEl = armyBar;
     this.updateSelectionLabel();
 
     // Help hint (bottom right)
@@ -2122,24 +2134,43 @@ export class HordeScene extends Phaser.Scene {
   }
 
   private updateSelectionLabel() {
-    if (!this.selectionLabel) return;
+    // Update Phaser hint text
+    if (this.selectionLabel) {
+      this.selectionLabel.setText('Q ◀ cycle ▶ E');
+    }
+
+    // Update HTML army bar
+    if (!this.armyBarEl) return;
     const available = this.getAvailableArmies();
 
-    // Show: ◀ [selected] ▶  with Q/E hint
-    const emoji = this.selectedArmy === 'all' ? '⚔' : (ANIMALS[this.selectedArmy]?.emoji || '?');
-    const name = this.selectedArmy === 'all' ? 'ALL' : cap(this.selectedArmy).toUpperCase();
-    const count = this.selectedArmy === 'all'
-      ? this.units.filter(u => u.team === this.myTeam && !u.dead).length
-      : this.units.filter(u => u.team === this.myTeam && !u.dead && u.type === this.selectedArmy).length;
+    let html = '';
+    for (const army of available) {
+      const isActive = army === this.selectedArmy;
+      const emoji = army === 'all' ? '⚔️' : (ANIMALS[army]?.emoji || '?');
+      const name = army === 'all' ? 'ALL' : cap(army).toUpperCase();
+      const count = army === 'all'
+        ? this.units.filter(u => u.team === this.myTeam && !u.dead).length
+        : this.units.filter(u => u.team === this.myTeam && !u.dead && u.type === army).length;
+      const tier = army === 'all' ? '' : `T${ANIMALS[army]?.tier || '?'}`;
 
-    // Show available types as dots/emojis below
-    const dots = available.map(a => {
-      const e = a === 'all' ? '⚔' : (ANIMALS[a]?.emoji || '');
-      return a === this.selectedArmy ? `[${e}]` : ` ${e} `;
-    }).join('');
+      const bg = isActive ? 'rgba(69,230,176,0.25)' : 'rgba(13,26,13,0.8)';
+      const border = isActive ? '#45E6B0' : '#3D5040';
+      const borderW = isActive ? '3px' : '1px';
+      const glow = isActive ? 'box-shadow:0 0 12px rgba(69,230,176,0.4);' : '';
+      const scale = isActive ? 'transform:scale(1.1);' : '';
 
-    this.selectionLabel.setText(`Q ◀  ${emoji} ${name} (${count})  ▶ E\n${dots}`);
-    this.selectionLabel.setColor(this.selectedArmy === 'all' ? '#45E6B0' : '#FFD93D');
+      html += `<div style="
+        background:${bg};border:${borderW} solid ${border};border-radius:10px;
+        padding:4px 10px;text-align:center;min-width:52px;
+        ${glow}${scale}transition:all 0.15s ease;
+      ">
+        <div style="font-size:22px;line-height:1.1;">${emoji}</div>
+        <div style="font-size:9px;color:${isActive ? '#45E6B0' : '#8BAA8B'};font-weight:800;letter-spacing:0.5px;">${name}</div>
+        <div style="font-size:11px;color:#f0e8ff;font-weight:700;">${count}</div>
+        ${tier ? `<div style="font-size:8px;color:#666;font-weight:600;">${tier}</div>` : ''}
+      </div>`;
+    }
+    this.armyBarEl.innerHTML = html;
   }
 
   // ─── BUFFS ──────────────────────────────────────────────────
@@ -2163,6 +2194,7 @@ export class HordeScene extends Phaser.Scene {
     this.textInput?.remove(); this.textInput = null;
     this.voiceStatusEl?.remove(); this.voiceStatusEl = null;
     this.selectionLabel = null;
+    this.armyBarEl?.remove(); this.armyBarEl = null;
     try { this.recognition?.abort(); } catch (_e) { /* */ }
     if (this.firebase) { this.firebase.cleanup(); this.firebase = null; }
   }
