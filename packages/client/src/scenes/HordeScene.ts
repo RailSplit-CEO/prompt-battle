@@ -489,8 +489,10 @@ export class HordeScene extends Phaser.Scene {
     targets: { x: number; y: number; id: string }[]; currentIdx: number;
   }> = {};
 
-  // Number-key army selection: 1=all, 2=bunny, 3=wolf, 4=bear, 5=lion, 6=dragon
+  // Army selection: TAB cycles forward, Shift+TAB cycles back, number keys direct-pick
   private selectedArmy: string = 'all';
+  // Cycle order: all → then only types the player currently has units of
+  private allArmyTypes = ['all', 'bunny', 'turtle', 'wolf', 'scorpion', 'hawk', 'bear', 'crocodile', 'lion', 'phoenix', 'dragon'];
   private armyKeys: Record<string, string> = {
     '1': 'all', '2': 'bunny', '3': 'wolf', '4': 'bear', '5': 'lion', '6': 'dragon',
     '7': 'turtle', '8': 'scorpion', '9': 'hawk', '0': 'crocodile',
@@ -805,15 +807,66 @@ export class HordeScene extends Phaser.Scene {
     this.spaceKey.on('down', () => this.startListening());
     this.spaceKey.on('up', () => this.stopListening());
 
-    // Number-key army selection (1-6)
+    // Number-key army selection (1-0)
     for (const [key, army] of Object.entries(this.armyKeys)) {
       const k = this.input.keyboard!.addKey(key);
       k.on('down', () => {
-        if (document.activeElement === this.textInput) return; // don't capture when typing
+        if (document.activeElement === this.textInput) return;
         this.selectedArmy = army;
         this.updateSelectionLabel();
       });
     }
+
+    // TAB / Q / E to cycle through armies you actually have
+    const tabKey = this.input.keyboard!.addKey('TAB');
+    const qKey = this.input.keyboard!.addKey('Q');
+    const eKey = this.input.keyboard!.addKey('E');
+
+    tabKey.on('down', (event: KeyboardEvent) => {
+      if (document.activeElement === this.textInput) return;
+      event.preventDefault(); // prevent browser tab-focus
+      this.cycleArmy(event.shiftKey ? -1 : 1);
+    });
+    qKey.on('down', () => {
+      if (document.activeElement === this.textInput) return;
+      this.cycleArmy(-1);
+    });
+    eKey.on('down', () => {
+      if (document.activeElement === this.textInput) return;
+      this.cycleArmy(1);
+    });
+  }
+
+  private cycleArmy(direction: 1 | -1) {
+    // Build list of available armies: 'all' + types the player currently has
+    const available = this.getAvailableArmies();
+    const currentIdx = available.indexOf(this.selectedArmy);
+    let nextIdx = currentIdx + direction;
+    if (nextIdx < 0) nextIdx = available.length - 1;
+    if (nextIdx >= available.length) nextIdx = 0;
+    this.selectedArmy = available[nextIdx];
+    this.updateSelectionLabel();
+
+    // Quick feedback showing what's selected
+    const count = this.selectedArmy === 'all'
+      ? this.units.filter(u => u.team === this.myTeam && !u.dead).length
+      : this.units.filter(u => u.team === this.myTeam && !u.dead && u.type === this.selectedArmy).length;
+    const emoji = this.selectedArmy === 'all' ? '' : (ANIMALS[this.selectedArmy]?.emoji + ' ' || '');
+    const name = this.selectedArmy === 'all' ? 'All units' : cap(this.selectedArmy);
+    this.showFeedback(`${emoji}${name} selected (${count})`, '#FFD93D');
+  }
+
+  private getAvailableArmies(): string[] {
+    const myTypes = new Set<string>();
+    for (const u of this.units) {
+      if (u.team === this.myTeam && !u.dead) myTypes.add(u.type);
+    }
+    // Always include 'all', then only types we have units of, in tier order
+    const available = ['all'];
+    for (const type of this.allArmyTypes) {
+      if (type !== 'all' && myTypes.has(type)) available.push(type);
+    }
+    return available;
   }
 
   private setupVoice(label: HTMLSpanElement) {
@@ -935,10 +988,9 @@ export class HordeScene extends Phaser.Scene {
     this.hudTexts['help'] = this.add.text(cam.width - 16, cam.height - 100, [
       'Drag: Pan  |  Scroll: Zoom  |  WASD: Pan',
       'SPACE: Voice  |  Type below: Text',
-      '1:All 2:Bunny 3:Wolf 4:Bear 5:Lion 6:Dragon',
-      '7:Turtle 8:Scorpion 9:Hawk 0:Croc',
-      '"attack wolf camp" | "sweep bunny camps"',
-      '"scorpions counter the bears!"',
+      'Q/E: Cycle army  |  TAB: Next  |  1-0: Direct pick',
+      'Commands apply to selected army',
+      '"attack nearest camp" | "sweep camps"',
     ].join('\n'), {
       fontSize: '10px', color: '#4A6B4A', fontFamily: '"Nunito", sans-serif', lineSpacing: 2, align: 'right',
     }).setOrigin(1, 1).setScrollFactor(0).setDepth(100);
@@ -1023,6 +1075,9 @@ export class HordeScene extends Phaser.Scene {
     const enemyCampsCount = this.camps.filter(c => c.owner === enemyT).length;
     enemyLines.push(`Camps: ${enemyCampsCount}`);
     this.hudTexts['enemy']?.setText(enemyLines.join('\n'));
+
+    // Update army selector counts
+    this.updateSelectionLabel();
   }
 
   // ─── MAIN UPDATE ────────────────────────────────────────────
@@ -2058,16 +2113,22 @@ export class HordeScene extends Phaser.Scene {
 
   private updateSelectionLabel() {
     if (!this.selectionLabel) return;
-    const labels: string[] = [];
-    for (const [key, army] of Object.entries(this.armyKeys)) {
-      const emoji = army === 'all' ? '' : (ANIMALS[army]?.emoji || '');
-      const name = army === 'all' ? 'ALL' : cap(army);
-      const active = this.selectedArmy === army;
-      labels.push(active ? `[${key}:${emoji}${name}]` : `${key}:${emoji}`);
-    }
-    this.selectionLabel.setText(labels.join('  '));
-    // Highlight color
-    const selEmoji = this.selectedArmy === 'all' ? '' : (ANIMALS[this.selectedArmy]?.emoji || '');
+    const available = this.getAvailableArmies();
+
+    // Show: ◀ [selected] ▶  with Q/E hint
+    const emoji = this.selectedArmy === 'all' ? '⚔' : (ANIMALS[this.selectedArmy]?.emoji || '?');
+    const name = this.selectedArmy === 'all' ? 'ALL' : cap(this.selectedArmy).toUpperCase();
+    const count = this.selectedArmy === 'all'
+      ? this.units.filter(u => u.team === this.myTeam && !u.dead).length
+      : this.units.filter(u => u.team === this.myTeam && !u.dead && u.type === this.selectedArmy).length;
+
+    // Show available types as dots/emojis below
+    const dots = available.map(a => {
+      const e = a === 'all' ? '⚔' : (ANIMALS[a]?.emoji || '');
+      return a === this.selectedArmy ? `[${e}]` : ` ${e} `;
+    }).join('');
+
+    this.selectionLabel.setText(`Q ◀  ${emoji} ${name} (${count})  ▶ E\n${dots}`);
     this.selectionLabel.setColor(this.selectedArmy === 'all' ? '#45E6B0' : '#FFD93D');
   }
 
