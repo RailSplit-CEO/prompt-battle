@@ -146,6 +146,13 @@ export const HORDE_SPRITE_CONFIGS: Record<string, EnemySpriteConfig> = {
     displayScale: 1.1,
     originY: 0.5,
   },
+  rogue: {
+    idle: { key: 'h_rogue_idle', path: 'assets/enemies/skull/Skull_Idle.png', frameWidth: 192, frameHeight: 192, frameCount: 8 },
+    walk: { key: 'h_rogue_walk', path: 'assets/enemies/skull/Skull_Run.png', frameWidth: 192, frameHeight: 192, frameCount: 6 },
+    attack: { key: 'h_rogue_attack', path: 'assets/enemies/skull/Skull_Attack.png', frameWidth: 192, frameHeight: 192, frameCount: 7 },
+    displayScale: 0.9,
+    originY: 0.5,
+  },
 
   // ─── Tier 3 ────────────────────────────────────────────
   panda: {

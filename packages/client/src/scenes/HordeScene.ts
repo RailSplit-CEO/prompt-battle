@@ -80,20 +80,20 @@ HOW SPAWNING WORKS: Units gather a resource → carry it to a camp of the desire
 
 To produce a unit, you MUST own a camp of that type. Camps start neutral with defenders — kill the defenders to capture.
 
-ARMORY: 🏛️ Each team has an Armory building on their side of the map. Players can unlock equipment with resources, then units walk to the Armory to pick items up. Equipment is permanent (doesn't drop on death). Units can carry a resource AND have equipment.
+ARMORY: 🏛️ Each team has an Armory building on their side of the map. Players unlock equipment with resources ("unlock swords"), then units walk to the Armory to pick items up. Equipment is permanent (doesn't drop on death). Units can carry a resource AND have equipment. One equipment per unit.
 
 EQUIPMENT (unlock once, unlimited pickups):
   ⛏️ Pickaxe (5🥕): Required to mine metal. +25% gather speed.
-  ⚔️ Sword (5🍖+3⚙️): +50% attack, +25% attack speed. Offensive specialist.
-  🛡️ Shield (5🍖+3⚙️): +60% HP, -25% damage taken, -15% speed. Tank.
-  👢 Boots (5🥕+2⚙️): +60% move speed, +50% pickup range. Fast runner.
-  🚩 Banner (8🍖+5⚙️): Aura — nearby allies +20% atk, +15% speed. Commander.
+  ⚔️ Sword (5🍖+3⚙️): +50% attack, +25% attack speed.
+  🛡️ Shield (5🍖+3⚙️): +60% HP, -25% damage taken, -15% speed.
+  👢 Boots (5🥕+2⚙️): +60% move speed, +50% pickup range.
+  🚩 Banner (8🍖+5⚙️): Aura — nearby allies +20% atk, +15% speed.
 
 MINES: ⛏️ Mine nodes on the map. Only units with a Pickaxe can mine metal. Metal is used to unlock equipment.
 
 To equip: include {"action":"equip","equipmentType":"pickaxe|sword|shield|boots|banner"} step BEFORE other steps. Unit walks to Armory, picks up item, then continues.
-Example: "get pickaxes then go mine" → [{"action":"equip","equipmentType":"pickaxe"},{"action":"mine"},{"action":"deliver","target":"base"}]
-Example: "get swords and attack wolf camp" → [{"action":"equip","equipmentType":"sword"},{"action":"attack_camp","targetAnimal":"gnoll","qualifier":"nearest"}]
+Example: "get pickaxes then mine" → [{"action":"equip","equipmentType":"pickaxe"},{"action":"mine"},{"action":"deliver","target":"base"}]
+Example: "get swords and attack" → [{"action":"equip","equipmentType":"sword"},{"action":"attack_camp","targetAnimal":"gnoll","qualifier":"nearest"}]
 
 ═══ CURRENT GAME STATE ═══
 Time: ${Math.floor(ctx.gameTime / 1000)}s
@@ -152,8 +152,8 @@ Available step types:
   {"action": "scout"} — explore the map to reveal camps and enemy positions, AVOIDS all combat
   {"action": "collect", "resourceType": "carrot|meat|crystal"} — pick up ground resources while AVOIDING enemy units (safe gathering)
   {"action": "kill_only", "targetType": "skull|spider|..."} — hunt and kill wild animals but IGNORE resource drops (pure combat, no pickup)
-  {"action": "mine"} — go to nearest mine node and extract metal, then carry it back (requires Pickaxe)
-  {"action": "equip", "equipmentType": "pickaxe|sword|shield|boots|banner"} — walk to team Armory, pick up equipment
+  {"action": "mine"} — go to nearest mine node and extract metal, then carry it back (requires Pickaxe equipment)
+  {"action": "equip", "equipmentType": "pickaxe|sword|shield|boots|banner"} — go to team Armory and equip item (must be unlocked first)
 
 The workflow LOOPS automatically. Design the steps so they make a sensible repeating cycle.
 
@@ -163,11 +163,11 @@ SPECIAL: Turtles carry 10x resources per trip — they're slow but incredibly ef
 Each unit has unique strengths — use these to make smart workflow decisions:
 
 GNOME (T1, 🧝): Fast, nimble, 2x pickup range. BEST gatherer for carrots. Cheap (1 carrot). Weak fighter — keep gathering, not fighting.
-TURTLE (T1, 🐢): Slow but carries 10x resources per trip! Ultimate hauler. 1 carrot. Always prefer turtles for any gather/deliver workflow.
+TURTLE (T1, 🐢): Slow but carries 10x resources per trip! Ultimate hauler. 1 carrot. Taunts nearby enemies (forces them to attack the turtle). Always prefer turtles for any gather/deliver workflow.
 SKULL (T2, 💀): Cheats death once (survives lethal at 1 HP). Good fighter. 3 meat. Can self-sustain: hunt → pick meat → deliver to own camp.
 SPIDER (T2, 🕷️): Fast ambusher. Great for raiding and hit-and-run. 3 meat.
 GNOLL (T2, 🐺): Ranged attacker (120 range vs normal 60). Excellent for defense and kiting. 3 meat.
-ROGUE (T2, 🗡️): Fast assassin. 3x damage on first hit against a new target (Backstab). Great for hit-and-run. 3 meat.
+ROGUE (T2, 🗡️): Fast assassin. 3x damage on first hit against a new target (Backstab). Invisible to neutral enemies — can sneak past camp defenders! Great for hit-and-run. 3 meat.
 PANDA (T3, 🐼): Tanky brawler, high HP. Excellent frontline defender. 5 meat.
 LIZARD (T3, 🦎): Agile, good damage. Great raider. 5 meat.
 MINOTAUR (T4, 🐂): Massive HP and damage. Late-game powerhouse. 8 crystals.
@@ -384,7 +384,8 @@ type WorkflowStep =
   | { action: 'scout' }                                       // explore the map, reveal camps/enemies, avoid combat
   | { action: 'collect'; resourceType: ResourceType }         // pick up ground resources while avoiding enemies
   | { action: 'kill_only'; targetType?: string }              // hunt and kill wild animals but ignore drops
-  | { action: 'mine' };                                       // go to nearest mine, extract metal
+  | { action: 'mine' }                                        // go to nearest mine, extract metal
+  | { action: 'equip'; equipmentType: EquipmentType };        // go to armory, pick up equipment
 
 interface HWorkflow {
   steps: WorkflowStep[];
@@ -465,6 +466,8 @@ interface HUnit {
   isElite: boolean; // golden elite prey — drops crystals
   idleTimer: number; // ms spent idle — restarts loop after 4s
   claimItemId: number; // id of ground item this unit is pathing to (-1 = none)
+  equipment: EquipmentType | null; // equipped item (pickaxe, sword, shield, boots, banner)
+  equipSprite: Phaser.GameObjects.Text | null; // visual for equipment
   mods: BehaviorMods; // behavior modifiers (formation, caution, pacing)
 }
 
@@ -558,7 +561,7 @@ const P2_BASE = { x: WORLD_W - 250, y: 250 };
 //
 // T1 WORKERS — cheap, resource gatherers
 //   🧝 Gnome   "Nimble Hands" — Fastest gatherer. 2x pickup range. Born to gather.
-//   🐢 Turtle  "Shell Stance" — Slowest unit but tankiest T1. 60% DR when guarding.
+//   🐢 Turtle  "Shell Stance" — Slowest unit but tankiest T1. 60% DR when stationary + taunts nearby foes.
 //
 // T2 FIGHTERS — mid-game combat specialists
 //   💀 Skull   "Undying"      — Cheats death once (survives at 1 HP).
@@ -578,7 +581,7 @@ const P2_BASE = { x: WORLD_W - 250, y: 250 };
 
 const ANIMALS: Record<string, AnimalDef> = {
   gnome:     { type: 'gnome',     emoji: '🧝', hp: 15,    attack: 3,    speed: 210, tier: 1, ability: 'Nimble Hands', desc: '2x pickup range, fastest gatherer', mineSpeed: 2.0 },
-  turtle:    { type: 'turtle',    emoji: '🐢', hp: 65,    attack: 3,    speed: 55,  tier: 1, ability: 'Shell Stance', desc: '60% DR when guarding (stationary)', mineSpeed: 1.5 },
+  turtle:    { type: 'turtle',    emoji: '🐢', hp: 65,    attack: 3,    speed: 55,  tier: 1, ability: 'Shell Stance', desc: '60% DR when stationary + taunts nearby foes', mineSpeed: 1.5 },
   skull:     { type: 'skull',     emoji: '💀', hp: 80,    attack: 14,   speed: 155, tier: 2, ability: 'Undying',      desc: 'Cheats death once (survives at 1 HP)', mineSpeed: 0.8 },
   spider:    { type: 'spider',    emoji: '🕷️', hp: 120,   attack: 18,   speed: 85,  tier: 2, ability: 'Venom Bite',   desc: '+5% target max HP per hit', mineSpeed: 0.6 },
   gnoll:     { type: 'gnoll',     emoji: '🐺', hp: 55,    attack: 28,   speed: 175, tier: 2, ability: 'Bone Toss',    desc: 'Extended range (120 vs 80)', mineSpeed: 0.8 },
@@ -587,7 +590,7 @@ const ANIMALS: Record<string, AnimalDef> = {
   minotaur:  { type: 'minotaur',  emoji: '🐂', hp: 2200,  attack: 110,  speed: 120, tier: 4, ability: 'War Cry',      desc: 'Nearby allies +25% attack', mineSpeed: 0.4 },
   shaman:    { type: 'shaman',    emoji: '🔮', hp: 1400,  attack: 180,  speed: 100, tier: 4, ability: 'Arcane Blast', desc: 'All attacks splash 60px', mineSpeed: 0.5 },
   troll:     { type: 'troll',     emoji: '👹', hp: 14000, attack: 350,  speed: 50,  tier: 5, ability: 'Club Slam',    desc: 'Massive 90px splash, slows enemies', mineSpeed: 0.3 },
-  rogue:     { type: 'rogue',     emoji: '🗡️', hp: 60,    attack: 45,   speed: 200, tier: 2, ability: 'Backstab',    desc: '3x damage on first hit against a target', mineSpeed: 1.0 },
+  rogue:     { type: 'rogue',     emoji: '🗡️', hp: 60,    attack: 45,   speed: 200, tier: 2, ability: 'Backstab',    desc: '3x first hit + invisible to neutrals', mineSpeed: 1.0 },
 };
 
 // Hard counter map: attacker → types it deals 2x damage to
@@ -832,11 +835,12 @@ function makeCampsFromMap(mapDef: MapDef, seed: number): CampDef[] {
   return camps;
 }
 const NEXUS_MAX_HP = 50000;
-const MAX_UNITS = 80;
+const MAX_UNITS = Infinity; // no swarm limit
 const BASE_SPAWN_MS = 5000; // (legacy, unused)
 const FREE_GNOME_MS = 30000; // free gnome from base every 30s
 const ATTACK_CD_MS = 1500;
 const COMBAT_RANGE = 80;
+const TURTLE_TAUNT_RANGE = 100; // turtles force nearby foes to attack them
 const CAMP_RANGE = 120;
 const AI_TICK_MS = 4000;
 const TEAM_COLORS = { 1: 0x4499FF, 2: 0xFF5555 };
@@ -859,34 +863,34 @@ const SPAWN_COSTS: Record<string, { type: ResourceType; amount: number }> = {
 };
 const RESOURCE_EMOJI: Record<ResourceType, string> = { carrot: '🥕', meat: '🍖', crystal: '💎', metal: '⚙️' };
 
-// ─── FORGE UPGRADES ──────────────────────────────────────
-interface ForgeUpgrade {
-  id: string;
+// ─── EQUIPMENT SYSTEM ──────────────────────────────────────
+type EquipmentType = 'pickaxe' | 'sword' | 'shield' | 'boots' | 'banner';
+
+interface EquipmentDef {
+  id: EquipmentType;
   name: string;
   emoji: string;
-  tier: 1 | 2 | 3;
   cost: Partial<Record<ResourceType, number>>;
-  effect: string; // description
+  effect: string;
 }
 
-const FORGE_UPGRADES: ForgeUpgrade[] = [
-  // Tier 1 — Carrots + Metal
-  { id: 'iron_weapons',    name: 'Iron Weapons',    emoji: '⚔️', tier: 1, cost: { carrot: 5, metal: 3 }, effect: '+20% attack' },
-  { id: 'wooden_shields',  name: 'Wooden Shields',  emoji: '🛡️', tier: 1, cost: { carrot: 5, metal: 3 }, effect: '+20% max HP' },
-  { id: 'swift_boots',     name: 'Swift Boots',     emoji: '👢', tier: 1, cost: { carrot: 5, metal: 3 }, effect: '+15% speed' },
-  { id: 'gatherer_gloves', name: 'Gatherer Gloves', emoji: '🧤', tier: 1, cost: { carrot: 5, metal: 2 }, effect: '+50% pickup range' },
-  // Tier 2 — Meat + Metal (requires 2 T1 upgrades)
-  { id: 'steel_weapons',   name: 'Steel Weapons',   emoji: '🗡️', tier: 2, cost: { meat: 8, metal: 5 }, effect: '+30% attack' },
-  { id: 'chainmail',       name: 'Chainmail',       emoji: '🔗', tier: 2, cost: { meat: 8, metal: 5 }, effect: '+30% max HP' },
-  { id: 'war_drums',       name: 'War Drums',       emoji: '🥁', tier: 2, cost: { meat: 6, metal: 4 }, effect: '-25% attack cooldown' },
-  { id: 'lifesteal',       name: 'Lifesteal',       emoji: '🩸', tier: 2, cost: { meat: 10, metal: 6 }, effect: '10% lifesteal' },
-  { id: 'thorns',          name: 'Thorns',          emoji: '🌹', tier: 2, cost: { meat: 8, metal: 5 }, effect: '15% damage reflect' },
-  // Tier 3 — Crystals + Metal (requires 2 T2 upgrades)
-  { id: 'enchanted_blades', name: 'Enchanted Blades', emoji: '✨', tier: 3, cost: { crystal: 6, metal: 8 }, effect: '+50% attack' },
-  { id: 'dragon_scale',     name: 'Dragon Scale',     emoji: '🐉', tier: 3, cost: { crystal: 6, metal: 8 }, effect: '+50% max HP' },
-  { id: 'berserker_rage',   name: 'Berserker Rage',   emoji: '💢', tier: 3, cost: { crystal: 5, metal: 6 }, effect: '2x attack speed below 30% HP' },
-  { id: 'siege_mastery',    name: 'Siege Mastery',     emoji: '🏰', tier: 3, cost: { crystal: 5, metal: 6 }, effect: '+100% nexus damage' },
+const EQUIPMENT: EquipmentDef[] = [
+  { id: 'pickaxe', name: 'Pickaxe', emoji: '⛏️', cost: { carrot: 5 }, effect: 'Can mine metal, +25% gather speed' },
+  { id: 'sword',   name: 'Sword',   emoji: '⚔️', cost: { meat: 5, metal: 3 }, effect: '+50% attack, +25% attack speed' },
+  { id: 'shield',  name: 'Shield',  emoji: '🛡️', cost: { meat: 5, metal: 3 }, effect: '+60% HP, -25% damage taken, -15% speed' },
+  { id: 'boots',   name: 'Boots',   emoji: '👢', cost: { carrot: 5, metal: 2 }, effect: '+60% move speed, +50% pickup range' },
+  { id: 'banner',  name: 'Banner',  emoji: '🚩', cost: { meat: 8, metal: 5 }, effect: 'Aura: nearby allies +20% atk, +15% speed' },
 ];
+
+const ARMORY_RANGE = 60; // how close to armory to pick up equipment
+
+interface HArmory {
+  x: number;
+  y: number;
+  team: 1 | 2;
+  sprite: Phaser.GameObjects.Text | null;
+  label: Phaser.GameObjects.Text | null;
+}
 
 const CARROT_SPAWN_MS = 5000;       // new carrots every 5s
 const MAX_GROUND_ITEMS = 150;
@@ -934,7 +938,10 @@ export class HordeScene extends Phaser.Scene {
     1: { carrot: 0, meat: 0, crystal: 0, metal: 0 },
     2: { carrot: 0, meat: 0, crystal: 0, metal: 0 },
   };
-  private forgeUpgrades: Record<1 | 2, Set<string>> = { 1: new Set(), 2: new Set() };
+  private unlockedEquipment: Record<1 | 2, Set<EquipmentType>> = { 1: new Set(), 2: new Set() };
+  private armories: HArmory[] = [];
+  private equipPanelEl: HTMLDivElement | null = null;
+  private sidebarEl: HTMLDivElement | null = null;
 
   private hudTexts: Record<string, Phaser.GameObjects.Text> = {};
   private textInput: HTMLInputElement | null = null;
@@ -1054,7 +1061,7 @@ export class HordeScene extends Phaser.Scene {
       1: { carrot: 0, meat: 0, crystal: 0, metal: 0 },
       2: { carrot: 0, meat: 0, crystal: 0, metal: 0 },
     };
-    this.forgeUpgrades = { 1: new Set(), 2: new Set() };
+    this.unlockedEquipment = { 1: new Set(), 2: new Set() };
 
     this.syncTimer = 0;
 
@@ -1062,6 +1069,7 @@ export class HordeScene extends Phaser.Scene {
     this.drawBackground();
     this.setupCamps();
     this.initMineNodes();
+    this.initArmories();
     this.setupNexuses();
     this.setupFog();
     this.setupCamera();
@@ -1326,6 +1334,7 @@ export class HordeScene extends Phaser.Scene {
         diveTimer: 0,
         lastAttackTarget: -1, attackFaceX: null, mods: { ...DEFAULT_MODS },
         carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
+        equipment: null, equipSprite: null,
       });
     }
   }
@@ -1352,6 +1361,19 @@ export class HordeScene extends Phaser.Scene {
       this.mineNodes.push({ id: `mine_${idx++}`, x: x1, y: y1, sprite: null, label: null });
       this.mineNodes.push({ id: `mine_${idx++}`, x: x2, y: y2, sprite: null, label: null });
     }
+  }
+
+  private initArmories() {
+    this.armories = [];
+    const cx = WORLD_W / 2, cy = WORLD_H / 2;
+    const angle1 = Math.atan2(cy - P1_BASE.y, cx - P1_BASE.x) + (Math.random() - 0.5) * 1.2;
+    const dist1 = 300 + Math.random() * 200;
+    const x1 = Math.round(Math.max(120, Math.min(WORLD_W - 120, P1_BASE.x + Math.cos(angle1) * dist1)));
+    const y1 = Math.round(Math.max(120, Math.min(WORLD_H - 120, P1_BASE.y + Math.sin(angle1) * dist1)));
+    const x2 = Math.round(cx + (cx - x1));
+    const y2 = Math.round(cy + (cy - y1));
+    this.armories.push({ x: x1, y: y1, team: 1, sprite: null, label: null });
+    this.armories.push({ x: x2, y: y2, team: 2, sprite: null, label: null });
   }
 
 
@@ -1400,6 +1422,7 @@ export class HordeScene extends Phaser.Scene {
         campId: null, lungeX: 0, lungeY: 0,
         hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, attackFaceX: null, mods: { ...DEFAULT_MODS },
         carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
+        equipment: null, equipSprite: null,
       });
     }
   }
@@ -1419,6 +1442,7 @@ export class HordeScene extends Phaser.Scene {
         campId: null, lungeX: 0, lungeY: 0,
         hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, attackFaceX: null, mods: { ...DEFAULT_MODS },
         carrying: null, carrySprite: null, loop: null, isElite: true, idleTimer: 0, claimItemId: -1,
+        equipment: null, equipSprite: null,
       });
     }
   }
@@ -1701,67 +1725,78 @@ export class HordeScene extends Phaser.Scene {
   private setupHUD() {
     const cam = this.cameras.main;
 
-    // Left panel background — thin, flush against edge
-    this.add.rectangle(0, 0, 190, cam.height, 0x000000, 0.5)
-      .setOrigin(0, 0).setScrollFactor(0).setDepth(99);
+    // Left panel — HTML Command Console overlay
+    {
+      const container = document.getElementById('game-container') ?? document.body;
+      const sidebar = document.createElement('div');
+      sidebar.id = 'horde-sidebar';
+      sidebar.style.cssText = `
+        position:absolute;top:0;left:0;width:220px;height:100%;
+        background:rgba(10,14,25,0.85);
+        backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+        border-right:1px solid rgba(69,230,176,0.2);
+        z-index:101;overflow-y:auto;padding:12px;
+        font-family:'Nunito',sans-serif;
+        scrollbar-width:thin;
+        scrollbar-color:rgba(69,230,176,0.35) rgba(10,14,25,0.4);
+      `;
+      sidebar.innerHTML = `
+        <div id="hud-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+          <span style="font-size:16px;font-weight:800;color:#45E6B0;font-family:'Fredoka',sans-serif;letter-spacing:2px;">HORDE</span>
+          <span id="hud-timer" style="font-size:13px;font-weight:700;color:#FFD93D;font-family:'Fredoka',sans-serif;">0:00</span>
+        </div>
+        <div id="hud-era" style="font-size:10px;color:#8BAA8B;text-align:center;margin-bottom:12px;letter-spacing:1px;"></div>
 
-    this.hudTexts['title'] = this.add.text(8, 8, 'HORDE', {
-      fontSize: '14px', color: '#45E6B0', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
-    }).setScrollFactor(0).setDepth(100);
+        <div style="margin-bottom:14px;">
+          <div style="display:flex;justify-content:space-between;font-size:10px;font-weight:700;margin-bottom:4px;">
+            <span style="color:#45E6B0;">YOUR BASE</span>
+            <span id="hud-nexus-mine" style="color:#45E6B0;">50000</span>
+          </div>
+          <div style="height:8px;background:rgba(255,255,255,0.08);border-radius:4px;overflow:hidden;margin-bottom:6px;">
+            <div id="hud-nexus-mine-bar" style="height:100%;width:100%;background:linear-gradient(90deg,#45E6B0,#2ECFA0);border-radius:4px;transition:width 0.5s ease;"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:10px;font-weight:700;margin-bottom:4px;">
+            <span style="color:#FF5555;">ENEMY BASE</span>
+            <span id="hud-nexus-enemy" style="color:#FF5555;">50000</span>
+          </div>
+          <div style="height:8px;background:rgba(255,255,255,0.08);border-radius:4px;overflow:hidden;">
+            <div id="hud-nexus-enemy-bar" style="height:100%;width:100%;background:linear-gradient(90deg,#FF5555,#CC3333);border-radius:4px;transition:width 0.5s ease;"></div>
+          </div>
+        </div>
 
-    this.hudTexts['timer'] = this.add.text(80, 9, '0:00', {
-      fontSize: '13px', color: '#FFD93D', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
-    }).setOrigin(0, 0).setScrollFactor(0).setDepth(100);
+        <div style="margin-bottom:14px;">
+          <div style="font-size:11px;font-weight:800;color:#45E6B0;letter-spacing:1.5px;margin-bottom:6px;font-family:'Fredoka',sans-serif;">RESOURCES</div>
+          <div id="hud-resources"></div>
+        </div>
 
-    // Army section
-    this.hudTexts['armyHeader'] = this.add.text(8, 30, 'ARMIES', {
-      fontSize: '11px', color: '#4499FF', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
-      letterSpacing: 1,
-    }).setScrollFactor(0).setDepth(100);
+        <div style="margin-bottom:14px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <span style="font-size:11px;font-weight:800;color:#4499FF;letter-spacing:1.5px;font-family:'Fredoka',sans-serif;">ARMY</span>
+            <span id="hud-army-total" style="font-size:11px;font-weight:700;color:#4499FF;"></span>
+          </div>
+          <div id="hud-army-list"></div>
+        </div>
 
-    this.hudTexts['armies'] = this.add.text(8, 46, '', {
-      fontSize: '10px', color: '#f0e8ff', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold', lineSpacing: 3,
-      wordWrap: { width: 175 },
-    }).setScrollFactor(0).setDepth(100);
+        <div style="margin-bottom:14px;">
+          <div style="font-size:11px;font-weight:800;color:#C98FFF;letter-spacing:1.5px;margin-bottom:6px;font-family:'Fredoka',sans-serif;">PRODUCTION</div>
+          <div id="hud-production"></div>
+        </div>
 
-    // Resources section
-    this.hudTexts['resHeader'] = this.add.text(8, 170, 'RESOURCES', {
-      fontSize: '11px', color: '#45E6B0', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
-      letterSpacing: 1,
-    }).setScrollFactor(0).setDepth(100);
+        <div style="margin-bottom:14px;">
+          <div style="font-size:11px;font-weight:800;color:#FFD93D;letter-spacing:1.5px;margin-bottom:6px;font-family:'Fredoka',sans-serif;">CAMPS</div>
+          <div id="hud-camps"></div>
+        </div>
 
-    this.hudTexts['resources'] = this.add.text(8, 186, '', {
-      fontSize: '10px', color: '#f0e8ff', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold', lineSpacing: 2,
-      wordWrap: { width: 175 },
-    }).setScrollFactor(0).setDepth(100);
+        <div style="margin-bottom:14px;">
+          <div style="font-size:11px;font-weight:800;color:#FF6B6B;letter-spacing:1.5px;margin-bottom:6px;font-family:'Fredoka',sans-serif;">MODIFIERS</div>
+          <div id="hud-modifiers" style="display:flex;flex-wrap:wrap;gap:4px;"></div>
+        </div>
 
-    // Production section
-    this.hudTexts['prodHeader'] = this.add.text(8, 250, 'PRODUCTION', {
-      fontSize: '11px', color: '#C98FFF', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
-      letterSpacing: 1,
-    }).setScrollFactor(0).setDepth(100);
-
-    this.hudTexts['production'] = this.add.text(8, 266, '', {
-      fontSize: '10px', color: '#cbb8ee', fontFamily: '"Nunito", sans-serif', fontStyle: '600', lineSpacing: 3,
-      wordWrap: { width: 175 },
-    }).setScrollFactor(0).setDepth(100);
-
-    // Camps section
-    this.hudTexts['campsHeader'] = this.add.text(8, 360, 'CAMPS', {
-      fontSize: '11px', color: '#FFD93D', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
-      letterSpacing: 1,
-    }).setScrollFactor(0).setDepth(100);
-
-    this.hudTexts['camps'] = this.add.text(8, 376, '', {
-      fontSize: '9px', color: '#f0e8ff', fontFamily: '"Nunito", sans-serif', fontStyle: '600', lineSpacing: 2,
-      wordWrap: { width: 175 },
-    }).setScrollFactor(0).setDepth(100);
-
-    // Buffs
-    this.hudTexts['buffs'] = this.add.text(8, cam.height - 80, '', {
-      fontSize: '10px', color: '#C98FFF', fontFamily: '"Nunito", sans-serif', fontStyle: '600', lineSpacing: 2,
-      wordWrap: { width: 175 },
-    }).setScrollFactor(0).setDepth(100);
+        <div id="hud-buffs"></div>
+      `;
+      container.appendChild(sidebar);
+      this.sidebarEl = sidebar;
+    }
 
     // Right side: enemy info
     this.add.rectangle(cam.width, 0, 220, 160, 0x000000, 0.35)
@@ -1827,6 +1862,37 @@ export class HordeScene extends Phaser.Scene {
       fontSize: '10px', color: '#4A6B4A', fontFamily: '"Nunito", sans-serif', lineSpacing: 2, align: 'right',
     }).setOrigin(1, 1).setScrollFactor(0).setDepth(100);
 
+    // Equipment panel toggle
+    const equipToggle = document.createElement('button');
+    equipToggle.id = 'horde-equip-toggle';
+    equipToggle.textContent = '🏛️';
+    equipToggle.style.cssText = `
+      position:absolute;top:10px;right:310px;width:36px;height:36px;
+      z-index:100;border:1px solid #3D5040;border-radius:8px;
+      background:rgba(13,26,13,0.88);color:#FFD700;font-size:18px;
+      cursor:pointer;display:flex;align-items:center;justify-content:center;
+      font-family:'Nunito',sans-serif;padding:0;
+    `;
+    equipToggle.addEventListener('click', () => {
+      if (this.equipPanelEl) {
+        const vis = this.equipPanelEl.style.display === 'none';
+        this.equipPanelEl.style.display = vis ? 'block' : 'none';
+      }
+    });
+    document.getElementById('game-container')!.appendChild(equipToggle);
+
+    const equipPanel = document.createElement('div');
+    equipPanel.id = 'horde-equip-panel';
+    equipPanel.style.cssText = `
+      position:absolute;top:10px;right:490px;width:220px;max-height:calc(100vh - 20px);
+      overflow-y:auto;z-index:98;
+      background:rgba(13,26,13,0.88);border:1px solid #3D5040;border-radius:12px;
+      padding:10px;font-family:'Nunito',sans-serif;display:none;
+      scrollbar-width:thin;scrollbar-color:rgba(69,230,176,0.35) rgba(13,26,13,0.4);
+    `;
+    document.getElementById('game-container')!.appendChild(equipPanel);
+    this.equipPanelEl = equipPanel;
+
     // ─── Character Details Panel (Bestiary) ─────────────────────
     const charToggle = document.createElement('button');
     charToggle.id = 'horde-char-toggle';
@@ -1858,38 +1924,70 @@ export class HordeScene extends Phaser.Scene {
     `;
 
     const tierColors: Record<number, string> = { 1: '#44CC44', 2: '#4499FF', 3: '#FF9933', 4: '#FF4444', 5: '#FFD700' };
+    const mineLabels: Record<string, string> = {
+      gnome: '2.0x', turtle: '1.5x', rogue: '1.0x', skull: '0.8x', gnoll: '0.8x',
+      lizard: '0.7x', spider: '0.6x', panda: '0.5x', shaman: '0.5x', minotaur: '0.4x', troll: '0.3x',
+    };
+    const counterEmojis: Record<string, string> = {
+      gnome: '\u{1F9DD}', turtle: '\u{1F422}', skull: '\u{1F480}', spider: '\u{1F577}\uFE0F',
+      gnoll: '\u{1F43A}', panda: '\u{1F43C}', lizard: '\u{1F98E}', minotaur: '\u{1F402}',
+      shaman: '\u{1F52E}', troll: '\u{1F479}', rogue: '\u{1F5E1}\uFE0F',
+    };
+    const roleMap: Record<string, string> = {
+      gnome: 'Gatherer', turtle: 'Tank / Hauler', skull: 'Bruiser', spider: 'Assassin',
+      gnoll: 'Ranged DPS', rogue: 'Assassin', panda: 'Tank', lizard: 'Executioner',
+      minotaur: 'Commander', shaman: 'Mage', troll: 'Juggernaut',
+    };
+    const specialNotes: Record<string, string[]> = {
+      gnome: ['2x pickup range'],
+      turtle: ['Carries 10x resources per trip', 'Taunts foes within 100px'],
+      rogue: ['Invisible to neutral enemies', 'Hops over terrain'],
+    };
     const unitData = [
-      { emoji: '\u{1F9DD}', name: 'Gnome', hp: 15, atk: 3, spd: 210, tier: 1, ability: 'Nimble Hands', desc: '2x pickup range, fastest gatherer', cost: '1\u{1F955}' },
-      { emoji: '\u{1F422}', name: 'Turtle', hp: 65, atk: 3, spd: 55, tier: 1, ability: 'Shell Stance', desc: '60% DR when guarding (stationary)', cost: '1\u{1F955}' },
-      { emoji: '\u{1F480}', name: 'Skull', hp: 80, atk: 14, spd: 155, tier: 2, ability: 'Undying', desc: 'Cheats death once (survives at 1 HP)', cost: '3\u{1F356}' },
-      { emoji: '\u{1F577}\uFE0F', name: 'Spider', hp: 120, atk: 18, spd: 85, tier: 2, ability: 'Venom Bite', desc: '+5% target max HP per hit', cost: '3\u{1F356}' },
-      { emoji: '\u{1F43A}', name: 'Gnoll', hp: 55, atk: 28, spd: 175, tier: 2, ability: 'Bone Toss', desc: 'Extended range (120 vs 80)', cost: '3\u{1F356}' },
-      { emoji: '\u{1F5E1}\uFE0F', name: 'Rogue', hp: 60, atk: 45, spd: 200, tier: 2, ability: 'Backstab', desc: '3x damage on first hit against a new target', cost: '3\u{1F356}' },
-      { emoji: '\u{1F43C}', name: 'Panda', hp: 900, atk: 35, spd: 80, tier: 3, ability: 'Thick Hide', desc: 'Regenerates 1% max HP/sec', cost: '5\u{1F356}' },
-      { emoji: '\u{1F98E}', name: 'Lizard', hp: 450, atk: 70, spd: 110, tier: 3, ability: 'Cold Blood', desc: '3x dmg to targets below 40% HP', cost: '5\u{1F955}' },
-      { emoji: '\u{1F402}', name: 'Minotaur', hp: 2200, atk: 110, spd: 120, tier: 4, ability: 'War Cry', desc: 'Nearby allies +25% attack', cost: '8\u{1F48E}' },
-      { emoji: '\u{1F52E}', name: 'Shaman', hp: 1400, atk: 180, spd: 100, tier: 4, ability: 'Arcane Blast', desc: 'All attacks splash 60px', cost: '8\u{1F48E}' },
-      { emoji: '\u{1F479}', name: 'Troll', hp: 14000, atk: 350, spd: 50, tier: 5, ability: 'Club Slam', desc: 'Massive 90px splash, slows enemies', cost: '20\u{1F48E}' },
+      { key: 'gnome',    emoji: '\u{1F9DD}',       name: 'Gnome',    hp: 15,    atk: 3,   spd: 210, tier: 1, ability: 'Nimble Hands', desc: '2x pickup range, fastest gatherer', cost: '1\u{1F955}' },
+      { key: 'turtle',   emoji: '\u{1F422}',       name: 'Turtle',   hp: 65,    atk: 3,   spd: 55,  tier: 1, ability: 'Shell Stance', desc: '60% DR when stationary + taunts nearby foes', cost: '1\u{1F955}' },
+      { key: 'skull',    emoji: '\u{1F480}',       name: 'Skull',    hp: 80,    atk: 14,  spd: 155, tier: 2, ability: 'Undying',      desc: 'Cheats death once (survives at 1 HP)', cost: '3\u{1F356}' },
+      { key: 'spider',   emoji: '\u{1F577}\uFE0F', name: 'Spider',   hp: 120,   atk: 18,  spd: 85,  tier: 2, ability: 'Venom Bite',   desc: '+5% target max HP per hit', cost: '3\u{1F356}' },
+      { key: 'gnoll',    emoji: '\u{1F43A}',       name: 'Gnoll',    hp: 55,    atk: 28,  spd: 175, tier: 2, ability: 'Bone Toss',    desc: 'Extended range (120 vs 80)', cost: '3\u{1F356}' },
+      { key: 'rogue',    emoji: '\u{1F5E1}\uFE0F', name: 'Rogue',    hp: 60,    atk: 45,  spd: 200, tier: 2, ability: 'Backstab',     desc: '3x first hit + invisible to neutrals', cost: '3\u{1F356}' },
+      { key: 'panda',    emoji: '\u{1F43C}',       name: 'Panda',    hp: 900,   atk: 35,  spd: 80,  tier: 3, ability: 'Thick Hide',   desc: 'Regenerates 1% max HP/sec', cost: '5\u{1F356}' },
+      { key: 'lizard',   emoji: '\u{1F98E}',       name: 'Lizard',   hp: 450,   atk: 70,  spd: 110, tier: 3, ability: 'Cold Blood',   desc: '3x dmg to targets below 40% HP', cost: '5\u{1F955}' },
+      { key: 'minotaur', emoji: '\u{1F402}',       name: 'Minotaur', hp: 2200,  atk: 110, spd: 120, tier: 4, ability: 'War Cry',      desc: 'Nearby allies +25% attack', cost: '8\u{1F48E}' },
+      { key: 'shaman',   emoji: '\u{1F52E}',       name: 'Shaman',   hp: 1400,  atk: 180, spd: 100, tier: 4, ability: 'Arcane Blast', desc: 'All attacks splash 60px', cost: '8\u{1F48E}' },
+      { key: 'troll',    emoji: '\u{1F479}',       name: 'Troll',    hp: 14000, atk: 350, spd: 50,  tier: 5, ability: 'Club Slam',    desc: 'Massive 90px splash, slows enemies', cost: '20\u{1F48E}' },
     ];
 
     let panelHTML = `<div style="font-size:12px;color:#45E6B0;font-weight:800;letter-spacing:1.5px;margin-bottom:8px;text-align:center;">BESTIARY</div>`;
     for (const u of unitData) {
       const tc = tierColors[u.tier];
+      const counters = HARD_COUNTERS[u.key] || [];
+      const counterStr = counters.length > 0
+        ? counters.map(c => (counterEmojis[c] || c)).join(' ')
+        : '<span style="color:#555;">none</span>';
+      const role = roleMap[u.key] || '';
+      const mine = mineLabels[u.key] || '1.0x';
+      const notes = specialNotes[u.key] || [];
+      const notesHTML = notes.map(n => `<div style="font-size:8px;color:#45E6B0;margin-top:1px;">\u2605 ${n}</div>`).join('');
       panelHTML += `
         <div style="background:rgba(30,50,30,0.6);border:1px solid #3D5040;border-radius:8px;padding:7px 8px;margin-bottom:6px;">
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">
             <span style="font-size:18px;">${u.emoji}</span>
             <span style="font-size:12px;font-weight:800;color:#f0e8ff;">${u.name}</span>
+            <span style="font-size:9px;color:#8BAA8B;font-weight:600;">${role}</span>
             <span style="font-size:9px;font-weight:700;color:${tc};background:rgba(0,0,0,0.4);padding:1px 5px;border-radius:4px;margin-left:auto;">T${u.tier}</span>
           </div>
-          <div style="display:flex;gap:8px;font-size:10px;color:#8BAA8B;margin-bottom:3px;">
+          <div style="display:flex;gap:6px;font-size:10px;color:#8BAA8B;margin-bottom:2px;flex-wrap:wrap;">
             <span>\u2764\uFE0F ${u.hp}</span>
             <span>\u2694\uFE0F ${u.atk}</span>
             <span>\u{1F3C3} ${u.spd}</span>
+            <span>\u26CF\uFE0F ${mine}</span>
             <span style="margin-left:auto;color:#FFD93D;">${u.cost}</span>
           </div>
-          <div style="font-size:10px;color:#C98FFF;font-weight:700;">${u.ability}</div>
-          <div style="font-size:9px;color:#8BAA8B;font-style:italic;">${u.desc}</div>
+          <div style="font-size:10px;color:#C98FFF;font-weight:700;margin-bottom:1px;">${u.ability}</div>
+          <div style="font-size:9px;color:#8BAA8B;font-style:italic;margin-bottom:2px;">${u.desc}</div>
+          <div style="display:flex;gap:4px;align-items:center;font-size:9px;">
+            <span style="color:#666;">Strong vs:</span> <span style="color:#FF7777;">${counterStr}</span>
+          </div>${notesHTML}
         </div>`;
     }
     charPanel.innerHTML = panelHTML;
@@ -1909,96 +2007,190 @@ export class HordeScene extends Phaser.Scene {
     };
     const p1c = countBy(p1), p2c = countBy(p2);
 
-    // Timer
+    // Timer + Era
     const secs = Math.floor(this.gameTime / 1000);
-    const eraName = HordeScene.ERA_NAMES[this.currentEra] || ""; this.hudTexts["timer"]?.setText(Math.floor(secs / 60) + ":" + (secs % 60).toString().padStart(2, "0") + "  Era " + this.currentEra + ": " + eraName);
+    const eraName = HordeScene.ERA_NAMES[this.currentEra] || '';
+    const timerEl = document.getElementById('hud-timer');
+    if (timerEl) timerEl.textContent = Math.floor(secs / 60) + ':' + (secs % 60).toString().padStart(2, '0');
+    const eraEl = document.getElementById('hud-era');
+    if (eraEl) eraEl.textContent = `Era ${this.currentEra}: ${eraName}`;
 
-    // ─── YOUR ARMIES (left panel) ───
-    const armyLines: string[] = [];
-    armyLines.push(`Total: ${p1.length}/${MAX_UNITS}`);
-    for (const [type, def] of Object.entries(ANIMALS)) {
-      const count = p1c[type] || 0;
-      if (count === 0) continue;
-      armyLines.push(`${def.emoji} ${cap(type)}: ${count}  [${def.ability}]`);
-    }
-    if (armyLines.length === 1) armyLines.push('  (no units yet)');
-    this.hudTexts['armies']?.setText(armyLines.join('\n'));
+    // Nexus HP bars
+    const maxNexus = 50000;
+    const myNexus = this.nexuses.find(n => n.team === myT);
+    const enemyNexus = this.nexuses.find(n => n.team === enemyT);
+    const myHp = myNexus ? myNexus.hp : maxNexus;
+    const enemyHp = enemyNexus ? enemyNexus.hp : maxNexus;
+    const mineHpEl = document.getElementById('hud-nexus-mine');
+    const mineBarEl = document.getElementById('hud-nexus-mine-bar');
+    const enemyHpEl = document.getElementById('hud-nexus-enemy');
+    const enemyBarEl = document.getElementById('hud-nexus-enemy-bar');
+    if (mineHpEl) mineHpEl.textContent = String(Math.ceil(myHp));
+    if (mineBarEl) mineBarEl.style.width = `${(myHp / maxNexus) * 100}%`;
+    if (enemyHpEl) enemyHpEl.textContent = String(Math.ceil(enemyHp));
+    if (enemyBarEl) enemyBarEl.style.width = `${(enemyHp / maxNexus) * 100}%`;
 
-    // ─── RESOURCES ───
+    // Resources
     const stock = this.baseStockpile[myT as 1 | 2];
-    const resLines = [
-      `🥕 Carrots: ${stock.carrot}`,
-      `🍖 Meat: ${stock.meat}`,
-      `💎 Crystals: ${stock.crystal}`,
-    ];
-    // Show camp food progress for owned camps
-    const foodCamps = this.camps.filter(c => c.owner === myT);
-    for (const c of foodCamps) {
-      const cost = SPAWN_COSTS[c.animalType];
-      if (cost) resLines.push(`  ${ANIMALS[c.animalType]?.emoji || ''} ${cap(c.animalType)}: ${c.storedFood}/${cost.amount}`);
-    }
-    this.hudTexts['resources']?.setText(resLines.join('\n'));
-
-    // ─── PRODUCTION (food-gated) ───
-    const prodLines: string[] = [];
-    const gnomeCountdown = Math.max(0, Math.ceil((FREE_GNOME_MS - this.freeGnomeTimer) / 1000));
-    prodLines.push(`🧝 Base: free gnome in ${gnomeCountdown}s`);
-    const myCamps = this.camps.filter(c => c.owner === myT);
-    for (const c of myCamps) {
-      const cost = SPAWN_COSTS[c.animalType];
-      if (!cost) continue;
-      const emoji = ANIMALS[c.animalType]?.emoji || '';
-      prodLines.push(`${emoji} ${cap(c.animalType)}: ${cost.amount}${RESOURCE_EMOJI[cost.type]} (${c.spawnMs / 1000}s)`);
-    }
-    this.hudTexts['production']?.setText(prodLines.join('\n'));
-
-    // ─── FORGE ───
-    const forgeLines: string[] = ['FORGE:'];
-    const myUpgrades = this.forgeUpgrades[myT as 1 | 2];
-    const ownedT1 = [...myUpgrades].filter(id => FORGE_UPGRADES.find(u => u.id === id)?.tier === 1).length;
-    const ownedT2 = [...myUpgrades].filter(id => FORGE_UPGRADES.find(u => u.id === id)?.tier === 2).length;
-    for (const up of FORGE_UPGRADES) {
-      const owned = myUpgrades.has(up.id);
-      const locked = (up.tier === 2 && ownedT1 < 2) || (up.tier === 3 && ownedT2 < 2);
-      const costStr = Object.entries(up.cost).map(([r, a]) => `${a}${RESOURCE_EMOJI[r as ResourceType]}`).join('+');
-      if (owned) {
-        forgeLines.push(`  ${up.emoji} ${up.name} ✅`);
-      } else if (locked) {
-        forgeLines.push(`  🔒 ${up.name} (T${up.tier})`);
-      } else {
-        forgeLines.push(`  ${up.emoji} ${up.name}: ${costStr}`);
+    const resEl = document.getElementById('hud-resources');
+    if (resEl) {
+      const maxRes = 50; // visual bar max
+      const resources = [
+        { emoji: '\u{1F955}', name: 'Carrots', amount: stock.carrot, color: '#FF9944', gradient: 'linear-gradient(90deg,#FF9944,#FFB366)' },
+        { emoji: '\u{1F356}', name: 'Meat', amount: stock.meat, color: '#FF5555', gradient: 'linear-gradient(90deg,#FF5555,#FF7777)' },
+        { emoji: '\u{1F48E}', name: 'Crystals', amount: stock.crystal, color: '#C98FFF', gradient: 'linear-gradient(90deg,#C98FFF,#DDB3FF)' },
+        { emoji: '\u2699\uFE0F', name: 'Metal', amount: stock.metal, color: '#88AACC', gradient: 'linear-gradient(90deg,#88AACC,#AACCDD)' },
+      ];
+      let html = '';
+      for (const r of resources) {
+        const pct = Math.min(100, (r.amount / maxRes) * 100);
+        html += `<div style="display:flex;align-items:center;gap:6px;margin-bottom:5px;">
+          <span style="font-size:14px;">${r.emoji}</span>
+          <div style="flex:1;">
+            <div style="display:flex;justify-content:space-between;font-size:10px;font-weight:700;">
+              <span style="color:#ccc;">${r.name}</span>
+              <span style="color:${r.color};">${r.amount}</span>
+            </div>
+            <div style="height:4px;background:rgba(255,255,255,0.08);border-radius:2px;overflow:hidden;margin-top:2px;">
+              <div style="height:100%;width:${pct}%;background:${r.gradient};border-radius:2px;transition:width 0.3s ease;"></div>
+            </div>
+          </div>
+        </div>`;
       }
+      resEl.innerHTML = html;
     }
-    if (!this.hudTexts['forge']) {
-      this.hudTexts['forge'] = this.add.text(10, 520, '', {
-        fontSize: '11px', color: '#FFD700',
-        stroke: '#000', strokeThickness: 2,
-        lineSpacing: 2,
-      }).setScrollFactor(0).setDepth(100);
-    }
-    this.hudTexts['forge']?.setText(forgeLines.join('\n'));
 
-    // ─── CAMPS ───
-    const yourCamps = this.camps.filter(c => c.owner === myT).length;
-    const enemyCamps = this.camps.filter(c => c.owner === enemyT).length;
-    const neutralCamps = this.camps.filter(c => c.owner === 0).length;
-    const campLines: string[] = [];
-    campLines.push(`🔵 Yours: ${yourCamps}  🔴 Enemy: ${enemyCamps}  ⚪ Neutral: ${neutralCamps}`);
-    campLines.push('');
-    for (const c of this.camps) {
-      const icon = c.owner === 0 ? '⚪' : c.owner === myT ? '🔵' : '🔴';
-      const tag = c.owner === myT ? ' (YOU)' : c.owner === enemyT ? ' (ENEMY)' : '';
-      campLines.push(`${icon} ${c.name}${tag}`);
+    // Army
+    const tierColors: Record<number, string> = { 1: '#44CC44', 2: '#4499FF', 3: '#FF9933', 4: '#FF4444', 5: '#FFD700' };
+    const totalEl = document.getElementById('hud-army-total');
+    if (totalEl) totalEl.textContent = `${p1.length} units`;
+    const armyEl = document.getElementById('hud-army-list');
+    if (armyEl) {
+      let html = '';
+      for (const [type, def] of Object.entries(ANIMALS)) {
+        const count = p1c[type] || 0;
+        if (count === 0) continue;
+        const tc = tierColors[def.tier] || '#aaa';
+        html += `<div style="display:flex;align-items:center;gap:5px;padding:3px 6px;margin-bottom:3px;background:rgba(255,255,255,0.04);border-radius:6px;border-left:3px solid ${tc};">
+          <span style="font-size:14px;">${def.emoji}</span>
+          <span style="font-size:10px;font-weight:700;color:#f0e8ff;flex:1;">${cap(type)}</span>
+          <span style="font-size:12px;font-weight:800;color:${tc};">${count}</span>
+        </div>`;
+      }
+      if (!html) html = '<div style="font-size:10px;color:#555;padding:4px;">No units yet</div>';
+      armyEl.innerHTML = html;
     }
-    this.hudTexts['camps']?.setText(campLines.join('\n'));
 
-    // ─── BUFFS ───
-    const b = this.getBuffs(myT as 1 | 2);
-    const bl: string[] = [];
-    if (b.speed > 0) bl.push(`⚡ Speed +${Math.round(b.speed * 100)}%`);
-    if (b.attack > 0) bl.push(`⚔ Attack +${Math.round(b.attack * 100)}%`);
-    if (b.hp > 0) bl.push(`❤ HP +${Math.round(b.hp * 100)}%`);
-    this.hudTexts['buffs']?.setText(bl.length ? `BUFFS:\n${bl.join('\n')}` : '');
+    // Production
+    const prodEl = document.getElementById('hud-production');
+    if (prodEl) {
+      let html = '';
+      const gnomeCountdown = Math.max(0, Math.ceil((FREE_GNOME_MS - this.freeGnomeTimer) / 1000));
+      html += `<div style="display:flex;align-items:center;gap:5px;padding:3px 6px;margin-bottom:3px;background:rgba(255,255,255,0.04);border-radius:6px;">
+        <span style="font-size:12px;">\u{1F9DD}</span>
+        <span style="font-size:10px;color:#8BAA8B;flex:1;">Free gnome</span>
+        <span style="font-size:10px;font-weight:700;color:#45E6B0;">${gnomeCountdown}s</span>
+      </div>`;
+      const myCamps = this.camps.filter(c => c.owner === myT);
+      for (const c of myCamps) {
+        const cost = SPAWN_COSTS[c.animalType];
+        if (!cost) continue;
+        const emoji = ANIMALS[c.animalType]?.emoji || '';
+        const tc = tierColors[ANIMALS[c.animalType]?.tier] || '#aaa';
+        html += `<div style="display:flex;align-items:center;gap:5px;padding:3px 6px;margin-bottom:3px;background:rgba(255,255,255,0.04);border-radius:6px;border-left:3px solid ${tc};">
+          <span style="font-size:12px;">${emoji}</span>
+          <span style="font-size:10px;color:#ccc;flex:1;">${cap(c.animalType)}</span>
+          <span style="font-size:10px;color:#8BAA8B;">${c.storedFood}/${cost.amount}${RESOURCE_EMOJI[cost.type]}</span>
+        </div>`;
+      }
+      if (myCamps.length === 0) html += '<div style="font-size:10px;color:#555;padding:4px;">No camps owned</div>';
+      prodEl.innerHTML = html;
+    }
+
+    // ─── EQUIPMENT PANEL ───
+    if (this.equipPanelEl) {
+      const unlocked = this.unlockedEquipment[myT as 1 | 2];
+      const stock = this.baseStockpile[myT as 1 | 2];
+      let eqHTML = `<div style="font-size:12px;color:#FFD700;font-weight:800;letter-spacing:1.5px;margin-bottom:8px;text-align:center;">ARMORY</div>`;
+      for (const eq of EQUIPMENT) {
+        const owned = unlocked.has(eq.id);
+        const costStr = Object.entries(eq.cost).map(([r, a]) => `${a}${RESOURCE_EMOJI[r as ResourceType]}`).join('+');
+        const canAfford = Object.entries(eq.cost).every(([r, a]) => (stock[r as ResourceType] || 0) >= a!);
+        const borderColor = owned ? '#45E6B0' : canAfford ? '#FFD700' : '#555';
+        const equipped = this.units.filter(u => u.team === myT && !u.dead && u.equipment === eq.id).length;
+        eqHTML += `
+          <div style="background:rgba(30,50,30,0.6);border:1px solid ${borderColor};border-radius:8px;padding:7px 8px;margin-bottom:6px;">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
+              <span style="font-size:18px;">${eq.emoji}</span>
+              <span style="font-size:12px;font-weight:800;color:#f0e8ff;">${eq.name}</span>
+              ${owned ? '<span style="font-size:10px;color:#45E6B0;margin-left:auto;">UNLOCKED</span>' : `<span style="font-size:10px;color:${canAfford ? '#FFD700' : '#FF6B6B'};margin-left:auto;">${costStr}</span>`}
+            </div>
+            <div style="font-size:9px;color:#8BAA8B;font-style:italic;">${eq.effect}</div>
+            ${owned && equipped > 0 ? `<div style="font-size:9px;color:#45E6B0;margin-top:2px;">${equipped} unit${equipped > 1 ? 's' : ''} equipped</div>` : ''}
+            ${owned ? `<div style="font-size:9px;color:#8BAA8B;margin-top:2px;">Say: "get a ${eq.name.toLowerCase()} then go..."</div>` : ''}
+          </div>`;
+      }
+      this.equipPanelEl.innerHTML = eqHTML;
+    }
+
+    // Camps
+    const campsEl = document.getElementById('hud-camps');
+    if (campsEl) {
+      const yourCamps = this.camps.filter(c => c.owner === myT).length;
+      const enemyCampsN = this.camps.filter(c => c.owner === enemyT).length;
+      const neutralCamps = this.camps.filter(c => c.owner === 0).length;
+      let html = `<div style="display:flex;gap:10px;font-size:10px;font-weight:700;margin-bottom:6px;">
+        <span style="color:#45E6B0;">\u{1F535} ${yourCamps}</span>
+        <span style="color:#FF5555;">\u{1F534} ${enemyCampsN}</span>
+        <span style="color:#888;">\u26AA ${neutralCamps}</span>
+      </div>`;
+      for (const c of this.camps) {
+        const color = c.owner === 0 ? '#666' : c.owner === myT ? '#45E6B0' : '#FF5555';
+        const dot = c.owner === 0 ? '\u26AA' : c.owner === myT ? '\u{1F535}' : '\u{1F534}';
+        const emoji = ANIMALS[c.animalType]?.emoji || '';
+        html += `<div style="font-size:9px;color:${color};padding:1px 0;">${dot} ${emoji} ${c.name}</div>`;
+      }
+      campsEl.innerHTML = html;
+    }
+
+    // Modifiers
+    const modsEl = document.getElementById('hud-modifiers');
+    if (modsEl) {
+      const modColors: Record<string, { bg: string; fg: string }> = {
+        spread: { bg: 'rgba(69,153,255,0.2)', fg: '#4499FF' },
+        tight: { bg: 'rgba(255,153,51,0.2)', fg: '#FF9933' },
+        safe: { bg: 'rgba(68,204,68,0.2)', fg: '#44CC44' },
+        aggressive: { bg: 'rgba(255,85,85,0.2)', fg: '#FF5555' },
+        rush: { bg: 'rgba(255,217,61,0.2)', fg: '#FFD93D' },
+        efficient: { bg: 'rgba(201,143,255,0.2)', fg: '#C98FFF' },
+      };
+      let html = '';
+      const activeMods = new Set<string>();
+      for (const [key, m] of Object.entries(this.groupModifiers)) {
+        if (!key.endsWith(`_${myT}`)) continue;
+        const bm = m as BehaviorMods;
+        if (bm.formation && bm.formation !== 'normal') activeMods.add(bm.formation);
+        if (bm.caution && bm.caution !== 'normal') activeMods.add(bm.caution);
+        if (bm.pacing && bm.pacing !== 'normal') activeMods.add(bm.pacing);
+      }
+      for (const mod of activeMods) {
+        const mc = modColors[mod] || { bg: 'rgba(255,255,255,0.1)', fg: '#aaa' };
+        html += `<span style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:10px;background:${mc.bg};color:${mc.fg};text-transform:uppercase;">${mod}</span>`;
+      }
+      if (!html) html = '<span style="font-size:9px;color:#555;">None active</span>';
+      modsEl.innerHTML = html;
+    }
+
+    // Buffs
+    const buffsEl = document.getElementById('hud-buffs');
+    if (buffsEl) {
+      const b = this.getBuffs(myT as 1 | 2);
+      let html = '';
+      if (b.speed > 0) html += `<div style="font-size:10px;color:#FFD93D;font-weight:700;">\u26A1 Speed +${Math.round(b.speed * 100)}%</div>`;
+      if (b.attack > 0) html += `<div style="font-size:10px;color:#FF5555;font-weight:700;">\u2694\uFE0F Attack +${Math.round(b.attack * 100)}%</div>`;
+      if (b.hp > 0) html += `<div style="font-size:10px;color:#45E6B0;font-weight:700;">\u2764\uFE0F HP +${Math.round(b.hp * 100)}%</div>`;
+      buffsEl.innerHTML = html;
+    }
 
     // ─── ENEMY (right panel) ───
     const enemyLines: string[] = [];
@@ -2028,6 +2220,7 @@ export class HordeScene extends Phaser.Scene {
       this.updateUnitSprites();
       this.updateCampVisuals();
       this.updateMineVisuals();
+      this.updateArmoryVisuals();
       this.drawNexusBars();
       this.updateFog();
       this.updateFogVisibility();
@@ -2056,6 +2249,7 @@ export class HordeScene extends Phaser.Scene {
     this.updateDebugOverlay();
     this.updateCampVisuals();
     this.updateMineVisuals();
+    this.updateArmoryVisuals();
     this.drawNexusBars();
     this.updateFog();
     this.updateFogVisibility();
@@ -2086,44 +2280,60 @@ export class HordeScene extends Phaser.Scene {
     }
   }
 
-  /** Purchase a forge upgrade for a team — deducts resources from base stockpile */
-  private purchaseUpgrade(team: 1 | 2, upgradeId: string): boolean {
-    const upgrade = FORGE_UPGRADES.find(u => u.id === upgradeId);
-    if (!upgrade) return false;
-    if (this.forgeUpgrades[team].has(upgradeId)) return false; // already owned
+  /** Unlock an equipment type for a team — deducts resources from base stockpile */
+  private unlockEquipment(team: 1 | 2, eqType: EquipmentType): boolean {
+    const def = EQUIPMENT.find(e => e.id === eqType);
+    if (!def) return false;
+    if (this.unlockedEquipment[team].has(eqType)) return false;
 
-    // Check tier requirements
-    const ownedCount = (tier: number) =>
-      [...this.forgeUpgrades[team]].filter(id => FORGE_UPGRADES.find(u => u.id === id)?.tier === tier).length;
-    if (upgrade.tier === 2 && ownedCount(1) < 2) return false;
-    if (upgrade.tier === 3 && ownedCount(2) < 2) return false;
-
-    // Check resources
     const stock = this.baseStockpile[team];
-    for (const [res, amt] of Object.entries(upgrade.cost)) {
+    for (const [res, amt] of Object.entries(def.cost)) {
       if ((stock[res as ResourceType] || 0) < amt!) return false;
     }
-
-    // Deduct resources
-    for (const [res, amt] of Object.entries(upgrade.cost)) {
+    for (const [res, amt] of Object.entries(def.cost)) {
       stock[res as ResourceType] -= amt!;
     }
 
-    this.forgeUpgrades[team].add(upgradeId);
-
-    // Apply HP upgrades immediately to existing units
-    if (upgradeId === 'wooden_shields' || upgradeId === 'chainmail' || upgradeId === 'dragon_scale') {
-      const hpMult = upgradeId === 'wooden_shields' ? 0.20 : upgradeId === 'chainmail' ? 0.30 : 0.50;
-      for (const u of this.units) {
-        if (u.team === team && !u.dead) {
-          const bonus = u.maxHp * hpMult;
-          u.maxHp += bonus;
-          u.hp += bonus;
-        }
-      }
-    }
-
+    this.unlockedEquipment[team].add(eqType);
     return true;
+  }
+
+  private getUnitEquipBuffs(u: HUnit) {
+    let speed = 0, attack = 0, hp = 0, damageTaken = 1, atkSpeedMult = 1, pickupRange = 1, gatherSpeed = 1;
+    if (!u.equipment) return { speed, attack, hp, damageTaken, atkSpeedMult, pickupRange, gatherSpeed };
+    switch (u.equipment) {
+      case 'pickaxe': gatherSpeed = 1.25; break;
+      case 'sword': attack = 0.50; atkSpeedMult = 0.75; break;
+      case 'shield': hp = 0.60; damageTaken = 0.75; speed = -0.15; break;
+      case 'boots': speed = 0.60; pickupRange = 1.5; break;
+      case 'banner': break;
+    }
+    return { speed, attack, hp, damageTaken, atkSpeedMult, pickupRange, gatherSpeed };
+  }
+
+  private getBannerAura(u: HUnit): { attack: number; speed: number } {
+    if (u.team === 0) return { attack: 0, speed: 0 };
+    const BANNER_RANGE = 120;
+    for (const ally of this.units) {
+      if (ally === u || ally.dead || ally.team !== u.team || ally.equipment !== 'banner') continue;
+      if (pdist(u, ally) <= BANNER_RANGE) return { attack: 0.20, speed: 0.15 };
+    }
+    return { attack: 0, speed: 0 };
+  }
+
+  private updateArmoryVisuals() {
+    for (const arm of this.armories) {
+      if (!arm.sprite) {
+        arm.sprite = this.add.text(arm.x, arm.y, '🏛️', { fontSize: '36px' }).setOrigin(0.5).setDepth(14);
+        arm.label = this.add.text(arm.x, arm.y + 28, 'Armory', {
+          fontSize: '11px', color: arm.team === 1 ? '#4499FF' : '#FF5555',
+          stroke: '#000', strokeThickness: 2,
+        }).setOrigin(0.5).setDepth(14);
+      }
+      const unlocked = this.unlockedEquipment[arm.team];
+      const items = [...unlocked].map(id => EQUIPMENT.find(e => e.id === id)?.emoji || '').join('');
+      if (arm.label) arm.label.setText(`Armory${items ? ' ' + items : ''}`);
+    }
   }
 
   /** Units spawn when food is delivered to camps. Base just stores resources.
@@ -2208,7 +2418,9 @@ export class HordeScene extends Phaser.Scene {
           const finalY = moveNY + perpY * 2.0 + (dot < 0 ? avoidY * 0.5 : 0);
           const fLen = Math.sqrt(finalX * finalX + finalY * finalY);
           if (fLen > 0.01) {
-            const buffMult = 1 + this.getBuffs(team).speed;
+            const eb1 = this.getUnitEquipBuffs(u);
+            const ba1 = this.getBannerAura(u);
+            const buffMult = 1 + this.getBuffs(team).speed + (eb1?.speed || 0) + ba1.speed;
             const spd = u.speed * buffMult;
             const moveStep = Math.min(spd * dt, d);
             u.x += (finalX / fLen) * moveStep;
@@ -2220,7 +2432,9 @@ export class HordeScene extends Phaser.Scene {
         }
       }
 
-      const buffMult = u.team !== 0 ? (1 + this.getBuffs(u.team as 1 | 2).speed) : 1;
+      const equipBuff = u.team !== 0 ? this.getUnitEquipBuffs(u) : null;
+      const bannerAura = u.team !== 0 ? this.getBannerAura(u) : { speed: 0, attack: 0 };
+      const buffMult = u.team !== 0 ? (1 + this.getBuffs(u.team as 1 | 2).speed + (equipBuff?.speed || 0) + bannerAura.speed) : 1;
       const spd = u.speed * buffMult;
       const finalSpeed = spd * dt;
       const step = Math.min(finalSpeed, d);
@@ -2405,8 +2619,22 @@ export class HordeScene extends Phaser.Scene {
       for (const o of this.units) {
         if (o.dead || o.team === u.team) continue;
         if (u.team === 0 && o.team === 0) continue;
+        // ─── ROGUE STEALTH: invisible to neutral enemies ───
+        if (u.team === 0 && o.type === 'rogue') continue;
         const d = pdist(u, o);
         if (d <= unitCombatRange && d < bestD) { bestD = d; best = o; }
+      }
+
+      // ─── TURTLE TAUNT: nearby enemy turtles force this unit to attack them ───
+      if (best && u.type !== 'turtle') {
+        let tauntTurtle: HUnit | null = null, tauntD = Infinity;
+        for (const o of this.units) {
+          if (o.dead || o.type !== 'turtle' || o.team === u.team) continue;
+          if (u.team === 0 && o.team === 0) continue;
+          const d = pdist(u, o);
+          if (d <= TURTLE_TAUNT_RANGE && d < tauntD) { tauntD = d; tauntTurtle = o; }
+        }
+        if (tauntTurtle) { best = tauntTurtle; bestD = tauntD; }
       }
 
       // Nexus attack (only player units)
@@ -2414,7 +2642,9 @@ export class HordeScene extends Phaser.Scene {
       const nexD = nex ? pdist(u, nex) : Infinity;
 
       if (best) {
-        const buffMult = u.team !== 0 ? (1 + this.getBuffs(u.team as 1 | 2).attack) : 1;
+        const eqB = u.team !== 0 ? this.getUnitEquipBuffs(u) : null;
+        const bannerB = u.team !== 0 ? this.getBannerAura(u) : { attack: 0 };
+        const buffMult = u.team !== 0 ? (1 + this.getBuffs(u.team as 1 | 2).attack + (eqB?.attack || 0) + bannerB.attack) : 1;
         let atk = u.attack * buffMult;
         const uTier = ANIMALS[u.type]?.tier || 1;
 
@@ -2472,6 +2702,7 @@ export class HordeScene extends Phaser.Scene {
             if (tStationary && target !== best) dmg *= 0.4;
           }
 
+          if (target.team !== 0) { atk *= this.getUnitEquipBuffs(target).damageTaken; }
           target.hp -= dmg;
           // Floating damage number
           this.spawnDmgNumber(target.x, target.y - 10, dmg, target === best, u);
@@ -2520,16 +2751,6 @@ export class HordeScene extends Phaser.Scene {
             }
           }
 
-          // Forge: Lifesteal — heal attacker for 10% of damage dealt
-          if (u.team !== 0 && this.forgeUpgrades[u.team as 1 | 2]?.has('lifesteal') && !target.dead) {
-            u.hp = Math.min(u.maxHp, u.hp + dmg * 0.10);
-          }
-          // Forge: Thorns — reflect 15% damage back to attacker
-          if (target.team !== 0 && this.forgeUpgrades[target.team as 1 | 2]?.has('thorns') && !target.dead) {
-            u.hp -= dmg * 0.15;
-            if (u.hp <= 0) { u.dead = true; u.claimItemId = -1; }
-          }
-
           // Hit flash
           if (target.sprite && !target.dead) {
             this.tweens.killTweensOf(target.sprite);
@@ -2541,12 +2762,8 @@ export class HordeScene extends Phaser.Scene {
           }
         }
         let cd = ATTACK_CD_MS;
-        if (u.team !== 0 && this.forgeUpgrades[u.team as 1 | 2]?.has('war_drums')) cd *= 0.75;
+        if (u.team !== 0) { const eqCd = this.getUnitEquipBuffs(u); cd *= eqCd.atkSpeedMult; }
         u.attackTimer = cd;
-        // Forge: Berserker Rage — 2x attack speed below 30% HP
-        if (u.team !== 0 && u.hp / u.maxHp < 0.3 && this.forgeUpgrades[u.team as 1 | 2]?.has('berserker_rage')) {
-          u.attackTimer = Math.round(u.attackTimer / 2);
-        }
 
         // Face attack target + play attack animation (no lunge movement)
         u.attackFaceX = best.x;
@@ -2555,8 +2772,9 @@ export class HordeScene extends Phaser.Scene {
           u.sprite.play(`h_${u.type}_attack`);
         }
       } else if (nex && nexD <= COMBAT_RANGE && u.team !== 0) {
-        let nexDmg = u.attack * (1 + this.getBuffs(u.team as 1 | 2).attack);
-        if (this.forgeUpgrades[u.team as 1 | 2]?.has('siege_mastery')) nexDmg *= 2;
+        const neqB = this.getUnitEquipBuffs(u);
+        const nBan = this.getBannerAura(u);
+        let nexDmg = u.attack * (1 + this.getBuffs(u.team as 1 | 2).attack + neqB.attack + nBan.attack);
         nex.hp -= nexDmg;
         this.spawnDmgNumber(nex.x, nex.y - 20, nexDmg, true, u);
         u.attackTimer = ATTACK_CD_MS;
@@ -2748,6 +2966,7 @@ export class HordeScene extends Phaser.Scene {
     for (const u of this.units) {
       if (u.dead) {
         if (u.sprite) { u.sprite.destroy(); u.sprite = null; }
+        if (u.equipSprite) { u.equipSprite.destroy(); u.equipSprite = null; }
         continue;
       }
       if (!u.sprite) {
@@ -2876,6 +3095,16 @@ export class HordeScene extends Phaser.Scene {
         );
       } else if (u.carrySprite) {
         u.carrySprite.destroy(); u.carrySprite = null;
+      }
+
+      // Equipment sprite
+      if (u.equipment && !u.equipSprite) {
+        const def = EQUIPMENT.find(e => e.id === u.equipment);
+        if (def) u.equipSprite = this.add.text(u.x + 12, u.y - 18, def.emoji, { fontSize: '14px' }).setDepth(32);
+      }
+      if (u.equipSprite) {
+        if (!u.equipment) { u.equipSprite.destroy(); u.equipSprite = null; }
+        else u.equipSprite.setPosition(u.x + 12, u.y - 18);
       }
     }
   }
@@ -3006,6 +3235,7 @@ export class HordeScene extends Phaser.Scene {
     this.units = this.units.filter(u => {
       if (u.dead) {
         if (u.sprite) { u.sprite.destroy(); u.sprite = null; }
+        if (u.equipSprite) { u.equipSprite.destroy(); u.equipSprite = null; }
         if (u.carrySprite) { u.carrySprite.destroy(); u.carrySprite = null; }
       }
       return !u.dead;
@@ -3084,7 +3314,7 @@ export class HordeScene extends Phaser.Scene {
       if (!curStep || (curStep.action !== 'seek_resource' && curStep.action !== 'collect' && curStep.action !== 'hunt')) continue;
       // Gnome Nimble Hands: 2x pickup range — born to gather
       let range = u.type === 'gnome' ? PICKUP_RANGE * 2 : PICKUP_RANGE;
-      if (this.forgeUpgrades[u.team as 1 | 2]?.has('gatherer_gloves')) range *= 1.5;
+      range *= this.getUnitEquipBuffs(u).pickupRange;
       for (const item of this.groundItems) {
         if (item.dead) continue;
         // Filter by matching resource type
@@ -3523,6 +3753,8 @@ export class HordeScene extends Phaser.Scene {
         case 'mine': {
           // If carrying metal, advance to next step (probably deliver)
           if (u.carrying) { this.advanceWorkflow(u); break; }
+          // Requires pickaxe equipment
+          if (u.equipment !== 'pickaxe') { this.advanceWorkflow(u); break; }
           // Find nearest mine node
           const nearestMine = this.mineNodes
             .slice()
@@ -3544,6 +3776,29 @@ export class HordeScene extends Phaser.Scene {
             }
           } else {
             this.spreadOut(u);
+          }
+          break;
+        }
+
+        case 'equip': {
+          const eqType = step.equipmentType;
+          if (!eqType || u.equipment === eqType) { this.advanceWorkflow(u); break; }
+          if (!this.unlockedEquipment[team].has(eqType)) { this.advanceWorkflow(u); break; }
+          const armory = this.armories.find(a => a.team === team);
+          if (!armory) { this.advanceWorkflow(u); break; }
+          u.targetX = armory.x; u.targetY = armory.y;
+          if (pdist(u, armory) < ARMORY_RANGE) {
+            if (u.equipment === 'shield') {
+              const bonus = Math.round(u.maxHp * (0.60 / 1.60));
+              u.maxHp -= bonus; u.hp = Math.min(u.hp, u.maxHp);
+            }
+            if (u.equipSprite) { u.equipSprite.destroy(); u.equipSprite = null; }
+            u.equipment = eqType;
+            if (eqType === 'shield') {
+              const bonus = u.maxHp * 0.60;
+              u.maxHp += bonus; u.hp += bonus;
+            }
+            this.advanceWorkflow(u);
           }
           break;
         }
@@ -3641,6 +3896,7 @@ export class HordeScene extends Phaser.Scene {
         campId: null, lungeX: 0, lungeY: 0,
         hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, attackFaceX: null, mods: { ...DEFAULT_MODS },
         carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
+        equipment: null, equipSprite: null,
       });
     }
     // Elite golden prey — very strong, drops crystals
@@ -3658,6 +3914,7 @@ export class HordeScene extends Phaser.Scene {
         campId: null, lungeX: 0, lungeY: 0,
         hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, attackFaceX: null, mods: { ...DEFAULT_MODS },
         carrying: null, carrySprite: null, loop: null, isElite: true, idleTimer: 0, claimItemId: -1,
+        equipment: null, equipSprite: null,
       });
     }
   }
@@ -3683,6 +3940,7 @@ export class HordeScene extends Phaser.Scene {
           campId: null, lungeX: 0, lungeY: 0,
           hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, attackFaceX: null, mods: { ...DEFAULT_MODS },
           carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
+          equipment: null, equipSprite: null,
         });
       }
       if (this.currentEra >= 4 && elites.length < ELITE_PREY_COUNT) {
@@ -3697,6 +3955,7 @@ export class HordeScene extends Phaser.Scene {
           campId: null, lungeX: 0, lungeY: 0,
           hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, attackFaceX: null, mods: { ...DEFAULT_MODS },
           carrying: null, carrySprite: null, loop: null, isElite: true, idleTimer: 0, claimItemId: -1,
+          equipment: null, equipSprite: null,
         });
       }
     }
@@ -3822,6 +4081,8 @@ export class HordeScene extends Phaser.Scene {
       isElite: false,
       idleTimer: 0,
       claimItemId: -1,
+      equipment: null,
+      equipSprite: null,
       mods: this.groupModifiers[`${type}_${team}`]
         ? { ...this.groupModifiers[`${type}_${team}`] }
         : { ...DEFAULT_MODS },
@@ -3986,6 +4247,7 @@ export class HordeScene extends Phaser.Scene {
       if (!incomingIds.has(u.id)) {
         u.dead = true;
         if (u.sprite) { u.sprite.destroy(); u.sprite = null; }
+        if (u.equipSprite) { u.equipSprite.destroy(); u.equipSprite = null; }
       }
     }
     this.units = this.units.filter(u => !u.dead);
@@ -4018,6 +4280,7 @@ export class HordeScene extends Phaser.Scene {
           diveTimer: 0,
           lastAttackTarget: -1, attackFaceX: null, mods: { ...DEFAULT_MODS },
           carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
+          equipment: null, equipSprite: null,
         });
       }
     }
@@ -4225,6 +4488,8 @@ export class HordeScene extends Phaser.Scene {
             return { action: 'kill_only' as const, targetType: s.targetType };
           case 'mine':
             return { action: 'mine' as const };
+          case 'equip':
+            return { action: 'equip' as const, equipmentType: ((s as any).equipmentType || 'pickaxe') as EquipmentType };
           default:
             return { action: 'seek_resource' as const, resourceType: 'carrot' as ResourceType };
         }
@@ -4415,32 +4680,22 @@ export class HordeScene extends Phaser.Scene {
       return;
     }
 
-    // "upgrade [name]" / "buy [name]" / "research [name]"
-    const upgradeMatch = lo.match(/\b(?:upgrade|buy|research|forge|unlock)\s+(.+)/i);
-    if (upgradeMatch) {
-      const query = upgradeMatch[1].toLowerCase().trim();
-      // Find best matching upgrade
-      const match = FORGE_UPGRADES.find(u =>
-        u.name.toLowerCase().includes(query) || u.id.includes(query.replace(/\s+/g, '_'))
+    // "unlock [equipment]" / "buy [equipment]" / "research [equipment]"
+    const unlockMatch = lo.match(/(?:unlock|buy|research|forge|upgrade)\s+(.+)/i);
+    if (unlockMatch) {
+      const query = unlockMatch[1].toLowerCase().trim();
+      const match = EQUIPMENT.find(e =>
+        e.name.toLowerCase().includes(query) || e.id.includes(query.replace(/\s+/g, '_'))
       );
       if (match) {
-        const success = this.purchaseUpgrade(team, match.id);
+        const success = this.unlockEquipment(team, match.id);
         if (success) {
-          this.showFeedback(`${match.emoji} ${match.name} researched!`, '#FFD700');
-        } else if (this.forgeUpgrades[team].has(match.id)) {
-          this.showFeedback(`Already have ${match.name}!`, '#FF6B6B');
+          this.showFeedback(`${match.emoji} ${match.name} unlocked! Units can pick them up at the Armory.`, '#FFD700');
+        } else if (this.unlockedEquipment[team].has(match.id)) {
+          this.showFeedback(`${match.name} already unlocked!`, '#FF6B6B');
         } else {
-          // Check why it failed
-          const ownedT1 = [...this.forgeUpgrades[team]].filter(id => FORGE_UPGRADES.find(u => u.id === id)?.tier === 1).length;
-          const ownedT2 = [...this.forgeUpgrades[team]].filter(id => FORGE_UPGRADES.find(u => u.id === id)?.tier === 2).length;
-          if (match.tier === 2 && ownedT1 < 2) {
-            this.showFeedback(`Need 2 Tier 1 upgrades first!`, '#FF6B6B');
-          } else if (match.tier === 3 && ownedT2 < 2) {
-            this.showFeedback(`Need 2 Tier 2 upgrades first!`, '#FF6B6B');
-          } else {
-            const needed = Object.entries(match.cost).map(([r, a]) => `${a}${RESOURCE_EMOJI[r as ResourceType]}`).join(' ');
-            this.showFeedback(`Not enough resources! Need ${needed}`, '#FF6B6B');
-          }
+          const needed = Object.entries(match.cost).map(([r, a]) => `${a}${RESOURCE_EMOJI[r as ResourceType]}`).join(' ');
+          this.showFeedback(`Not enough resources! Need ${needed}`, '#FF6B6B');
         }
         return;
       }
@@ -4687,12 +4942,6 @@ export class HordeScene extends Phaser.Scene {
       else if (s === 'hp') hp += c.buff.value;
       else if (s === 'all') { speed += c.buff.value; attack += c.buff.value; hp += c.buff.value; }
     }
-    // Forge upgrade bonuses
-    const owned = this.forgeUpgrades[team];
-    if (owned.has('iron_weapons')) attack += 0.20;
-    if (owned.has('steel_weapons')) attack += 0.30;
-    if (owned.has('enchanted_blades')) attack += 0.50;
-    if (owned.has('swift_boots')) speed += 0.15;
     return { speed, attack, hp };
   }
 
@@ -4702,10 +4951,13 @@ export class HordeScene extends Phaser.Scene {
     this.textInput?.remove(); this.textInput = null;
     this.voiceStatusEl?.remove(); this.voiceStatusEl = null;
     this.selectionLabel = null;
+    this.sidebarEl?.remove(); this.sidebarEl = null;
     this.armyBarEl?.remove(); this.armyBarEl = null;
     this.cmdHistoryEl?.remove(); this.cmdHistoryEl = null;
     this.charPanelEl?.remove(); this.charPanelEl = null;
     document.getElementById('horde-char-toggle')?.remove();
+    this.equipPanelEl?.remove(); this.equipPanelEl = null;
+    document.getElementById('horde-equip-toggle')?.remove();
     try { this.recognition?.abort(); } catch (_e) { /* */ }
     if (this.firebase) { this.firebase.cleanup(); this.firebase = null; }
   }

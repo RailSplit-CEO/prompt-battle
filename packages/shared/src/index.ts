@@ -5,3 +5,4 @@ export * from './data/units';
 export * from './data/camps';
 export * from './data/structures';
 export * from './data/barks';
+export * from './data/maps';

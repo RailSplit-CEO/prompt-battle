@@ -1,11 +1,14 @@
 import Phaser from 'phaser';
 import { FirebaseSync } from '../network/FirebaseSync';
 import { Matchmaking } from '../network/Matchmaking';
+import { getSoloMaps, MapDef } from '@prompt-battle/shared';
 
 export class MenuScene extends Phaser.Scene {
   private matchmaking!: Matchmaking;
   private statusText!: Phaser.GameObjects.Text;
   private floatingShapes: { sprite: Phaser.GameObjects.Arc | Phaser.GameObjects.Star; vx: number; vy: number; rotSpeed: number }[] = [];
+  private mapPickerContainer: Phaser.GameObjects.Container | null = null;
+  private mapPickerZones: Phaser.GameObjects.Zone[] = [];
 
   constructor() {
     super({ key: 'MenuScene' });
@@ -89,57 +92,20 @@ export class MenuScene extends Phaser.Scene {
     line.setAlpha(0);
     this.tweens.add({ targets: line, alpha: 1, duration: 600, delay: 600 });
 
-    // BUTTONS
-    const playBtn = this.createCartoonButton(
-      width / 2, playBtnY, 300, 62, 'FIND MATCH', 0xFF6B9D, true
-    );
-    playBtn.container.setAlpha(0).setScale(0.5);
-    this.tweens.add({
-      targets: playBtn.container,
-      alpha: 1, scaleX: 1, scaleY: 1,
-      duration: 600, delay: 700, ease: 'Back.easeOut',
-    });
-    playBtn.zone.on('pointerdown', () => this.findMatch());
-
-    const localBtn = this.createCartoonButton(
-      width / 2, localBtnY, 300, 62, 'LOCAL TEST', 0x6CC4FF, false
-    );
-    localBtn.container.setAlpha(0).setScale(0.5);
-    this.tweens.add({
-      targets: localBtn.container,
-      alpha: 1, scaleX: 1, scaleY: 1,
-      duration: 600, delay: 850, ease: 'Back.easeOut',
-    });
-    localBtn.zone.on('pointerdown', () => this.startLocalTest());
-
-    // Jungle Lane Mode button
-    const jungleBtnY = localBtnY + 82;
-    const jungleBtn = this.createCartoonButton(
-      width / 2, jungleBtnY, 300, 62, 'JUNGLE LANES', 0xFFD93D, false
-    );
-    jungleBtn.container.setAlpha(0).setScale(0.5);
-    this.tweens.add({
-      targets: jungleBtn.container,
-      alpha: 1, scaleX: 1, scaleY: 1,
-      duration: 600, delay: 1000, ease: 'Back.easeOut',
-    });
-    jungleBtn.zone.on('pointerdown', () => this.startJungleLane());
-
-    // Horde Mode button (solo vs AI)
-    const hordeBtnY = jungleBtnY + 82;
+    // BUTTONS — Horde modes + Characters only
     const hordeBtn = this.createCartoonButton(
-      width / 2, hordeBtnY, 300, 62, 'HORDE (SOLO)', 0x45E6B0, false
+      width / 2, playBtnY, 300, 62, 'HORDE (SOLO)', 0x45E6B0, true
     );
     hordeBtn.container.setAlpha(0).setScale(0.5);
     this.tweens.add({
       targets: hordeBtn.container,
       alpha: 1, scaleX: 1, scaleY: 1,
-      duration: 600, delay: 1150, ease: 'Back.easeOut',
+      duration: 600, delay: 700, ease: 'Back.easeOut',
     });
     hordeBtn.zone.on('pointerdown', () => this.startHordeMode());
 
     // Horde PvP (online multiplayer)
-    const hordePvpBtnY = hordeBtnY + 82;
+    const hordePvpBtnY = playBtnY + 82;
     const hordePvpBtn = this.createCartoonButton(
       width / 2, hordePvpBtnY, 300, 62, 'HORDE PVP', 0xFF9F43, true
     );
@@ -147,12 +113,30 @@ export class MenuScene extends Phaser.Scene {
     this.tweens.add({
       targets: hordePvpBtn.container,
       alpha: 1, scaleX: 1, scaleY: 1,
-      duration: 600, delay: 1300, ease: 'Back.easeOut',
+      duration: 600, delay: 850, ease: 'Back.easeOut',
     });
     hordePvpBtn.zone.on('pointerdown', () => this.findHordeMatch());
 
+    // Characters (in-game bestiary)
+    const charBtnY = hordePvpBtnY + 82;
+    const charBtn = this.createCartoonButton(
+      width / 2, charBtnY, 300, 62, 'CHARACTERS', 0x6BB0F0, false
+    );
+    charBtn.container.setAlpha(0).setScale(0.5);
+    this.tweens.add({
+      targets: charBtn.container,
+      alpha: 1, scaleX: 1, scaleY: 1,
+      duration: 600, delay: 1000, ease: 'Back.easeOut',
+    });
+    charBtn.zone.on('pointerdown', () => {
+      this.cameras.main.fadeOut(300, 27, 16, 64);
+      this.cameras.main.once('camerafadeoutcomplete', () => {
+        this.scene.start('CharactersScene');
+      });
+    });
+
     // Keyboard shortcut hint
-    const shortcutHint = this.add.text(width / 2, hordePvpBtnY + 44, 'Press ENTER to find match', {
+    const shortcutHint = this.add.text(width / 2, charBtnY + 44, 'Press ENTER to start horde mode', {
       fontSize: '12px',
       color: '#8B6DB0',
       fontFamily: '"Nunito", sans-serif',
@@ -161,7 +145,7 @@ export class MenuScene extends Phaser.Scene {
     this.tweens.add({ targets: shortcutHint, alpha: 0.6, duration: 600, delay: 1000 });
 
     // ENTER key listener
-    this.input.keyboard!.on('keydown-ENTER', () => this.findMatch());
+    this.input.keyboard!.on('keydown-ENTER', () => this.startHordeMode());
 
     // Status text
     this.statusText = this.add.text(width / 2, statusY, '', {
@@ -432,9 +416,140 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private startHordeMode() {
+    this.showMapPicker();
+  }
+
+  private showMapPicker() {
+    // Remove existing picker if any
+    if (this.mapPickerContainer) {
+      this.mapPickerContainer.destroy();
+      this.mapPickerZones.forEach(z => z.destroy());
+    }
+    this.mapPickerZones = [];
+
+    const { width, height } = this.cameras.main;
+    const maps = getSoloMaps();
+    const container = this.add.container(width / 2, height / 2).setDepth(200);
+    this.mapPickerContainer = container;
+
+    // Dim overlay
+    const overlay = this.add.graphics();
+    overlay.fillStyle(0x000000, 0.7);
+    overlay.fillRect(-width / 2, -height / 2, width, height);
+    container.add(overlay);
+
+    // Title
+    const title = this.add.text(0, -height * 0.35, 'CHOOSE YOUR MAP', {
+      fontSize: '32px', color: '#FFD93D', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
+      letterSpacing: 3,
+    }).setOrigin(0.5);
+    container.add(title);
+
+    // Map cards
+    const cardW = 260, cardH = 130, gap = 20;
+    const totalW = maps.length * cardW + (maps.length - 1) * gap;
+    const startX = -totalW / 2 + cardW / 2;
+    const cardY = -30;
+
+    const mapColors = [0xFF6B9D, 0x6CC4FF, 0x45E6B0, 0xC98FFF];
+
+    maps.forEach((map, i) => {
+      const cx = startX + i * (cardW + gap);
+      const color = mapColors[i % mapColors.length];
+
+      // Card shadow
+      const shadow = this.add.graphics();
+      shadow.fillStyle(0x000000, 0.4);
+      shadow.fillRoundedRect(cx - cardW / 2 + 4, cardY - cardH / 2 + 4, cardW, cardH, 12);
+      container.add(shadow);
+
+      // Card background
+      const bg = this.add.graphics();
+      bg.fillStyle(color, 0.25);
+      bg.fillRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, cardH, 12);
+      bg.lineStyle(3, color, 0.8);
+      bg.strokeRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, cardH, 12);
+      container.add(bg);
+
+      // Map name
+      const nameText = this.add.text(cx, cardY - 30, map.name, {
+        fontSize: '18px', color: '#fff', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
+      }).setOrigin(0.5);
+      container.add(nameText);
+
+      // Map description
+      const descText = this.add.text(cx, cardY + 5, map.description, {
+        fontSize: '11px', color: '#cbb8ee', fontFamily: '"Nunito", sans-serif',
+        wordWrap: { width: cardW - 20 }, align: 'center',
+      }).setOrigin(0.5, 0);
+      container.add(descText);
+
+      // Camps/slots info
+      const slotsText = this.add.text(cx, cardY + cardH / 2 - 15, `${map.campSlots.length * 2 + (map.trollSlot ? 1 : 0)} camps`, {
+        fontSize: '10px', color: '#FFD93D', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
+      }).setOrigin(0.5);
+      container.add(slotsText);
+
+      // Interactive zone (positioned in world space, not container space)
+      const zone = this.add.zone(width / 2 + cx, height / 2 + cardY, cardW, cardH)
+        .setInteractive({ useHandCursor: true }).setDepth(201);
+      this.mapPickerZones.push(zone);
+
+      zone.on('pointerover', () => {
+        bg.clear();
+        bg.fillStyle(color, 0.45);
+        bg.fillRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, cardH, 12);
+        bg.lineStyle(4, color, 1);
+        bg.strokeRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, cardH, 12);
+      });
+      zone.on('pointerout', () => {
+        bg.clear();
+        bg.fillStyle(color, 0.25);
+        bg.fillRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, cardH, 12);
+        bg.lineStyle(3, color, 0.8);
+        bg.strokeRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, cardH, 12);
+      });
+      zone.on('pointerdown', () => {
+        this.selectMap(map.id);
+      });
+    });
+
+    // Back button
+    const backY = cardY + cardH / 2 + 60;
+    const backText = this.add.text(0, backY, 'BACK', {
+      fontSize: '16px', color: '#FF6B6B', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
+    }).setOrigin(0.5);
+    container.add(backText);
+
+    const backZone = this.add.zone(width / 2, height / 2 + backY, 100, 30)
+      .setInteractive({ useHandCursor: true }).setDepth(201);
+    this.mapPickerZones.push(backZone);
+    backZone.on('pointerdown', () => {
+      container.destroy();
+      this.mapPickerZones.forEach(z => z.destroy());
+      this.mapPickerZones = [];
+      this.mapPickerContainer = null;
+    });
+    backZone.on('pointerover', () => backText.setColor('#fff'));
+    backZone.on('pointerout', () => backText.setColor('#FF6B6B'));
+
+    // Animate in
+    container.setAlpha(0).setScale(0.9);
+    this.tweens.add({ targets: container, alpha: 1, scaleX: 1, scaleY: 1, duration: 300, ease: 'Back.easeOut' });
+  }
+
+  private selectMap(mapId: string) {
+    // Clean up picker
+    if (this.mapPickerContainer) {
+      this.mapPickerContainer.destroy();
+      this.mapPickerZones.forEach(z => z.destroy());
+      this.mapPickerZones = [];
+      this.mapPickerContainer = null;
+    }
+
     this.cameras.main.fadeOut(400, 27, 16, 64);
     this.cameras.main.once('camerafadeoutcomplete', () => {
-      this.scene.start('HordeScene');
+      this.scene.start('HordeScene', { mapId });
     });
   }
 
