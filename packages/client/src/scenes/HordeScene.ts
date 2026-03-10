@@ -144,7 +144,7 @@ KEY: For meat/crystals, include "hunt" step BEFORE "seek_resource". For carrots,
 
 ═══ WORKFLOW EXAMPLES ═══
 
-IMPORTANT: Any command involving "get", "make", "take", "produce", "create", "train", "spawn", or "breed" a unit type ALWAYS uses the FULL BOOTSTRAP workflow. This means: attack_camp FIRST (to capture it if needed), THEN gather resources, THEN deliver. NEVER skip the attack_camp step for production commands.
+IMPORTANT: Any command involving "get", "make", "take", "produce", "create", "train", "spawn", or "breed" a unit type ALWAYS uses the FULL BOOTSTRAP workflow. This means: attack_camp FIRST (to capture it if needed), THEN gather resources, THEN deliver. NEVER skip the attack_camp step for production commands. NOTE: at runtime, if the player already owns a camp of the target type, the attack_camp step is automatically skipped — units go straight to gathering.
 
 PRODUCTION (ALWAYS bootstrap — capture camp + gather + deliver):
 "make gnomes" → [{"action":"attack_camp","targetAnimal":"gnome","qualifier":"nearest"},{"action":"seek_resource","resourceType":"carrot"},{"action":"deliver","target":"nearest_gnome_camp"}]
@@ -757,6 +757,11 @@ export class HordeScene extends Phaser.Scene {
   private voiceStatusEl: HTMLDivElement | null = null;
   private transcriptEl: HTMLSpanElement | null = null;
 
+  // Command history tracking
+  private commandHistory: { command: string; outcome: string; color: string; time: number }[] = [];
+  private cmdHistoryEl: HTMLDivElement | null = null;
+  private pendingCommandText: string | null = null;
+
   private wasdKeys!: Record<string, Phaser.Input.Keyboard.Key>;
   private spaceKey!: Phaser.Input.Keyboard.Key;
   private recognition: any = null;
@@ -765,6 +770,12 @@ export class HordeScene extends Phaser.Scene {
   private isDragging = false;
   private dragPrevX = 0;
   private dragPrevY = 0;
+  private dragMoved = false; // did mouse move during this drag? (to distinguish click vs drag)
+
+  // Debug: click a unit to inspect it
+  private debugUnit: HUnit | null = null;
+  private debugText: Phaser.GameObjects.Text | null = null;
+  private debugHighlight: Phaser.GameObjects.Arc | null = null;
 
   // Persistent rally points: key = "type_team", value = {x, y}
   // When you command "gnomes attack skull camp", ALL future gnomes also go there
@@ -1052,6 +1063,7 @@ export class HordeScene extends Phaser.Scene {
     this.input.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
       if (ptr.rightButtonDown() || ptr.middleButtonDown() || ptr.leftButtonDown()) {
         this.isDragging = true;
+        this.dragMoved = false;
         this.dragPrevX = ptr.x;
         this.dragPrevY = ptr.y;
       }
@@ -1060,12 +1072,26 @@ export class HordeScene extends Phaser.Scene {
       if (!this.isDragging) return;
       const dx = ptr.x - this.dragPrevX;
       const dy = ptr.y - this.dragPrevY;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) this.dragMoved = true;
       cam.scrollX -= dx / cam.zoom;
       cam.scrollY -= dy / cam.zoom;
       this.dragPrevX = ptr.x;
       this.dragPrevY = ptr.y;
     });
-    this.input.on('pointerup', () => { this.isDragging = false; });
+    this.input.on('pointerup', (ptr: Phaser.Input.Pointer) => {
+      if (!this.dragMoved && ptr.leftButtonReleased()) {
+        // Click (not drag) — try to select a unit for debug
+        const wx = ptr.worldX, wy = ptr.worldY;
+        let closest: HUnit | null = null, closestD = 40; // 40px click radius
+        for (const u of this.units) {
+          if (u.dead) continue;
+          const d = Math.sqrt((u.x - wx) ** 2 + (u.y - wy) ** 2);
+          if (d < closestD) { closestD = d; closest = u; }
+        }
+        this.setDebugUnit(closest);
+      }
+      this.isDragging = false;
+    });
   }
 
   private updateCamera(dt: number) {
@@ -1331,6 +1357,22 @@ export class HordeScene extends Phaser.Scene {
     this.armyBarEl = armyBar;
     this.updateSelectionLabel();
 
+    // Command History Panel (bottom-left)
+    const cmdPanel = document.createElement('div');
+    cmdPanel.id = 'horde-cmd-history';
+    cmdPanel.style.cssText = `
+      position:absolute;bottom:62px;left:12px;width:320px;max-height:180px;
+      overflow-y:auto;z-index:101;pointer-events:all;
+      font-family:'Nunito',sans-serif;
+      background:rgba(13,26,13,0.85);border:2px solid #3D5040;border-radius:12px;
+      padding:8px 10px;
+      scrollbar-width:thin;scrollbar-color:rgba(69,230,176,0.35) rgba(13,26,13,0.4);
+    `;
+    cmdPanel.innerHTML = `<div style="font-size:10px;color:#45E6B0;font-weight:800;letter-spacing:1px;margin-bottom:4px;">COMMAND LOG</div>
+      <div id="cmd-history-entries" style="font-size:11px;color:#8BAA8B;"></div>`;
+    document.getElementById('game-container')!.appendChild(cmdPanel);
+    this.cmdHistoryEl = cmdPanel;
+
     // Help hint (bottom right)
     this.hudTexts['help'] = this.add.text(cam.width - 16, cam.height - 100, [
       'Drag: Pan  |  Scroll: Zoom  |  WASD: Pan',
@@ -1467,6 +1509,7 @@ export class HordeScene extends Phaser.Scene {
     this.cleanupDead();
     this.updateGroundItems(delta);
     this.updateUnitSprites();
+    this.updateDebugOverlay();
     this.updateCampVisuals();
     this.drawNexusBars();
     this.updateHUD();
@@ -1516,68 +1559,60 @@ export class HordeScene extends Phaser.Scene {
       const d = Math.sqrt(dx * dx + dy * dy);
       if (d < 5) continue;
 
-      // Avoidance: any non-combat workflow step avoids enemies & hostile camps
-      if (u.team !== 0 && u.loop) {
-        const curStep = u.loop.steps[u.loop.currentStep];
-        // Non-combat = anything except attack_camp, attack_enemies, hunt, kill_only, defend
-        const isCombatStep = curStep && (
-          curStep.action === 'attack_camp'
-          || curStep.action === 'attack_enemies'
-          || curStep.action === 'hunt'
-          || curStep.action === 'kill_only'
-          || curStep.action === 'defend'
-        );
-        const shouldAvoid = curStep && !isCombatStep;
+      // Avoidance: units carrying food on non-combat steps steer around threats
+      // Uses a tight range so units can navigate between two enemies
+      if (u.team !== 0 && u.carrying && this.isNonCombatStep(u)) {
+        const AVOID_RANGE = 100; // tight range so units can fit between threats
+        let avoidX = 0, avoidY = 0;
+        const team = u.team as 1 | 2;
 
-        if (shouldAvoid) {
-          const AVOID_RANGE = 150;
-          let avoidX = 0, avoidY = 0;
-          const team = u.team as 1 | 2;
-
-          // Avoid enemy units and neutral camp defenders
-          for (const o of this.units) {
-            if (o.dead || o.team === u.team) continue;
-            const ex = u.x - o.x, ey = u.y - o.y;
-            const ed = Math.sqrt(ex * ex + ey * ey);
-            if (ed < AVOID_RANGE && ed > 1) {
-              const strength = (AVOID_RANGE - ed) / AVOID_RANGE;
-              avoidX += (ex / ed) * strength;
-              avoidY += (ey / ed) * strength;
-            }
+        // Avoid enemy units and neutral camp defenders
+        for (const o of this.units) {
+          if (o.dead || o.team === u.team) continue;
+          const ex = u.x - o.x, ey = u.y - o.y;
+          const ed = Math.sqrt(ex * ex + ey * ey);
+          if (ed < AVOID_RANGE && ed > 1) {
+            // Very strong close up, drops off sharply — lets units pass between two threats
+            const strength = (AVOID_RANGE / ed) - 1; // inverse: 1/ed scaled, approaches 0 at range
+            avoidX += (ex / ed) * strength;
+            avoidY += (ey / ed) * strength;
           }
+        }
 
-          // Avoid hostile camps (not owned by us, with defenders alive)
-          const targetAnimal = this.getBootstrapAnimal(u.loop);
-          for (const c of this.camps) {
-            // Skip our own camps
-            if (c.owner === team) continue;
-            // For bootstrap, skip the target camp we're meant to capture
-            if (targetAnimal && c.animalType === targetAnimal) continue;
-            // Only avoid camps that are actually dangerous (have defenders)
-            const hasDefenders = this.units.some(g => g.campId === c.id && g.team === 0 && !g.dead);
-            if (!hasDefenders && c.owner === 0) continue;
-            const cx2 = u.x - c.x, cy2 = u.y - c.y;
-            const cd = Math.sqrt(cx2 * cx2 + cy2 * cy2);
-            if (cd < AVOID_RANGE && cd > 1) {
-              const strength = (AVOID_RANGE - cd) / AVOID_RANGE;
-              avoidX += (cx2 / cd) * strength;
-              avoidY += (cy2 / cd) * strength;
-            }
+        // Avoid hostile camps (not owned by us, with defenders alive)
+        const targetAnimal = u.loop ? this.getBootstrapAnimal(u.loop) : undefined;
+        for (const c of this.camps) {
+          if (c.owner === team) continue;
+          if (targetAnimal && c.animalType === targetAnimal) continue;
+          const hasDefenders = this.units.some(g => g.campId === c.id && g.team === 0 && !g.dead);
+          if (!hasDefenders && c.owner === 0) continue;
+          const cx2 = u.x - c.x, cy2 = u.y - c.y;
+          const cd = Math.sqrt(cx2 * cx2 + cy2 * cy2);
+          if (cd < AVOID_RANGE * 1.5 && cd > 1) {
+            const strength = (AVOID_RANGE * 1.5 / cd) - 1;
+            avoidX += (cx2 / cd) * strength;
+            avoidY += (cy2 / cd) * strength;
           }
+        }
 
-          // Blend avoidance into movement direction
-          if (avoidX !== 0 || avoidY !== 0) {
-            const normD = d > 0 ? d : 1;
-            dx = dx / normD + avoidX * 0.7;
-            dy = dy / normD + avoidY * 0.7;
-            const blendD = Math.sqrt(dx * dx + dy * dy);
-            if (blendD > 0) { dx /= blendD; dy /= blendD; }
-            const buffMult = 1 + this.getBuffs(u.team as 1 | 2).speed;
+        if (avoidX !== 0 || avoidY !== 0) {
+          // Blend: strong avoidance perpendicular to movement allows squeezing between threats
+          const normD = d > 0 ? d : 1;
+          const moveNX = dx / normD, moveNY = dy / normD; // normalized movement dir
+          // Project avoidance onto perpendicular-to-movement (lateral dodge)
+          const dot = avoidX * moveNX + avoidY * moveNY;
+          const perpX = avoidX - dot * moveNX; // remove forward/backward component
+          const perpY = avoidY - dot * moveNY;
+          // Final direction: forward movement + strong lateral dodge
+          const finalX = moveNX + perpX * 2.0 + (dot < 0 ? avoidX * 0.5 : 0);
+          const finalY = moveNY + perpY * 2.0 + (dot < 0 ? avoidY * 0.5 : 0);
+          const fLen = Math.sqrt(finalX * finalX + finalY * finalY);
+          if (fLen > 0.01) {
+            const buffMult = 1 + this.getBuffs(team).speed;
             const spd = u.speed * buffMult;
-            const finalSpeed = spd * dt;
-            const moveStep = Math.min(finalSpeed, d);
-            u.x += dx * moveStep;
-            u.y += dy * moveStep;
+            const moveStep = Math.min(spd * dt, d);
+            u.x += (finalX / fLen) * moveStep;
+            u.y += (finalY / fLen) * moveStep;
             u.x = Math.max(0, Math.min(WORLD_W, u.x));
             u.y = Math.max(0, Math.min(WORLD_H, u.y));
             continue;
@@ -1628,10 +1663,10 @@ export class HordeScene extends Phaser.Scene {
     for (const u of this.units) {
       if (u.dead) continue;
 
-      // Units on non-combat workflow steps don't fight — they flee via movement avoidance
-      if (u.team !== 0 && this.isNonCombatStep(u)) continue;
+      // Units carrying food on non-combat steps don't fight — they flee
+      if (u.carrying && u.team !== 0 && this.isNonCombatStep(u)) continue;
 
-      // Drop food and fight if enemy is nearby
+      // Non-carrying units drop food and fight if enemy is nearby
       if (u.carrying && u.team !== 0) {
         const combatRange = u.type === 'gnoll' ? 120 : COMBAT_RANGE;
         const enemyNear = this.units.some(o => !o.dead && o.team !== u.team && o.team !== 0 && pdist(u, o) <= combatRange + 30);
@@ -2109,6 +2144,52 @@ export class HordeScene extends Phaser.Scene {
     }
   }
 
+  private setDebugUnit(u: HUnit | null) {
+    // Clean up old debug visuals
+    if (this.debugText) { this.debugText.destroy(); this.debugText = null; }
+    if (this.debugHighlight) { this.debugHighlight.destroy(); this.debugHighlight = null; }
+    this.debugUnit = u;
+    if (!u) return;
+    this.debugText = this.add.text(0, 0, '', {
+      fontSize: '11px', color: '#FFFFFF', backgroundColor: '#000000AA',
+      padding: { x: 6, y: 4 },
+    }).setDepth(100).setOrigin(0, 1);
+    this.debugHighlight = this.add.circle(0, 0, 20, 0xFFFF00, 0).setStrokeStyle(2, 0xFFFF00, 0.8).setDepth(99);
+  }
+
+  private updateDebugOverlay() {
+    const u = this.debugUnit;
+    if (!u || u.dead) { this.setDebugUnit(null); return; }
+    if (!this.debugText || !this.debugHighlight) return;
+
+    // Position highlight and text near the unit
+    this.debugHighlight.setPosition(u.x, u.y);
+    this.debugText.setPosition(u.x + 25, u.y - 10);
+
+    const team = u.team === 0 ? 'neutral' : u.team === 1 ? 'P1' : 'P2';
+    const def = ANIMALS[u.type];
+    const stepInfo = u.loop
+      ? `Step ${u.loop.currentStep}/${u.loop.steps.length}: ${JSON.stringify(u.loop.steps[u.loop.currentStep])}`
+      : 'no workflow';
+    const loopLabel = u.loop?.label || '-';
+    const carry = u.carrying || 'none';
+    const claim = u.claimItemId >= 0 ? `item#${u.claimItemId}` : 'none';
+    const dist = Math.round(Math.sqrt((u.targetX - u.x) ** 2 + (u.targetY - u.y) ** 2));
+    const nonCombat = this.isNonCombatStep(u) ? 'YES' : 'no';
+
+    this.debugText.setText([
+      `${def?.emoji || '?'} ${u.type} #${u.id} [${team}]`,
+      `HP: ${Math.round(u.hp)}/${u.maxHp}  ATK: ${u.attack}  SPD: ${u.speed}`,
+      `Pos: (${Math.round(u.x)}, ${Math.round(u.y)})`,
+      `Target: (${Math.round(u.targetX)}, ${Math.round(u.targetY)}) dist=${dist}`,
+      `Carrying: ${carry}  Claim: ${claim}`,
+      `Workflow: ${loopLabel}`,
+      `${stepInfo}`,
+      `Idle: ${Math.round(u.idleTimer)}ms  NonCombat: ${nonCombat}`,
+      `Anim: ${u.animState}  Camp: ${u.campId || '-'}`,
+    ].join('\n'));
+  }
+
   private updateCampVisuals() {
     for (const c of this.camps) {
       const color = c.owner === 0 ? 0xFFD93D : TEAM_COLORS[c.owner as 1 | 2];
@@ -2190,17 +2271,14 @@ export class HordeScene extends Phaser.Scene {
     this.carrotSpawnTimer += delta;
     if (this.carrotSpawnTimer < CARROT_SPAWN_MS) return;
     this.carrotSpawnTimer -= CARROT_SPAWN_MS;
-    // Spawn carrots symmetrically — equal on both sides
+    // Spawn carrots symmetrically — 1 per side = 2 total per tick
     const MARGIN = 100;
     const cx = WORLD_W / 2, cy = WORLD_H / 2;
-    for (let i = 0; i < 4; i++) {
-      // Random point on P1's half (bottom-left)
-      const x = MARGIN + Math.random() * (cx - MARGIN);
-      const y = cy + Math.random() * (cy - MARGIN);
-      this.spawnGroundItem('carrot', x, y);
-      // Mirror to P2's half (top-right)
-      this.spawnGroundItem('carrot', WORLD_W - x, WORLD_H - y);
-    }
+    const x = MARGIN + Math.random() * (cx - MARGIN);
+    const y = cy + Math.random() * (cy - MARGIN);
+    this.spawnGroundItem('carrot', x, y);
+    // Mirror to P2's half (top-right)
+    this.spawnGroundItem('carrot', WORLD_W - x, WORLD_H - y);
   }
 
   private updateGroundItems(delta: number) {
@@ -2353,31 +2431,48 @@ export class HordeScene extends Phaser.Scene {
             this.advanceWorkflow(u);
             break;
           }
-          // Check if current claim is still valid
+          // Invalidate claim if item is gone
           if (u.claimItemId >= 0) {
             const claimed = this.groundItems.find(i => i.id === u.claimItemId);
-            if (claimed && !claimed.dead) {
-              // Still valid — keep pathing to it
-              u.targetX = claimed.x; u.targetY = claimed.y;
-              break;
-            }
-            u.claimItemId = -1; // item gone, find new one
+            if (!claimed || claimed.dead) u.claimItemId = -1;
           }
-          // Find nearest unclaimed ground item of the right type
-          let best: HGroundItem | null = null, bestD = Infinity;
+          // Scan for nearest resource — prefer unclaimed, but allow shared claims
+          const currentClaimDist = u.claimItemId >= 0
+            ? pdist(u, this.groundItems.find(i => i.id === u.claimItemId)!)
+            : Infinity;
+          let bestUnclaimed: HGroundItem | null = null, bestUnclaimedD = Infinity;
+          let bestAny: HGroundItem | null = null, bestAnyD = Infinity;
           for (const item of this.groundItems) {
             if (item.dead || item.type !== step.resourceType) continue;
-            if (claimedItems.has(item.id)) continue;
-            const d = pdist(u, item);
-            if (d < bestD) { bestD = d; best = item; }
+            const itemD = pdist(u, item);
+            // Track best of ANY matching resource (claimed or not)
+            if (itemD < bestAnyD) { bestAnyD = itemD; bestAny = item; }
+            // Track best unclaimed
+            if (!claimedItems.has(item.id) || item.id === u.claimItemId) {
+              if (itemD < bestUnclaimedD) { bestUnclaimedD = itemD; bestUnclaimed = item; }
+            }
           }
-          if (best) {
+          // Prefer unclaimed, fall back to any available resource (shared claim)
+          const best = bestUnclaimed || bestAny;
+          const bestD = bestUnclaimed ? bestUnclaimedD : bestAnyD;
+          if (best && (u.claimItemId < 0 || bestD < currentClaimDist * 0.7)) {
+            // Switch to closer resource (must be 30%+ closer to avoid thrashing)
+            if (u.claimItemId >= 0) claimedItems.delete(u.claimItemId);
             u.claimItemId = best.id;
             claimedItems.add(best.id);
             u.targetX = best.x; u.targetY = best.y;
+          } else if (u.claimItemId >= 0) {
+            // Keep pathing to current claim
+            const claimed = this.groundItems.find(i => i.id === u.claimItemId)!;
+            u.targetX = claimed.x; u.targetY = claimed.y;
           } else {
-            // Nothing available — wait near base
-            if (pdist(u, base) > 200) { u.targetX = base.x; u.targetY = base.y; }
+            // Truly nothing on the map — spread out to forage
+            if (pdist(u, { x: u.targetX, y: u.targetY }) < 30) {
+              const angle = Math.random() * Math.PI * 2;
+              const range = 200 + Math.random() * 400;
+              u.targetX = Math.max(50, Math.min(WORLD_W - 50, u.x + Math.cos(angle) * range));
+              u.targetY = Math.max(50, Math.min(WORLD_H - 50, u.y + Math.sin(angle) * range));
+            }
           }
           break;
         }
@@ -2430,6 +2525,11 @@ export class HordeScene extends Phaser.Scene {
         }
 
         case 'attack_camp': {
+          // If we already own a camp of this type, skip capture step entirely
+          if (step.targetAnimal) {
+            const ownedOfType = this.camps.some(c => c.animalType === step.targetAnimal && c.owner === team);
+            if (ownedOfType) { this.advanceWorkflow(u); break; }
+          }
           // Find target camp
           let targetCamp: HCamp | undefined;
           if (step.campIndex !== undefined && step.campIndex >= 0) {
@@ -2871,6 +2971,7 @@ export class HordeScene extends Phaser.Scene {
 
   /** Called when the local player issues a voice/text command */
   private issueCommand(text: string) {
+    this.pendingCommandText = text;
     if (this.isOnline && !this.isHost) {
       // Guest: send command to host via Firebase
       this.showFeedback('Sending command...', '#FFD93D');
@@ -3004,6 +3105,7 @@ export class HordeScene extends Phaser.Scene {
   // ─── COMMAND PARSING ─────────────────────────────────────────
 
   private async handleCommand(text: string, team: 1 | 2) {
+    this.pendingCommandText = text;
     this.showFeedback('Processing command...', '#FFD93D');
 
     // Build rich context for Gemini — full game state
@@ -3431,6 +3533,43 @@ export class HordeScene extends Phaser.Scene {
     if (!t) return;
     t.setText(msg).setColor(color).setAlpha(1);
     this.tweens.add({ targets: t, alpha: 0, duration: 3000, delay: 1000 });
+
+    // Auto-log command outcome (skip intermediate "processing/sending" messages)
+    if (this.pendingCommandText && msg !== 'Processing command...' && msg !== 'Sending command...') {
+      this.logCommandHistory(this.pendingCommandText, msg, color);
+      this.pendingCommandText = null;
+    }
+  }
+
+  private logCommandHistory(command: string, outcome: string, color: string) {
+    const secs = Math.floor(this.gameTime / 1000);
+    const timeStr = `${Math.floor(secs / 60)}:${(secs % 60).toString().padStart(2, '0')}`;
+    this.commandHistory.push({ command, outcome, color, time: secs });
+    // Keep last 20 entries
+    if (this.commandHistory.length > 20) this.commandHistory.shift();
+
+    const el = document.getElementById('cmd-history-entries');
+    if (!el) return;
+
+    let html = '';
+    for (let i = this.commandHistory.length - 1; i >= 0; i--) {
+      const entry = this.commandHistory[i];
+      const t = `${Math.floor(entry.time / 60)}:${(entry.time % 60).toString().padStart(2, '0')}`;
+      const isLatest = i === this.commandHistory.length - 1;
+      const opacity = isLatest ? '1' : '0.6';
+      const bg = isLatest ? 'rgba(69,230,176,0.1)' : 'transparent';
+      html += `<div style="opacity:${opacity};background:${bg};padding:4px 6px;border-radius:6px;margin-bottom:3px;border-left:3px solid ${entry.color};">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span style="color:#FFD93D;font-weight:700;font-size:11px;">&gt; ${entry.command}</span>
+          <span style="color:#4A6B4A;font-size:9px;">${t}</span>
+        </div>
+        <div style="color:${entry.color};font-size:10px;font-weight:600;margin-top:1px;">${entry.outcome}</div>
+      </div>`;
+    }
+    el.innerHTML = html;
+
+    // Auto-scroll to top (latest entry is at top)
+    if (this.cmdHistoryEl) this.cmdHistoryEl.scrollTop = 0;
   }
 
   private updateSelectionLabel() {
@@ -3496,6 +3635,7 @@ export class HordeScene extends Phaser.Scene {
     this.voiceStatusEl?.remove(); this.voiceStatusEl = null;
     this.selectionLabel = null;
     this.armyBarEl?.remove(); this.armyBarEl = null;
+    this.cmdHistoryEl?.remove(); this.cmdHistoryEl = null;
     try { this.recognition?.abort(); } catch (_e) { /* */ }
     if (this.firebase) { this.firebase.cleanup(); this.firebase = null; }
   }
