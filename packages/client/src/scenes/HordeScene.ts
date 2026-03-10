@@ -1800,26 +1800,12 @@ export class HordeScene extends Phaser.Scene {
     this.fogRT = this.add.renderTexture(0, 0, WORLD_W, WORLD_H)
       .setOrigin(0)
       .setDepth(50)
-      .setAlpha(0.82);
-    // Tint the fog overlay dark green instead of pure black
-    this.fogRT.setTint(0x1a2e10);
+      .setAlpha(0.65);
 
-    // Generate a sharp radial-gradient circle brush (mostly full, thin fade at edge)
-    const d = FOG_VISION_RANGE * 2;
-    const canv = this.textures.createCanvas('fog_brush', d, d);
-    if (canv) {
-      const ctx = canv.context;
-      const grad = ctx.createRadialGradient(FOG_VISION_RANGE, FOG_VISION_RANGE, 0,
-                                             FOG_VISION_RANGE, FOG_VISION_RANGE, FOG_VISION_RANGE);
-      grad.addColorStop(0, 'rgba(255,255,255,1)');
-      grad.addColorStop(0.85, 'rgba(255,255,255,1)');
-      grad.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, d, d);
-      canv.refresh();
-    }
-    this.fogBrush = this.make.image({ key: 'fog_brush', x: 0, y: 0 }, false);
-    this.fogBrush.setOrigin(0.5, 0.5);
+    // Use Tiny Swords shadow sprite for softer fog edges
+    const shadowScale = (FOG_VISION_RANGE * 2) / 192;
+    this.fogBrush = this.make.image({ key: 'ts_shadow', x: 0, y: 0 }, false);
+    (this.fogBrush as Phaser.GameObjects.Image).setScale(shadowScale);
   }
 
   private updateFog() {
@@ -1833,12 +1819,12 @@ export class HordeScene extends Phaser.Scene {
     // Cache vision sources for this frame
     this.buildVisionCache();
 
-    // Fill with dark green fog
-    this.fogRT.fill(0x0d1a08);
+    // Fill with black (fog)
+    this.fogRT.fill(0x000000);
 
     // Erase fog around all vision sources (base, allies, enemy nexus)
     for (const s of this.visionSources) {
-      this.fogRT.erase(this.fogBrush, s.x, s.y);
+      this.fogRT.erase(this.fogBrush, s.x - FOG_VISION_RANGE, s.y - FOG_VISION_RANGE);
     }
   }
 
@@ -2427,13 +2413,25 @@ export class HordeScene extends Phaser.Scene {
   private setupCamera() {
     const cam = this.cameras.main;
     cam.setBounds(0, 0, WORLD_W, WORLD_H);
+
+    // Fit game viewport between left sidebar (220px CSS) and right panel (250px CSS)
+    // The canvas is 1920x1080 internal, scaled to fit via CSS. Use the canvas's actual
+    // rendered size to convert CSS px → game px.
+    const canvas = this.game.canvas;
+    const canvasCssW = canvas.getBoundingClientRect().width || window.innerWidth;
+    const ratio = 1920 / canvasCssW;
+    const leftGp = Math.round(220 * ratio);   // left sidebar in game px
+    const rightGp = Math.round(250 * ratio);   // right panel in game px
+    cam.setViewport(leftGp, 0, 1920 - leftGp - rightGp, 1080);
+
     const myBase = this.myTeam === 1 ? P1_BASE : P2_BASE;
     const camOffX = this.myTeam === 1 ? 400 : -400;
     const camOffY = this.myTeam === 1 ? -400 : 400;
     cam.centerOn(myBase.x + camOffX, myBase.y + camOffY);
     cam.setZoom(0.7);
+    const vpW = 1920 - leftGp - rightGp;
     this.input.on('wheel', (_ptr: any, _over: any, _dx: number, deltaY: number) => {
-      const minZoom = Math.max(cam.width / WORLD_W, cam.height / WORLD_H, 0.3);
+      const minZoom = Math.max(vpW / WORLD_W, 1080 / WORLD_H, 0.3);
       cam.zoom = Phaser.Math.Clamp(cam.zoom + (deltaY > 0 ? -0.05 : 0.05), minZoom, 2.0);
     });
 
@@ -4396,7 +4394,7 @@ export class HordeScene extends Phaser.Scene {
             );
             // Camp capture explosion
             if (this.textures.exists('ts_explosion02')) {
-              const boom = this.add.sprite(camp.x, camp.y, 'ts_explosion02').setScale(1.0).setDepth(55).setOrigin(0.5);
+              const boom = this.add.sprite(camp.x, camp.y, 'ts_explosion02').setScale(1.0).setDepth(15).setOrigin(0.5);
               boom.play('ts_explosion02_anim');
               boom.once('animationcomplete', () => boom.destroy());
             }
@@ -4956,11 +4954,11 @@ export class HordeScene extends Phaser.Scene {
       if (item.age >= ITEM_DESPAWN_MS) { item.dead = true; continue; }
       if (!item.sprite) {
         if (item.type === 'meat') {
-          item.sprite = this.add.image(item.x, item.y, 'ts_meat').setScale(0.45).setDepth(55).setOrigin(0.5);
+          item.sprite = this.add.image(item.x, item.y, 'ts_meat').setScale(0.45).setDepth(15).setOrigin(0.5);
         } else if (item.type === 'crystal') {
-          item.sprite = this.add.image(item.x, item.y, 'ts_gold').setScale(0.3).setDepth(55).setOrigin(0.5).setTint(0xCC88FF);
+          item.sprite = this.add.image(item.x, item.y, 'ts_gold').setScale(0.3).setDepth(15).setOrigin(0.5).setTint(0xCC88FF);
         } else if (item.type === 'carrot') {
-          item.sprite = this.add.image(item.x, item.y, 'ts_gold').setScale(0.25).setDepth(55).setOrigin(0.5).setTint(0xFF9944);
+          item.sprite = this.add.image(item.x, item.y, 'ts_gold').setScale(0.25).setDepth(15).setOrigin(0.5).setTint(0xFF9944);
         } else {
           item.sprite = this.add.text(item.x, item.y, RESOURCE_EMOJI[item.type], { fontSize: '16px' }).setOrigin(0.5).setDepth(15) as any;
         }
