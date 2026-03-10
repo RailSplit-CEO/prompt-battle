@@ -1887,7 +1887,7 @@ export class HordeScene extends Phaser.Scene {
 
       // Scouts and collectors always skip combat (pacifist); carrying units on non-combat steps also skip
       if (u.team !== 0 && this.isNonCombatStep(u)) {
-        const step = u.loop?.steps[u.loop!.currentStep];
+        const step = u.loop ? u.loop.steps[u.loop.currentStep] : undefined;
         const pacifist = step && (step.action === 'scout' || step.action === 'collect');
         if (pacifist || u.carrying) continue;
       }
