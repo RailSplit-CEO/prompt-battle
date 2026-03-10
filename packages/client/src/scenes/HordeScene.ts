@@ -1,13 +1,14 @@
 import Phaser from 'phaser';
 import { FirebaseSync } from '../network/FirebaseSync';
 import { HORDE_SPRITE_CONFIGS } from '../sprites/SpriteConfig';
+import { MapDef, MapCampSlot, MapZoneDef, assignAnimalsToSlots, getMapById, ALL_MAPS } from '@prompt-battle/shared';
 
 // ═══════════════════════════════════════════════════════════════
 // GEMINI INTEGRATION
 // ═══════════════════════════════════════════════════════════════
 
 const GEMINI_API_KEY = (import.meta as any).env?.VITE_GEMINI_API_KEY || '';
-const GEMINI_MODEL = 'gemini-2.0-flash';
+const GEMINI_MODEL = 'gemini-2.5-flash';
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=`;
 const GEMINI_MAX_RETRIES = 3;
 
@@ -425,6 +426,11 @@ interface HCamp {
   area: Phaser.GameObjects.Arc | null;
   captureBar: Phaser.GameObjects.Graphics | null;
   storedFood: number; // food stored toward next spawn
+  // Fog of war: remember last-seen state
+  scouted: boolean;          // has this camp ever been revealed?
+  lastSeenOwner: 0 | 1 | 2;  // owner when last in vision
+  lastSeenLabel: string;      // label text when last in vision
+  lastSeenColor: string;      // label color when last in vision
 }
 
 interface HNexus {
@@ -447,6 +453,7 @@ interface HordeSceneData {
   gameId?: string;
   playerId?: string;
   amPlayer1?: boolean;
+  mapId?: string;
 }
 
 interface HordeSyncUnit {
@@ -689,6 +696,66 @@ function makeCamps(): CampDef[] {
 function cap(s: string) { return s[0].toUpperCase() + s.slice(1); }
 
 const CAMP_DEFS = makeCamps();
+
+// ─── MAP-DRIVEN CAMP GENERATION ─────────────────────────────
+// Creates CampDef[] from a MapDef by assigning random animals to fixed slots.
+
+function makeCampsFromMap(mapDef: MapDef, seed: number): CampDef[] {
+  const rng = seededRandom(seed);
+  for (const k of Object.keys(usedNames)) delete usedNames[k];
+
+  const GUARD_COUNT: Record<string, number> = {
+    gnome: 1, turtle: 1, skull: 1, spider: 1, gnoll: 1,
+    panda: 1, lizard: 1, minotaur: 1, shaman: 1, troll: 1,
+  };
+  const SPAWN_MS: Record<string, number> = {
+    gnome: 4000, turtle: 4500, skull: 6000, spider: 6000, gnoll: 5500,
+    panda: 7500, lizard: 7500, minotaur: 10000, shaman: 10000, troll: 15000,
+  };
+
+  // Assign random animals to slots
+  const animalAssignments = assignAnimalsToSlots(mapDef.campSlots, rng);
+
+  const camps: CampDef[] = [];
+  let idx = 0;
+
+  for (let i = 0; i < mapDef.campSlots.length; i++) {
+    const slot = mapDef.campSlots[i];
+    const animalType = animalAssignments[i];
+    const def = ANIMALS[animalType];
+    if (!def) continue;
+
+    const name1 = pickCampName(animalType, rng);
+    const name2 = pickCampName(animalType, rng);
+    const buff1 = { stat: 'attack', value: 0.05 + rng() * 0.05 };
+    const buff2 = { stat: 'hp', value: 0.05 + rng() * 0.05 };
+
+    camps.push({
+      id: `camp_${idx++}`, name: `${def.emoji} ${name1}`,
+      type: animalType, x: slot.bluePos.x, y: slot.bluePos.y,
+      guards: GUARD_COUNT[animalType], spawnMs: SPAWN_MS[animalType], buff: buff1,
+    });
+    camps.push({
+      id: `camp_${idx++}`, name: `${def.emoji} ${name2}`,
+      type: animalType, x: slot.redPos.x, y: slot.redPos.y,
+      guards: GUARD_COUNT[animalType], spawnMs: SPAWN_MS[animalType], buff: buff2,
+    });
+  }
+
+  // Troll camp (center boss) if defined
+  if (mapDef.trollSlot) {
+    const trollDef = ANIMALS['troll'];
+    const trollName = pickCampName('troll', rng);
+    camps.push({
+      id: `camp_${idx++}`, name: `${trollDef.emoji} ${trollName}`,
+      type: 'troll', x: mapDef.trollSlot.x, y: mapDef.trollSlot.y,
+      guards: GUARD_COUNT['troll'], spawnMs: SPAWN_MS['troll'],
+      buff: { stat: 'all', value: 0.10 },
+    });
+  }
+
+  return camps;
+}
 const NEXUS_MAX_HP = 50000;
 const MAX_UNITS = 80;
 const BASE_SPAWN_MS = 5000;
@@ -697,6 +764,7 @@ const COMBAT_RANGE = 80;
 const CAMP_RANGE = 120;
 const AI_TICK_MS = 4000;
 const TEAM_COLORS = { 1: 0x4499FF, 2: 0xFF5555 };
+const FOG_VISION_RANGE = 400; // radius of vision around each ally unit
 const GOLDEN_ANGLE = 2.39996;
 
 // ─── RESOURCE ECONOMY ──────────────────────────────────────
@@ -761,6 +829,12 @@ export class HordeScene extends Phaser.Scene {
   private commandHistory: { command: string; outcome: string; color: string; time: number }[] = [];
   private cmdHistoryEl: HTMLDivElement | null = null;
   private pendingCommandText: string | null = null;
+  // Last voice command per army type (shown on army bar cards)
+  private lastArmyCommand: Record<string, string> = {};
+
+  // Fog of war
+  private fogRT: Phaser.GameObjects.RenderTexture | null = null;
+  private fogBrush: Phaser.GameObjects.Graphics | null = null;
 
   private wasdKeys!: Record<string, Phaser.Input.Keyboard.Key>;
   private spaceKey!: Phaser.Input.Keyboard.Key;
@@ -798,6 +872,10 @@ export class HordeScene extends Phaser.Scene {
   private selectionLabel: Phaser.GameObjects.Text | null = null;
   private armyBarEl: HTMLDivElement | null = null;
 
+  // ─── MAP CONFIG ──────────────────────────────────────────────
+  private mapDef: MapDef | null = null;
+  private activeCampDefs: CampDef[] = CAMP_DEFS;
+
   // ─── MULTIPLAYER ──────────────────────────────────────────────
   private isOnline = false;
   private isHost = true; // host = runs simulation; guest = renders sync state
@@ -819,6 +897,17 @@ export class HordeScene extends Phaser.Scene {
     // Player 1 (host) = team 1 (bottom-left), Player 2 (guest) = team 2 (top-right)
     this.isHost = data?.amPlayer1 !== false; // default host if solo
     this.myTeam = this.isHost ? 1 : 2;
+
+    // Map selection: solo can pick any map, multiplayer uses default
+    const mapId = this.isOnline ? 'default' : (data?.mapId || 'default');
+    if (mapId !== 'default') {
+      this.mapDef = getMapById(mapId);
+      const seed = Date.now();
+      this.activeCampDefs = makeCampsFromMap(this.mapDef, seed);
+    } else {
+      this.mapDef = null;
+      this.activeCampDefs = CAMP_DEFS;
+    }
   }
 
   create() {
@@ -850,6 +939,7 @@ export class HordeScene extends Phaser.Scene {
     this.drawBackground();
     this.setupCamps();
     this.setupNexuses();
+    this.setupFog();
     this.setupCamera();
     this.setupInput();
     this.setupHUD();
@@ -926,10 +1016,126 @@ export class HordeScene extends Phaser.Scene {
     g.fillCircle(P2_BASE.x, P2_BASE.y, 500);
   }
 
+  // ─── FOG OF WAR ─────────────────────────────────────────────
+
+  private setupFog() {
+    // RenderTexture covering the whole world — filled dark, erased around allies
+    this.fogRT = this.add.renderTexture(0, 0, WORLD_W, WORLD_H)
+      .setOrigin(0)
+      .setDepth(50) // above world objects (units=20, camps=5-6, nexus=8-9, items=15) but below HUD (100)
+      .setAlpha(1.0);
+
+    // Reusable brush for punching vision holes — sharp binary cutoff
+    this.fogBrush = this.make.graphics({ x: 0, y: 0 }, false);
+    this.fogBrush.fillStyle(0xffffff, 1.0);
+    this.fogBrush.fillCircle(FOG_VISION_RANGE, FOG_VISION_RANGE, FOG_VISION_RANGE);
+  }
+
+  private updateFog() {
+    if (!this.fogRT || !this.fogBrush) return;
+
+    // Cache vision sources for this frame
+    this.buildVisionCache();
+
+    // Fill with black (fog)
+    this.fogRT.fill(0x000000);
+
+    // Erase fog around all vision sources (base, allies, enemy nexus)
+    for (const s of this.visionSources) {
+      this.fogRT.erase(this.fogBrush, s.x - FOG_VISION_RANGE, s.y - FOG_VISION_RANGE);
+    }
+  }
+
+  /** Hide/show sprites based on fog of war vision */
+  private updateFogVisibility() {
+    const enemyTeam = this.myTeam === 1 ? 2 : 1;
+
+    // Hide/show enemy and neutral unit sprites
+    for (const u of this.units) {
+      if (u.team === this.myTeam) continue; // always show own units
+      const visible = this.isInVision(u.x, u.y);
+      if (u.sprite) u.sprite.setVisible(visible);
+      if (u.carrySprite) u.carrySprite.setVisible(visible);
+    }
+
+    // Hide/show ground items outside vision
+    for (const item of this.groundItems) {
+      if (item.dead || !item.sprite) continue;
+      item.sprite.setVisible(this.isInVision(item.x, item.y));
+    }
+
+    // Camp visuals: always show outline, but use last-known info if not in vision
+    for (const c of this.camps) {
+      const visible = this.isInVision(c.x, c.y);
+      // Own camps are always fully visible
+      if (c.owner === this.myTeam) {
+        c.scouted = true;
+        c.lastSeenOwner = c.owner;
+        if (c.label) { c.lastSeenLabel = c.label.text; c.lastSeenColor = c.label.style.color as string; }
+        continue;
+      }
+      if (visible) {
+        // Mark as scouted, snapshot current info
+        c.scouted = true;
+        c.lastSeenOwner = c.owner;
+        if (c.label) { c.lastSeenLabel = c.label.text; c.lastSeenColor = c.label.style.color as string; }
+        // updateCampVisuals() already set the correct live info
+      } else {
+        // Out of vision
+        if (c.captureBar) c.captureBar.clear();
+        if (c.scouted) {
+          // Show last-known info (frozen state)
+          const lastColor = c.lastSeenOwner === 0 ? 0xFFD93D
+            : c.lastSeenOwner === this.myTeam ? 0x4499FF : 0xFF5555;
+          c.area?.setFillStyle(lastColor, 0.05);
+          c.area?.setStrokeStyle(2, lastColor, 0.2);
+          if (c.label) {
+            c.label.setText(c.lastSeenLabel);
+            c.label.setColor(c.lastSeenColor);
+          }
+        } else {
+          // Never scouted — yellow unknown, just show outline
+          c.area?.setFillStyle(0xFFD93D, 0.04);
+          c.area?.setStrokeStyle(2, 0xFFD93D, 0.15);
+          if (c.label) {
+            c.label.setText('???');
+            c.label.setColor('#FFD93D');
+          }
+        }
+      }
+    }
+  }
+
+  // Cached vision sources for the current frame (avoids re-filtering allies per query)
+  private visionSources: { x: number; y: number }[] = [];
+
+  private buildVisionCache() {
+    this.visionSources = [];
+    // Own base
+    this.visionSources.push(this.myTeam === 1 ? P1_BASE : P2_BASE);
+    // Enemy nexus always visible
+    this.visionSources.push(this.myTeam === 1 ? P2_BASE : P1_BASE);
+    // Allied units
+    for (const u of this.units) {
+      if (u.dead || u.team !== this.myTeam) continue;
+      this.visionSources.push(u);
+    }
+  }
+
+  /** Check if a world position is currently visible (within vision range of any ally) */
+  private isInVision(x: number, y: number): boolean {
+    const r2 = FOG_VISION_RANGE * FOG_VISION_RANGE;
+    for (const s of this.visionSources) {
+      const dx = x - s.x, dy = y - s.y;
+      if (dx * dx + dy * dy < r2) return true;
+    }
+    return false;
+  }
+
   // ─── CAMPS ───────────────────────────────────────────────────
 
   private setupCamps() {
-    for (const def of CAMP_DEFS) {
+    for (const def of this.activeCampDefs) {
       const animalDef = ANIMALS[def.type];
 
       const area = this.add.circle(def.x, def.y, CAMP_RANGE, 0xFFD93D, 0.06);
@@ -948,6 +1154,7 @@ export class HordeScene extends Phaser.Scene {
         x: def.x, y: def.y, owner: 0,
         spawnMs: def.spawnMs, spawnTimer: 0, buff: def.buff,
         label, area, captureBar, storedFood: 0,
+        scouted: false, lastSeenOwner: 0, lastSeenLabel: '', lastSeenColor: '#FFD93D',
       };
       this.camps.push(camp);
 
@@ -1263,61 +1470,66 @@ export class HordeScene extends Phaser.Scene {
   private setupHUD() {
     const cam = this.cameras.main;
 
-    // Left panel background
-    this.add.rectangle(0, 0, 260, cam.height, 0x000000, 0.45)
+    // Left panel background — thin, flush against edge
+    this.add.rectangle(0, 0, 190, cam.height, 0x000000, 0.5)
       .setOrigin(0, 0).setScrollFactor(0).setDepth(99);
 
-    this.hudTexts['title'] = this.add.text(16, 12, 'HORDE CAPTURE', {
-      fontSize: '18px', color: '#45E6B0', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
+    this.hudTexts['title'] = this.add.text(8, 8, 'HORDE', {
+      fontSize: '14px', color: '#45E6B0', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
     }).setScrollFactor(0).setDepth(100);
 
-    this.hudTexts['timer'] = this.add.text(130, 14, '0:00', {
-      fontSize: '14px', color: '#FFD93D', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
+    this.hudTexts['timer'] = this.add.text(80, 9, '0:00', {
+      fontSize: '13px', color: '#FFD93D', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
     }).setOrigin(0, 0).setScrollFactor(0).setDepth(100);
 
     // Army section
-    this.hudTexts['armyHeader'] = this.add.text(16, 44, 'YOUR ARMIES', {
-      fontSize: '13px', color: '#4499FF', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
+    this.hudTexts['armyHeader'] = this.add.text(8, 30, 'ARMIES', {
+      fontSize: '11px', color: '#4499FF', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
       letterSpacing: 1,
     }).setScrollFactor(0).setDepth(100);
 
-    this.hudTexts['armies'] = this.add.text(16, 64, '', {
-      fontSize: '12px', color: '#f0e8ff', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold', lineSpacing: 5,
+    this.hudTexts['armies'] = this.add.text(8, 46, '', {
+      fontSize: '10px', color: '#f0e8ff', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold', lineSpacing: 3,
+      wordWrap: { width: 175 },
     }).setScrollFactor(0).setDepth(100);
 
     // Resources section
-    this.hudTexts['resHeader'] = this.add.text(16, 195, 'RESOURCES', {
-      fontSize: '13px', color: '#45E6B0', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
+    this.hudTexts['resHeader'] = this.add.text(8, 170, 'RESOURCES', {
+      fontSize: '11px', color: '#45E6B0', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
       letterSpacing: 1,
     }).setScrollFactor(0).setDepth(100);
 
-    this.hudTexts['resources'] = this.add.text(16, 215, '', {
-      fontSize: '12px', color: '#f0e8ff', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold', lineSpacing: 3,
+    this.hudTexts['resources'] = this.add.text(8, 186, '', {
+      fontSize: '10px', color: '#f0e8ff', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold', lineSpacing: 2,
+      wordWrap: { width: 175 },
     }).setScrollFactor(0).setDepth(100);
 
     // Production section
-    this.hudTexts['prodHeader'] = this.add.text(16, 265, 'PRODUCTION', {
-      fontSize: '13px', color: '#C98FFF', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
+    this.hudTexts['prodHeader'] = this.add.text(8, 250, 'PRODUCTION', {
+      fontSize: '11px', color: '#C98FFF', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
       letterSpacing: 1,
     }).setScrollFactor(0).setDepth(100);
 
-    this.hudTexts['production'] = this.add.text(16, 285, '', {
-      fontSize: '12px', color: '#cbb8ee', fontFamily: '"Nunito", sans-serif', fontStyle: '600', lineSpacing: 4,
+    this.hudTexts['production'] = this.add.text(8, 266, '', {
+      fontSize: '10px', color: '#cbb8ee', fontFamily: '"Nunito", sans-serif', fontStyle: '600', lineSpacing: 3,
+      wordWrap: { width: 175 },
     }).setScrollFactor(0).setDepth(100);
 
     // Camps section
-    this.hudTexts['campsHeader'] = this.add.text(16, 385, 'CAMPS', {
-      fontSize: '13px', color: '#FFD93D', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
+    this.hudTexts['campsHeader'] = this.add.text(8, 360, 'CAMPS', {
+      fontSize: '11px', color: '#FFD93D', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
       letterSpacing: 1,
     }).setScrollFactor(0).setDepth(100);
 
-    this.hudTexts['camps'] = this.add.text(16, 405, '', {
-      fontSize: '11px', color: '#f0e8ff', fontFamily: '"Nunito", sans-serif', fontStyle: '600', lineSpacing: 3,
+    this.hudTexts['camps'] = this.add.text(8, 376, '', {
+      fontSize: '9px', color: '#f0e8ff', fontFamily: '"Nunito", sans-serif', fontStyle: '600', lineSpacing: 2,
+      wordWrap: { width: 175 },
     }).setScrollFactor(0).setDepth(100);
 
     // Buffs
-    this.hudTexts['buffs'] = this.add.text(16, cam.height - 80, '', {
-      fontSize: '11px', color: '#C98FFF', fontFamily: '"Nunito", sans-serif', fontStyle: '600', lineSpacing: 2,
+    this.hudTexts['buffs'] = this.add.text(8, cam.height - 80, '', {
+      fontSize: '10px', color: '#C98FFF', fontFamily: '"Nunito", sans-serif', fontStyle: '600', lineSpacing: 2,
+      wordWrap: { width: 175 },
     }).setScrollFactor(0).setDepth(100);
 
     // Right side: enemy info
@@ -1489,6 +1701,8 @@ export class HordeScene extends Phaser.Scene {
       this.updateUnitSprites();
       this.updateCampVisuals();
       this.drawNexusBars();
+      this.updateFog();
+      this.updateFogVisibility();
       this.updateHUD();
       return;
     }
@@ -1512,6 +1726,8 @@ export class HordeScene extends Phaser.Scene {
     this.updateDebugOverlay();
     this.updateCampVisuals();
     this.drawNexusBars();
+    this.updateFog();
+    this.updateFogVisibility();
     this.updateHUD();
     this.checkWin();
 
@@ -1561,7 +1777,7 @@ export class HordeScene extends Phaser.Scene {
 
       // Avoidance: units carrying food on non-combat steps steer around threats
       // Uses a tight range so units can navigate between two enemies
-      if (u.team !== 0 && u.carrying && this.isNonCombatStep(u)) {
+      if (u.team !== 0 && this.isNonCombatStep(u)) {
         const AVOID_RANGE = 100; // tight range so units can fit between threats
         let avoidX = 0, avoidY = 0;
         const team = u.team as 1 | 2;
@@ -1601,8 +1817,14 @@ export class HordeScene extends Phaser.Scene {
           const moveNX = dx / normD, moveNY = dy / normD; // normalized movement dir
           // Project avoidance onto perpendicular-to-movement (lateral dodge)
           const dot = avoidX * moveNX + avoidY * moveNY;
-          const perpX = avoidX - dot * moveNX; // remove forward/backward component
-          const perpY = avoidY - dot * moveNY;
+          let perpX = avoidX - dot * moveNX; // remove forward/backward component
+          let perpY = avoidY - dot * moveNY;
+          // If enemy is directly ahead, pick a deterministic side to dodge
+          if (Math.abs(perpX) + Math.abs(perpY) < 0.1 && (avoidX !== 0 || avoidY !== 0)) {
+            const side = (u.id % 2 === 0) ? 1 : -1;
+            perpX = -moveNY * side;
+            perpY = moveNX * side;
+          }
           // Final direction: forward movement + strong lateral dodge
           const finalX = moveNX + perpX * 2.0 + (dot < 0 ? avoidX * 0.5 : 0);
           const finalY = moveNY + perpY * 2.0 + (dot < 0 ? avoidY * 0.5 : 0);
@@ -1663,8 +1885,12 @@ export class HordeScene extends Phaser.Scene {
     for (const u of this.units) {
       if (u.dead) continue;
 
-      // Units carrying food on non-combat steps don't fight — they flee
-      if (u.carrying && u.team !== 0 && this.isNonCombatStep(u)) continue;
+      // Scouts and collectors always skip combat (pacifist); carrying units on non-combat steps also skip
+      if (u.team !== 0 && this.isNonCombatStep(u)) {
+        const step = u.loop?.steps[u.loop!.currentStep];
+        const pacifist = step && (step.action === 'scout' || step.action === 'collect');
+        if (pacifist || u.carrying) continue;
+      }
 
       // Non-carrying units drop food and fight if enemy is nearby
       if (u.carrying && u.team !== 0) {
@@ -2271,14 +2497,26 @@ export class HordeScene extends Phaser.Scene {
     this.carrotSpawnTimer += delta;
     if (this.carrotSpawnTimer < CARROT_SPAWN_MS) return;
     this.carrotSpawnTimer -= CARROT_SPAWN_MS;
-    // Spawn carrots symmetrically — 1 per side = 2 total per tick
-    const MARGIN = 100;
-    const cx = WORLD_W / 2, cy = WORLD_H / 2;
-    const x = MARGIN + Math.random() * (cx - MARGIN);
-    const y = cy + Math.random() * (cy - MARGIN);
-    this.spawnGroundItem('carrot', x, y);
-    // Mirror to P2's half (top-right)
-    this.spawnGroundItem('carrot', WORLD_W - x, WORLD_H - y);
+
+    if (this.mapDef && this.mapDef.carrotZones.length > 0) {
+      // Map-driven carrot zones: spawn 1 carrot in a random zone per tick
+      // Spawn 2 total (pick 2 random zones, or same zone twice)
+      for (let i = 0; i < 2; i++) {
+        const zone = this.mapDef.carrotZones[Math.floor(Math.random() * this.mapDef.carrotZones.length)];
+        const x = zone.x + Math.random() * zone.w;
+        const y = zone.y + Math.random() * zone.h;
+        this.spawnGroundItem('carrot', x, y);
+      }
+    } else {
+      // Default: spawn carrots symmetrically — 1 per side = 2 total per tick
+      const MARGIN = 100;
+      const cx = WORLD_W / 2, cy = WORLD_H / 2;
+      const x = MARGIN + Math.random() * (cx - MARGIN);
+      const y = cy + Math.random() * (cy - MARGIN);
+      this.spawnGroundItem('carrot', x, y);
+      // Mirror to P2's half (top-right)
+      this.spawnGroundItem('carrot', WORLD_W - x, WORLD_H - y);
+    }
   }
 
   private updateGroundItems(delta: number) {
@@ -2318,6 +2556,12 @@ export class HordeScene extends Phaser.Scene {
       const range = u.type === 'gnome' ? PICKUP_RANGE * 2 : PICKUP_RANGE;
       for (const item of this.groundItems) {
         if (item.dead) continue;
+        // Only pick up resources matching the workflow's target resource type
+        if (u.loop) {
+          const curStep = u.loop.steps[u.loop.currentStep];
+          if (curStep?.action === 'seek_resource' && item.type !== curStep.resourceType) continue;
+          if (curStep?.action === 'collect' && item.type !== curStep.resourceType) continue;
+        }
         if (pdist(u, item) < range) {
           u.carrying = item.type;
           u.claimItemId = -1; // release claim
@@ -2351,9 +2595,23 @@ export class HordeScene extends Phaser.Scene {
         continue;
       }
 
+      // Collect workflow only delivers to base, never camps
+      if (u.loop) {
+        const curStep = u.loop.steps[u.loop.currentStep];
+        if (curStep?.action === 'collect') continue;
+      }
+
       // Deliver to owned camp that needs this resource type
       for (const camp of this.camps) {
         if (camp.owner !== team) continue;
+        // Only deliver to the camp type matching the workflow target
+        if (u.loop) {
+          const deliverStep = u.loop.steps.find(s => s.action === 'deliver');
+          if (deliverStep && deliverStep.action === 'deliver') {
+            const match = deliverStep.target.match(/^nearest_(\w+)_camp$/);
+            if (match && camp.animalType !== match[1]) continue;
+          }
+        }
         if (pdist(u, camp) < PICKUP_RANGE + 25) {
           const cost = SPAWN_COSTS[camp.animalType];
           if (cost && cost.type === u.carrying) {
@@ -2397,6 +2655,12 @@ export class HordeScene extends Phaser.Scene {
         } else {
           u.claimItemId = -1; // item gone, release claim
         }
+      }
+    }
+    const claimCounts = new Map<number, number>();
+    for (const u of this.units) {
+      if (!u.dead && u.claimItemId >= 0) {
+        claimCounts.set(u.claimItemId, (claimCounts.get(u.claimItemId) || 0) + 1);
       }
     }
 
@@ -2444,6 +2708,7 @@ export class HordeScene extends Phaser.Scene {
           let bestAny: HGroundItem | null = null, bestAnyD = Infinity;
           for (const item of this.groundItems) {
             if (item.dead || item.type !== step.resourceType) continue;
+            if ((claimCounts.get(item.id) || 0) >= 3 && item.id !== u.claimItemId) continue;
             const itemD = pdist(u, item);
             // Track best of ANY matching resource (claimed or not)
             if (itemD < bestAnyD) { bestAnyD = itemD; bestAny = item; }
@@ -2704,25 +2969,43 @@ export class HordeScene extends Phaser.Scene {
 
   /** Spawn position on the outskirts — heavily biased toward corners, away from bases */
   private randomOutskirtsPos(): { x: number; y: number } {
+    const safeR = this.mapDef?.safeRadius ?? 500;
+
+    // Map-driven wild zones: pick random position within a random wild zone
+    if (this.mapDef && this.mapDef.wildZones.length > 0) {
+      const exclusions = this.mapDef.wildExclusions || [];
+      for (let attempt = 0; attempt < 50; attempt++) {
+        const zone = this.mapDef.wildZones[Math.floor(Math.random() * this.mapDef.wildZones.length)];
+        const x = zone.x + Math.random() * zone.w;
+        const y = zone.y + Math.random() * zone.h;
+        // Check exclusions (bases, lakes, etc.)
+        let excluded = false;
+        for (const ex of exclusions) {
+          if (pdist({ x, y }, { x: ex.x, y: ex.y }) < ex.radius) { excluded = true; break; }
+        }
+        if (!excluded && pdist({ x, y }, P1_BASE) > safeR && pdist({ x, y }, P2_BASE) > safeR) {
+          return { x: Math.max(50, Math.min(WORLD_W - 50, x)), y: Math.max(50, Math.min(WORLD_H - 50, y)) };
+        }
+      }
+      return { x: WORLD_W / 2, y: 200 }; // fallback
+    }
+
+    // Default behavior: corner-biased outskirts spawning
     const MARGIN = 120;
-    const CORNER_SIZE = 800; // corner zone size
-    // 4 corners of the map (top-left, top-right, bottom-left, bottom-right)
+    const CORNER_SIZE = 800;
     const corners = [
-      { x: MARGIN, y: MARGIN },                         // top-left
-      { x: WORLD_W - MARGIN, y: MARGIN },                // top-right
-      { x: MARGIN, y: WORLD_H - MARGIN },                // bottom-left (near P1)
-      { x: WORLD_W - MARGIN, y: WORLD_H - MARGIN },      // bottom-right
+      { x: MARGIN, y: MARGIN },
+      { x: WORLD_W - MARGIN, y: MARGIN },
+      { x: MARGIN, y: WORLD_H - MARGIN },
+      { x: WORLD_W - MARGIN, y: WORLD_H - MARGIN },
     ];
     for (let attempt = 0; attempt < 50; attempt++) {
-      // 80% chance corner, 20% chance edge
       let x: number, y: number;
       if (Math.random() < 0.8) {
-        // Pick a random corner and scatter within CORNER_SIZE
         const c = corners[Math.floor(Math.random() * corners.length)];
         x = c.x + (Math.random() - 0.5) * CORNER_SIZE;
         y = c.y + (Math.random() - 0.5) * CORNER_SIZE;
       } else {
-        // Edge band fallback
         const edge = Math.floor(Math.random() * 4);
         if (edge === 0) { x = MARGIN + Math.random() * (WORLD_W - MARGIN * 2); y = MARGIN + Math.random() * 400; }
         else if (edge === 1) { x = MARGIN + Math.random() * (WORLD_W - MARGIN * 2); y = WORLD_H - MARGIN - Math.random() * 400; }
@@ -2731,7 +3014,7 @@ export class HordeScene extends Phaser.Scene {
       }
       x = Math.max(MARGIN, Math.min(WORLD_W - MARGIN, x));
       y = Math.max(MARGIN, Math.min(WORLD_H - MARGIN, y));
-      if (pdist({ x, y }, P1_BASE) > 500 && pdist({ x, y }, P2_BASE) > 500) return { x, y };
+      if (pdist({ x, y }, P1_BASE) > safeR && pdist({ x, y }, P2_BASE) > safeR) return { x, y };
     }
     return { x: WORLD_W / 2, y: MARGIN + 100 }; // fallback
   }
@@ -2812,7 +3095,7 @@ export class HordeScene extends Phaser.Scene {
     }
     // Wander wild animals — stay on outskirts, away from center AND player bases
     const cx = WORLD_W / 2, cy = WORLD_H / 2;
-    const BASE_AVOID = 600; // wild animals stay this far from player bases
+    const BASE_AVOID = this.mapDef?.safeRadius ? this.mapDef.safeRadius + 100 : 600; // wild animals stay this far from player bases
     for (const u of this.units) {
       if (u.team !== 0 || u.campId || u.dead) continue;
 
@@ -2972,6 +3255,8 @@ export class HordeScene extends Phaser.Scene {
   /** Called when the local player issues a voice/text command */
   private issueCommand(text: string) {
     this.pendingCommandText = text;
+    // Track last command per army for display on army bar
+    this.lastArmyCommand[this.selectedArmy] = text;
     if (this.isOnline && !this.isHost) {
       // Guest: send command to host via Firebase
       this.showFeedback('Sending command...', '#FFD93D');
@@ -3591,6 +3876,9 @@ export class HordeScene extends Phaser.Scene {
         ? this.units.filter(u => u.team === this.myTeam && !u.dead).length
         : this.units.filter(u => u.team === this.myTeam && !u.dead && u.type === army).length;
       const tier = army === 'all' ? '' : `T${ANIMALS[army]?.tier || '?'}`;
+      const lastCmd = this.lastArmyCommand[army] || '';
+      // Truncate command to fit card
+      const cmdDisplay = lastCmd.length > 20 ? lastCmd.slice(0, 18) + '…' : lastCmd;
 
       const bg = isActive ? 'rgba(69,230,176,0.25)' : 'rgba(13,26,13,0.8)';
       const border = isActive ? '#45E6B0' : '#3D5040';
@@ -3600,14 +3888,15 @@ export class HordeScene extends Phaser.Scene {
 
       html += `<div style="
         background:${bg};border:${borderW} solid ${border};border-radius:10px;
-        padding:4px 10px;text-align:center;min-width:52px;
+        padding:6px 12px;text-align:center;min-width:64px;
         ${glow}${scale}transition:all 0.15s ease;
       ">
-        <div style="font-size:22px;line-height:1.1;">${emoji}</div>
-        <div style="font-size:9px;color:${isActive ? '#45E6B0' : '#8BAA8B'};font-weight:800;letter-spacing:0.5px;">${name}</div>
-        <div style="font-size:11px;color:#f0e8ff;font-weight:700;">${count}</div>
-        ${tier ? `<div style="font-size:8px;color:#666;font-weight:600;">${tier}</div>` : ''}
-        ${army !== 'all' && ANIMALS[army] ? `<div style="font-size:7px;color:#C98FFF;font-weight:600;white-space:nowrap;">${ANIMALS[army].ability}</div>` : ''}
+        <div style="font-size:28px;line-height:1.2;">${emoji}</div>
+        <div style="font-size:10px;color:${isActive ? '#45E6B0' : '#8BAA8B'};font-weight:800;letter-spacing:0.5px;">${name}</div>
+        <div style="font-size:13px;color:#f0e8ff;font-weight:700;">${count}</div>
+        ${tier ? `<div style="font-size:9px;color:#666;font-weight:600;">${tier}</div>` : ''}
+        ${army !== 'all' && ANIMALS[army] ? `<div style="font-size:8px;color:#C98FFF;font-weight:600;white-space:nowrap;">${ANIMALS[army].ability}</div>` : ''}
+        ${cmdDisplay ? `<div style="font-size:8px;color:#FFD93D;font-style:italic;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:80px;" title="${lastCmd.replace(/"/g, '&quot;')}">"${cmdDisplay}"</div>` : ''}
       </div>`;
     }
     this.armyBarEl.innerHTML = html;
