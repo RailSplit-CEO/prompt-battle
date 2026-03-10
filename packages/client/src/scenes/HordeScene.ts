@@ -11,93 +11,215 @@ const GEMINI_MODEL = 'gemini-2.0-flash';
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=`;
 const GEMINI_MAX_RETRIES = 3;
 
+interface GameContext {
+  myUnits: { type: string; count: number; tier: number; gathering: number }[];
+  camps: { name: string; animalType: string; tier: number; owner: string; index: number; x: number; y: number; dist: number; defenders: number; storedFood: number; spawnCost: number }[];
+  nexusHp: { mine: number; enemy: number };
+  resources: { carrot: number; meat: number; crystal: number };
+  groundCarrots: number;
+  groundMeat: number;
+  groundCrystals: number;
+  gameTime: number;
+  selectedArmy: string;
+}
+
 interface HordeCommand {
-  targetType: 'camp' | 'nearest_camp' | 'sweep_camps' | 'nexus' | 'base' | 'position' | 'defend' | 'retreat' | 'gather' | 'make';
-  targetAnimal?: string; // filter camps by animal type
-  campIndex?: number; // specific camp index (-1 = auto-pick)
+  targetType: 'camp' | 'nearest_camp' | 'sweep_camps' | 'nexus' | 'base' | 'position' | 'defend' | 'retreat' | 'workflow';
+  targetAnimal?: string;
+  campIndex?: number;
   qualifier?: 'nearest' | 'furthest' | 'weakest' | 'strongest' | 'uncaptured' | 'enemy';
-  gatherResource?: ResourceType; // for gather commands
-  makeAnimal?: string; // for "make" commands — which animal to produce
+  // LLM-defined workflow steps — the LLM decides the full loop
+  workflow?: { action: string; resourceType?: string; target?: string; targetType?: string; campIndex?: number; qualifier?: string; targetAnimal?: string; x?: number; y?: number }[];
   narration?: string;
 }
 
 async function parseWithGemini(
   rawText: string,
-  myUnits: { type: string; count: number }[],
-  camps: { name: string; animalType: string; owner: string; index: number; x: number; y: number; dist: number; defenders: number }[],
-  nexusHp: { mine: number; enemy: number },
-  gameTime: number,
+  ctx: GameContext,
 ): Promise<HordeCommand[] | null> {
   if (!GEMINI_API_KEY) return null;
 
-  const unitList = myUnits.map(u => `  ${u.type}: ${u.count} units`).join('\n');
-  const campList = camps.map(c =>
-    `  [${c.index}] ${c.name} (${c.animalType}) - ${c.owner} - dist:${c.dist} - defenders:${c.defenders}`
+  const campList = ctx.camps.map(c =>
+    `  [${c.index}] ${c.name} (${c.animalType}, T${c.tier}) - ${c.owner}${c.storedFood > 0 ? ` - food:${c.storedFood}/${c.spawnCost}` : ''} - dist:${c.dist} - defenders:${c.defenders}`
   ).join('\n');
 
-  const prompt = `You parse voice commands for an RTS game. The player has already selected which army to command (via hotkey). You just determine WHERE to send them.
+  const unitList = ctx.myUnits.map(u => {
+    let info = `  ${u.type} (T${u.tier}): ${u.count} units`;
+    if (u.gathering > 0) info += ` (${u.gathering} gathering)`;
+    return info;
+  }).join('\n');
 
-CAMPS (sorted by distance from player):
+  const prompt = `You are the AI commander for a voice-controlled RTS game called "Horde Capture." The player speaks commands and you interpret them into game actions. You deeply understand the game's economy and must reason about what the player wants.
+
+═══ GAME ECONOMY ═══
+Resources: 🥕 Carrots (spawn on ground everywhere), 🍖 Meat (drops from killed wild animals), 💎 Crystals (drops from elite prey)
+
+SPAWN COSTS — each unit type requires a specific resource delivered to its camp:
+  Tier 1: gnome (🧝) = 1 carrot, turtle (🐢) = 1 carrot
+  Tier 2: skull (💀) = 3 meat, spider (🕷️) = 3 meat, gnoll (🐺) = 3 meat
+  Tier 3: panda (🐼) = 5 meat, lizard (🦎) = 5 meat
+  Tier 4: minotaur (🐂) = 8 crystals, shaman (🔮) = 8 crystals
+  Tier 5: troll (👹) = 12 crystals
+
+HOW SPAWNING WORKS: Units gather a resource → carry it to a camp of the desired type → camp uses it to spawn that unit type. E.g. "make gnomes" means gather carrots and deliver to a gnome camp. "make skulls" means gather meat and deliver to a skull camp.
+
+To produce a unit, you MUST own a camp of that type. Camps start neutral with defenders — kill the defenders to capture.
+
+═══ CURRENT GAME STATE ═══
+Time: ${Math.floor(ctx.gameTime / 1000)}s
+Selected army: ${ctx.selectedArmy} (player commands this group via hotkeys)
+
+MY UNITS:
+${unitList || '  (none)'}
+
+MY RESOURCES: 🥕${ctx.resources.carrot} 🍖${ctx.resources.meat} 💎${ctx.resources.crystal}
+
+CAMPS (sorted by distance):
 ${campList}
 
-NEXUS HP: mine=${nexusHp.mine}/50000, enemy=${nexusHp.enemy}/50000
+NEXUS HP: mine=${ctx.nexusHp.mine}/50000, enemy=${ctx.nexusHp.enemy}/50000
 
-ACTIONS:
-- "camp": Go to a SPECIFIC camp. Set campIndex from the list above.
-- "nearest_camp": Go to nearest camp matching filters.
-- "sweep_camps": Auto-chain capture ALL matching camps one by one.
-- "nexus": Attack enemy nexus/base/throne.
-- "base"/"defend"/"retreat": Go home / hold position / fall back.
-- "position": Go to map center.
-- "gather": Gather a specific resource. Set gatherResource to "carrot", "meat", or "crystal". Units loop: pick up → deliver to base → repeat.
-- "make": Produce a specific animal. Set makeAnimal to the animal name. Units auto-gather the required resource and deliver to the right camp/base to spawn that animal. E.g. "make wolves" = gather meat → deliver to wolf camp.
+Ground items nearby: 🥕${ctx.groundCarrots} carrots, 🍖${ctx.groundMeat} meat, 💎${ctx.groundCrystals} crystals on the map
 
-QUALIFIERS (for nearest_camp): nearest, furthest, weakest, uncaptured, enemy
+═══ ACTIONS ═══
+Simple movement commands (no workflow needed):
+- "camp": Go to a specific camp. Set campIndex.
+- "nearest_camp": Go to nearest camp matching filters (targetAnimal, qualifier).
+- "sweep_camps": Chain-capture multiple camps of a type.
+- "nexus": Attack enemy nexus.
+- "base"/"defend"/"retreat": Fall back / hold / go home.
 
-EXAMPLES:
-- "attack Bouncy Burrow" → camp, campIndex=(index of Bouncy Burrow)
-- "go to Wailing Woods" → camp, campIndex=(index of Wailing Woods)
-- "nearest bunny camp" → nearest_camp, targetAnimal=bunny, qualifier=nearest
-- "sweep wolf camps" → sweep_camps, targetAnimal=wolf
-- "attack nexus" → nexus
-- "closest camp" → nearest_camp, qualifier=nearest
-- "weakest camp" → nearest_camp, qualifier=weakest
-- "enemy camps" → nearest_camp, qualifier=enemy
-- "defend" → defend
-- "retreat" → retreat
-- "gather carrots" → gather, gatherResource=carrot
-- "gather meat" → gather, gatherResource=meat
-- "collect crystals" → gather, gatherResource=crystal
-- "make bunnies" → make, makeAnimal=bunny
-- "make turtles" → make, makeAnimal=turtle
-- "make wolves" → make, makeAnimal=wolf
-- "produce bears" → make, makeAnimal=bear
-- "spawn dragons" → make, makeAnimal=dragon
-- "make more bunnies" → make, makeAnimal=bunny
-- "create scorpions" → make, makeAnimal=scorpion
+QUALIFIERS: nearest, furthest, weakest, uncaptured, enemy
+
+═══ WORKFLOWS ═══
+For economy/production commands, you design a WORKFLOW — a repeating loop of steps the units execute automatically. Use targetType="workflow" and provide a "workflow" array.
+
+Available step types:
+  {"action": "seek_resource", "resourceType": "carrot|meat|crystal"} — find and pick up a ground resource
+  {"action": "deliver", "target": "base|nearest_TYPE_camp"} — carry item to a destination. Use "nearest_gnome_camp", "nearest_skull_camp", etc.
+  {"action": "hunt", "targetType": "skull|spider|..."} — attack wild animals (they drop meat/crystals on death). Optional targetType filter.
+  {"action": "attack_camp", "targetAnimal": "gnome|skull|...", "qualifier": "nearest"} — go capture a camp
+  {"action": "move", "x": 1000, "y": 1000} — move to coordinates
+  {"action": "defend", "target": "base|nearest_TYPE_camp"} — guard a location, patrol nearby, fight enemies that approach
+  {"action": "attack_enemies"} — seek and fight enemy player units relentlessly
+
+The workflow LOOPS automatically. Design the steps so they make a sensible repeating cycle.
+
+SPECIAL: Turtles carry 10x resources per trip — they're slow but incredibly efficient haulers! Prefer assigning turtles to gather/deliver workflows.
+
+═══ UNIT TRAITS & ROLES ═══
+Each unit has unique strengths — use these to make smart workflow decisions:
+
+GNOME (T1, 🧝): Fast, nimble, 2x pickup range. BEST gatherer for carrots. Cheap (1 carrot). Weak fighter — keep gathering, not fighting.
+TURTLE (T1, 🐢): Slow but carries 10x resources per trip! Ultimate hauler. 1 carrot. Always prefer turtles for any gather/deliver workflow.
+SKULL (T2, 💀): Cheats death once (survives lethal at 1 HP). Good fighter. 3 meat. Can self-sustain: hunt → pick meat → deliver to own camp.
+SPIDER (T2, 🕷️): Fast ambusher. Great for raiding and hit-and-run. 3 meat.
+GNOLL (T2, 🐺): Ranged attacker (120 range vs normal 60). Excellent for defense and kiting. 3 meat.
+PANDA (T3, 🐼): Tanky brawler, high HP. Excellent frontline defender. 5 meat.
+LIZARD (T3, 🦎): Agile, good damage. Great raider. 5 meat.
+MINOTAUR (T4, 🐂): Massive HP and damage. Late-game powerhouse. 8 crystals.
+SHAMAN (T4, 🔮): Support/caster. Strong but expensive. 8 crystals.
+TROLL (T5, 👹): Ultimate unit — enormous stats. Only 1 camp at map center. 12 crystals. Game-ender.
+
+═══ RESOURCE FLOW ═══
+Carrots → spawn on ground naturally (slow). Gnomes/turtles eat these.
+Meat → drops when wild animals die. Need to HUNT first. For T2-T3.
+Crystals → drop from elite golden minotaurs (rare, tough, map center). For T4-T5.
+KEY: For meat/crystals, include "hunt" step BEFORE "seek_resource". For carrots, just "seek_resource".
+
+═══ BOOTSTRAP SEQUENCES (per unit type) ═══
+"bootstrap gnomes": [{"action":"attack_camp","targetAnimal":"gnome","qualifier":"nearest"},{"action":"seek_resource","resourceType":"carrot"},{"action":"deliver","target":"nearest_gnome_camp"}]
+"bootstrap turtles": [{"action":"attack_camp","targetAnimal":"turtle","qualifier":"nearest"},{"action":"seek_resource","resourceType":"carrot"},{"action":"deliver","target":"nearest_turtle_camp"}]
+"bootstrap skulls": [{"action":"attack_camp","targetAnimal":"skull","qualifier":"nearest"},{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_skull_camp"}]
+"bootstrap spiders": [{"action":"attack_camp","targetAnimal":"spider","qualifier":"nearest"},{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_spider_camp"}]
+"bootstrap gnolls": [{"action":"attack_camp","targetAnimal":"gnoll","qualifier":"nearest"},{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_gnoll_camp"}]
+"bootstrap pandas": [{"action":"attack_camp","targetAnimal":"panda","qualifier":"nearest"},{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_panda_camp"}]
+"bootstrap lizards": [{"action":"attack_camp","targetAnimal":"lizard","qualifier":"nearest"},{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_lizard_camp"}]
+"bootstrap minotaurs": [{"action":"attack_camp","targetAnimal":"minotaur","qualifier":"nearest"},{"action":"hunt","targetType":"minotaur"},{"action":"seek_resource","resourceType":"crystal"},{"action":"deliver","target":"nearest_minotaur_camp"}]
+"bootstrap shamans": [{"action":"attack_camp","targetAnimal":"shaman","qualifier":"nearest"},{"action":"hunt","targetType":"minotaur"},{"action":"seek_resource","resourceType":"crystal"},{"action":"deliver","target":"nearest_shaman_camp"}]
+"bootstrap troll": [{"action":"attack_camp","targetAnimal":"troll","qualifier":"nearest"},{"action":"hunt","targetType":"minotaur"},{"action":"seek_resource","resourceType":"crystal"},{"action":"deliver","target":"nearest_troll_camp"}]
+
+═══ WORKFLOW EXAMPLES ═══
+
+PRODUCTION (already own camp):
+"make gnomes" → [{"action":"seek_resource","resourceType":"carrot"},{"action":"deliver","target":"nearest_gnome_camp"}]
+"make skulls" → [{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_skull_camp"}]
+"make shamans" → [{"action":"hunt","targetType":"minotaur"},{"action":"seek_resource","resourceType":"crystal"},{"action":"deliver","target":"nearest_shaman_camp"}]
+
+CROSS-UNIT PRODUCTION:
+"gnomes make skulls" → [{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_skull_camp"}]
+"turtles make pandas" → [{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_panda_camp"}]
+"skulls make skulls" → [{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_skull_camp"}]
+
+HUNTING:
+"hunt wilds" → [{"action":"hunt"}]
+"farm meat" → [{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"base"}]
+"farm elites" → [{"action":"hunt","targetType":"minotaur"},{"action":"seek_resource","resourceType":"crystal"},{"action":"deliver","target":"base"}]
+
+GATHER & STOCKPILE:
+"stockpile carrots" → [{"action":"seek_resource","resourceType":"carrot"},{"action":"deliver","target":"base"}]
+"stockpile meat" → [{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"base"}]
+
+RAIDING & CAPTURE:
+"raid enemy" → [{"action":"attack_camp","qualifier":"enemy"}]
+"sweep uncaptured" → [{"action":"attack_camp","qualifier":"uncaptured"}]
+"capture and produce skulls" → [{"action":"attack_camp","targetAnimal":"skull","qualifier":"nearest"},{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_skull_camp"}]
+
+DEFEND & ATTACK:
+"defend base" → [{"action":"defend","target":"base"}]
+"guard gnome camp" → [{"action":"defend","target":"nearest_gnome_camp"}]
+"attack enemies" → [{"action":"attack_enemies"}]
+"hunt enemies then defend" → [{"action":"attack_enemies"},{"action":"defend","target":"base"}]
+
+STRATEGIC:
+"get started" → bootstrap gnomes (cheapest, fastest economy start)
+"full pipeline" → [{"action":"attack_camp","targetAnimal":"skull","qualifier":"nearest"},{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_skull_camp"}]
+"build up then push" → [{"action":"seek_resource","resourceType":"carrot"},{"action":"deliver","target":"nearest_gnome_camp"},{"action":"attack_camp","qualifier":"enemy"}]
+
+SIMPLE MOVEMENT (no workflow):
+"attack nearest camp" → targetType: "nearest_camp", qualifier: "nearest"
+"attack nexus" → targetType: "nexus"
+"retreat" → targetType: "retreat"
+
+═══ STRATEGIC REASONING ═══
+Before choosing a workflow, think:
+1. What does the player want? (produce, gather, fight, defend, bootstrap?)
+2. Do they own the required camp? If not → include attack_camp FIRST.
+3. What resource? (carrots→T1, meat→T2-T3, crystals→T4-T5)
+4. For meat/crystals → include "hunt" BEFORE "seek_resource" (those come from kills).
+5. For carrots → just "seek_resource" (they spawn naturally).
+6. Best unit for the job? (gnomes=fast gather, turtles=10x haul, skulls=self-sustain hunters)
+7. Design the workflow as a LOOP that makes sense repeated forever.
+
+═══ YOUR JOB ═══
+Interpret the player's voice command using your deep understanding of the economy and unit traits.
+- Adapt to current game state — if they lack a camp, capture it first
+- "bootstrap X" → use the bootstrap sequence for unit type X
+- "get started" → bootstrap gnomes (cheapest start)
+- Be creative — combine steps based on what makes strategic sense
+- If you can tell which unit type is selected, tailor the workflow to their strengths
 
 RULES:
-- Output exactly ONE command (army selection is handled separately).
-- Match camp names by partial word (e.g. "bouncy" = "Bouncy Burrow").
+- Output exactly ONE command (army selection is handled separately by hotkeys).
 - ALWAYS pick the best interpretation — never refuse.
+- Match camp names by partial word.
 
-COMMAND: "${rawText}"
+PLAYER SAYS: "${rawText}"
 
 JSON ONLY (no markdown):
 {
-  "targetType": "<camp|nearest_camp|sweep_camps|nexus|base|position|defend|retreat|gather|make>",
-  "targetAnimal": "<bunny|turtle|wolf|scorpion|hawk|bear|crocodile|lion|phoenix|dragon or omit>",
+  "targetType": "<camp|nearest_camp|sweep_camps|nexus|base|defend|retreat|workflow>",
+  "targetAnimal": "<animal type or omit>",
   "campIndex": <index or -1>,
   "qualifier": "<nearest|furthest|weakest|uncaptured|enemy or omit>",
-  "gatherResource": "<carrot|meat|crystal or omit>",
-  "makeAnimal": "<bunny|turtle|wolf|scorpion|hawk|bear|crocodile|lion|phoenix|dragon or omit>",
+  "workflow": [<array of step objects, only if targetType=workflow>],
   "narration": "<One dramatic sentence>"
 }`;
 
   const body = JSON.stringify({
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: {
-      maxOutputTokens: 256,
+      maxOutputTokens: 512,
       responseMimeType: 'application/json',
     },
   });
@@ -167,11 +289,33 @@ interface HGroundItem {
   age: number; // ms since spawn, for despawn
 }
 
-interface HGatherLoop {
-  action: 'gather';
-  resourceType: ResourceType;
-  deliverTo: string; // campId or 'base'
-  phase: 'seeking' | 'carrying' | 'delivering';
+// ─── LLM-Defined Workflows ────────────────────────────────
+// The LLM outputs workflow steps; the game engine executes them in order and loops.
+type WorkflowStep =
+  | { action: 'seek_resource'; resourceType: ResourceType }   // find & walk to a ground resource
+  | { action: 'deliver'; target: string }                     // carry item to target: 'base', 'nearest_TYPE_camp' (e.g. 'nearest_gnome_camp'), or a campId
+  | { action: 'hunt'; targetType?: string }                   // attack nearest wild animal (for meat/crystal drops)
+  | { action: 'attack_camp'; campIndex?: number; qualifier?: string; targetAnimal?: string } // go fight a camp
+  | { action: 'move'; x: number; y: number }                  // move to position
+  | { action: 'defend'; target: string }                      // guard a location: 'base', 'nearest_TYPE_camp', or campId — fight enemies that come near
+  | { action: 'attack_enemies' };                             // seek and fight nearest enemy player units
+
+interface HWorkflow {
+  steps: WorkflowStep[];
+  currentStep: number;
+  label: string; // LLM-provided description, shown in HUD
+}
+
+// Backward compat helper — build a workflow from old-style gather loop params
+function makeGatherWorkflow(resourceType: ResourceType, deliverTo: string): HWorkflow {
+  return {
+    steps: [
+      { action: 'seek_resource', resourceType },
+      { action: 'deliver', target: deliverTo },
+    ],
+    currentStep: 0,
+    label: `${resourceType} → ${deliverTo}`,
+  };
 }
 
 interface HUnit {
@@ -196,14 +340,16 @@ interface HUnit {
   prevSpriteX: number;
   prevSpriteY: number;
   // Special mechanic flags
-  hasRebirth: boolean;   // phoenix: respawn once on death
-  diveReady: boolean;    // hawk: next attack does 2x
-  diveTimer: number;     // hawk: cooldown before dive recharges
+  hasRebirth: boolean;   // skull: cheats death once (survives at 1 HP)
+  diveReady: boolean;    // (unused, kept for interface compat)
+  diveTimer: number;     // (unused, kept for interface compat)
   // Resource economy
   carrying: ResourceType | null;
   carrySprite: Phaser.GameObjects.Text | null;
-  loop: HGatherLoop | null;
+  loop: HWorkflow | null;
   isElite: boolean; // golden elite prey — drops crystals
+  idleTimer: number; // ms spent idle — restarts loop after 4s
+  claimItemId: number; // id of ground item this unit is pathing to (-1 = none)
 }
 
 interface CampDef {
@@ -285,55 +431,55 @@ const WORLD_H = 3200;
 const P1_BASE = { x: 250, y: WORLD_H - 250 };
 const P2_BASE = { x: WORLD_W - 250, y: 250 };
 
-// ─── ANIMAL ROSTER ─────────────────────────────────────────
-// Each animal has a distinct role, stat profile, and unique ability.
+// ─── UNIT ROSTER ──────────────────────────────────────────
+// Each unit has a distinct role, stat profile, and unique ability.
 //
 // T1 WORKERS — cheap, resource gatherers
-//   🐰 Bunny  "Swiftfoot"   — Fastest unit. 2x pickup range. Born to gather.
-//   🐢 Turtle "Shell Guard"  — Slowest unit but tankiest T1. 50% DR when stationary.
+//   🧝 Gnome   "Nimble Hands" — Fastest gatherer. 2x pickup range. Born to gather.
+//   🐢 Turtle  "Shell Stance" — Slowest unit but tankiest T1. 60% DR when guarding.
 //
 // T2 FIGHTERS — mid-game combat specialists
-//   🐺 Wolf   "Pack Tactics" — Fast flanker. +15% damage per nearby wolf (stacks!).
-//   🦂 Scorpion "Venom Sting"— Slow assassin. Deals 5% target max HP bonus dmg per hit.
-//   🦅 Hawk   "Dive Strike"  — Glass cannon. First attack = 3x dmg, 6s cooldown.
+//   💀 Skull   "Undying"      — Cheats death once (survives at 1 HP).
+//   🕷️ Spider  "Venom Bite"   — Slow assassin. +5% target max HP per hit.
+//   🐺 Gnoll   "Bone Toss"    — Extended range (120 vs 80).
 //
 // T3 HEAVIES — expensive powerhouses
-//   🐻 Bear   "Berserker"   — Gets STRONGER as HP drops. 2x attack at 10% HP.
-//   🐊 Croc   "Death Roll"  — Executioner. 3x damage to targets below 40% HP.
+//   🐼 Panda   "Thick Hide"   — Regenerates 1% max HP/sec. Very tanky.
+//   🦎 Lizard  "Cold Blood"   — 3x dmg to targets below 40% HP.
 //
 // T4 ELITES — game-changers
-//   🦁 Lion   "War Roar"    — Commander. Allies within 150px get +25% attack.
-//   🔥 Phoenix "Rebirth"    — Immortal. Respawns once at 50% HP on death.
+//   🐂 Minotaur "War Cry"     — Commander. Nearby allies +25% attack.
+//   🔮 Shaman   "Arcane Blast" — All attacks splash 60px.
 //
 // T5 LEGENDARY
-//   🐉 Dragon "Inferno"     — Devastator. Massive splash (80px). Crushes everything.
+//   👹 Troll   "Club Slam"    — Massive 90px splash, slows enemies.
 
 const ANIMALS: Record<string, AnimalDef> = {
-  bunny:     { type: 'bunny',     emoji: '🐰', hp: 15,    attack: 3,    speed: 210, tier: 1, ability: 'Swiftfoot',    desc: '2x pickup range, fastest unit' },
-  turtle:    { type: 'turtle',    emoji: '🐢', hp: 65,    attack: 3,    speed: 55,  tier: 1, ability: 'Shell Guard',  desc: '50% DR when stationary' },
-  wolf:      { type: 'wolf',      emoji: '🐺', hp: 90,    attack: 12,   speed: 165, tier: 2, ability: 'Pack Tactics', desc: '+15% dmg per nearby wolf' },
-  scorpion:  { type: 'scorpion',  emoji: '🦂', hp: 120,   attack: 18,   speed: 85,  tier: 2, ability: 'Venom Sting', desc: '+5% target max HP per hit' },
-  hawk:      { type: 'hawk',      emoji: '🦅', hp: 55,    attack: 28,   speed: 210, tier: 2, ability: 'Dive Strike', desc: 'First hit 3x dmg, 6s CD' },
-  bear:      { type: 'bear',      emoji: '🐻', hp: 800,   attack: 40,   speed: 85,  tier: 3, ability: 'Berserker',   desc: 'Up to 2x atk at low HP' },
-  crocodile: { type: 'crocodile', emoji: '🐊', hp: 500,   attack: 65,   speed: 65,  tier: 3, ability: 'Death Roll',  desc: '3x dmg to targets <40% HP' },
-  lion:      { type: 'lion',      emoji: '🦁', hp: 2000,  attack: 110,  speed: 130, tier: 4, ability: 'War Roar',    desc: 'Nearby allies +25% attack' },
-  phoenix:   { type: 'phoenix',   emoji: '🔥', hp: 1600,  attack: 170,  speed: 120, tier: 4, ability: 'Rebirth',     desc: 'Respawns once at 50% HP' },
-  dragon:    { type: 'dragon',    emoji: '🐉', hp: 12000, attack: 350,  speed: 55,  tier: 5, ability: 'Inferno',     desc: 'Massive 80px splash damage' },
+  gnome:     { type: 'gnome',     emoji: '🧝', hp: 15,    attack: 3,    speed: 210, tier: 1, ability: 'Nimble Hands', desc: '2x pickup range, fastest gatherer' },
+  turtle:    { type: 'turtle',    emoji: '🐢', hp: 65,    attack: 3,    speed: 55,  tier: 1, ability: 'Shell Stance', desc: '60% DR when guarding (stationary)' },
+  skull:     { type: 'skull',     emoji: '💀', hp: 80,    attack: 14,   speed: 155, tier: 2, ability: 'Undying',      desc: 'Cheats death once (survives at 1 HP)' },
+  spider:    { type: 'spider',    emoji: '🕷️', hp: 120,   attack: 18,   speed: 85,  tier: 2, ability: 'Venom Bite',   desc: '+5% target max HP per hit' },
+  gnoll:     { type: 'gnoll',     emoji: '🐺', hp: 55,    attack: 28,   speed: 175, tier: 2, ability: 'Bone Toss',    desc: 'Extended range (120 vs 80)' },
+  panda:     { type: 'panda',     emoji: '🐼', hp: 900,   attack: 35,   speed: 80,  tier: 3, ability: 'Thick Hide',   desc: 'Regenerates 1% max HP/sec' },
+  lizard:    { type: 'lizard',    emoji: '🦎', hp: 450,   attack: 70,   speed: 110, tier: 3, ability: 'Cold Blood',   desc: '3x dmg to targets below 40% HP' },
+  minotaur:  { type: 'minotaur',  emoji: '🐂', hp: 2200,  attack: 110,  speed: 120, tier: 4, ability: 'War Cry',      desc: 'Nearby allies +25% attack' },
+  shaman:    { type: 'shaman',    emoji: '🔮', hp: 1400,  attack: 180,  speed: 100, tier: 4, ability: 'Arcane Blast', desc: 'All attacks splash 60px' },
+  troll:     { type: 'troll',     emoji: '👹', hp: 14000, attack: 350,  speed: 50,  tier: 5, ability: 'Club Slam',    desc: 'Massive 90px splash, slows enemies' },
 };
 
 // Hard counter map: attacker → types it deals 2x damage to
 // Designed around the ability matchups:
 const HARD_COUNTERS: Record<string, string[]> = {
-  bunny:     [],                       // no counters — pure worker, wins by numbers
-  turtle:    ['bunny'],                // shell guard absorbs bunny swarms
-  wolf:      ['hawk', 'scorpion'],     // pack overwhelms fragile specialists
-  scorpion:  ['bear', 'turtle'],       // venom shreds tanky slow targets
-  hawk:      ['scorpion', 'bunny'],    // dive-bombs slow/fragile targets
-  bear:      ['wolf', 'crocodile'],    // berserker rage too tanky to swarm or execute
-  crocodile: ['bear', 'lion'],         // death roll executes the biggest targets
-  lion:      ['wolf', 'phoenix'],      // war roar + stats overwhelm packs and outlast rebirth
-  phoenix:   ['dragon', 'lion'],       // rebirth outlasts burst; can't be one-shot
-  dragon:    ['phoenix', 'hawk'],      // inferno kills phoenix twice, swats hawks from sky
+  gnome:     [],                       // pure worker, wins by speed
+  turtle:    ['gnome'],                // shell absorbs weak hits
+  skull:     ['gnoll', 'spider'],      // undying outlasts fragile specialists
+  spider:    ['panda', 'turtle'],      // venom shreds tanky slow targets
+  gnoll:     ['spider', 'gnome'],      // ranged picks off slow/fragile targets
+  panda:     ['skull', 'lizard'],      // regen too tanky to burst or execute
+  lizard:    ['panda', 'minotaur'],    // cold blood executes the biggest targets
+  minotaur:  ['skull', 'shaman'],      // war cry + stats overwhelm undying and casters
+  shaman:    ['troll', 'minotaur'],    // arcane blast burns down big slow targets
+  troll:     ['shaman', 'gnoll'],      // club slam crushes casters and ranged
 };
 
 // Procedural map: competitive symmetric layout.
@@ -346,57 +492,57 @@ function seededRandom(seed: number) {
   return () => { s = (s * 16807 + 0) % 2147483647; return s / 2147483647; };
 }
 
-// Unique alliterative/rhyming camp names per animal — easy to call out by voice
+// Unique alliterative/rhyming camp names per unit — easy to call out by voice
 const CAMP_NAMES: Record<string, string[]> = {
-  bunny: [
-    'Bouncy Burrow', 'Bramble Borough', 'Breezy Bluff', 'Bubbling Brook',
-    'Bashful Basin', 'Bright Bend', 'Buttercup Bay', 'Berry Bramble',
-    'Bumble Bridge', 'Blossom Bank', 'Bunny Bazaar', 'Bristle Bog',
+  gnome: [
+    'Gnarly Grotto', 'Gemstone Glen', 'Gadget Garden', 'Goblin Gate',
+    'Granite Glade', 'Gleaming Gulch', 'Gnome Nook', 'Golden Grove',
+    'Gear Gorge', 'Glimmer Gap', 'Gizmo Grounds', 'Grassy Gnoll',
   ],
   turtle: [
     'Tranquil Terrace', 'Tumble Town', 'Twilight Trail', 'Tidal Turn',
     'Thistle Tor', 'Timber Trench', 'Turtle Tavern', 'Topaz Tower',
     'Tangled Thicket', 'Tepid Tarn', 'Thunder Trail', 'Tundra Top',
   ],
-  wolf: [
-    'Wailing Woods', 'Whispering Wilds', 'Windswept Watch', 'Wicked Warren',
-    'Warden Wall', 'Wanderer Way', 'Winter Wake', 'Wolven Weald',
-    'Withered Walk', 'Wild Whistle', 'Warpath West', 'Wooded Wharf',
+  skull: [
+    'Skull Sanctum', 'Shadow Shrine', 'Skeleton Shore', 'Specter Steppe',
+    'Soul Swamp', 'Sinister Summit', 'Shade Springs', 'Spirit Stretch',
+    'Sepulcher Sands', 'Sorrow Slope', 'Spook Shelf', 'Skull Sweep',
   ],
-  scorpion: [
-    'Stinger Sands', 'Scorched Strip', 'Shadow Sting', 'Sunken Spire',
-    'Sand Sweep', 'Silent Strike', 'Sulfur Springs', 'Stone Steppe',
-    'Skull Stretch', 'Searing Scar', 'Serpent Slope', 'Storm Shelf',
+  spider: [
+    'Silk Spindle', 'Shadow Silk', 'Spinner Spire', 'Strand Stretch',
+    'Silken Sands', 'Spider Sweep', 'Sticky Springs', 'Spindle Steppe',
+    'Silk Scar', 'Spinner Slope', 'Strand Shelf', 'Spider Strip',
   ],
-  hawk: [
-    'Howling Heights', 'High Hollow', 'Hazy Hilltop', 'Hawk Haven',
-    'Hidden Helm', 'Highland Haunt', 'Halo Hill', 'Horizon Hook',
-    'Hanging Heath', 'Harvest Holt', 'Hero Helm', 'Humble Hearth',
+  gnoll: [
+    'Gnash Gate', 'Growl Gorge', 'Grunt Gully', 'Gnaw Grounds',
+    'Grim Garrison', 'Growling Glen', 'Gnoll Notch', 'Gore Gulch',
+    'Gravel Gap', 'Gnarl Grove', 'Grudge Garden', 'Gnoll Nook',
   ],
-  bear: [
-    'Boulder Basin', 'Blackberry Bluff', 'Brawler Bay', 'Big Bear Bog',
-    'Broken Bridge', 'Brute Barracks', 'Bark Bastion', 'Beast Bunker',
-    'Bitter Bend', 'Blizzard Base', 'Bronze Berm', 'Burly Bank',
+  panda: [
+    'Peaceful Peak', 'Plum Pagoda', 'Pine Paradise', 'Placid Pool',
+    'Peony Plateau', 'Pebble Path', 'Panda Pavilion', 'Primrose Pass',
+    'Pleasant Prairie', 'Porcelain Pond', 'Petal Point', 'Plum Pasture',
   ],
-  crocodile: [
-    'Croc Creek', 'Crimson Cove', 'Cruel Canyon', 'Crumbling Court',
-    'Crystal Crossing', 'Cobalt Cliff', 'Coral Camp', 'Cursed Cavern',
-    'Copper Crag', 'Cedar Cut', 'Clawed Coast', 'Crater Core',
+  lizard: [
+    'Lava Lair', 'Lurking Ledge', 'Lizard Lagoon', 'Limestone Ledge',
+    'Lush Landing', 'Lunar Lake', 'Lichen Lodge', 'Lost Lagoon',
+    'Leafy Lane', 'Lantern Lair', 'Legacy Ledge', 'Lizard Loft',
   ],
-  lion: [
-    'Lion Lodge', 'Lofty Lair', 'Lonely Ledge', 'Lunar Landing',
-    'Lavender Lake', 'Lightning Leap', 'Lost Lookout', 'Lumber Line',
-    'Lusty Lawn', 'Lantern Lane', 'Legacy Loft', 'Lynx Lagoon',
+  minotaur: [
+    'Maze Manor', 'Might Mountain', 'Marble Mine', 'Mammoth Meadow',
+    'Mystic Mesa', 'Monolith Mound', 'Minotaur March', 'Molten Moat',
+    'Maul Mount', 'Magnus Mill', 'Mace Mire', 'Muscle Mesa',
   ],
-  phoenix: [
-    'Flame Forge', 'Fiery Falls', 'Furnace Field', 'Flash Frontier',
-    'Frozen Fire', 'Fury Fort', 'Fading Flare', 'Fossil Flat',
-    'Phantom Pyre', 'Phoenix Peak', 'Flickering Fen', 'First Fire',
+  shaman: [
+    'Spirit Shrine', 'Spell Spring', 'Sorcery Summit', 'Starfall Sanctum',
+    'Sage Spire', 'Shimmer Shore', 'Sigil Swamp', 'Sacred Stone',
+    'Spark Slope', 'Shaman Shelf', 'Spectral Sands', 'Storm Shrine',
   ],
-  dragon: [
-    'Dragon Dome', 'Dread Den', 'Dark Divide', 'Dire Dungeon',
-    'Doom Dale', 'Dragonfire Deep', 'Devil Drop', 'Dust Devil',
-    'Diamond Drift', 'Dusk Domain', 'Demon Ditch', 'Dawn Depths',
+  troll: [
+    'Terror Tor', 'Thunder Throne', 'Titan Trench', 'Troll Tavern',
+    'Tremor Trail', 'Twisted Tower', 'Thorned Thicket', 'Titan Tarn',
+    'Tusk Terrace', 'Tyrant Top', 'Thrash Trench', 'Troll Tunnel',
   ],
 };
 
@@ -417,134 +563,79 @@ function pickCampName(animalType: string, rng: () => number): string {
 function makeCamps(): CampDef[] {
   const camps: CampDef[] = [];
   const rng = seededRandom(42069);
-  // Reset used names
   for (const k of Object.keys(usedNames)) delete usedNames[k];
 
-  const TIER_ANIMALS: Record<number, string[]> = {
-    1: ['bunny', 'turtle'],
-    2: ['wolf', 'scorpion', 'hawk'],
-    3: ['bear', 'crocodile'],
-    4: ['lion', 'phoenix'],
-    5: ['dragon'],
-  };
-
-  const BUFF_POOL: { stat: string; value: number }[] = [
-    { stat: 'speed', value: 0.05 }, { stat: 'attack', value: 0.08 },
-    { stat: 'hp', value: 0.10 }, { stat: 'attack', value: 0.06 },
-    { stat: 'speed', value: 0.07 }, { stat: 'hp', value: 0.08 },
-    { stat: 'all', value: 0.04 },
-  ];
-
   const GUARD_COUNT: Record<string, number> = {
-    bunny: 3, turtle: 3, wolf: 3, scorpion: 3, hawk: 3,
-    bear: 2, crocodile: 2, lion: 2, phoenix: 2, dragon: 1,
+    gnome: 1, turtle: 1, skull: 1, spider: 1, gnoll: 1,
+    panda: 1, lizard: 1, minotaur: 1, shaman: 1, troll: 1,
   };
   const SPAWN_MS: Record<string, number> = {
-    bunny: 4000, turtle: 4500, wolf: 6000, scorpion: 6000, hawk: 5500,
-    bear: 7500, crocodile: 7500, lion: 10000, phoenix: 10000, dragon: 15000,
+    gnome: 4000, turtle: 4500, skull: 6000, spider: 6000, gnoll: 5500,
+    panda: 7500, lizard: 7500, minotaur: 10000, shaman: 10000, troll: 15000,
   };
 
-  // Pre-roll the tier list with correct distribution
-  // 40 camps total (20 mirrored pairs): 50% T1, 25% T2, 12.5% T3, 7.5% T4, 5% T5
-  const tierList: number[] = [];
-  const counts = { 1: 20, 2: 10, 3: 5, 4: 3, 5: 2 }; // = 40
-  for (const [tier, count] of Object.entries(counts)) {
-    for (let i = 0; i < count; i++) tierList.push(Number(tier));
-  }
-  // Shuffle tier list
-  for (let i = tierList.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [tierList[i], tierList[j]] = [tierList[j], tierList[i]];
-  }
-
-  const MARGIN = 150;
-  const BASE_CLEAR = 350;
-  const CAMP_SPACING = 320; // wider spacing = more spread out
-  const placed: { x: number; y: number }[] = [];
-
-  const tooClose = (x: number, y: number) => {
-    if (pdist({ x, y }, P1_BASE) < BASE_CLEAR) return true;
-    if (pdist({ x, y }, P2_BASE) < BASE_CLEAR) return true;
-    for (const p of placed) {
-      if (pdist({ x, y }, p) < CAMP_SPACING) return true;
-    }
-    return false;
-  };
-
-  // Mirror a point across the map center diagonal (swap relative to center)
   const cx = WORLD_W / 2, cy = WORLD_H / 2;
-  const mirror = (x: number, y: number): [number, number] => {
-    return [cx + (cx - x), cy + (cy - y)];
-  };
+  const mirror = (x: number, y: number): [number, number] => [cx + (cx - x), cy + (cy - y)];
 
-  // Place camps in mirrored pairs for fairness
-  // Half are placed on P1's side, half mirrored to P2's side
-  // Higher tiers go toward the center/contested zones
   let idx = 0;
-  let tierIdx = 0;
 
-  // Sort tiers so low tiers go near bases, high tiers toward center
-  const sortedTiers = [...tierList].sort((a, b) => a - b);
+  // ─── ONE CAMP PER UNIT TYPE PER SIDE (mirrored) ───
+  // Layout: T1 near base, T2 mid, T3 far mid, T4 deep contested
+  // Each unit type gets exactly 1 camp on each side = 18 camps (9 pairs)
+  const campLayout: { type: string; distFromBase: number; angleOffset: number }[] = [
+    // T1 — close to base
+    { type: 'gnome',  distFromBase: 400,  angleOffset: -0.4 },
+    { type: 'turtle', distFromBase: 450,  angleOffset: 0.4 },
+    // T2 — mid range
+    { type: 'skull',  distFromBase: 800,  angleOffset: -0.6 },
+    { type: 'spider', distFromBase: 850,  angleOffset: 0.0 },
+    { type: 'gnoll',  distFromBase: 900,  angleOffset: 0.6 },
+    // T3 — far mid
+    { type: 'panda',  distFromBase: 1300, angleOffset: -0.3 },
+    { type: 'lizard', distFromBase: 1350, angleOffset: 0.3 },
+    // T4 — deep contested, close to center
+    { type: 'minotaur', distFromBase: 1700, angleOffset: -0.2 },
+    { type: 'shaman',   distFromBase: 1750, angleOffset: 0.2 },
+  ];
 
-  for (let i = 0; i < sortedTiers.length && tierIdx < sortedTiers.length; i++) {
-    const tier = sortedTiers[tierIdx];
+  // Base angle from P1 base toward center
+  const baseAngle = Math.atan2(cy - P1_BASE.y, cx - P1_BASE.x);
 
-    // Determine placement zone based on tier
-    // T1: near own base (300-900 from base)
-    // T2: mid-range (700-1400 from base)
-    // T3: contested zone (1000-1800 from base)
-    // T4-5: center/deep enemy territory (1300-2200 from base)
-    const minR = tier <= 1 ? 350 : tier <= 2 ? 600 : tier <= 3 ? 900 : 1100;
-    const maxR = tier <= 1 ? 1200 : tier <= 2 ? 1800 : tier <= 3 ? 2400 : 2800;
+  for (const layout of campLayout) {
+    const def = ANIMALS[layout.type];
+    const angle = baseAngle + layout.angleOffset + (rng() - 0.5) * 0.2;
+    const dist = layout.distFromBase + (rng() - 0.5) * 80;
 
-    let placed1 = false;
-    for (let attempt = 0; attempt < 80; attempt++) {
-      // Generate point at random angle from P1 base, within tier distance range
-      const angle = rng() * Math.PI * 2;
-      const dist = minR + rng() * (maxR - minR);
-      const x = P1_BASE.x + Math.cos(angle) * dist;
-      const y = P1_BASE.y + Math.sin(angle) * dist;
+    const x = Math.round(Math.max(120, Math.min(WORLD_W - 120, P1_BASE.x + Math.cos(angle) * dist)));
+    const y = Math.round(Math.max(120, Math.min(WORLD_H - 120, P1_BASE.y + Math.sin(angle) * dist)));
+    const [mx, my] = mirror(x, y);
 
-      // Clamp to world bounds
-      if (x < MARGIN || x > WORLD_W - MARGIN || y < MARGIN || y > WORLD_H - MARGIN) continue;
-      if (tooClose(x, y)) continue;
+    const name1 = pickCampName(layout.type, rng);
+    const name2 = pickCampName(layout.type, rng);
+    const buff1 = { stat: 'attack', value: 0.05 + rng() * 0.05 };
+    const buff2 = { stat: 'hp', value: 0.05 + rng() * 0.05 };
 
-      // Check the mirrored point too
-      const [mx, my] = mirror(x, y);
-      if (mx < MARGIN || mx > WORLD_W - MARGIN || my < MARGIN || my > WORLD_H - MARGIN) continue;
-      if (tooClose(mx, my)) continue;
-
-      // Both points are valid — place pair
-      const pool = TIER_ANIMALS[tier];
-      const animalType = pool[Math.floor(rng() * pool.length)];
-      const def = ANIMALS[animalType];
-      const buff = BUFF_POOL[Math.floor(rng() * BUFF_POOL.length)];
-      // Mirror gets same animal type for fairness, different buff
-      const buff2 = BUFF_POOL[Math.floor(rng() * BUFF_POOL.length)];
-
-      const name1 = pickCampName(animalType, rng);
-      const name2 = pickCampName(animalType, rng);
-
-      camps.push({
-        id: `camp_${idx++}`, name: `${def.emoji} ${name1}`,
-        type: animalType, x: Math.round(x), y: Math.round(y),
-        guards: GUARD_COUNT[animalType], spawnMs: SPAWN_MS[animalType], buff,
-      });
-      placed.push({ x, y });
-
-      camps.push({
-        id: `camp_${idx++}`, name: `${def.emoji} ${name2}`,
-        type: animalType, x: Math.round(mx), y: Math.round(my),
-        guards: GUARD_COUNT[animalType], spawnMs: SPAWN_MS[animalType], buff: buff2,
-      });
-      placed.push({ x: mx, y: my });
-
-      tierIdx += 2; // consumed 2 from the tier list
-      placed1 = true;
-      break;
-    }
-    if (!placed1) tierIdx += 2; // skip if couldn't place
+    camps.push({
+      id: `camp_${idx++}`, name: `${def.emoji} ${name1}`,
+      type: layout.type, x, y,
+      guards: GUARD_COUNT[layout.type], spawnMs: SPAWN_MS[layout.type], buff: buff1,
+    });
+    camps.push({
+      id: `camp_${idx++}`, name: `${def.emoji} ${name2}`,
+      type: layout.type, x: Math.round(mx), y: Math.round(my),
+      guards: GUARD_COUNT[layout.type], spawnMs: SPAWN_MS[layout.type], buff: buff2,
+    });
   }
+
+  // ─── TROLL — single camp in the center of the map ───
+  const trollDef = ANIMALS['troll'];
+  const trollName = pickCampName('troll', rng);
+  camps.push({
+    id: `camp_${idx++}`, name: `${trollDef.emoji} ${trollName}`,
+    type: 'troll', x: Math.round(cx + (rng() - 0.5) * 100), y: Math.round(cy + (rng() - 0.5) * 100),
+    guards: GUARD_COUNT['troll'], spawnMs: SPAWN_MS['troll'],
+    buff: { stat: 'all', value: 0.10 },
+  });
 
   return camps;
 }
@@ -564,23 +655,23 @@ const GOLDEN_ANGLE = 2.39996;
 
 // ─── RESOURCE ECONOMY ──────────────────────────────────────
 const SPAWN_COSTS: Record<string, { type: ResourceType; amount: number }> = {
-  bunny:     { type: 'carrot',  amount: 1 },
+  gnome:     { type: 'carrot',  amount: 1 },
   turtle:    { type: 'carrot',  amount: 1 },
-  wolf:      { type: 'meat',    amount: 3 },
-  scorpion:  { type: 'meat',    amount: 3 },
-  hawk:      { type: 'meat',    amount: 3 },
-  bear:      { type: 'meat',    amount: 5 },
-  crocodile: { type: 'meat',    amount: 5 },
-  lion:      { type: 'crystal', amount: 8 },
-  phoenix:   { type: 'crystal', amount: 8 },
-  dragon:    { type: 'crystal', amount: 12 },
+  skull:     { type: 'meat',    amount: 3 },
+  spider:    { type: 'meat',    amount: 3 },
+  gnoll:     { type: 'meat',    amount: 3 },
+  panda:     { type: 'meat',    amount: 5 },
+  lizard:    { type: 'meat',    amount: 5 },
+  minotaur:  { type: 'crystal', amount: 8 },
+  shaman:    { type: 'crystal', amount: 8 },
+  troll:     { type: 'crystal', amount: 12 },
 };
 const RESOURCE_EMOJI: Record<ResourceType, string> = { carrot: '🥕', meat: '🍖', crystal: '💎' };
-const CARROT_SPAWN_MS = 4000;       // new carrot every 4s
-const MAX_GROUND_ITEMS = 120;
+const CARROT_SPAWN_MS = 5000;       // new carrots every 5s
+const MAX_GROUND_ITEMS = 150;
 const ITEM_DESPAWN_MS = 90000;      // ground items vanish after 90s
 const PICKUP_RANGE = 35;
-const WILD_ANIMAL_COUNT = 15;       // neutral roaming animals on outskirts
+const WILD_ANIMAL_COUNT = 30;       // neutral roaming animals — concentrated in corners
 const ELITE_PREY_COUNT = 3;         // golden elite prey (T4 stats, drop crystals)
 const WILD_RESPAWN_MS = 20000;      // respawn wild animals every 20s
 
@@ -630,8 +721,10 @@ export class HordeScene extends Phaser.Scene {
   private dragPrevY = 0;
 
   // Persistent rally points: key = "type_team", value = {x, y}
-  // When you command "bunnies attack wolf camp", ALL future bunnies also go there
+  // When you command "gnomes attack skull camp", ALL future gnomes also go there
   private rallyPoints: Record<string, { x: number; y: number }> = {};
+  // Active workflow per group — new spawns inherit this automatically
+  private groupWorkflows: Record<string, HWorkflow> = {};
   private activeSweeps: Record<string, {
     team: 1 | 2; subject: string;
     targets: { x: number; y: number; id: string }[]; currentIdx: number;
@@ -640,10 +733,10 @@ export class HordeScene extends Phaser.Scene {
   // Army selection: TAB cycles forward, Shift+TAB cycles back, number keys direct-pick
   private selectedArmy: string = 'all';
   // Cycle order: all → then only types the player currently has units of
-  private allArmyTypes = ['all', 'bunny', 'turtle', 'wolf', 'scorpion', 'hawk', 'bear', 'crocodile', 'lion', 'phoenix', 'dragon'];
+  private allArmyTypes = ['all', 'gnome', 'turtle', 'skull', 'spider', 'gnoll', 'panda', 'lizard', 'minotaur', 'shaman', 'troll'];
   private armyKeys: Record<string, string> = {
-    '1': 'all', '2': 'bunny', '3': 'wolf', '4': 'bear', '5': 'lion', '6': 'dragon',
-    '7': 'turtle', '8': 'scorpion', '9': 'hawk', '0': 'crocodile',
+    '1': 'all', '2': 'gnome', '3': 'skull', '4': 'panda', '5': 'minotaur', '6': 'troll',
+    '7': 'turtle', '8': 'spider', '9': 'gnoll', '0': 'lizard',
   };
   private selectionLabel: Phaser.GameObjects.Text | null = null;
   private armyBarEl: HTMLDivElement | null = null;
@@ -696,7 +789,7 @@ export class HordeScene extends Phaser.Scene {
 
     this.syncTimer = 0;
 
-    this.cameras.main.setBackgroundColor('#0d1a0d');
+    this.cameras.main.setBackgroundColor('#1a1a2e');
     this.drawBackground();
     this.setupCamps();
     this.setupNexuses();
@@ -705,11 +798,11 @@ export class HordeScene extends Phaser.Scene {
     this.setupHUD();
     this.events.on('shutdown', () => this.cleanupHTML());
 
-    // Starting bunnies — only host/solo spawns units; guest gets them via sync
+    // Starting gnomes — only host/solo spawns units; guest gets them via sync
     if (!this.isOnline || this.isHost) {
       for (let i = 0; i < 3; i++) {
-        this.spawnUnit('bunny', 1, P1_BASE.x + 50 + i * 20, P1_BASE.y - 50);
-        this.spawnUnit('bunny', 2, P2_BASE.x - 50 - i * 20, P2_BASE.y + 50);
+        this.spawnUnit('gnome', 1, P1_BASE.x + 50 + i * 20, P1_BASE.y - 50);
+        this.spawnUnit('gnome', 2, P2_BASE.x - 50 - i * 20, P2_BASE.y + 50);
       }
       this.spawnWildAnimals();
     }
@@ -746,22 +839,34 @@ export class HordeScene extends Phaser.Scene {
   private drawBackground() {
     const g = this.add.graphics();
 
-    // Faint concentric rings from each nexus
-    for (const [base, color] of [[P1_BASE, 0x4499FF], [P2_BASE, 0xFF5555]] as const) {
-      for (const r of [350, 750, 1100]) {
-        g.lineStyle(1, color as number, 0.08);
-        g.strokeCircle(base.x, base.y, r);
-      }
+    // Solid clean grass field
+    g.fillStyle(0x1e3a14, 1);
+    g.fillRect(0, 0, WORLD_W, WORLD_H);
+
+    // Subtle lighter patches for depth — large soft rectangles, not noisy
+    const patches = [
+      { x: 400, y: 400, w: 800, h: 600 },
+      { x: 1800, y: 200, w: 700, h: 500 },
+      { x: 100, y: 1600, w: 600, h: 700 },
+      { x: 2200, y: 1400, w: 800, h: 600 },
+      { x: 1200, y: 800, w: 900, h: 700 },
+      { x: 600, y: 2400, w: 700, h: 500 },
+      { x: 2400, y: 2500, w: 600, h: 500 },
+    ];
+    for (const p of patches) {
+      g.fillStyle(0x254a1a, 0.25);
+      g.fillRoundedRect(p.x, p.y, p.w, p.h, 80);
     }
 
-    // Diagonal lane
-    g.lineStyle(2, 0xffffff, 0.04);
-    g.lineBetween(P1_BASE.x, P1_BASE.y, P2_BASE.x, P2_BASE.y);
+    // Thin border around the play area
+    g.lineStyle(3, 0x122e0e, 0.5);
+    g.strokeRect(0, 0, WORLD_W, WORLD_H);
 
-    // Subtle grid
-    g.lineStyle(1, 0xffffff, 0.015);
-    for (let x = 0; x < WORLD_W; x += 200) g.lineBetween(x, 0, x, WORLD_H);
-    for (let y = 0; y < WORLD_H; y += 200) g.lineBetween(0, y, WORLD_W, y);
+    // Very faint base territory indicators — soft circles, not harsh rings
+    g.fillStyle(0x4499FF, 0.04);
+    g.fillCircle(P1_BASE.x, P1_BASE.y, 500);
+    g.fillStyle(0xFF5555, 0.04);
+    g.fillCircle(P2_BASE.x, P2_BASE.y, 500);
   }
 
   // ─── CAMPS ───────────────────────────────────────────────────
@@ -815,10 +920,10 @@ export class HordeScene extends Phaser.Scene {
         targetY: camp.y + Math.sin(wanderAngle) * wanderR,
         attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
         campId: camp.id, lungeX: 0, lungeY: 0,
-        hasRebirth: camp.animalType === 'phoenix',
-        diveReady: camp.animalType === 'hawk',
+        hasRebirth: camp.animalType === 'skull',
+        diveReady: false,
         diveTimer: 0,
-        carrying: null, carrySprite: null, loop: null, isElite: false,
+        carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
       });
     }
   }
@@ -940,7 +1045,7 @@ export class HordeScene extends Phaser.Scene {
     const input = document.createElement('input');
     input.id = 'horde-cmd-input';
     input.type = 'text';
-    input.placeholder = 'Type command... (e.g. "bunnies attack wolf camp")';
+    input.placeholder = 'Type command... (e.g. "gnomes attack skull camp")';
     input.style.cssText = `
       position:absolute;bottom:20px;left:50%;transform:translateX(-50%);
       width:520px;padding:10px 18px;font-size:15px;
@@ -1186,7 +1291,7 @@ export class HordeScene extends Phaser.Scene {
       'SPACE: Voice  |  Type below: Text',
       'Q/E: Cycle army  |  TAB: Next  |  1-0: Direct pick',
       'Commands apply to selected army',
-      '"attack nearest camp" | "make bunnies" | "make wolves"',
+      '"attack nearest camp" | "make gnomes" | "make skulls"',
     ].join('\n'), {
       fontSize: '10px', color: '#4A6B4A', fontFamily: '"Nunito", sans-serif', lineSpacing: 2, align: 'right',
     }).setOrigin(1, 1).setScrollFactor(0).setDepth(100);
@@ -1236,7 +1341,7 @@ export class HordeScene extends Phaser.Scene {
 
     // ─── PRODUCTION (food-gated) ───
     const prodLines: string[] = [];
-    prodLines.push(`🐰 Base: 1🥕/bunny (${BASE_SPAWN_MS / 1000}s)`);
+    prodLines.push(`🧝 Base: 1🥕/gnome (${BASE_SPAWN_MS / 1000}s)`);
     const myCamps = this.camps.filter(c => c.owner === myT);
     for (const c of myCamps) {
       const cost = SPAWN_COSTS[c.animalType];
@@ -1304,7 +1409,7 @@ export class HordeScene extends Phaser.Scene {
     this.gameTime += delta;
     this.updateCarrotSpawning(delta);
     this.updateWildAnimals(delta);
-    this.updateGatherLoops();
+    this.updateWorkflows();
     this.updateResourcePickup();
     this.updateDeliveries();
     this.updateMovement(dt);
@@ -1338,12 +1443,12 @@ export class HordeScene extends Phaser.Scene {
   private trySpawnFromDelivery(team: 1 | 2, location: 'base' | string) {
     if (this.units.filter(u => u.team === team && !u.dead).length >= MAX_UNITS) return;
     if (location === 'base') {
-      // Base spawns bunnies from carrots
+      // Base spawns gnomes from carrots
       const stock = this.baseStockpile[team];
-      if (stock.carrot >= SPAWN_COSTS['bunny'].amount) {
-        stock.carrot -= SPAWN_COSTS['bunny'].amount;
+      if (stock.carrot >= SPAWN_COSTS['gnome'].amount) {
+        stock.carrot -= SPAWN_COSTS['gnome'].amount;
         const b = team === 1 ? P1_BASE : P2_BASE;
-        this.spawnUnit('bunny', team, b.x + (team === 1 ? 60 : -60), b.y + (team === 1 ? -30 : 30));
+        this.spawnUnit('gnome', team, b.x + (team === 1 ? 60 : -60), b.y + (team === 1 ? -30 : 30));
       }
     } else {
       const camp = this.camps.find(c => c.id === location);
@@ -1358,107 +1463,19 @@ export class HordeScene extends Phaser.Scene {
   // ─── MOVEMENT (horde flocking) ─────────────────────────────
 
   private updateMovement(dt: number) {
-    // Build spatial groups: same type + same team = one horde
-    const hordes = new Map<string, HUnit[]>();
-    for (const u of this.units) {
-      if (u.dead) continue;
-      const k = `${u.type}_${u.team}`;
-      if (!hordes.has(k)) hordes.set(k, []);
-      hordes.get(k)!.push(u);
-    }
-
-    // Precompute horde centers
-    const hordeCenters = new Map<string, { cx: number; cy: number; count: number }>();
-    for (const [k, group] of hordes) {
-      let sx = 0, sy = 0;
-      for (const u of group) { sx += u.x; sy += u.y; }
-      hordeCenters.set(k, { cx: sx / group.length, cy: sy / group.length, count: group.length });
-    }
-
-    // Flocking strengths by tier — low tier = tight horde, high tier = more independent
-    const COHESION_BY_TIER: Record<number, number> = { 1: 0.7, 2: 0.45, 3: 0.25, 4: 0.15, 5: 0.08 };
-    const SEPARATION_DIST = 22; // min distance before pushing apart
-    const SEPARATION_FORCE = 60; // push-apart strength
-
     for (const u of this.units) {
       if (u.dead) continue;
 
-      // Base: move toward target
       const dx = u.targetX - u.x, dy = u.targetY - u.y;
       const d = Math.sqrt(dx * dx + dy * dy);
-      if (d < 5) continue; // already there
+      if (d < 5) continue;
 
       const buffMult = u.team !== 0 ? (1 + this.getBuffs(u.team as 1 | 2).speed) : 1;
       const spd = u.speed * buffMult;
-
-      // Primary: always move at full speed toward target
-      const forwardX = (dx / d) * spd;
-      const forwardY = (dy / d) * spd;
-
-      // Lateral nudges (cohesion, separation, avoidance) — added as offsets, never slow down forward speed
-      let nudgeX = 0, nudgeY = 0;
-
-      // Cohesion: steer toward horde center (skip neutral defenders)
-      if (u.team !== 0) {
-        const k = `${u.type}_${u.team}`;
-        const center = hordeCenters.get(k);
-        if (center && center.count > 1) {
-          const tier = ANIMALS[u.type]?.tier || 1;
-          const cohesion = COHESION_BY_TIER[tier] ?? 0.3;
-          const cdx = center.cx - u.x, cdy = center.cy - u.y;
-          const cd = Math.sqrt(cdx * cdx + cdy * cdy);
-          if (cd > 10) {
-            const pull = Math.min(cd * 0.02, 1.0) * cohesion * spd;
-            nudgeX += (cdx / cd) * pull;
-            nudgeY += (cdy / cd) * pull;
-          }
-        }
-      }
-
-      // Camp avoidance: steer away from neutral camps the unit is NOT targeting
-      if (u.team !== 0) {
-        for (const camp of this.camps) {
-          if (camp.owner === u.team) continue;
-          const campDist = pdist(u, camp);
-          const avoidRadius = CAMP_RANGE + 60;
-          if (campDist < avoidRadius && campDist > 5) {
-            const targetToCamp = pdist({ x: u.targetX, y: u.targetY }, camp);
-            if (targetToCamp < CAMP_RANGE) continue;
-            const awayX = u.x - camp.x, awayY = u.y - camp.y;
-            const awayD = Math.sqrt(awayX * awayX + awayY * awayY) || 1;
-            const pushStrength = ((avoidRadius - campDist) / avoidRadius) * spd * 0.5;
-            nudgeX += (awayX / awayD) * pushStrength;
-            nudgeY += (awayY / awayD) * pushStrength;
-          }
-        }
-      }
-
-      // Separation: avoid stacking on nearby same-team units
-      const horde = hordes.get(`${u.type}_${u.team}`);
-      if (horde && horde.length > 1) {
-        for (const o of horde) {
-          if (o === u) continue;
-          const ox = u.x - o.x, oy = u.y - o.y;
-          const od = Math.sqrt(ox * ox + oy * oy);
-          if (od < SEPARATION_DIST && od > 0.1) {
-            const push = (SEPARATION_DIST - od) / SEPARATION_DIST;
-            nudgeX += (ox / od) * push * SEPARATION_FORCE;
-            nudgeY += (oy / od) * push * SEPARATION_FORCE;
-          }
-        }
-      }
-
-      // Combine: full-speed forward + capped lateral nudges
-      let moveX = forwardX + nudgeX;
-      let moveY = forwardY + nudgeY;
-
-      // Normalize to ensure units always move at full speed (nudges steer, never slow)
-      const moveD = Math.sqrt(moveX * moveX + moveY * moveY);
-      if (moveD > 0) {
-        const finalSpeed = spd * dt;
-        u.x += (moveX / moveD) * finalSpeed;
-        u.y += (moveY / moveD) * finalSpeed;
-      }
+      const finalSpeed = spd * dt;
+      const step = Math.min(finalSpeed, d);
+      u.x += (dx / d) * step;
+      u.y += (dy / d) * step;
 
       // Clamp to world bounds
       u.x = Math.max(0, Math.min(WORLD_W, u.x));
@@ -1471,25 +1488,47 @@ export class HordeScene extends Phaser.Scene {
   private updateCombat(delta: number) {
     for (const u of this.units) {
       if (u.dead) continue;
-      // Units carrying resources can't fight
-      if (u.carrying) continue;
-      u.attackTimer -= delta;
 
-      // Hawk dive recharge: after 5s without attacking, dive is ready again
-      if (u.type === 'hawk' && !u.diveReady) {
-        u.diveTimer -= delta;
-        if (u.diveTimer <= 0) u.diveReady = true;
+      // Drop food and fight if enemy is nearby
+      if (u.carrying && u.team !== 0) {
+        const combatRange = u.type === 'gnoll' ? 120 : COMBAT_RANGE;
+        const enemyNear = this.units.some(o => !o.dead && o.team !== u.team && o.team !== 0 && pdist(u, o) <= combatRange + 30);
+        if (enemyNear) {
+          // Drop carried resource on the ground and engage
+          this.spawnGroundItem(u.carrying, u.x, u.y);
+          u.carrying = null;
+          if (u.carrySprite) { u.carrySprite.destroy(); u.carrySprite = null; }
+          // Reset workflow to seeking phase so they re-pick after combat
+          if (u.loop) {
+            const step = u.loop.steps[u.loop.currentStep];
+            if (step?.action === 'deliver') {
+              // Go back to seek step
+              u.loop.currentStep = (u.loop.currentStep - 1 + u.loop.steps.length) % u.loop.steps.length;
+            }
+          }
+        } else {
+          continue; // No enemies — keep carrying, skip combat
+        }
       }
+
+      // PANDA "Thick Hide": regenerate 1% max HP per second
+      if (u.type === 'panda' && u.hp < u.maxHp) {
+        u.hp = Math.min(u.maxHp, u.hp + u.maxHp * 0.01 * (delta / 1000));
+      }
+
+      u.attackTimer -= delta;
 
       if (u.attackTimer > 0) continue;
 
       // Find closest enemy: team 0 attacks anyone, team 1/2 attack each other AND team 0
+      // GNOLL "Bone Toss": extended combat range (120 vs 80)
+      const unitCombatRange = u.type === 'gnoll' ? 120 : COMBAT_RANGE;
       let best: HUnit | null = null, bestD = Infinity;
       for (const o of this.units) {
         if (o.dead || o.team === u.team) continue;
         if (u.team === 0 && o.team === 0) continue;
         const d = pdist(u, o);
-        if (d <= COMBAT_RANGE && d < bestD) { bestD = d; best = o; }
+        if (d <= unitCombatRange && d < bestD) { bestD = d; best = o; }
       }
 
       // Nexus attack (only player units)
@@ -1505,51 +1544,30 @@ export class HordeScene extends Phaser.Scene {
         const counters = HARD_COUNTERS[u.type];
         if (counters && counters.includes(best.type)) atk *= 2;
 
-        // ─── WOLF PACK TACTICS: +15% damage per nearby friendly wolf ───
-        if (u.type === 'wolf' && u.team !== 0) {
-          const nearbyWolves = this.units.filter(w =>
-            w !== u && !w.dead && w.type === 'wolf' && w.team === u.team && pdist(u, w) < 100
-          ).length;
-          atk *= (1 + nearbyWolves * 0.15);
-        }
-
-        // ─── SCORPION VENOM STING: +5% of target's max HP as bonus damage ───
-        if (u.type === 'scorpion') {
+        // ─── SPIDER VENOM BITE: +5% of target's max HP as bonus damage ───
+        if (u.type === 'spider') {
           atk += best.maxHp * 0.05;
         }
 
-        // ─── HAWK DIVE STRIKE: first attack = 3x damage, 6s cooldown ───
-        if (u.type === 'hawk' && u.diveReady) {
-          atk *= 3;
-          u.diveReady = false;
-          u.diveTimer = 6000;
-        }
-
-        // ─── BEAR BERSERKER: attack scales up as HP drops (up to 2x at 10% HP) ───
-        if (u.type === 'bear') {
-          const missingPct = 1 - (u.hp / u.maxHp); // 0 at full, ~1 at near-death
-          atk *= (1 + missingPct); // 1x at full → 2x at near-death
-        }
-
-        // ─── CROCODILE DEATH ROLL: 3x to targets below 40% HP ───
-        if (u.type === 'crocodile' && best.hp / best.maxHp < 0.4) {
+        // ─── LIZARD COLD BLOOD: 3x to targets below 40% HP ───
+        if (u.type === 'lizard' && best.hp / best.maxHp < 0.4) {
           atk *= 3;
         }
 
-        // ─── LION WAR ROAR: nearby allies get +25% attack (check if attacker has lion nearby) ───
-        if (u.team !== 0 && u.type !== 'lion') {
-          const hasLionNearby = this.units.some(l =>
-            !l.dead && l.type === 'lion' && l.team === u.team && pdist(u, l) < 150
+        // ─── MINOTAUR WAR CRY: nearby allies get +25% attack (check if attacker has minotaur nearby) ───
+        if (u.team !== 0 && u.type !== 'minotaur') {
+          const hasMinotaurNearby = this.units.some(l =>
+            !l.dead && l.type === 'minotaur' && l.team === u.team && pdist(u, l) < 150
           );
-          if (hasLionNearby) atk *= 1.25;
+          if (hasMinotaurNearby) atk *= 1.25;
         }
 
-        // ─── TURTLE SHELL GUARD: 50% damage reduction when stationary ───
+        // ─── TURTLE SHELL STANCE: 60% damage reduction when stationary ───
         const isStationary = pdist(best, { x: best.targetX, y: best.targetY }) < 15;
-        if (best.type === 'turtle' && isStationary) atk *= 0.5;
+        if (best.type === 'turtle' && isStationary) atk *= 0.4;
 
-        // Splash: Dragon = 80px, T4 = 50px, T3 = 40px, others = none
-        const splashRadius = u.type === 'dragon' ? 80 : uTier >= 4 ? 50 : uTier >= 3 ? 40 : 0;
+        // Splash: Troll = 90px, Shaman = 60px (always), T4 = 50px, T3 = 40px, others = none
+        const splashRadius = u.type === 'troll' ? 90 : u.type === 'shaman' ? 60 : uTier >= 4 ? 50 : uTier >= 3 ? 40 : 0;
         const splashTargets: HUnit[] = [best];
         if (splashRadius > 0) {
           for (const o of this.units) {
@@ -1562,17 +1580,22 @@ export class HordeScene extends Phaser.Scene {
         for (const target of splashTargets) {
           let dmg = target === best ? atk : atk * 0.5; // half damage for splash
 
-          // Shell guard also applies to splash targets
+          // Shell stance also applies to splash targets
           if (target.type === 'turtle') {
             const tStationary = pdist(target, { x: target.targetX, y: target.targetY }) < 15;
-            if (tStationary && target !== best) dmg *= 0.5;
+            if (tStationary && target !== best) dmg *= 0.4;
           }
 
           target.hp -= dmg;
 
-          // ─── PHOENIX REBIRTH: respawn at 50% HP instead of dying ───
-          if (target.hp <= 0 && target.type === 'phoenix' && target.hasRebirth) {
-            target.hp = target.maxHp * 0.5;
+          // ─── TROLL CLUB SLAM: enemies hit by troll get their attack cooldown doubled ───
+          if (u.type === 'troll' && !target.dead) {
+            target.attackTimer += ATTACK_CD_MS;
+          }
+
+          // ─── SKULL UNDYING: cheats death once, survives at 1 HP ───
+          if (target.hp <= 0 && target.type === 'skull' && target.hasRebirth) {
+            target.hp = 1;
             target.hasRebirth = false;
             if (target.sprite) {
               this.tweens.killTweensOf(target.sprite);
@@ -1584,6 +1607,7 @@ export class HordeScene extends Phaser.Scene {
             }
           } else if (target.hp <= 0) {
             target.dead = true;
+            target.claimItemId = -1; // release any resource claim
             // Drop meat on death (all units)
             this.spawnGroundItem('meat', target.x + (Math.random() - 0.5) * 20, target.y + (Math.random() - 0.5) * 20);
             // Elite prey drops crystals
@@ -1655,14 +1679,14 @@ export class HordeScene extends Phaser.Scene {
     for (const camp of this.camps) {
       const defenders = this.units.filter(u => u.campId === camp.id && u.team === 0 && !u.dead);
 
-      // Make neutral defenders wander slowly near their camp
+      // Make neutral defenders patrol around their camp — always walking
       for (const d of defenders) {
         const distToCamp = pdist(d, camp);
         const distToTarget = pdist(d, { x: d.targetX, y: d.targetY });
-        // Only pick new target when arrived or drifted too far — not every frame
-        if (distToTarget < 8 || distToCamp > 80) {
+        // Pick new patrol point when arrived or drifted too far
+        if (distToTarget < 12 || distToCamp > 120) {
           const a = Math.random() * Math.PI * 2;
-          const r = 15 + Math.random() * 35;
+          const r = 40 + Math.random() * 60;
           d.targetX = camp.x + Math.cos(a) * r;
           d.targetY = camp.y + Math.sin(a) * r;
         }
@@ -1765,7 +1789,7 @@ export class HordeScene extends Phaser.Scene {
         if (mc.length > 0) deliverTo = mc[0].id;
       }
       for (const u of toAssign) {
-        u.loop = { action: 'gather', resourceType: resType, deliverTo, phase: 'seeking' };
+        u.loop = makeGatherWorkflow(resType, deliverTo);
       }
     }
 
@@ -1828,24 +1852,34 @@ export class HordeScene extends Phaser.Scene {
       if (!u.sprite) {
         const spriteConf = HORDE_SPRITE_CONFIGS[u.type];
         if (spriteConf) {
-          // Create animated sprite
-          u.sprite = this.add.sprite(0, 0, spriteConf.idle.key);
+          // Create animated sprite at unit's actual position
+          u.sprite = this.add.sprite(u.x, u.y, spriteConf.idle.key);
+          u.prevSpriteX = u.x;
+          u.prevSpriteY = u.y;
           const scale = u.isElite ? spriteConf.displayScale * 1.3 : spriteConf.displayScale;
           u.sprite.setScale(scale);
           u.sprite.setOrigin(0.5, spriteConf.originY);
           u.sprite.setDepth(20);
-          u.sprite.play(`h_${u.type}_idle`);
-          u.animState = 'idle';
-
-          // Team tint: neutral=amber, player1=slight blue, player2=slight red, elite=gold
-          if (u.isElite) {
-            u.sprite.setTint(0xFFDD44);
-          } else if (u.team === 0) {
-            u.sprite.setTint(0xFFCC88);
-          } else if (u.team === 2) {
-            u.sprite.setTint(0xFFAAAA);
+          // Start with correct animation based on whether unit is already moving
+          const initDist = Math.sqrt((u.targetX - u.x) ** 2 + (u.targetY - u.y) ** 2);
+          if (initDist > 8) {
+            u.sprite.play(`h_${u.type}_walk`);
+            u.animState = 'walk';
+          } else {
+            u.sprite.play(`h_${u.type}_idle`);
+            u.animState = 'idle';
           }
-          // team 1 (player) keeps original colors
+
+          // Team tint: subtle coloring to distinguish teams without overwhelming the sprite
+          if (u.isElite) {
+            u.sprite.setTint(0xEEDD88);
+          } else if (u.team === 0) {
+            u.sprite.setTint(0xDDDD99); // soft warm for neutral
+          } else if (u.team === 1) {
+            u.sprite.setTint(0xAADDAA); // soft green for player
+          } else if (u.team === 2) {
+            u.sprite.setTint(0xDD9999); // soft red for enemy
+          }
 
           // Return to idle after attack animation completes
           u.sprite.on('animationcomplete', (anim: Phaser.Animations.Animation) => {
@@ -1866,8 +1900,8 @@ export class HordeScene extends Phaser.Scene {
       // Sunflower spiral formation offset based on stable unit ID
       // Tighter for horde units (bunnies), wider for big animals
       const tier = ANIMALS[u.type]?.tier || 1;
-      const tierSpacing = tier <= 1 ? 8 : tier <= 2 ? 12 : tier >= 4 ? 14 : 10;
-      const maxSpread = tier <= 1 ? 35 : tier <= 2 ? 50 : tier >= 4 ? 50 : 40;
+      const tierSpacing = tier <= 1 ? 16 : tier <= 2 ? 22 : tier >= 4 ? 28 : 20;
+      const maxSpread = tier <= 1 ? 70 : tier <= 2 ? 90 : tier >= 4 ? 100 : 80;
       const a = u.id * GOLDEN_ANGLE;
       const grp = groups.get(`${u.type}_${u.team}`) || [u];
       const idx = grp.indexOf(u);
@@ -1882,16 +1916,14 @@ export class HordeScene extends Phaser.Scene {
       u.sprite.setPosition(sx, sy);
 
       // Animation state: flip based on movement, switch idle/walk
-      const movedX = sx - u.prevSpriteX;
-      const movedY = sy - u.prevSpriteY;
-      const isMoving = Math.abs(movedX) > 1 || Math.abs(movedY) > 1;
+      // Use actual unit-to-target distance (not lerped sprite delta) for reliable walk detection
+      const distToTarget = Math.sqrt((u.targetX - u.x) ** 2 + (u.targetY - u.y) ** 2);
+      const isMoving = distToTarget > 8;
 
-      // Face direction: use target direction for reliable flipping, fall back to sprite delta
+      // Face direction: use target direction for reliable flipping
       const headingX = u.targetX - u.x;
       if (Math.abs(headingX) > 2) {
         u.sprite.setFlipX(headingX < 0);
-      } else if (Math.abs(movedX) > 0.3) {
-        u.sprite.setFlipX(movedX < 0);
       }
 
       if (u.animState !== 'attack') {
@@ -2052,15 +2084,20 @@ export class HordeScene extends Phaser.Scene {
   private updateResourcePickup() {
     for (const u of this.units) {
       if (u.dead || u.carrying || u.team === 0) continue;
-      // Bunny Swiftfoot: 2x pickup range — born to gather
-      const range = u.type === 'bunny' ? PICKUP_RANGE * 2 : PICKUP_RANGE;
+      // Gnome Nimble Hands: 2x pickup range — born to gather
+      const range = u.type === 'gnome' ? PICKUP_RANGE * 2 : PICKUP_RANGE;
       for (const item of this.groundItems) {
         if (item.dead) continue;
         if (pdist(u, item) < range) {
           u.carrying = item.type;
+          u.claimItemId = -1; // release claim
           item.dead = true;
           if (item.sprite) { item.sprite.destroy(); item.sprite = null; }
-          if (u.loop) u.loop.phase = 'delivering';
+          // Picked up a resource — advance workflow past seek_resource step
+          if (u.loop) {
+            const step = u.loop.steps[u.loop.currentStep];
+            if (step?.action === 'seek_resource') this.advanceWorkflow(u);
+          }
           break;
         }
       }
@@ -2073,9 +2110,12 @@ export class HordeScene extends Phaser.Scene {
       const team = u.team as 1 | 2;
       const base = team === 1 ? P1_BASE : P2_BASE;
 
+      // Turtle carries 10x per trip — slow but massive hauler
+      const carryAmount = u.type === 'turtle' ? 10 : 1;
+
       // Deliver to own base
       if (pdist(u, base) < PICKUP_RANGE + 25) {
-        this.baseStockpile[team][u.carrying] += 1;
+        this.baseStockpile[team][u.carrying] += carryAmount;
         this.clearCarrying(u);
         this.trySpawnFromDelivery(team, 'base');
         continue;
@@ -2087,7 +2127,7 @@ export class HordeScene extends Phaser.Scene {
         if (pdist(u, camp) < PICKUP_RANGE + 25) {
           const cost = SPAWN_COSTS[camp.animalType];
           if (cost && cost.type === u.carrying) {
-            camp.storedFood += 1;
+            camp.storedFood += carryAmount;
             this.clearCarrying(u);
             this.trySpawnFromDelivery(team, camp.id);
           }
@@ -2100,83 +2140,276 @@ export class HordeScene extends Phaser.Scene {
   private clearCarrying(u: HUnit) {
     u.carrying = null;
     if (u.carrySprite) { u.carrySprite.destroy(); u.carrySprite = null; }
-    if (u.loop) u.loop.phase = 'seeking';
+    // Advance workflow to next step after delivery
+    if (u.loop) this.advanceWorkflow(u);
   }
 
-  // ─── RESOURCE ECONOMY: GATHER LOOPS ──────────────────────────
+  /** Advance to next workflow step, looping back to 0 at the end */
+  private advanceWorkflow(u: HUnit) {
+    if (!u.loop) return;
+    u.loop.currentStep = (u.loop.currentStep + 1) % u.loop.steps.length;
+  }
 
-  private updateGatherLoops() {
-    // No auto-assign — loops are created by voice commands only
-    // Track which ground items are already targeted so each unit picks a unique one
+  // ─── WORKFLOW ENGINE ──────────────────────────────────────────
+  // Executes LLM-defined multi-step workflows on units each frame.
+
+  private updateWorkflows() {
+    const dt = this.game.loop.delta; // ms since last frame
+
+    // Build set of item IDs currently claimed by living units
     const claimedItems = new Set<number>();
+    for (const u of this.units) {
+      if (!u.dead && u.claimItemId >= 0) {
+        // Validate claim: item must still exist and not be dead
+        const item = this.groundItems.find(i => i.id === u.claimItemId);
+        if (item && !item.dead) {
+          claimedItems.add(u.claimItemId);
+        } else {
+          u.claimItemId = -1; // item gone, release claim
+        }
+      }
+    }
 
     for (const u of this.units) {
-      if (u.dead || !u.loop || u.team === 0) continue;
+      if (u.dead || u.team === 0) continue;
+
+      // Units with a loop that are idle for 4s → restart their loop from step 0
+      if (u.loop) {
+        const distToTarget = Math.sqrt((u.targetX - u.x) ** 2 + (u.targetY - u.y) ** 2);
+        const isIdle = distToTarget < 10 && !u.carrying && u.animState !== 'attack';
+        if (isIdle) {
+          u.idleTimer += dt;
+          if (u.idleTimer >= 4000) {
+            u.loop.currentStep = 0;
+            u.idleTimer = 0;
+          }
+        } else {
+          u.idleTimer = 0;
+        }
+      }
+
+      if (!u.loop) continue;
       const team = u.team as 1 | 2;
       const base = team === 1 ? P1_BASE : P2_BASE;
+      const step = u.loop.steps[u.loop.currentStep];
+      if (!step) continue;
 
-      if (u.loop.phase === 'seeking' && !u.carrying) {
-        // Find nearest UNCLAIMED matching ground item unique to this unit
-        let best: HGroundItem | null = null, bestD = Infinity;
-        for (const item of this.groundItems) {
-          if (item.dead || item.type !== u.loop.resourceType) continue;
-          if (claimedItems.has(item.id)) continue; // skip already-claimed
-          const d = pdist(u, item);
-          if (d < bestD) { bestD = d; best = item; }
-        }
-        if (best) {
-          claimedItems.add(best.id); // claim it
-          u.targetX = best.x; u.targetY = best.y;
-        } else {
-          // No unclaimed items — wait near base
-          if (pdist(u, base) > 200) { u.targetX = base.x; u.targetY = base.y; }
-        }
-      } else if (u.loop.phase === 'delivering' && u.carrying) {
-        // Head to delivery target
-        if (u.loop.deliverTo === 'base') {
-          u.targetX = base.x; u.targetY = base.y;
-        } else {
-          const camp = this.camps.find(c => c.id === u.loop!.deliverTo);
-          if (camp && camp.owner === team) {
-            u.targetX = camp.x; u.targetY = camp.y;
+      switch (step.action) {
+        case 'seek_resource': {
+          if (u.carrying) {
+            u.claimItemId = -1; // release claim on pickup
+            this.advanceWorkflow(u);
+            break;
+          }
+          // Check if current claim is still valid
+          if (u.claimItemId >= 0) {
+            const claimed = this.groundItems.find(i => i.id === u.claimItemId);
+            if (claimed && !claimed.dead) {
+              // Still valid — keep pathing to it
+              u.targetX = claimed.x; u.targetY = claimed.y;
+              break;
+            }
+            u.claimItemId = -1; // item gone, find new one
+          }
+          // Find nearest unclaimed ground item of the right type
+          let best: HGroundItem | null = null, bestD = Infinity;
+          for (const item of this.groundItems) {
+            if (item.dead || item.type !== step.resourceType) continue;
+            if (claimedItems.has(item.id)) continue;
+            const d = pdist(u, item);
+            if (d < bestD) { bestD = d; best = item; }
+          }
+          if (best) {
+            u.claimItemId = best.id;
+            claimedItems.add(best.id);
+            u.targetX = best.x; u.targetY = best.y;
           } else {
+            // Nothing available — wait near base
+            if (pdist(u, base) > 200) { u.targetX = base.x; u.targetY = base.y; }
+          }
+          break;
+        }
+
+        case 'deliver': {
+          if (!u.carrying) {
+            // Nothing to deliver — loop back to seek
+            this.advanceWorkflow(u);
+            break;
+          }
+          // Resolve delivery target
+          const target = this.resolveDeliverTarget(step.target, team);
+          if (target) {
+            u.targetX = target.x; u.targetY = target.y;
+          } else {
+            // Target camp not owned — go capture the nearest one of that type
+            const nearestMatch = step.target.match(/^nearest_(\w+)_camp$/);
+            if (nearestMatch) {
+              const animalType = nearestMatch[1];
+              const unowned = this.camps
+                .filter(c => c.animalType === animalType && c.owner !== team)
+                .sort((a, b) => pdist(a, base) - pdist(b, base));
+              if (unowned.length > 0) {
+                // Drop food, go capture, workflow will re-seek after
+                this.spawnGroundItem(u.carrying, u.x, u.y);
+                u.carrying = null;
+                if (u.carrySprite) { u.carrySprite.destroy(); u.carrySprite = null; }
+                u.targetX = unowned[0].x; u.targetY = unowned[0].y;
+                break;
+              }
+            }
+            // Last fallback: deliver to base
             u.targetX = base.x; u.targetY = base.y;
           }
+          break;
+        }
+
+        case 'hunt': {
+          // Find nearest wild animal to attack
+          const prey = this.units
+            .filter(w => w.team === 0 && !w.dead && !w.campId
+              && (!step.targetType || w.type === step.targetType))
+            .sort((a, b) => pdist(u, a) - pdist(u, b));
+          if (prey.length > 0) {
+            u.targetX = prey[0].x; u.targetY = prey[0].y;
+          }
+          // If we picked up a resource from a kill, advance
+          if (u.carrying) this.advanceWorkflow(u);
+          break;
+        }
+
+        case 'attack_camp': {
+          // Find target camp
+          let targetCamp: HCamp | undefined;
+          if (step.campIndex !== undefined && step.campIndex >= 0) {
+            targetCamp = this.camps[step.campIndex];
+          } else if (step.targetAnimal) {
+            const qualifier = step.qualifier || 'nearest';
+            const filtered = this.camps.filter(c =>
+              c.animalType === step.targetAnimal && c.owner !== team);
+            if (qualifier === 'nearest') filtered.sort((a, b) => pdist(a, base) - pdist(b, base));
+            targetCamp = filtered[0];
+          }
+          if (targetCamp) {
+            u.targetX = targetCamp.x; u.targetY = targetCamp.y;
+            // If captured, advance
+            if (targetCamp.owner === team) this.advanceWorkflow(u);
+          }
+          break;
+        }
+
+        case 'move': {
+          u.targetX = step.x; u.targetY = step.y;
+          if (pdist(u, { x: step.x, y: step.y }) < 20) this.advanceWorkflow(u);
+          break;
+        }
+
+        case 'defend': {
+          // Guard a location — go there and stay, fighting anything that comes close
+          const guardPos = this.resolveDeliverTarget(step.target, team) || base;
+          const distToGuard = pdist(u, guardPos);
+          // If far from guard point, go there
+          if (distToGuard > 120) {
+            u.targetX = guardPos.x; u.targetY = guardPos.y;
+          } else {
+            // At guard point — look for nearby enemies to chase
+            const nearby = this.units
+              .filter(e => !e.dead && e.team !== 0 && e.team !== team && pdist(e, guardPos) < 250)
+              .sort((a, b) => pdist(u, a) - pdist(u, b));
+            if (nearby.length > 0) {
+              u.targetX = nearby[0].x; u.targetY = nearby[0].y;
+            } else {
+              // Patrol near guard point
+              if (pdist(u, { x: u.targetX, y: u.targetY }) < 12) {
+                const a = Math.random() * Math.PI * 2;
+                const r = 30 + Math.random() * 60;
+                u.targetX = guardPos.x + Math.cos(a) * r;
+                u.targetY = guardPos.y + Math.sin(a) * r;
+              }
+            }
+          }
+          // Defend loops never advance — they stay forever
+          break;
+        }
+
+        case 'attack_enemies': {
+          // Seek and fight nearest enemy player units (not neutrals)
+          const enemyTeam = team === 1 ? 2 : 1;
+          const enemies = this.units
+            .filter(e => !e.dead && e.team === enemyTeam)
+            .sort((a, b) => pdist(u, a) - pdist(u, b));
+          if (enemies.length > 0) {
+            u.targetX = enemies[0].x; u.targetY = enemies[0].y;
+          } else {
+            // No enemies — push toward enemy base
+            const enemyBase = team === 1 ? P2_BASE : P1_BASE;
+            u.targetX = enemyBase.x; u.targetY = enemyBase.y;
+          }
+          // Attack_enemies loops never advance — continuous hunting
+          break;
         }
       }
     }
   }
 
+  /** Resolve a deliver target string to coordinates */
+  private resolveDeliverTarget(target: string, team: 1 | 2): { x: number; y: number } | null {
+    if (target === 'base') {
+      return team === 1 ? P1_BASE : P2_BASE;
+    }
+    // "nearest_TYPE_camp" pattern — e.g. "nearest_gnome_camp"
+    const nearestMatch = target.match(/^nearest_(\w+)_camp$/);
+    if (nearestMatch) {
+      const animalType = nearestMatch[1];
+      const base = team === 1 ? P1_BASE : P2_BASE;
+      const camp = this.camps
+        .filter(c => c.owner === team && c.animalType === animalType)
+        .sort((a, b) => pdist(a, base) - pdist(b, base))[0];
+      return camp || null;
+    }
+    // Direct camp ID
+    const camp = this.camps.find(c => c.id === target && c.owner === team);
+    return camp || null;
+  }
+
   // ─── RESOURCE ECONOMY: WILD ANIMALS ──────────────────────────
 
-  /** Spawn position on the outskirts — edges and corners of the map, away from bases */
+  /** Spawn position on the outskirts — heavily biased toward corners, away from bases */
   private randomOutskirtsPos(): { x: number; y: number } {
-    const MARGIN = 150;
-    const EDGE_BAND = 500; // how deep into the map "outskirts" extends
-    let x: number, y: number;
+    const MARGIN = 120;
+    const CORNER_SIZE = 800; // corner zone size
+    // 4 corners of the map (top-left, top-right, bottom-left, bottom-right)
+    const corners = [
+      { x: MARGIN, y: MARGIN },                         // top-left
+      { x: WORLD_W - MARGIN, y: MARGIN },                // top-right
+      { x: MARGIN, y: WORLD_H - MARGIN },                // bottom-left (near P1)
+      { x: WORLD_W - MARGIN, y: WORLD_H - MARGIN },      // bottom-right
+    ];
     for (let attempt = 0; attempt < 50; attempt++) {
-      // Pick a random edge (top, bottom, left, right)
-      const edge = Math.floor(Math.random() * 4);
-      if (edge === 0) { // top
-        x = MARGIN + Math.random() * (WORLD_W - MARGIN * 2);
-        y = MARGIN + Math.random() * EDGE_BAND;
-      } else if (edge === 1) { // bottom
-        x = MARGIN + Math.random() * (WORLD_W - MARGIN * 2);
-        y = WORLD_H - MARGIN - Math.random() * EDGE_BAND;
-      } else if (edge === 2) { // left
-        x = MARGIN + Math.random() * EDGE_BAND;
-        y = MARGIN + Math.random() * (WORLD_H - MARGIN * 2);
-      } else { // right
-        x = WORLD_W - MARGIN - Math.random() * EDGE_BAND;
-        y = MARGIN + Math.random() * (WORLD_H - MARGIN * 2);
+      // 80% chance corner, 20% chance edge
+      let x: number, y: number;
+      if (Math.random() < 0.8) {
+        // Pick a random corner and scatter within CORNER_SIZE
+        const c = corners[Math.floor(Math.random() * corners.length)];
+        x = c.x + (Math.random() - 0.5) * CORNER_SIZE;
+        y = c.y + (Math.random() - 0.5) * CORNER_SIZE;
+      } else {
+        // Edge band fallback
+        const edge = Math.floor(Math.random() * 4);
+        if (edge === 0) { x = MARGIN + Math.random() * (WORLD_W - MARGIN * 2); y = MARGIN + Math.random() * 400; }
+        else if (edge === 1) { x = MARGIN + Math.random() * (WORLD_W - MARGIN * 2); y = WORLD_H - MARGIN - Math.random() * 400; }
+        else if (edge === 2) { x = MARGIN + Math.random() * 400; y = MARGIN + Math.random() * (WORLD_H - MARGIN * 2); }
+        else { x = WORLD_W - MARGIN - Math.random() * 400; y = MARGIN + Math.random() * (WORLD_H - MARGIN * 2); }
       }
+      x = Math.max(MARGIN, Math.min(WORLD_W - MARGIN, x));
+      y = Math.max(MARGIN, Math.min(WORLD_H - MARGIN, y));
       if (pdist({ x, y }, P1_BASE) > 500 && pdist({ x, y }, P2_BASE) > 500) return { x, y };
     }
     return { x: WORLD_W / 2, y: MARGIN + 100 }; // fallback
   }
 
   private spawnWildAnimals() {
-    const wildTypes = ['bunny', 'turtle', 'wolf', 'scorpion', 'hawk'];
+    // Higher-tier enemies on outskirts — no gnomes/turtles (those are gatherers)
+    const wildTypes = ['skull', 'spider', 'gnoll', 'panda', 'lizard'];
     for (let i = 0; i < WILD_ANIMAL_COUNT; i++) {
       const type = wildTypes[Math.floor(Math.random() * wildTypes.length)];
       const def = ANIMALS[type];
@@ -2189,7 +2422,7 @@ export class HordeScene extends Phaser.Scene {
         attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
         campId: null, lungeX: 0, lungeY: 0,
         hasRebirth: false, diveReady: false, diveTimer: 0,
-        carrying: null, carrySprite: null, loop: null, isElite: false,
+        carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
       });
     }
     // Elite golden prey — very strong, drops crystals
@@ -2200,13 +2433,13 @@ export class HordeScene extends Phaser.Scene {
         y = WORLD_H * 0.2 + Math.random() * (WORLD_H * 0.6);
       } while (pdist({ x, y }, P1_BASE) < 600 || pdist({ x, y }, P2_BASE) < 600);
       this.units.push({
-        id: this.nextId++, type: 'lion', team: 0,
+        id: this.nextId++, type: 'minotaur', team: 0,
         hp: 2000, maxHp: 2000, attack: 150, speed: 90,
         x, y, targetX: x + Math.random() * 80 - 40, targetY: y + Math.random() * 80 - 40,
         attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
         campId: null, lungeX: 0, lungeY: 0,
         hasRebirth: false, diveReady: false, diveTimer: 0,
-        carrying: null, carrySprite: null, loop: null, isElite: true,
+        carrying: null, carrySprite: null, loop: null, isElite: true, idleTimer: 0, claimItemId: -1,
       });
     }
   }
@@ -2218,7 +2451,7 @@ export class HordeScene extends Phaser.Scene {
       const wilds = this.units.filter(u => u.team === 0 && !u.campId && !u.dead && !u.isElite);
       const elites = this.units.filter(u => u.team === 0 && !u.campId && !u.dead && u.isElite);
       if (wilds.length < WILD_ANIMAL_COUNT) {
-        const wt = ['bunny', 'turtle', 'wolf', 'scorpion', 'hawk'];
+        const wt = ['skull', 'spider', 'gnoll', 'panda', 'lizard'];
         const type = wt[Math.floor(Math.random() * wt.length)];
         const def = ANIMALS[type];
         const pos = this.randomOutskirtsPos();
@@ -2230,7 +2463,7 @@ export class HordeScene extends Phaser.Scene {
           attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
           campId: null, lungeX: 0, lungeY: 0,
           hasRebirth: false, diveReady: false, diveTimer: 0,
-          carrying: null, carrySprite: null, loop: null, isElite: false,
+          carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
         });
       }
       if (elites.length < ELITE_PREY_COUNT) {
@@ -2238,20 +2471,34 @@ export class HordeScene extends Phaser.Scene {
         do { x = WORLD_W * 0.2 + Math.random() * (WORLD_W * 0.6); y = WORLD_H * 0.2 + Math.random() * (WORLD_H * 0.6);
         } while (pdist({ x, y }, P1_BASE) < 600 || pdist({ x, y }, P2_BASE) < 600);
         this.units.push({
-          id: this.nextId++, type: 'lion', team: 0,
+          id: this.nextId++, type: 'minotaur', team: 0,
           hp: 2000, maxHp: 2000, attack: 150, speed: 90,
           x, y, targetX: x + Math.random() * 80 - 40, targetY: y + Math.random() * 80 - 40,
           attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
           campId: null, lungeX: 0, lungeY: 0,
           hasRebirth: false, diveReady: false, diveTimer: 0,
-          carrying: null, carrySprite: null, loop: null, isElite: true,
+          carrying: null, carrySprite: null, loop: null, isElite: true, idleTimer: 0, claimItemId: -1,
         });
       }
     }
-    // Wander wild animals — stay on outskirts, don't drift to center
+    // Wander wild animals — stay on outskirts, away from center AND player bases
     const cx = WORLD_W / 2, cy = WORLD_H / 2;
+    const BASE_AVOID = 600; // wild animals stay this far from player bases
     for (const u of this.units) {
       if (u.team !== 0 || u.campId || u.dead) continue;
+
+      // Continuously push wilds away from bases (even mid-path)
+      const d1 = pdist(u, P1_BASE), d2 = pdist(u, P2_BASE);
+      if (d1 < BASE_AVOID || d2 < BASE_AVOID) {
+        const nearBase = d1 < d2 ? P1_BASE : P2_BASE;
+        const awayX = u.x - nearBase.x, awayY = u.y - nearBase.y;
+        const awayD = Math.sqrt(awayX * awayX + awayY * awayY) || 1;
+        const pushR = 400 + Math.random() * 300;
+        u.targetX = Math.max(100, Math.min(WORLD_W - 100, u.x + (awayX / awayD) * pushR));
+        u.targetY = Math.max(100, Math.min(WORLD_H - 100, u.y + (awayY / awayD) * pushR));
+        continue;
+      }
+
       if (pdist(u, { x: u.targetX, y: u.targetY }) < 15) {
         // If too close to center, push back toward nearest edge
         const distToCenter = pdist(u, { x: cx, y: cy });
@@ -2268,10 +2515,12 @@ export class HordeScene extends Phaser.Scene {
           const r = 80 + Math.random() * 150;
           let nx = u.x + Math.cos(a) * r;
           let ny = u.y + Math.sin(a) * r;
-          // Clamp to world and keep away from center
+          // Clamp to world and keep away from center and bases
           nx = Math.max(100, Math.min(WORLD_W - 100, nx));
           ny = Math.max(100, Math.min(WORLD_H - 100, ny));
-          if (pdist({ x: nx, y: ny }, { x: cx, y: cy }) < 700) {
+          if (pdist({ x: nx, y: ny }, { x: cx, y: cy }) < 700
+              || pdist({ x: nx, y: ny }, P1_BASE) < BASE_AVOID
+              || pdist({ x: nx, y: ny }, P2_BASE) < BASE_AVOID) {
             // Re-roll toward outskirts
             const pos = this.randomOutskirtsPos();
             nx = pos.x; ny = pos.y;
@@ -2342,10 +2591,17 @@ export class HordeScene extends Phaser.Scene {
       x, y, targetX, targetY,
       attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
       campId: null, lungeX: 0, lungeY: 0,
-      hasRebirth: type === 'phoenix',
-      diveReady: type === 'hawk',
+      hasRebirth: type === 'skull',
+      diveReady: false,
       diveTimer: 0,
-      carrying: null, carrySprite: null, loop: null, isElite: false,
+      carrying: null, carrySprite: null,
+      // Inherit active group workflow so new spawns auto-join the loop
+      loop: this.groupWorkflows[`${type}_${team}`]
+        ? { ...this.groupWorkflows[`${type}_${team}`], currentStep: 0 }
+        : null,
+      isElite: false,
+      idleTimer: 0,
+      claimItemId: -1,
     });
   }
 
@@ -2375,7 +2631,7 @@ export class HordeScene extends Phaser.Scene {
       const a = i * GOLDEN_ANGLE;
       // Tighter spiral for low-tier horde units, wider for big units
       const tier = ANIMALS[units[i].type]?.tier || 1;
-      const spacing = tier <= 1 ? 10 : tier <= 2 ? 14 : 18;
+      const spacing = tier <= 1 ? 28 : tier <= 2 ? 36 : 46;
       const r = Math.sqrt(i) * spacing;
       units[i].targetX = tx + Math.cos(a) * r;
       units[i].targetY = ty + Math.sin(a) * r;
@@ -2500,10 +2756,10 @@ export class HordeScene extends Phaser.Scene {
           x: su.x, y: su.y, targetX: su.targetX, targetY: su.targetY,
           attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
           campId: su.campId, lungeX: 0, lungeY: 0,
-          hasRebirth: su.type === 'phoenix',
-          diveReady: su.type === 'hawk',
+          hasRebirth: su.type === 'skull',
+          diveReady: false,
           diveTimer: 0,
-          carrying: null, carrySprite: null, loop: null, isElite: false,
+          carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
         });
       }
     }
@@ -2521,32 +2777,57 @@ export class HordeScene extends Phaser.Scene {
   private async handleCommand(text: string, team: 1 | 2) {
     this.showFeedback('Processing command...', '#FFD93D');
 
-    // Build rich context for Gemini
-    const countBy: Record<string, number> = {};
-    for (const u of this.units) {
-      if (u.team === team && !u.dead) countBy[u.type] = (countBy[u.type] || 0) + 1;
-    }
-    const myUnits = Object.entries(countBy).map(([type, count]) => ({ type, count }));
+    // Build rich context for Gemini — full game state
     const base = team === 1 ? P1_BASE : P2_BASE;
+
+    // Unit counts with gathering info
+    const countBy: Record<string, { count: number; gathering: number }> = {};
+    for (const u of this.units) {
+      if (u.team === team && !u.dead) {
+        if (!countBy[u.type]) countBy[u.type] = { count: 0, gathering: 0 };
+        countBy[u.type].count++;
+        if (u.loop) countBy[u.type].gathering++;
+      }
+    }
+    const myUnits = Object.entries(countBy).map(([type, info]) => ({
+      type, count: info.count, tier: ANIMALS[type]?.tier || 1, gathering: info.gathering,
+    }));
+
+    // Camp context with stored food
     const campCtx = this.camps
       .map((c, i) => {
         const defenders = this.units.filter(u => u.campId === c.id && u.team === 0 && !u.dead).length;
+        const cost = SPAWN_COSTS[c.animalType];
         return {
-          name: c.name, animalType: c.animalType, index: i,
+          name: c.name, animalType: c.animalType, tier: ANIMALS[c.animalType]?.tier || 1, index: i,
           owner: c.owner === 0 ? 'NEUTRAL' : c.owner === team ? 'YOURS' : 'ENEMY',
           x: Math.round(c.x), y: Math.round(c.y),
           dist: Math.round(pdist(c, base)),
-          defenders,
+          defenders, storedFood: c.storedFood, spawnCost: cost?.amount || 0,
         };
       })
-      .sort((a, b) => a.dist - b.dist); // sort by distance from player base
+      .sort((a, b) => a.dist - b.dist);
 
     const myNex = this.nexuses.find(n => n.team === team)!;
     const enemyNex = this.nexuses.find(n => n.team !== team)!;
     const nexusHp = { mine: Math.round(myNex.hp), enemy: Math.round(enemyNex.hp) };
 
+    // Count ground resources
+    const alive = this.groundItems.filter(g => !g.dead);
+    const groundCarrots = alive.filter(g => g.type === 'carrot').length;
+    const groundMeat = alive.filter(g => g.type === 'meat').length;
+    const groundCrystals = alive.filter(g => g.type === 'crystal').length;
+
+    const ctx: GameContext = {
+      myUnits, camps: campCtx, nexusHp,
+      resources: { ...this.baseStockpile[team] },
+      groundCarrots, groundMeat, groundCrystals,
+      gameTime: this.gameTime,
+      selectedArmy: this.selectedArmy,
+    };
+
     // Try Gemini first
-    const geminiResult = await parseWithGemini(text, myUnits, campCtx, nexusHp, this.gameTime);
+    const geminiResult = await parseWithGemini(text, ctx);
 
     if (geminiResult && geminiResult.length > 0) {
       // Only use first command — army selection is separate, one command per input
@@ -2641,64 +2922,46 @@ export class HordeScene extends Phaser.Scene {
         }
       }
 
-    } else if (cmd.targetType === 'make') {
-      // "make wolves" = gather the resource wolves need, deliver to a wolf camp
-      const animal = cmd.makeAnimal || 'bunny';
-      const cost = SPAWN_COSTS[animal];
-      if (!cost) { this.showFeedback(`Unknown animal: ${animal}`, '#FF6B6B'); return true; }
-
+    } else if (cmd.targetType === 'workflow' && cmd.workflow && cmd.workflow.length > 0) {
+      // LLM-defined workflow — parse steps and assign to selected units
       const sel = this.units.filter(u => u.team === team && !u.dead && (subject === 'all' || u.type === subject));
       if (sel.length === 0) { this.showFeedback(`No ${subject} units!`, '#FF6B6B'); return true; }
 
-      // Find delivery target: base for T1, or nearest owned camp of that animal type
-      let deliverTo = 'base';
-      const base = team === 1 ? P1_BASE : P2_BASE;
-      if (animal !== 'bunny' && animal !== 'turtle') {
-        const targetCamp = this.camps
-          .filter(c => c.owner === team && c.animalType === animal)
-          .sort((a, b) => pdist(a, base) - pdist(b, base));
-        if (targetCamp.length > 0) {
-          deliverTo = targetCamp[0].id;
-        } else {
-          const campName = cap(animal);
-          this.showFeedback(`No owned ${campName} camp! Capture one first.`, '#FF6B6B');
-          return true;
+      const steps: WorkflowStep[] = cmd.workflow.map(s => {
+        switch (s.action) {
+          case 'seek_resource':
+            return { action: 'seek_resource' as const, resourceType: (s.resourceType || 'carrot') as ResourceType };
+          case 'deliver':
+            return { action: 'deliver' as const, target: s.target || 'base' };
+          case 'hunt':
+            return { action: 'hunt' as const, targetType: s.targetType };
+          case 'attack_camp':
+            return { action: 'attack_camp' as const, campIndex: s.campIndex, qualifier: s.qualifier, targetAnimal: s.targetAnimal };
+          case 'move':
+            return { action: 'move' as const, x: s.x || WORLD_W / 2, y: s.y || WORLD_H / 2 };
+          case 'defend':
+            return { action: 'defend' as const, target: s.target || 'base' };
+          case 'attack_enemies':
+            return { action: 'attack_enemies' as const };
+          default:
+            return { action: 'seek_resource' as const, resourceType: 'carrot' as ResourceType };
         }
+      });
+
+      const workflow: HWorkflow = { steps, currentStep: 0, label: cmd.narration || 'Custom workflow' };
+      for (const u of sel) { u.loop = { ...workflow, currentStep: 0 }; }
+
+      // Store as group workflow so new spawns inherit it
+      if (subject === 'all') {
+        // Apply to all unit types in the selection
+        const types = new Set(sel.map(u => u.type));
+        for (const t of types) this.groupWorkflows[`${t}_${team}`] = workflow;
+      } else {
+        this.groupWorkflows[`${subject}_${team}`] = workflow;
       }
 
-      for (const u of sel) {
-        u.loop = { action: 'gather', resourceType: cost.type, deliverTo, phase: 'seeking' };
-      }
-      const emoji = ANIMALS[animal]?.emoji || '';
-      const resEmoji = RESOURCE_EMOJI[cost.type];
-      const targetName = deliverTo === 'base' ? 'base' : (this.camps.find(c => c.id === deliverTo)?.name || 'camp');
-      this.showFeedback(cmd.narration || `${sel.length} units gathering ${resEmoji} → ${emoji} ${targetName}`, '#45E6B0');
-      return true;
-
-    } else if (cmd.targetType === 'gather') {
-      // Generic gather: collect a resource type, deliver to base
-      const resType = cmd.gatherResource || 'carrot';
-      const sel = this.units.filter(u => u.team === team && !u.dead && (subject === 'all' || u.type === subject));
-      if (sel.length === 0) {
-        this.showFeedback(`No ${subject} units!`, '#FF6B6B');
-        return true;
-      }
-
-      // Find best delivery target for this resource
-      let deliverTo = 'base';
-      if (resType !== 'carrot') {
-        const base = team === 1 ? P1_BASE : P2_BASE;
-        const matchingCamps = this.camps
-          .filter(c => c.owner === team && SPAWN_COSTS[c.animalType]?.type === resType)
-          .sort((a, b) => pdist(a, base) - pdist(b, base));
-        if (matchingCamps.length > 0) deliverTo = matchingCamps[0].id;
-      }
-
-      for (const u of sel) {
-        u.loop = { action: 'gather', resourceType: resType, deliverTo, phase: 'seeking' };
-      }
-      const emoji = RESOURCE_EMOJI[resType];
-      this.showFeedback(cmd.narration || `${sel.length} units gathering ${emoji}!`, '#45E6B0');
+      console.log('[Workflow] LLM designed:', JSON.stringify(steps));
+      this.showFeedback(cmd.narration || `${sel.length} units: workflow started!`, '#45E6B0');
       return true;
 
     } else if (cmd.targetType === 'position') {
@@ -2712,8 +2975,16 @@ export class HordeScene extends Phaser.Scene {
       this.showFeedback(`No ${subject} units!`, '#FF6B6B');
       return true;
     }
-    // Clear gather loops — new command overrides
+    // Clear workflows — new movement command overrides
     for (const u of sel) { u.loop = null; }
+    // Clear group workflow so new spawns don't inherit old loop
+    if (subject === 'all') {
+      for (const key of Object.keys(this.groupWorkflows)) {
+        if (key.endsWith(`_${team}`)) delete this.groupWorkflows[key];
+      }
+    } else {
+      delete this.groupWorkflows[`${subject}_${team}`];
+    }
     this.sendUnitsTo(sel, tx, ty, true);
     const label = subject === 'all' ? 'All units' : `${sel.length} ${subject}(s)`;
     const narration = cmd.narration || `${label} moving out!`;
@@ -2730,10 +3001,10 @@ export class HordeScene extends Phaser.Scene {
     const makeMatch = lo.match(/\b(?:make|produce|spawn|create|breed|train)\s+(?:more\s+)?(\w+)/i);
     if (makeMatch) {
       const animalPatterns: [RegExp, string][] = [
-        [/bunn(y|ies)|rabbit/i, 'bunny'], [/turtle/i, 'turtle'],
-        [/wol(f|ves)/i, 'wolf'], [/scorpion/i, 'scorpion'], [/hawk/i, 'hawk'],
-        [/bear/i, 'bear'], [/croc(odile)?/i, 'crocodile'],
-        [/lion/i, 'lion'], [/phoenix/i, 'phoenix'], [/dragon/i, 'dragon'],
+        [/gnome(s)?/i, 'gnome'], [/turtle(s)?/i, 'turtle'],
+        [/skull(s)?/i, 'skull'], [/spider(s)?/i, 'spider'], [/gnoll(s)?/i, 'gnoll'],
+        [/panda(s)?/i, 'panda'], [/lizard(s)?/i, 'lizard'],
+        [/minotaur(s)?/i, 'minotaur'], [/shaman(s)?/i, 'shaman'], [/troll(s)?/i, 'troll'],
       ];
       let animal: string | null = null;
       for (const [pat, name] of animalPatterns) {
@@ -2745,17 +3016,18 @@ export class HordeScene extends Phaser.Scene {
           const sel = this.units.filter(u => u.team === team && !u.dead && (subject === 'all' || u.type === subject));
           if (sel.length === 0) { this.showFeedback(`No ${subject} units!`, '#FF6B6B'); return; }
 
-          let deliverTo = 'base';
-          if (animal !== 'bunny' && animal !== 'turtle') {
-            const targetCamp = this.camps.filter(c => c.owner === team && c.animalType === animal)
-              .sort((a, b) => pdist(a, base) - pdist(b, base));
-            if (targetCamp.length > 0) deliverTo = targetCamp[0].id;
-            else { this.showFeedback(`No owned ${cap(animal)} camp! Capture one first.`, '#FF6B6B'); return; }
+          const deliverTo = `nearest_${animal}_camp`;
+          const wf = makeGatherWorkflow(cost.type, deliverTo);
+          for (const u of sel) { u.loop = { ...wf, currentStep: 0 }; }
+          // Store as group workflow for future spawns
+          if (subject === 'all') {
+            const types = new Set(sel.map(u => u.type));
+            for (const t of types) this.groupWorkflows[`${t}_${team}`] = wf;
+          } else {
+            this.groupWorkflows[`${subject}_${team}`] = wf;
           }
-          for (const u of sel) { u.loop = { action: 'gather', resourceType: cost.type, deliverTo, phase: 'seeking' }; }
           const emoji = ANIMALS[animal]?.emoji || '';
-          const targetName = deliverTo === 'base' ? 'base' : (this.camps.find(c => c.id === deliverTo)?.name || 'camp');
-          this.showFeedback(`${sel.length} units: ${RESOURCE_EMOJI[cost.type]} → ${emoji} ${targetName}`, '#45E6B0');
+          this.showFeedback(`${sel.length} units: ${RESOURCE_EMOJI[cost.type]} → ${emoji} ${cap(animal)} camp`, '#45E6B0');
           return;
         }
       }
@@ -2770,7 +3042,14 @@ export class HordeScene extends Phaser.Scene {
       const sel = this.units.filter(u => u.team === team && !u.dead && (subject === 'all' || u.type === subject));
       if (sel.length === 0) { this.showFeedback(`No ${subject} units!`, '#FF6B6B'); return; }
 
-      for (const u of sel) { u.loop = { action: 'gather', resourceType: resType, deliverTo: 'base', phase: 'seeking' }; }
+      const wf = makeGatherWorkflow(resType, 'base');
+      for (const u of sel) { u.loop = { ...wf, currentStep: 0 }; }
+      if (subject === 'all') {
+        const types = new Set(sel.map(u => u.type));
+        for (const t of types) this.groupWorkflows[`${t}_${team}`] = wf;
+      } else {
+        this.groupWorkflows[`${subject}_${team}`] = wf;
+      }
       this.showFeedback(`${sel.length} units gathering ${RESOURCE_EMOJI[resType]}!`, '#45E6B0');
       return;
     }
@@ -2804,13 +3083,13 @@ export class HordeScene extends Phaser.Scene {
       }
     }
 
-    // Match camp by animal type keyword: "wolf camp" → nearest unowned wolf camp
+    // Match camp by unit type keyword: "skull camp" → nearest unowned skull camp
     if (!found) {
       const animalPatterns: [RegExp, string][] = [
-        [/bunn(y|ies)|rabbit/i, 'bunny'], [/turtle/i, 'turtle'],
-        [/wol(f|ves)/i, 'wolf'], [/scorpion/i, 'scorpion'], [/hawk/i, 'hawk'],
-        [/bear/i, 'bear'], [/croc(odile)?/i, 'crocodile'],
-        [/lion/i, 'lion'], [/phoenix/i, 'phoenix'], [/dragon/i, 'dragon'],
+        [/gnome(s)?/i, 'gnome'], [/turtle(s)?/i, 'turtle'],
+        [/skull(s)?/i, 'skull'], [/spider(s)?/i, 'spider'], [/gnoll(s)?/i, 'gnoll'],
+        [/panda(s)?/i, 'panda'], [/lizard(s)?/i, 'lizard'],
+        [/minotaur(s)?/i, 'minotaur'], [/shaman(s)?/i, 'shaman'], [/troll(s)?/i, 'troll'],
       ];
       for (const [pat, name] of animalPatterns) {
         if (pat.test(lo)) {
@@ -2837,7 +3116,15 @@ export class HordeScene extends Phaser.Scene {
       this.showFeedback(`No ${subject} units!`, '#FF6B6B');
       return;
     }
-    for (const u of sel) { u.loop = null; } // Clear gather loops
+    for (const u of sel) { u.loop = null; }
+    // Clear group workflow so new spawns don't inherit old loop
+    if (subject === 'all') {
+      for (const key of Object.keys(this.groupWorkflows)) {
+        if (key.endsWith(`_${team}`)) delete this.groupWorkflows[key];
+      }
+    } else {
+      delete this.groupWorkflows[`${subject}_${team}`];
+    }
     this.sendUnitsTo(sel, tx, ty, true);
     const emoji = subject === 'all' ? '' : (ANIMALS[subject]?.emoji + ' ' || '');
     const label = subject === 'all' ? 'All units' : `${emoji}${sel.length} ${cap(subject)}(s)`;

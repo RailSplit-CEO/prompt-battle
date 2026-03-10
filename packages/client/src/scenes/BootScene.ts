@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
-import { UNIT_DEFS } from '@prompt-battle/shared';
+import { AnimalType, UNIT_DEFS } from '@prompt-battle/shared';
+import { SPRITE_CONFIGS, HORDE_SPRITE_CONFIGS, ANIM_FRAME_RATES } from '../sprites/SpriteConfig';
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -12,6 +13,9 @@ export class BootScene extends Phaser.Scene {
     this.createUnitTextures();
     this.createObjectiveTextures();
     this.createUITextures();
+
+    // ─── Load enemy sprite sheets ──────────────────────────
+    this.loadEnemySprites();
 
     const { width, height } = this.cameras.main;
     this.cameras.main.setBackgroundColor('#1B1040');
@@ -80,15 +84,107 @@ export class BootScene extends Phaser.Scene {
   }
 
   create() {
+    // ─── Create all enemy animations ─────────────────────
+    this.createEnemyAnimations();
+
     this.cameras.main.fadeOut(400, 27, 16, 64);
     this.cameras.main.once('camerafadeoutcomplete', () => {
       this.scene.start('MenuScene');
     });
   }
 
+  // ─── Load Enemy Sprite Sheets ─────────────────────────────
+  private loadEnemySprites() {
+    const loaded = new Set<string>();
+
+    // Battle mode sprites
+    const animalTypes: AnimalType[] = [
+      'rabbit', 'parrot', 'wolf', 'falcon', 'goat',
+      'bear', 'viper', 'deer', 'elephant', 'lion',
+    ];
+    for (const type of animalTypes) {
+      const config = SPRITE_CONFIGS[type];
+      for (const state of ['idle', 'walk', 'attack'] as const) {
+        const sheet = config[state];
+        if (!loaded.has(sheet.key)) {
+          this.load.spritesheet(sheet.key, sheet.path, {
+            frameWidth: sheet.frameWidth,
+            frameHeight: sheet.frameHeight,
+          });
+          loaded.add(sheet.key);
+        }
+      }
+    }
+
+    // Horde mode sprites
+    for (const type of Object.keys(HORDE_SPRITE_CONFIGS)) {
+      const config = HORDE_SPRITE_CONFIGS[type];
+      for (const state of ['idle', 'walk', 'attack'] as const) {
+        const sheet = config[state];
+        if (!loaded.has(sheet.key)) {
+          this.load.spritesheet(sheet.key, sheet.path, {
+            frameWidth: sheet.frameWidth,
+            frameHeight: sheet.frameHeight,
+          });
+          loaded.add(sheet.key);
+        }
+      }
+    }
+  }
+
+  // ─── Create Enemy Animations ──────────────────────────────
+  private createEnemyAnimations() {
+    const created = new Set<string>();
+
+    const createAnimsForConfig = (prefix: string, config: typeof SPRITE_CONFIGS[AnimalType]) => {
+      if (created.has(prefix)) return;
+      created.add(prefix);
+
+      this.anims.create({
+        key: `${prefix}_idle`,
+        frames: this.anims.generateFrameNumbers(config.idle.key, {
+          start: 0, end: config.idle.frameCount - 1,
+        }),
+        frameRate: ANIM_FRAME_RATES.idle,
+        repeat: -1,
+      });
+
+      this.anims.create({
+        key: `${prefix}_walk`,
+        frames: this.anims.generateFrameNumbers(config.walk.key, {
+          start: 0, end: config.walk.frameCount - 1,
+        }),
+        frameRate: ANIM_FRAME_RATES.walk,
+        repeat: -1,
+      });
+
+      this.anims.create({
+        key: `${prefix}_attack`,
+        frames: this.anims.generateFrameNumbers(config.attack.key, {
+          start: 0, end: config.attack.frameCount - 1,
+        }),
+        frameRate: ANIM_FRAME_RATES.attack,
+        repeat: 0,
+      });
+    };
+
+    // Battle mode animations
+    const animalTypes: AnimalType[] = [
+      'rabbit', 'parrot', 'wolf', 'falcon', 'goat',
+      'bear', 'viper', 'deer', 'elephant', 'lion',
+    ];
+    for (const type of animalTypes) {
+      createAnimsForConfig(type, SPRITE_CONFIGS[type]);
+    }
+
+    // Horde mode animations (prefixed with h_)
+    for (const [type, config] of Object.entries(HORDE_SPRITE_CONFIGS)) {
+      createAnimsForConfig(`h_${type}`, config);
+    }
+  }
+
   // ─── Hero Textures ──────────────────────────────────────
   private createHeroTextures() {
-    // Generic hero textures per team (no class distinction)
     for (const team of ['p1', 'p2'] as const) {
       const outline = team === 'p1' ? 0x4499FF : 0xFF5555;
       const body = team === 'p1' ? 0x2266CC : 0xCC2222;
@@ -105,7 +201,7 @@ export class BootScene extends Phaser.Scene {
     }
   }
 
-  // ─── Animal Unit Textures ───────────────────────────────
+  // ─── Animal Unit Textures (fallback circles) ──────────────
   private createUnitTextures() {
     const unitColors: Record<string, number> = {
       rabbit: 0xCCBB99,
@@ -139,7 +235,6 @@ export class BootScene extends Phaser.Scene {
 
   // ─── Camp & Structure Textures ──────────────────────────
   private createObjectiveTextures() {
-    // Camp marker (neutral - gray)
     const campNeutral = this.add.graphics();
     campNeutral.fillStyle(0x000000, 0.4);
     campNeutral.fillCircle(16, 16, 14);
@@ -150,7 +245,6 @@ export class BootScene extends Phaser.Scene {
     campNeutral.generateTexture('camp_neutral', 32, 32);
     campNeutral.destroy();
 
-    // Camp markers per team
     for (const [team, color] of [['p1', 0x4499FF], ['p2', 0xFF5555]] as const) {
       const gfx = this.add.graphics();
       gfx.fillStyle(0x000000, 0.4);
@@ -165,7 +259,6 @@ export class BootScene extends Phaser.Scene {
       gfx.destroy();
     }
 
-    // Structure marker (tall tower shape)
     const strGfx = this.add.graphics();
     strGfx.fillStyle(0x000000, 0.4);
     strGfx.fillRoundedRect(6, 2, 20, 28, 4);
@@ -182,7 +275,6 @@ export class BootScene extends Phaser.Scene {
     strGfx.generateTexture('structure', 32, 32);
     strGfx.destroy();
 
-    // Structure destroyed
     const strDestrGfx = this.add.graphics();
     strDestrGfx.fillStyle(0x555555, 0.5);
     strDestrGfx.fillRoundedRect(8, 12, 16, 16, 3);
@@ -191,7 +283,6 @@ export class BootScene extends Phaser.Scene {
     strDestrGfx.generateTexture('structure_destroyed', 32, 32);
     strDestrGfx.destroy();
 
-    // Base marker
     for (const [team, color] of [['p1', 0x2266CC], ['p2', 0xCC2222]] as const) {
       const gfx = this.add.graphics();
       gfx.fillStyle(color, 0.6);
@@ -209,7 +300,6 @@ export class BootScene extends Phaser.Scene {
 
   // ─── UI Textures ────────────────────────────────────────
   private createUITextures() {
-    // Selection ring
     const selGfx = this.add.graphics();
     selGfx.lineStyle(4, 0xFFD93D, 1);
     selGfx.strokeCircle(20, 20, 18);
@@ -218,14 +308,12 @@ export class BootScene extends Phaser.Scene {
     selGfx.generateTexture('selection_ring', 40, 40);
     selGfx.destroy();
 
-    // Particle
     const particleGfx = this.add.graphics();
     particleGfx.fillStyle(0xffffff);
     particleGfx.fillCircle(4, 4, 4);
     particleGfx.generateTexture('particle', 8, 8);
     particleGfx.destroy();
 
-    // Glow
     const glowGfx = this.add.graphics();
     glowGfx.fillStyle(0xffffff, 0.6);
     glowGfx.fillCircle(16, 16, 16);
@@ -247,7 +335,6 @@ export class BootScene extends Phaser.Scene {
       gfx.destroy();
     };
 
-    // GRASS
     g((gfx) => {
       gfx.fillStyle(0x5CC96B); gfx.fillRect(0, 0, S, S);
       gfx.fillStyle(0x6AD97A, 0.4); gfx.fillCircle(8, 8, 6);
@@ -257,7 +344,6 @@ export class BootScene extends Phaser.Scene {
       gfx.lineStyle(1, 0x3A9B48, 0.25); gfx.strokeRect(0, 0, S, S);
     }, 'grass');
 
-    // FOREST
     g((gfx) => {
       gfx.fillStyle(0x2E8B4E); gfx.fillRect(0, 0, S, S);
       gfx.fillStyle(0x6B4226); gfx.fillRect(14, 18, 5, 14);
@@ -269,7 +355,6 @@ export class BootScene extends Phaser.Scene {
       gfx.lineStyle(1, 0x155528, 0.3); gfx.strokeRect(0, 0, S, S);
     }, 'forest');
 
-    // WATER
     g((gfx) => {
       gfx.fillStyle(0x3399EE); gfx.fillRect(0, 0, S, S);
       gfx.fillStyle(0x55BBFF, 0.4); gfx.fillCircle(10, 10, 8);
@@ -281,7 +366,6 @@ export class BootScene extends Phaser.Scene {
       gfx.lineStyle(1, 0x2266AA, 0.3); gfx.strokeRect(0, 0, S, S);
     }, 'water');
 
-    // HILL
     g((gfx) => {
       gfx.fillStyle(0xD4A940); gfx.fillRect(0, 0, S, S);
       gfx.fillStyle(0xC89B30); gfx.fillTriangle(16, 2, -2, 30, 34, 30);
@@ -290,7 +374,6 @@ export class BootScene extends Phaser.Scene {
       gfx.lineStyle(1, 0x9A7A20, 0.3); gfx.strokeRect(0, 0, S, S);
     }, 'hill');
 
-    // PATH
     g((gfx) => {
       gfx.fillStyle(0xEDD9A7); gfx.fillRect(0, 0, S, S);
       gfx.fillStyle(0xD4C090, 0.5); gfx.fillCircle(8, 8, 4); gfx.fillCircle(22, 24, 5);
@@ -299,7 +382,6 @@ export class BootScene extends Phaser.Scene {
       gfx.lineStyle(1, 0xBFA070, 0.2); gfx.strokeRect(0, 0, S, S);
     }, 'path');
 
-    // BRIDGE
     g((gfx) => {
       gfx.fillStyle(0x3399EE); gfx.fillRect(0, 0, S, S);
       gfx.fillStyle(0x8B6B3A);
@@ -311,7 +393,6 @@ export class BootScene extends Phaser.Scene {
       gfx.lineStyle(1, 0x4A2E14, 0.4); gfx.strokeRect(0, 0, S, S);
     }, 'bridge');
 
-    // SAND
     g((gfx) => {
       gfx.fillStyle(0xF0D890); gfx.fillRect(0, 0, S, S);
       gfx.fillStyle(0xE0C880, 0.4); gfx.fillCircle(12, 10, 7); gfx.fillCircle(24, 24, 8);
@@ -320,7 +401,6 @@ export class BootScene extends Phaser.Scene {
       gfx.lineStyle(1, 0xD0B060, 0.25); gfx.strokeRect(0, 0, S, S);
     }, 'sand');
 
-    // RIVER (same as water but slightly different shade)
     g((gfx) => {
       gfx.fillStyle(0x2288CC); gfx.fillRect(0, 0, S, S);
       gfx.fillStyle(0x44AAEE, 0.4); gfx.fillCircle(10, 10, 8);
@@ -330,14 +410,12 @@ export class BootScene extends Phaser.Scene {
       gfx.lineStyle(1, 0x1166AA, 0.3); gfx.strokeRect(0, 0, S, S);
     }, 'river');
 
-    // SHORE
     g((gfx) => {
       gfx.fillStyle(0xD4C090); gfx.fillRect(0, 0, S, S);
       gfx.fillStyle(0xC8B080, 0.5); gfx.fillCircle(16, 16, 10);
       gfx.lineStyle(1, 0xBFA070, 0.3); gfx.strokeRect(0, 0, S, S);
     }, 'shore');
 
-    // BLUE BASE
     g((gfx) => {
       gfx.fillStyle(0x2266CC); gfx.fillRect(0, 0, S, S);
       gfx.fillStyle(0x3388EE, 0.4); gfx.fillCircle(16, 16, 10);
@@ -345,7 +423,6 @@ export class BootScene extends Phaser.Scene {
       gfx.lineStyle(1, 0x1155AA, 0.4); gfx.strokeRect(0, 0, S, S);
     }, 'blue_base');
 
-    // RED BASE
     g((gfx) => {
       gfx.fillStyle(0xCC2222); gfx.fillRect(0, 0, S, S);
       gfx.fillStyle(0xEE3838, 0.4); gfx.fillCircle(16, 16, 10);

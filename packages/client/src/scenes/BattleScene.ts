@@ -1134,6 +1134,9 @@ export class BattleScene extends Phaser.Scene {
       if (!alive) break;
       const unitDmg = Math.max(1, unit.attack - alive.defense);
       alive.hp -= unitDmg;
+      // Trigger attack animation for army units hitting guards
+      const unitEntity = this.unitEntities.get(unit.id);
+      if (unitEntity) unitEntity.playAttack();
       if (alive.hp <= 0) alive.isDead = true;
     }
 
@@ -1299,6 +1302,9 @@ export class BattleScene extends Phaser.Scene {
           closestEnemy.currentHp -= dmg;
           const entity = this.heroEntities.get(closestEnemy.id);
           if (entity) entity.showDamage(dmg);
+          // Trigger attack animation
+          const unitEntity = this.unitEntities.get(unit.id);
+          if (unitEntity) unitEntity.playAttack();
           if (closestEnemy.currentHp <= 0) this.killHero(closestEnemy);
         }
       } else {
@@ -1319,6 +1325,9 @@ export class BattleScene extends Phaser.Scene {
             const counterMult = getCounterMultiplier(def.tags, UNIT_DEFS[other.type].tags);
             const dmg = Math.max(1, Math.round((unit.attack - other.defense) * counterMult));
             other.currentHp -= dmg;
+            // Trigger attack animation
+            const atkEntity = this.unitEntities.get(unit.id);
+            if (atkEntity) atkEntity.playAttack();
             if (other.currentHp <= 0) {
               other.isDead = true;
             }
