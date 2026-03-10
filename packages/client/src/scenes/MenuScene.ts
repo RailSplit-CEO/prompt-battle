@@ -6,7 +6,7 @@ import { getSoloMaps, MapDef } from '@prompt-battle/shared';
 export class MenuScene extends Phaser.Scene {
   private matchmaking!: Matchmaking;
   private statusText!: Phaser.GameObjects.Text;
-  private floatingShapes: { sprite: Phaser.GameObjects.Arc | Phaser.GameObjects.Star; vx: number; vy: number; rotSpeed: number }[] = [];
+  private floatingShapes: { sprite: Phaser.GameObjects.Image; vx: number; vy: number; rot: number }[] = [];
   private mapPickerContainer: Phaser.GameObjects.Container | null = null;
   private mapPickerZones: Phaser.GameObjects.Zone[] = [];
 
@@ -16,156 +16,171 @@ export class MenuScene extends Phaser.Scene {
 
   create() {
     const { width, height } = this.cameras.main;
-    this.cameras.main.setBackgroundColor('#1B1040');
-    this.cameras.main.fadeIn(600, 27, 16, 64);
 
-    // Floating colorful shapes (stars, circles)
-    this.createFloatingShapes(width, height);
+    // === BACKGROUND: tiled grass with warm overlay ===
+    this.cameras.main.setBackgroundColor('#2a4a1e');
+    this.cameras.main.fadeIn(600, 20, 35, 15);
 
-    // Vertical centering: derive positions from title Y
-    const titleY = height * 0.22;
-    const subtitleY = titleY + 58;
-    const lineY = subtitleY + 22;
-    const playBtnY = lineY + 90;
-    const localBtnY = playBtnY + 82;
-    const statusY = localBtnY + 230;
+    // Tile grass if available, else solid color
+    if (this.textures.exists('ts_grass')) {
+      const TILE = 64;
+      const grassFrames = [10, 11, 12, 13, 19, 20, 21, 22];
+      let seed = 99;
+      for (let y = 0; y < height; y += TILE) {
+        for (let x = 0; x < width; x += TILE) {
+          seed = (seed * 16807) % 2147483647;
+          const frame = grassFrames[seed % grassFrames.length];
+          this.add.image(x + TILE / 2, y + TILE / 2, 'ts_grass', frame).setDepth(0);
+        }
+      }
+    }
 
-    // Title shadow (offset behind main title for cartoon depth)
-    this.add.text(width / 2 + 4, titleY + 4, 'PROMPT BATTLE', {
-      fontSize: '60px',
-      color: '#0D0825',
-      fontFamily: '"Fredoka", sans-serif',
-      fontStyle: 'bold',
-    }).setOrigin(0.5).setAlpha(0.6);
+    // Warm vignette overlay
+    const vig = this.add.graphics().setDepth(1);
+    vig.fillStyle(0x000000, 0.3);
+    vig.fillRect(0, 0, width, height);
+    // Lighter center
+    vig.fillStyle(0x000000, -0.15);
+    const vigR = Math.max(width, height) * 0.6;
+    vig.fillCircle(width / 2, height / 2, vigR);
 
-    // Main title
+    // === FLOATING DECORATIVE ICONS ===
+    this.createFloatingIcons(width, height);
+
+    // Layout positions
+    const titleY = height * 0.18;
+    const subtitleY = titleY + 62;
+    const dividerY = subtitleY + 24;
+    const btn1Y = dividerY + 80;
+    const btn2Y = btn1Y + 80;
+    const btn3Y = btn2Y + 80;
+    const statusY = btn3Y + 70;
+    const howToPlayY = statusY + 50;
+
+    // === TITLE with Swords banner ===
+    // Sword decorations on each side of title
+    if (this.textures.exists('ts_icon5')) {
+      const swordL = this.add.image(width / 2 - 220, titleY + 5, 'ts_icon5')
+        .setScale(1.0).setDepth(10).setAngle(-30).setAlpha(0.8);
+      const swordR = this.add.image(width / 2 + 220, titleY + 5, 'ts_icon5')
+        .setScale(1.0).setDepth(10).setAngle(30).setFlipX(true).setAlpha(0.8);
+      this.tweens.add({ targets: [swordL, swordR], alpha: 0.9, duration: 800, delay: 300 });
+    }
+
+    // Title shadow
+    this.add.text(width / 2 + 3, titleY + 3, 'PROMPT BATTLE', {
+      fontSize: '56px', color: '#1a0e05', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
+    }).setOrigin(0.5).setAlpha(0.5).setDepth(10);
+
+    // Main title — warm parchment gold
     const title = this.add.text(width / 2, titleY, 'PROMPT BATTLE', {
-      fontSize: '60px',
-      color: '#FF6B9D',
-      fontFamily: '"Fredoka", sans-serif',
-      fontStyle: 'bold',
-    }).setOrigin(0.5).setAlpha(0).setScale(0.5);
+      fontSize: '56px', color: '#FFD93D', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
+      stroke: '#6B4226', strokeThickness: 6,
+    }).setOrigin(0.5).setAlpha(0).setScale(0.5).setDepth(11);
 
     this.tweens.add({
-      targets: title,
-      alpha: 1,
-      scaleX: 1,
-      scaleY: 1,
-      duration: 800,
-      ease: 'Back.easeOut',
+      targets: title, alpha: 1, scaleX: 1, scaleY: 1,
+      duration: 800, ease: 'Back.easeOut',
     });
-
-    // Title bounce loop
     this.tweens.add({
-      targets: title,
-      y: { from: titleY, to: titleY + 6 },
-      duration: 2000,
-      yoyo: true,
-      repeat: -1,
-      ease: 'Sine.easeInOut',
+      targets: title, y: { from: titleY, to: titleY + 5 },
+      duration: 2400, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
     });
 
-    // Subtitle
+    // Subtitle — parchment style
     const subtitle = this.add.text(width / 2, subtitleY, 'COMMAND YOUR ARMY WITH WORDS!', {
-      fontSize: '15px',
-      color: '#FFD93D',
-      fontFamily: '"Nunito", sans-serif',
-      fontStyle: 'bold',
-      letterSpacing: 3,
-    }).setOrigin(0.5).setAlpha(0);
+      fontSize: '14px', color: '#e8dcc4', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
+      letterSpacing: 3, stroke: '#4a3520', strokeThickness: 3,
+    }).setOrigin(0.5).setAlpha(0).setDepth(11);
+    this.tweens.add({ targets: subtitle, alpha: 0.95, duration: 600, delay: 500 });
 
-    this.tweens.add({
-      targets: subtitle,
-      alpha: 0.9,
-      duration: 600,
-      delay: 500,
-    });
-
-    // Decorative line - bright and fun
-    const line = this.add.graphics();
-    line.lineStyle(3, 0xFFD93D, 0.5);
-    line.lineBetween(width / 2 - 100, lineY, width / 2 + 100, lineY);
+    // Decorative divider — crossed swords style
+    const divLine = this.add.graphics().setDepth(10);
+    divLine.lineStyle(2, 0xFFD93D, 0.6);
+    divLine.lineBetween(width / 2 - 120, dividerY, width / 2 + 120, dividerY);
+    // Diamond at center
+    divLine.fillStyle(0xFFD93D, 0.8);
+    const dx = width / 2, dy = dividerY;
+    divLine.fillTriangle(dx - 6, dy, dx, dy - 6, dx + 6, dy);
+    divLine.fillTriangle(dx - 6, dy, dx, dy + 6, dx + 6, dy);
     // Dots at ends
-    line.fillStyle(0xFFD93D, 0.7);
-    line.fillCircle(width / 2 - 104, lineY, 4);
-    line.fillCircle(width / 2 + 104, lineY, 4);
-    line.setAlpha(0);
-    this.tweens.add({ targets: line, alpha: 1, duration: 600, delay: 600 });
+    divLine.fillCircle(width / 2 - 124, dividerY, 3);
+    divLine.fillCircle(width / 2 + 124, dividerY, 3);
+    divLine.setAlpha(0);
+    this.tweens.add({ targets: divLine, alpha: 1, duration: 600, delay: 600 });
 
-    // BUTTONS — Horde modes + Characters only
-    const hordeBtn = this.createCartoonButton(
-      width / 2, playBtnY, 300, 62, 'HORDE (SOLO)', 0x45E6B0, true
-    );
+    // === BUTTONS — Medieval styled ===
+    const hordeBtn = this.createMedievalButton(width / 2, btn1Y, 320, 60, 'HORDE (SOLO)', 'green', true);
     hordeBtn.container.setAlpha(0).setScale(0.5);
-    this.tweens.add({
-      targets: hordeBtn.container,
-      alpha: 1, scaleX: 1, scaleY: 1,
-      duration: 600, delay: 700, ease: 'Back.easeOut',
-    });
+    this.tweens.add({ targets: hordeBtn.container, alpha: 1, scaleX: 1, scaleY: 1, duration: 600, delay: 700, ease: 'Back.easeOut' });
     hordeBtn.zone.on('pointerdown', () => this.startHordeMode());
 
-    // Horde PvP (online multiplayer)
-    const hordePvpBtnY = playBtnY + 82;
-    const hordePvpBtn = this.createCartoonButton(
-      width / 2, hordePvpBtnY, 300, 62, 'HORDE PVP', 0xFF9F43, true
-    );
-    hordePvpBtn.container.setAlpha(0).setScale(0.5);
-    this.tweens.add({
-      targets: hordePvpBtn.container,
-      alpha: 1, scaleX: 1, scaleY: 1,
-      duration: 600, delay: 850, ease: 'Back.easeOut',
-    });
-    hordePvpBtn.zone.on('pointerdown', () => this.findHordeMatch());
+    // Shield icon on solo button
+    if (this.textures.exists('ts_icon6')) {
+      const shieldIcon = this.add.image(width / 2 - 130, btn1Y, 'ts_icon6').setScale(0.5).setDepth(15);
+      hordeBtn.container.add(shieldIcon);
+      shieldIcon.setPosition(-130, 0);
+    }
 
-    // Characters (in-game bestiary)
-    const charBtnY = hordePvpBtnY + 82;
-    const charBtn = this.createCartoonButton(
-      width / 2, charBtnY, 300, 62, 'CHARACTERS', 0x6BB0F0, false
-    );
+    const pvpBtn = this.createMedievalButton(width / 2, btn2Y, 320, 60, 'HORDE PVP', 'red', true);
+    pvpBtn.container.setAlpha(0).setScale(0.5);
+    this.tweens.add({ targets: pvpBtn.container, alpha: 1, scaleX: 1, scaleY: 1, duration: 600, delay: 850, ease: 'Back.easeOut' });
+    pvpBtn.zone.on('pointerdown', () => this.findHordeMatch());
+
+    // Sword icon on PvP button
+    if (this.textures.exists('ts_icon5')) {
+      const swordIcon = this.add.image(0, 0, 'ts_icon5').setScale(0.45).setDepth(15);
+      pvpBtn.container.add(swordIcon);
+      swordIcon.setPosition(-130, 0);
+    }
+
+    const charBtn = this.createMedievalButton(width / 2, btn3Y, 320, 60, 'CHARACTERS', 'blue', false);
     charBtn.container.setAlpha(0).setScale(0.5);
-    this.tweens.add({
-      targets: charBtn.container,
-      alpha: 1, scaleX: 1, scaleY: 1,
-      duration: 600, delay: 1000, ease: 'Back.easeOut',
-    });
+    this.tweens.add({ targets: charBtn.container, alpha: 1, scaleX: 1, scaleY: 1, duration: 600, delay: 1000, ease: 'Back.easeOut' });
     charBtn.zone.on('pointerdown', () => {
-      this.cameras.main.fadeOut(300, 27, 16, 64);
+      this.cameras.main.fadeOut(300, 20, 35, 15);
       this.cameras.main.once('camerafadeoutcomplete', () => {
         this.scene.start('CharactersScene');
       });
     });
 
-    // Keyboard shortcut hint
-    const shortcutHint = this.add.text(width / 2, charBtnY + 44, 'Press ENTER to start horde mode', {
-      fontSize: '12px',
-      color: '#8B6DB0',
-      fontFamily: '"Nunito", sans-serif',
-      fontStyle: '600',
-    }).setOrigin(0.5).setAlpha(0);
-    this.tweens.add({ targets: shortcutHint, alpha: 0.6, duration: 600, delay: 1000 });
+    // Info icon on characters button
+    if (this.textures.exists('ts_icon11')) {
+      const infoIcon = this.add.image(0, 0, 'ts_icon11').setScale(0.45).setDepth(15);
+      charBtn.container.add(infoIcon);
+      infoIcon.setPosition(-130, 0);
+    }
 
-    // ENTER key listener
+    // Keyboard shortcut
+    const hint = this.add.text(width / 2, btn3Y + 42, 'Press ENTER to start horde mode', {
+      fontSize: '11px', color: '#a89870', fontFamily: '"Nunito", sans-serif', fontStyle: '600',
+      stroke: '#2a1a0a', strokeThickness: 2,
+    }).setOrigin(0.5).setAlpha(0).setDepth(11);
+    this.tweens.add({ targets: hint, alpha: 0.7, duration: 600, delay: 1000 });
     this.input.keyboard!.on('keydown-ENTER', () => this.startHordeMode());
 
     // Status text
     this.statusText = this.add.text(width / 2, statusY, '', {
-      fontSize: '16px',
-      color: '#FFD93D',
-      fontFamily: '"Nunito", sans-serif',
-      fontStyle: 'bold',
-    }).setOrigin(0.5);
+      fontSize: '16px', color: '#FFD93D', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
+      stroke: '#4a3520', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(11);
 
-    // HOW TO PLAY — positioned relative to buttons
-    const howToPlayY = statusY + 50;
-    const howToPlay = this.add.container(width / 2, howToPlayY);
+    // === HOW TO PLAY — parchment scroll style ===
+    const howContainer = this.add.container(width / 2, howToPlayY).setDepth(11);
 
-    const howTitle = this.add.text(0, 0, 'HOW TO PLAY', {
-      fontSize: '13px',
-      color: '#FF6B9D',
-      fontFamily: '"Fredoka", sans-serif',
-      fontStyle: 'bold',
+    // Parchment background
+    const parchBg = this.add.graphics();
+    parchBg.fillStyle(0xd4c4a0, 0.85);
+    parchBg.fillRoundedRect(-200, -15, 400, 115, 8);
+    parchBg.lineStyle(2, 0x8B7355, 0.8);
+    parchBg.strokeRoundedRect(-200, -15, 400, 115, 8);
+    howContainer.add(parchBg);
+
+    const howTitle = this.add.text(0, -5, 'HOW TO PLAY', {
+      fontSize: '13px', color: '#6B4226', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
       letterSpacing: 3,
     }).setOrigin(0.5);
+    howContainer.add(howTitle);
 
     const steps = [
       { icon: '1', text: 'Draft 3 characters (class + animal combo)' },
@@ -174,175 +189,193 @@ export class MenuScene extends Phaser.Scene {
     ];
 
     steps.forEach((step, i) => {
-      const y = 30 + i * 28;
-      // Step number circle - bright and chunky
+      const y = 22 + i * 26;
+      // Step number in a wooden circle
       const circle = this.add.graphics();
-      circle.fillStyle(0x000000, 0.3);
-      circle.fillCircle(-180, y, 12);
-      circle.fillStyle(0xFFD93D, 0.9);
+      circle.fillStyle(0x8B7355, 0.9);
       circle.fillCircle(-180, y, 10);
-      howToPlay.add(circle);
+      circle.fillStyle(0xd4c4a0, 0.9);
+      circle.fillCircle(-180, y, 8);
+      howContainer.add(circle);
 
       const num = this.add.text(-180, y, step.icon, {
-        fontSize: '12px', color: '#1B1040', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
+        fontSize: '11px', color: '#4a3520', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
       }).setOrigin(0.5);
-      howToPlay.add(num);
+      howContainer.add(num);
 
       const txt = this.add.text(-160, y, step.text, {
-        fontSize: '13px', color: '#cbb8ee', fontFamily: '"Nunito", sans-serif', fontStyle: '600',
+        fontSize: '12px', color: '#4a3520', fontFamily: '"Nunito", sans-serif', fontStyle: '600',
       }).setOrigin(0, 0.5);
-      howToPlay.add(txt);
+      howContainer.add(txt);
     });
 
-    howToPlay.add(howTitle);
-    howToPlay.setAlpha(0);
-    this.tweens.add({ targets: howToPlay, alpha: 1, duration: 800, delay: 1200 });
+    howContainer.setAlpha(0);
+    this.tweens.add({ targets: howContainer, alpha: 1, duration: 800, delay: 1200 });
 
     // Version
-    this.add.text(width / 2, height - 20, 'v0.1.0  |  Phaser 3 + Firebase + Gemini', {
-      fontSize: '11px',
-      color: '#6B4DB0',
-      fontFamily: '"Nunito", sans-serif',
-    }).setOrigin(0.5);
-  }
+    this.add.text(width / 2, height - 18, 'v0.2.0  |  Prompt Battle — Tiny Swords Edition', {
+      fontSize: '10px', color: '#6a5a4a', fontFamily: '"Nunito", sans-serif',
+      stroke: '#1a0e05', strokeThickness: 2,
+    }).setOrigin(0.5).setDepth(11);
 
-  update() {
-    const { width, height } = this.cameras.main;
-    for (const shape of this.floatingShapes) {
-      shape.sprite.x += shape.vx;
-      shape.sprite.y += shape.vy;
-      if ('angle' in shape.sprite) {
-        shape.sprite.angle += shape.rotSpeed;
-      }
-      if (shape.sprite.x < -30) shape.sprite.x = width + 30;
-      if (shape.sprite.x > width + 30) shape.sprite.x = -30;
-      if (shape.sprite.y < -30) shape.sprite.y = height + 30;
-      if (shape.sprite.y > height + 30) shape.sprite.y = -30;
+    // === CASTLE decorations in corners ===
+    if (this.textures.exists('ts_castle_blue')) {
+      this.add.image(80, height - 60, 'ts_castle_blue').setScale(0.3).setAlpha(0.25).setDepth(2);
+    }
+    if (this.textures.exists('ts_castle_red')) {
+      this.add.image(width - 80, height - 60, 'ts_castle_red').setScale(0.3).setAlpha(0.25).setDepth(2);
     }
   }
 
-  private createFloatingShapes(width: number, height: number) {
-    const colors = [0xFF6B9D, 0xFFD93D, 0x45E6B0, 0x6CC4FF, 0xC98FFF, 0xFF9F43];
+  update() {
+    for (const shape of this.floatingShapes) {
+      shape.sprite.x += shape.vx;
+      shape.sprite.y += shape.vy;
+      shape.sprite.angle += shape.rot;
+      const { width, height } = this.cameras.main;
+      if (shape.sprite.x < -40) shape.sprite.x = width + 40;
+      if (shape.sprite.x > width + 40) shape.sprite.x = -40;
+      if (shape.sprite.y < -40) shape.sprite.y = height + 40;
+      if (shape.sprite.y > height + 40) shape.sprite.y = -40;
+    }
+  }
 
-    for (let i = 0; i < 12; i++) {
+  private createFloatingIcons(width: number, height: number) {
+    // Float various Tiny Swords icons across the background
+    const iconKeys = ['ts_icon1', 'ts_icon2', 'ts_icon3', 'ts_icon4', 'ts_icon5', 'ts_icon6', 'ts_icon10'];
+    const available = iconKeys.filter(k => this.textures.exists(k));
+    if (available.length === 0) return;
+
+    for (let i = 0; i < 15; i++) {
+      const key = available[i % available.length];
       const x = Math.random() * width;
       const y = Math.random() * height;
-      const color = colors[i % colors.length];
-      const alpha = 0.06 + Math.random() * 0.08;
-
-      let sprite: Phaser.GameObjects.Arc | Phaser.GameObjects.Star;
-      if (i % 3 === 0) {
-        // Star shape
-        sprite = this.add.star(x, y, 5, 3 + Math.random() * 4, 6 + Math.random() * 6, color, alpha);
-      } else {
-        // Circle
-        const r = 4 + Math.random() * 8;
-        sprite = this.add.circle(x, y, r, color, alpha);
-      }
+      const img = this.add.image(x, y, key)
+        .setScale(0.35 + Math.random() * 0.25)
+        .setAlpha(0.06 + Math.random() * 0.06)
+        .setDepth(2)
+        .setAngle(Math.random() * 360);
 
       this.tweens.add({
-        targets: sprite,
-        alpha: { from: alpha, to: alpha * 0.3 },
-        scaleX: { from: 1, to: 1.2 },
-        scaleY: { from: 1, to: 1.2 },
+        targets: img,
+        alpha: { from: img.alpha, to: img.alpha * 0.3 },
+        scaleX: { from: img.scaleX, to: img.scaleX * 1.15 },
+        scaleY: { from: img.scaleY, to: img.scaleY * 1.15 },
         duration: 3000 + Math.random() * 4000,
-        yoyo: true,
-        repeat: -1,
-        ease: 'Sine.easeInOut',
+        yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
         delay: Math.random() * 2000,
       });
 
       this.floatingShapes.push({
-        sprite,
-        vx: (Math.random() - 0.5) * 0.3,
-        vy: (Math.random() - 0.5) * 0.25,
-        rotSpeed: (Math.random() - 0.5) * 0.3,
+        sprite: img,
+        vx: (Math.random() - 0.5) * 0.25,
+        vy: (Math.random() - 0.5) * 0.2,
+        rot: (Math.random() - 0.5) * 0.15,
       });
     }
   }
 
-  private createCartoonButton(
+  private createMedievalButton(
     x: number, y: number, w: number, h: number,
-    label: string, color: number, isPrimary: boolean
+    label: string, color: 'green' | 'red' | 'blue', isPrimary: boolean
   ): { container: Phaser.GameObjects.Container; zone: Phaser.GameObjects.Zone } {
-    const container = this.add.container(x, y);
+    const container = this.add.container(x, y).setDepth(12);
 
-    // Shadow behind button
+    // Color schemes
+    const schemes = {
+      green: { fill: 0x45703a, border: 0x6B9B5E, highlight: 0x8BC47A, text: '#e8dcc4' },
+      red:   { fill: 0x8B3A3A, border: 0xBB5555, highlight: 0xDD7777, text: '#e8dcc4' },
+      blue:  { fill: 0x3A5A8B, border: 0x5588BB, highlight: 0x77AADD, text: '#e8dcc4' },
+    };
+    const s = schemes[color];
+
+    // Drop shadow
     const shadow = this.add.graphics();
-    shadow.fillStyle(0x000000, 0.3);
-    shadow.fillRoundedRect(-w / 2 + 4, -h / 2 + 4, w, h, 16);
+    shadow.fillStyle(0x000000, 0.4);
+    shadow.fillRoundedRect(-w / 2 + 4, -h / 2 + 4, w, h, 8);
     container.add(shadow);
 
-    // Button background with thick cartoon border
+    // Wood-textured button background
     const bg = this.add.graphics();
-    bg.fillStyle(color, 0.3);
-    bg.fillRoundedRect(-w / 2, -h / 2, w, h, 16);
-    bg.lineStyle(3, color, 0.8);
-    bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 16);
+    // Base fill
+    bg.fillStyle(s.fill, 0.9);
+    bg.fillRoundedRect(-w / 2, -h / 2, w, h, 8);
+    // Inner lighter stripe (wood grain effect)
+    bg.fillStyle(s.highlight, 0.15);
+    bg.fillRoundedRect(-w / 2 + 4, -h / 2 + 3, w - 8, h / 3, 4);
+    // Border — thick medieval style
+    bg.lineStyle(3, s.border, 1);
+    bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 8);
+    // Inner border for depth
+    bg.lineStyle(1, 0x000000, 0.2);
+    bg.strokeRoundedRect(-w / 2 + 3, -h / 2 + 3, w - 6, h - 6, 6);
     container.add(bg);
 
+    // Corner rivets
+    const rivetPositions = [
+      [-w / 2 + 10, -h / 2 + 10], [w / 2 - 10, -h / 2 + 10],
+      [-w / 2 + 10, h / 2 - 10], [w / 2 - 10, h / 2 - 10],
+    ];
+    const rivets = this.add.graphics();
+    for (const [rx, ry] of rivetPositions) {
+      rivets.fillStyle(0x000000, 0.3);
+      rivets.fillCircle(rx + 1, ry + 1, 3);
+      rivets.fillStyle(0xc8b890, 0.9);
+      rivets.fillCircle(rx, ry, 3);
+      rivets.fillStyle(0xffffff, 0.3);
+      rivets.fillCircle(rx - 1, ry - 1, 1.5);
+    }
+    container.add(rivets);
+
     // Button text
-    const text = this.add.text(0, 0, label, {
-      fontSize: '20px',
-      color: '#fff',
-      fontFamily: '"Fredoka", sans-serif',
-      fontStyle: 'bold',
-      letterSpacing: 2,
+    const text = this.add.text(0, -1, label, {
+      fontSize: '19px', color: s.text, fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
+      letterSpacing: 2, stroke: '#1a0e05', strokeThickness: 3,
     }).setOrigin(0.5);
     container.add(text);
 
-    // Idle bounce for primary button
+    // Idle breathing for primary buttons
     if (isPrimary) {
       this.tweens.add({
         targets: container,
-        scaleX: { from: 1, to: 1.02 },
-        scaleY: { from: 1, to: 1.02 },
-        duration: 1200,
-        yoyo: true,
-        repeat: -1,
-        ease: 'Sine.easeInOut',
+        scaleX: { from: 1, to: 1.015 }, scaleY: { from: 1, to: 1.015 },
+        duration: 1400, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
       });
     }
 
     // Interactive zone
-    const zone = this.add.zone(x, y, w, h).setInteractive({ useHandCursor: true });
+    const zone = this.add.zone(x, y, w, h).setInteractive({ useHandCursor: true }).setDepth(13);
 
     zone.on('pointerover', () => {
-      this.tweens.add({
-        targets: container,
-        scaleX: 1.08, scaleY: 1.08,
-        duration: 200,
-        ease: 'Back.easeOut',
-      });
-      text.setColor('#fff');
+      this.tweens.add({ targets: container, scaleX: 1.06, scaleY: 1.06, duration: 150, ease: 'Back.easeOut' });
       bg.clear();
-      bg.fillStyle(color, 0.5);
-      bg.fillRoundedRect(-w / 2, -h / 2, w, h, 16);
-      bg.lineStyle(4, color, 1);
-      bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 16);
+      bg.fillStyle(s.highlight, 0.5);
+      bg.fillRoundedRect(-w / 2, -h / 2, w, h, 8);
+      bg.fillStyle(0xffffff, 0.08);
+      bg.fillRoundedRect(-w / 2 + 4, -h / 2 + 3, w - 8, h / 3, 4);
+      bg.lineStyle(3, 0xFFD93D, 1);
+      bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 8);
+      bg.lineStyle(1, 0x000000, 0.2);
+      bg.strokeRoundedRect(-w / 2 + 3, -h / 2 + 3, w - 6, h - 6, 6);
+      text.setColor('#FFD93D');
     });
 
     zone.on('pointerout', () => {
-      this.tweens.add({
-        targets: container,
-        scaleX: 1, scaleY: 1,
-        duration: 200,
-      });
-      text.setColor('#fff');
+      this.tweens.add({ targets: container, scaleX: 1, scaleY: 1, duration: 150 });
       bg.clear();
-      bg.fillStyle(color, 0.3);
-      bg.fillRoundedRect(-w / 2, -h / 2, w, h, 16);
-      bg.lineStyle(3, color, 0.8);
-      bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 16);
+      bg.fillStyle(s.fill, 0.9);
+      bg.fillRoundedRect(-w / 2, -h / 2, w, h, 8);
+      bg.fillStyle(s.highlight, 0.15);
+      bg.fillRoundedRect(-w / 2 + 4, -h / 2 + 3, w - 8, h / 3, 4);
+      bg.lineStyle(3, s.border, 1);
+      bg.strokeRoundedRect(-w / 2, -h / 2, w, h, 8);
+      bg.lineStyle(1, 0x000000, 0.2);
+      bg.strokeRoundedRect(-w / 2 + 3, -h / 2 + 3, w - 6, h - 6, 6);
+      text.setColor(s.text);
     });
 
     zone.on('pointerdown', () => {
-      this.tweens.add({
-        targets: container,
-        scaleX: 0.92, scaleY: 0.92,
-        duration: 80,
-        yoyo: true,
-      });
+      this.tweens.add({ targets: container, scaleX: 0.94, scaleY: 0.94, duration: 60, yoyo: true });
     });
 
     return { container, zone };
@@ -367,14 +400,10 @@ export class MenuScene extends Phaser.Scene {
         loop: true,
       });
 
-      // Pulsing alpha on searching status
       const pulseTween = this.tweens.add({
         targets: this.statusText,
         alpha: { from: 1, to: 0.5 },
-        duration: 800,
-        yoyo: true,
-        repeat: -1,
-        ease: 'Sine.easeInOut',
+        duration: 800, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
       });
 
       this.matchmaking = new Matchmaking(firebase);
@@ -386,12 +415,12 @@ export class MenuScene extends Phaser.Scene {
 
       if (matchResult.gameId) {
         this.statusText.setText('Match found!');
-        this.statusText.setColor('#45E6B0');
+        this.statusText.setColor('#8BC47A');
 
-        this.cameras.main.flash(300, 255, 107, 157, false);
+        this.cameras.main.flash(300, 139, 196, 122, false);
 
         this.time.delayedCall(800, () => {
-          this.cameras.main.fadeOut(400, 27, 16, 64);
+          this.cameras.main.fadeOut(400, 20, 35, 15);
           this.cameras.main.once('camerafadeoutcomplete', () => {
             this.scene.start('DraftScene', {
               gameId: matchResult.gameId,
@@ -404,12 +433,12 @@ export class MenuScene extends Phaser.Scene {
       }
     } catch (err) {
       this.statusText.setText('Error: ' + (err as Error).message);
-      this.statusText.setColor('#FF6B6B');
+      this.statusText.setColor('#DD7777');
     }
   }
 
   private startJungleLane() {
-    this.cameras.main.fadeOut(400, 27, 16, 64);
+    this.cameras.main.fadeOut(400, 20, 35, 15);
     this.cameras.main.once('camerafadeoutcomplete', () => {
       this.scene.start('JungleLaneScene');
     });
@@ -424,7 +453,6 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private showMapPicker() {
-    // Remove existing picker if any
     if (this.mapPickerContainer) {
       this.mapPickerContainer.destroy();
       this.mapPickerZones.forEach(z => z.destroy());
@@ -438,90 +466,117 @@ export class MenuScene extends Phaser.Scene {
 
     // Dim overlay
     const overlay = this.add.graphics();
-    overlay.fillStyle(0x000000, 0.7);
+    overlay.fillStyle(0x0a0a0a, 0.75);
     overlay.fillRect(-width / 2, -height / 2, width, height);
     container.add(overlay);
 
-    // Title
+    // Title on parchment ribbon
+    const titleBg = this.add.graphics();
+    titleBg.fillStyle(0x8B7355, 0.9);
+    titleBg.fillRoundedRect(-160, -height * 0.35 - 22, 320, 44, 6);
+    titleBg.fillStyle(0xd4c4a0, 0.9);
+    titleBg.fillRoundedRect(-155, -height * 0.35 - 19, 310, 38, 4);
+    container.add(titleBg);
+
     const title = this.add.text(0, -height * 0.35, 'CHOOSE YOUR MAP', {
-      fontSize: '32px', color: '#FFD93D', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
-      letterSpacing: 3,
+      fontSize: '24px', color: '#4a3520', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
+      letterSpacing: 2,
     }).setOrigin(0.5);
     container.add(title);
 
-    // Map cards
-    const cardW = 260, cardH = 130, gap = 20;
+    // Map cards — parchment style
+    const cardW = 260, cardH = 140, gap = 20;
     const totalW = maps.length * cardW + (maps.length - 1) * gap;
     const startX = -totalW / 2 + cardW / 2;
-    const cardY = -30;
+    const cardY = -20;
 
-    const mapColors = [0xFF6B9D, 0x6CC4FF, 0x45E6B0, 0xC98FFF];
+    const cardColors = [
+      { fill: 0x45703a, border: 0x6B9B5E, accent: '#8BC47A' },
+      { fill: 0x3A5A8B, border: 0x5588BB, accent: '#77AADD' },
+      { fill: 0x8B6B3A, border: 0xBB9955, accent: '#DDBB77' },
+      { fill: 0x6B3A6B, border: 0x9955AA, accent: '#BB77CC' },
+    ];
 
     maps.forEach((map, i) => {
       const cx = startX + i * (cardW + gap);
-      const color = mapColors[i % mapColors.length];
+      const cc = cardColors[i % cardColors.length];
 
       // Card shadow
-      const shadow = this.add.graphics();
-      shadow.fillStyle(0x000000, 0.4);
-      shadow.fillRoundedRect(cx - cardW / 2 + 4, cardY - cardH / 2 + 4, cardW, cardH, 12);
-      container.add(shadow);
+      const cardShadow = this.add.graphics();
+      cardShadow.fillStyle(0x000000, 0.5);
+      cardShadow.fillRoundedRect(cx - cardW / 2 + 5, cardY - cardH / 2 + 5, cardW, cardH, 8);
+      container.add(cardShadow);
 
-      // Card background
+      // Card — parchment with colored border
       const bg = this.add.graphics();
-      bg.fillStyle(color, 0.25);
-      bg.fillRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, cardH, 12);
-      bg.lineStyle(3, color, 0.8);
-      bg.strokeRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, cardH, 12);
+      bg.fillStyle(0xd4c4a0, 0.92);
+      bg.fillRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, cardH, 8);
+      // Colored header stripe
+      bg.fillStyle(cc.fill, 0.8);
+      bg.fillRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, 36, { tl: 8, tr: 8, bl: 0, br: 0 });
+      bg.lineStyle(3, cc.border, 1);
+      bg.strokeRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, cardH, 8);
       container.add(bg);
 
-      // Map name
-      const nameText = this.add.text(cx, cardY - 30, map.name, {
-        fontSize: '18px', color: '#fff', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
+      // Map name — in the colored header
+      const nameText = this.add.text(cx, cardY - cardH / 2 + 18, map.name, {
+        fontSize: '16px', color: '#e8dcc4', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
+        stroke: '#1a0e05', strokeThickness: 2,
       }).setOrigin(0.5);
       container.add(nameText);
 
-      // Map description
+      // Description — on parchment body
       const descText = this.add.text(cx, cardY + 5, map.description, {
-        fontSize: '11px', color: '#cbb8ee', fontFamily: '"Nunito", sans-serif',
-        wordWrap: { width: cardW - 20 }, align: 'center',
+        fontSize: '11px', color: '#4a3520', fontFamily: '"Nunito", sans-serif',
+        wordWrap: { width: cardW - 24 }, align: 'center',
       }).setOrigin(0.5, 0);
       container.add(descText);
 
-      // Camps/slots info
-      const slotsText = this.add.text(cx, cardY + cardH / 2 - 15, `${map.campSlots.length * 2 + (map.trollSlot ? 1 : 0)} camps`, {
-        fontSize: '10px', color: '#FFD93D', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
+      // Camp count — accent colored
+      const slotsText = this.add.text(cx, cardY + cardH / 2 - 18, `${map.campSlots.length * 2 + (map.trollSlot ? 1 : 0)} camps`, {
+        fontSize: '10px', color: cc.accent, fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
+        stroke: '#1a0e05', strokeThickness: 2,
       }).setOrigin(0.5);
       container.add(slotsText);
 
-      // Interactive zone (positioned in world space, not container space)
+      // Interactive zone
       const zone = this.add.zone(width / 2 + cx, height / 2 + cardY, cardW, cardH)
         .setInteractive({ useHandCursor: true }).setDepth(201);
       this.mapPickerZones.push(zone);
 
       zone.on('pointerover', () => {
         bg.clear();
-        bg.fillStyle(color, 0.45);
-        bg.fillRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, cardH, 12);
-        bg.lineStyle(4, color, 1);
-        bg.strokeRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, cardH, 12);
+        bg.fillStyle(0xe8dcc4, 0.95);
+        bg.fillRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, cardH, 8);
+        bg.fillStyle(cc.fill, 0.95);
+        bg.fillRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, 36, { tl: 8, tr: 8, bl: 0, br: 0 });
+        bg.lineStyle(3, 0xFFD93D, 1);
+        bg.strokeRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, cardH, 8);
       });
       zone.on('pointerout', () => {
         bg.clear();
-        bg.fillStyle(color, 0.25);
-        bg.fillRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, cardH, 12);
-        bg.lineStyle(3, color, 0.8);
-        bg.strokeRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, cardH, 12);
+        bg.fillStyle(0xd4c4a0, 0.92);
+        bg.fillRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, cardH, 8);
+        bg.fillStyle(cc.fill, 0.8);
+        bg.fillRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, 36, { tl: 8, tr: 8, bl: 0, br: 0 });
+        bg.lineStyle(3, cc.border, 1);
+        bg.strokeRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, cardH, 8);
       });
-      zone.on('pointerdown', () => {
-        this.selectMap(map.id);
-      });
+      zone.on('pointerdown', () => this.selectMap(map.id));
     });
 
-    // Back button
-    const backY = cardY + cardH / 2 + 60;
+    // Back button — medieval styled
+    const backY = cardY + cardH / 2 + 55;
+    const backBg = this.add.graphics();
+    backBg.fillStyle(0x8B3A3A, 0.8);
+    backBg.fillRoundedRect(-50, backY - 15, 100, 30, 6);
+    backBg.lineStyle(2, 0xBB5555, 0.9);
+    backBg.strokeRoundedRect(-50, backY - 15, 100, 30, 6);
+    container.add(backBg);
+
     const backText = this.add.text(0, backY, 'BACK', {
-      fontSize: '16px', color: '#FF6B6B', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
+      fontSize: '14px', color: '#e8dcc4', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
+      stroke: '#1a0e05', strokeThickness: 2,
     }).setOrigin(0.5);
     container.add(backText);
 
@@ -534,8 +589,20 @@ export class MenuScene extends Phaser.Scene {
       this.mapPickerZones = [];
       this.mapPickerContainer = null;
     });
-    backZone.on('pointerover', () => backText.setColor('#fff'));
-    backZone.on('pointerout', () => backText.setColor('#FF6B6B'));
+    backZone.on('pointerover', () => {
+      backBg.clear();
+      backBg.fillStyle(0xBB5555, 0.9);
+      backBg.fillRoundedRect(-50, backY - 15, 100, 30, 6);
+      backBg.lineStyle(2, 0xFFD93D, 1);
+      backBg.strokeRoundedRect(-50, backY - 15, 100, 30, 6);
+    });
+    backZone.on('pointerout', () => {
+      backBg.clear();
+      backBg.fillStyle(0x8B3A3A, 0.8);
+      backBg.fillRoundedRect(-50, backY - 15, 100, 30, 6);
+      backBg.lineStyle(2, 0xBB5555, 0.9);
+      backBg.strokeRoundedRect(-50, backY - 15, 100, 30, 6);
+    });
 
     // Animate in
     container.setAlpha(0).setScale(0.9);
@@ -543,7 +610,6 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private selectMap(mapId: string) {
-    // Clean up picker
     if (this.mapPickerContainer) {
       this.mapPickerContainer.destroy();
       this.mapPickerZones.forEach(z => z.destroy());
@@ -551,7 +617,7 @@ export class MenuScene extends Phaser.Scene {
       this.mapPickerContainer = null;
     }
 
-    this.cameras.main.fadeOut(400, 27, 16, 64);
+    this.cameras.main.fadeOut(400, 20, 35, 15);
     this.cameras.main.once('camerafadeoutcomplete', () => {
       this.scene.start('HordeScene', { mapId });
     });
@@ -579,10 +645,7 @@ export class MenuScene extends Phaser.Scene {
       const pulseTween = this.tweens.add({
         targets: this.statusText,
         alpha: { from: 1, to: 0.5 },
-        duration: 800,
-        yoyo: true,
-        repeat: -1,
-        ease: 'Sine.easeInOut',
+        duration: 800, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
       });
 
       this.matchmaking = new Matchmaking(firebase, 'horde_waiting');
@@ -594,12 +657,12 @@ export class MenuScene extends Phaser.Scene {
 
       if (matchResult.gameId) {
         this.statusText.setText('Opponent found! Starting Horde PvP...');
-        this.statusText.setColor('#45E6B0');
+        this.statusText.setColor('#8BC47A');
 
-        this.cameras.main.flash(300, 255, 159, 67, false);
+        this.cameras.main.flash(300, 139, 159, 67, false);
 
         this.time.delayedCall(800, () => {
-          this.cameras.main.fadeOut(400, 27, 16, 64);
+          this.cameras.main.fadeOut(400, 20, 35, 15);
           this.cameras.main.once('camerafadeoutcomplete', () => {
             this.scene.start('HordeScene', {
               isOnline: true,
@@ -612,7 +675,7 @@ export class MenuScene extends Phaser.Scene {
       }
     } catch (err) {
       this.statusText.setText('Error: ' + (err as Error).message);
-      this.statusText.setColor('#FF6B6B');
+      this.statusText.setColor('#DD7777');
     }
   }
 
@@ -626,7 +689,7 @@ export class MenuScene extends Phaser.Scene {
 
       const gameId = await firebase.createLocalGame();
 
-      this.cameras.main.fadeOut(400, 27, 16, 64);
+      this.cameras.main.fadeOut(400, 20, 35, 15);
       this.cameras.main.once('camerafadeoutcomplete', () => {
         this.scene.start('DraftScene', {
           gameId,
@@ -636,7 +699,7 @@ export class MenuScene extends Phaser.Scene {
       });
     } catch (err) {
       this.statusText.setText('Error: ' + (err as Error).message);
-      this.statusText.setColor('#FF6B6B');
+      this.statusText.setColor('#DD7777');
     }
   }
 }

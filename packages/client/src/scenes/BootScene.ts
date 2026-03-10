@@ -14,6 +14,7 @@ export class BootScene extends Phaser.Scene {
     this.createUnitTextures();
     this.createObjectiveTextures();
     this.createUITextures();
+    this.loadTinySwordsAssets();
 
     // ─── Load enemy sprite sheets ──────────────────────────
     this.loadEnemySprites();
@@ -91,6 +92,8 @@ export class BootScene extends Phaser.Scene {
     // ─── Create all enemy animations ─────────────────────
     this.createEnemyAnimations();
 
+    this.createTinySwordsAnimations();
+
     this.cameras.main.fadeOut(400, 27, 16, 64);
     this.cameras.main.once('camerafadeoutcomplete', () => {
       this.scene.start('MenuScene');
@@ -133,6 +136,61 @@ export class BootScene extends Phaser.Scene {
           loaded.add(sheet.key);
         }
       }
+    }
+  }
+
+  private loadTinySwordsAssets() {
+    // Terrain
+    this.load.spritesheet('ts_grass', 'assets/terrain/tilemap_grass.png', { frameWidth: 64, frameHeight: 64 });
+    this.load.image('ts_water_bg', 'assets/terrain/water_bg.png');
+    this.load.spritesheet('ts_water_foam', 'assets/terrain/water_foam.png', { frameWidth: 192, frameHeight: 192 });
+    this.load.image('ts_shadow', 'assets/terrain/shadow.png');
+
+    // Buildings
+    for (const color of ['blue', 'red']) {
+      this.load.image(`ts_castle_${color}`, `assets/buildings/castle_${color}.png`);
+      this.load.image(`ts_barracks_${color}`, `assets/buildings/barracks_${color}.png`);
+      this.load.image(`ts_tower_${color}`, `assets/buildings/tower_${color}.png`);
+      this.load.image(`ts_archery_${color}`, `assets/buildings/archery_${color}.png`);
+      this.load.image(`ts_monastery_${color}`, `assets/buildings/monastery_${color}.png`);
+      for (let i = 1; i <= 3; i++) {
+        this.load.image(`ts_house${i}_${color}`, `assets/buildings/house${i}_${color}.png`);
+      }
+    }
+    for (let i = 1; i <= 3; i++) {
+      this.load.image(`ts_house${i}_yellow`, `assets/buildings/house${i}_yellow.png`);
+    }
+
+    // Resources
+    this.load.image('ts_meat', 'assets/resources/meat.png');
+    this.load.image('ts_gold', 'assets/resources/gold.png');
+    for (let i = 1; i <= 6; i++) {
+      this.load.image(`ts_gold_stone${i}`, `assets/resources/gold_stone${i}.png`);
+    }
+
+    // Particle FX - need to determine exact frame counts from image dimensions
+    // Dust_01: 512×64 → 8 frames of 64×64
+    this.load.spritesheet('ts_dust01', 'assets/fx/dust01.png', { frameWidth: 64, frameHeight: 64 });
+    // Dust_02: 640×64 → 10 frames of 64×64
+    this.load.spritesheet('ts_dust02', 'assets/fx/dust02.png', { frameWidth: 64, frameHeight: 64 });
+    // Explosion_01: 1536×192 → 8 frames of 192×192
+    this.load.spritesheet('ts_explosion01', 'assets/fx/explosion01.png', { frameWidth: 192, frameHeight: 192 });
+    // Explosion_02
+    this.load.spritesheet('ts_explosion02', 'assets/fx/explosion02.png', { frameWidth: 192, frameHeight: 192 });
+    // Tower projectile & explosion (128x128 frames)
+    this.load.spritesheet('tower_projectile', 'assets/fx/tower_projectile.png', { frameWidth: 128, frameHeight: 128 });
+    this.load.spritesheet('tower_explosion', 'assets/fx/tower_explosion.png', { frameWidth: 128, frameHeight: 128 });
+
+    // UI
+    this.load.image('ts_big_bar_base', 'assets/ui/bars/BigBar_Base.png');
+    this.load.image('ts_big_bar_fill', 'assets/ui/bars/BigBar_Fill.png');
+    this.load.image('ts_small_bar_base', 'assets/ui/bars/SmallBar_Base.png');
+    this.load.image('ts_small_bar_fill', 'assets/ui/bars/SmallBar_Fill.png');
+    this.load.image('ts_paper', 'assets/ui/panels/RegularPaper.png');
+    this.load.image('ts_wood_table', 'assets/ui/panels/WoodTable.png');
+    this.load.image('ts_banner', 'assets/ui/panels/Banner.png');
+    for (let i = 1; i <= 12; i++) {
+      this.load.image(`ts_icon${i}`, `assets/ui/icons/Icon_${i.toString().padStart(2, '0')}.png`);
     }
   }
 
@@ -185,6 +243,64 @@ export class BootScene extends Phaser.Scene {
     for (const [type, config] of Object.entries(HORDE_SPRITE_CONFIGS)) {
       createAnimsForConfig(`h_${type}`, config);
     }
+  }
+
+  private createTinySwordsAnimations() {
+    // Water foam: 16 frames of 192×192
+    this.anims.create({
+      key: 'ts_water_foam_anim',
+      frames: this.anims.generateFrameNumbers('ts_water_foam', { start: 0, end: 15 }),
+      frameRate: 8,
+      repeat: -1,
+    });
+
+    // Dust_01: small death poof (8 frames)
+    this.anims.create({
+      key: 'ts_dust01_anim',
+      frames: this.anims.generateFrameNumbers('ts_dust01', { start: 0, end: 7 }),
+      frameRate: 16,
+      repeat: 0,
+    });
+
+    // Dust_02: big death poof (10 frames)
+    this.anims.create({
+      key: 'ts_dust02_anim',
+      frames: this.anims.generateFrameNumbers('ts_dust02', { start: 0, end: 9 }),
+      frameRate: 14,
+      repeat: 0,
+    });
+
+    // Explosion_01: nexus/camp hit
+    this.anims.create({
+      key: 'ts_explosion01_anim',
+      frames: this.anims.generateFrameNumbers('ts_explosion01', { start: 0, end: 7 }),
+      frameRate: 12,
+      repeat: 0,
+    });
+
+    // Explosion_02
+    this.anims.create({
+      key: 'ts_explosion02_anim',
+      frames: this.anims.generateFrameNumbers('ts_explosion02', { start: 0, end: 7 }),
+      frameRate: 12,
+      repeat: 0,
+    });
+
+    // Tower projectile (3 frames, looping spin)
+    this.anims.create({
+      key: 'tower_proj_anim',
+      frames: this.anims.generateFrameNumbers('tower_projectile', { start: 0, end: 2 }),
+      frameRate: 10,
+      repeat: -1,
+    });
+
+    // Tower explosion (9 frames)
+    this.anims.create({
+      key: 'tower_explode_anim',
+      frames: this.anims.generateFrameNumbers('tower_explosion', { start: 0, end: 8 }),
+      frameRate: 14,
+      repeat: 0,
+    });
   }
 
   // ─── Hero Textures ──────────────────────────────────────

@@ -66,7 +66,7 @@ export interface MapDef {
 
 export const TIER_POOLS: Record<number, string[]> = {
   1: ['gnome', 'turtle'],
-  2: ['skull', 'spider', 'gnoll', 'rogue'],
+  2: ['skull', 'spider', 'hyena', 'rogue'],
   3: ['panda', 'lizard'],
   4: ['minotaur', 'shaman'],
 };

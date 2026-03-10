@@ -139,10 +139,10 @@ export const HORDE_SPRITE_CONFIGS: Record<string, EnemySpriteConfig> = {
     displayScale: 1.2,
     originY: 0.5,
   },
-  gnoll: {
-    idle: { key: 'h_gnoll_idle', path: 'assets/enemies/gnoll/Gnoll_Idle.png', frameWidth: 192, frameHeight: 192, frameCount: 6 },
-    walk: { key: 'h_gnoll_walk', path: 'assets/enemies/gnoll/Gnoll_Walk.png', frameWidth: 192, frameHeight: 192, frameCount: 8 },
-    attack: { key: 'h_gnoll_attack', path: 'assets/enemies/gnoll/Gnoll_Throw.png', frameWidth: 192, frameHeight: 192, frameCount: 8 },
+  hyena: {
+    idle: { key: 'h_hyena_idle', path: 'assets/enemies/gnoll/Gnoll_Idle.png', frameWidth: 192, frameHeight: 192, frameCount: 6 },
+    walk: { key: 'h_hyena_walk', path: 'assets/enemies/gnoll/Gnoll_Walk.png', frameWidth: 192, frameHeight: 192, frameCount: 8 },
+    attack: { key: 'h_hyena_attack', path: 'assets/enemies/gnoll/Gnoll_Throw.png', frameWidth: 192, frameHeight: 192, frameCount: 8 },
     displayScale: 1.1,
     originY: 0.5,
   },
