@@ -11,11 +11,12 @@ const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GE
 const GEMINI_MAX_RETRIES = 3;
 
 interface HordeCommand {
-  targetType: 'camp' | 'nearest_camp' | 'sweep_camps' | 'nexus' | 'base' | 'position' | 'defend' | 'retreat' | 'gather';
+  targetType: 'camp' | 'nearest_camp' | 'sweep_camps' | 'nexus' | 'base' | 'position' | 'defend' | 'retreat' | 'gather' | 'make';
   targetAnimal?: string; // filter camps by animal type
   campIndex?: number; // specific camp index (-1 = auto-pick)
   qualifier?: 'nearest' | 'furthest' | 'weakest' | 'strongest' | 'uncaptured' | 'enemy';
   gatherResource?: ResourceType; // for gather commands
+  makeAnimal?: string; // for "make" commands — which animal to produce
   narration?: string;
 }
 
@@ -47,7 +48,8 @@ ACTIONS:
 - "nexus": Attack enemy nexus/base/throne.
 - "base"/"defend"/"retreat": Go home / hold position / fall back.
 - "position": Go to map center.
-- "gather": Gather resources. Set gatherResource to "carrot", "meat", or "crystal". Units loop: pick up → deliver → repeat.
+- "gather": Gather a specific resource. Set gatherResource to "carrot", "meat", or "crystal". Units loop: pick up → deliver to base → repeat.
+- "make": Produce a specific animal. Set makeAnimal to the animal name. Units auto-gather the required resource and deliver to the right camp/base to spawn that animal. E.g. "make wolves" = gather meat → deliver to wolf camp.
 
 QUALIFIERS (for nearest_camp): nearest, furthest, weakest, uncaptured, enemy
 
@@ -64,10 +66,14 @@ EXAMPLES:
 - "retreat" → retreat
 - "gather carrots" → gather, gatherResource=carrot
 - "gather meat" → gather, gatherResource=meat
-- "get food" → gather, gatherResource=carrot
 - "collect crystals" → gather, gatherResource=crystal
-- "farm" → gather, gatherResource=carrot
-- "make more bunnies" → gather, gatherResource=carrot
+- "make bunnies" → make, makeAnimal=bunny
+- "make turtles" → make, makeAnimal=turtle
+- "make wolves" → make, makeAnimal=wolf
+- "produce bears" → make, makeAnimal=bear
+- "spawn dragons" → make, makeAnimal=dragon
+- "make more bunnies" → make, makeAnimal=bunny
+- "create scorpions" → make, makeAnimal=scorpion
 
 RULES:
 - Output exactly ONE command (army selection is handled separately).
@@ -78,11 +84,12 @@ COMMAND: "${rawText}"
 
 JSON ONLY (no markdown):
 {
-  "targetType": "<camp|nearest_camp|sweep_camps|nexus|base|position|defend|retreat|gather>",
+  "targetType": "<camp|nearest_camp|sweep_camps|nexus|base|position|defend|retreat|gather|make>",
   "targetAnimal": "<bunny|turtle|wolf|scorpion|hawk|bear|crocodile|lion|phoenix|dragon or omit>",
   "campIndex": <index or -1>,
   "qualifier": "<nearest|furthest|weakest|uncaptured|enemy or omit>",
   "gatherResource": "<carrot|meat|crystal or omit>",
+  "makeAnimal": "<bunny|turtle|wolf|scorpion|hawk|bear|crocodile|lion|phoenix|dragon or omit>",
   "narration": "<One dramatic sentence>"
 }`;
 
@@ -1151,7 +1158,7 @@ export class HordeScene extends Phaser.Scene {
       'SPACE: Voice  |  Type below: Text',
       'Q/E: Cycle army  |  TAB: Next  |  1-0: Direct pick',
       'Commands apply to selected army',
-      '"attack nearest camp" | "sweep camps" | "gather carrots"',
+      '"attack nearest camp" | "make bunnies" | "make wolves"',
     ].join('\n'), {
       fontSize: '10px', color: '#4A6B4A', fontFamily: '"Nunito", sans-serif', lineSpacing: 2, align: 'right',
     }).setOrigin(1, 1).setScrollFactor(0).setDepth(100);
@@ -1991,31 +1998,7 @@ export class HordeScene extends Phaser.Scene {
   // ─── RESOURCE ECONOMY: GATHER LOOPS ──────────────────────────
 
   private updateGatherLoops() {
-    // Auto-assign idle player units to gather loops (always looping)
-    for (const u of this.units) {
-      if (u.dead || u.team === 0 || u.loop) continue;
-      // If unit is idle (near its target, not carrying)
-      const atTarget = pdist(u, { x: u.targetX, y: u.targetY }) < 25;
-      if (!atTarget && !u.carrying) continue;
-      // Don't auto-gather if enemies are nearby (unit is in combat)
-      const hasNearbyEnemy = this.units.some(e => !e.dead && e.team !== u.team && e.team !== 0 && pdist(u, e) < COMBAT_RANGE + 50);
-      if (hasNearbyEnemy) continue;
-      // Don't auto-gather if near enemy nexus (attacking)
-      const enemyNex = this.nexuses.find(n => n.team !== u.team);
-      if (enemyNex && pdist(u, enemyNex) < COMBAT_RANGE + 80) continue;
-      // Default gather: T1 gathers carrots, T2+ gathers meat
-      const tier = ANIMALS[u.type]?.tier || 1;
-      const resType: ResourceType = tier <= 1 ? 'carrot' : 'meat';
-      let deliverTo = 'base';
-      if (resType === 'meat') {
-        const base = u.team === 1 ? P1_BASE : P2_BASE;
-        const mc = this.camps.filter(c => c.owner === u.team && SPAWN_COSTS[c.animalType]?.type === 'meat')
-          .sort((a, b) => pdist(a, base) - pdist(b, base));
-        if (mc.length > 0) deliverTo = mc[0].id;
-      }
-      u.loop = { action: 'gather', resourceType: resType, deliverTo, phase: u.carrying ? 'delivering' : 'seeking' };
-    }
-
+    // No auto-assign — loops are created by voice commands only
     // Track which ground items are already targeted so each unit picks a unique one
     const claimedItems = new Set<number>();
 
@@ -2550,8 +2533,42 @@ export class HordeScene extends Phaser.Scene {
         }
       }
 
+    } else if (cmd.targetType === 'make') {
+      // "make wolves" = gather the resource wolves need, deliver to a wolf camp
+      const animal = cmd.makeAnimal || 'bunny';
+      const cost = SPAWN_COSTS[animal];
+      if (!cost) { this.showFeedback(`Unknown animal: ${animal}`, '#FF6B6B'); return true; }
+
+      const sel = this.units.filter(u => u.team === team && !u.dead && (subject === 'all' || u.type === subject));
+      if (sel.length === 0) { this.showFeedback(`No ${subject} units!`, '#FF6B6B'); return true; }
+
+      // Find delivery target: base for T1, or nearest owned camp of that animal type
+      let deliverTo = 'base';
+      const base = team === 1 ? P1_BASE : P2_BASE;
+      if (animal !== 'bunny' && animal !== 'turtle') {
+        const targetCamp = this.camps
+          .filter(c => c.owner === team && c.animalType === animal)
+          .sort((a, b) => pdist(a, base) - pdist(b, base));
+        if (targetCamp.length > 0) {
+          deliverTo = targetCamp[0].id;
+        } else {
+          const campName = cap(animal);
+          this.showFeedback(`No owned ${campName} camp! Capture one first.`, '#FF6B6B');
+          return true;
+        }
+      }
+
+      for (const u of sel) {
+        u.loop = { action: 'gather', resourceType: cost.type, deliverTo, phase: 'seeking' };
+      }
+      const emoji = ANIMALS[animal]?.emoji || '';
+      const resEmoji = RESOURCE_EMOJI[cost.type];
+      const targetName = deliverTo === 'base' ? 'base' : (this.camps.find(c => c.id === deliverTo)?.name || 'camp');
+      this.showFeedback(cmd.narration || `${sel.length} units gathering ${resEmoji} → ${emoji} ${targetName}`, '#45E6B0');
+      return true;
+
     } else if (cmd.targetType === 'gather') {
-      // Set up gather loop for selected units
+      // Generic gather: collect a resource type, deliver to base
       const resType = cmd.gatherResource || 'carrot';
       const sel = this.units.filter(u => u.team === team && !u.dead && (subject === 'all' || u.type === subject));
       if (sel.length === 0) {
@@ -2562,7 +2579,6 @@ export class HordeScene extends Phaser.Scene {
       // Find best delivery target for this resource
       let deliverTo = 'base';
       if (resType !== 'carrot') {
-        // Find nearest owned camp that needs this resource type
         const base = team === 1 ? P1_BASE : P2_BASE;
         const matchingCamps = this.camps
           .filter(c => c.owner === team && SPAWN_COSTS[c.animalType]?.type === resType)
@@ -2602,8 +2618,43 @@ export class HordeScene extends Phaser.Scene {
     const subject = this.selectedArmy; // always use selected army
     const base = team === 1 ? P1_BASE : P2_BASE;
 
-    // Gather commands
-    if (/\b(gather|collect|farm|forage|harvest|get food|make more)\b/i.test(lo)) {
+    // "make [animal]" commands — set up gather loop for that animal's resource
+    const makeMatch = lo.match(/\b(?:make|produce|spawn|create|breed|train)\s+(?:more\s+)?(\w+)/i);
+    if (makeMatch) {
+      const animalPatterns: [RegExp, string][] = [
+        [/bunn(y|ies)|rabbit/i, 'bunny'], [/turtle/i, 'turtle'],
+        [/wol(f|ves)/i, 'wolf'], [/scorpion/i, 'scorpion'], [/hawk/i, 'hawk'],
+        [/bear/i, 'bear'], [/croc(odile)?/i, 'crocodile'],
+        [/lion/i, 'lion'], [/phoenix/i, 'phoenix'], [/dragon/i, 'dragon'],
+      ];
+      let animal: string | null = null;
+      for (const [pat, name] of animalPatterns) {
+        if (pat.test(makeMatch[1])) { animal = name; break; }
+      }
+      if (animal) {
+        const cost = SPAWN_COSTS[animal];
+        if (cost) {
+          const sel = this.units.filter(u => u.team === team && !u.dead && (subject === 'all' || u.type === subject));
+          if (sel.length === 0) { this.showFeedback(`No ${subject} units!`, '#FF6B6B'); return; }
+
+          let deliverTo = 'base';
+          if (animal !== 'bunny' && animal !== 'turtle') {
+            const targetCamp = this.camps.filter(c => c.owner === team && c.animalType === animal)
+              .sort((a, b) => pdist(a, base) - pdist(b, base));
+            if (targetCamp.length > 0) deliverTo = targetCamp[0].id;
+            else { this.showFeedback(`No owned ${cap(animal)} camp! Capture one first.`, '#FF6B6B'); return; }
+          }
+          for (const u of sel) { u.loop = { action: 'gather', resourceType: cost.type, deliverTo, phase: 'seeking' }; }
+          const emoji = ANIMALS[animal]?.emoji || '';
+          const targetName = deliverTo === 'base' ? 'base' : (this.camps.find(c => c.id === deliverTo)?.name || 'camp');
+          this.showFeedback(`${sel.length} units: ${RESOURCE_EMOJI[cost.type]} → ${emoji} ${targetName}`, '#45E6B0');
+          return;
+        }
+      }
+    }
+
+    // Gather commands (generic resource gathering)
+    if (/\b(gather|collect|farm|forage|harvest|get food)\b/i.test(lo)) {
       let resType: ResourceType = 'carrot';
       if (/meat|flesh|kill/i.test(lo)) resType = 'meat';
       else if (/crystal|gem|diamond|elite/i.test(lo)) resType = 'crystal';
@@ -2611,13 +2662,7 @@ export class HordeScene extends Phaser.Scene {
       const sel = this.units.filter(u => u.team === team && !u.dead && (subject === 'all' || u.type === subject));
       if (sel.length === 0) { this.showFeedback(`No ${subject} units!`, '#FF6B6B'); return; }
 
-      let deliverTo = 'base';
-      if (resType !== 'carrot') {
-        const matchCamps = this.camps.filter(c => c.owner === team && SPAWN_COSTS[c.animalType]?.type === resType)
-          .sort((a, b) => pdist(a, base) - pdist(b, base));
-        if (matchCamps.length > 0) deliverTo = matchCamps[0].id;
-      }
-      for (const u of sel) { u.loop = { action: 'gather', resourceType: resType, deliverTo, phase: 'seeking' }; }
+      for (const u of sel) { u.loop = { action: 'gather', resourceType: resType, deliverTo: 'base', phase: 'seeking' }; }
       this.showFeedback(`${sel.length} units gathering ${RESOURCE_EMOJI[resType]}!`, '#45E6B0');
       return;
     }
