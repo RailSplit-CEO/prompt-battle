@@ -1795,14 +1795,28 @@ export class HordeScene extends Phaser.Scene {
       const sy = prev.y + (dispY - prev.y) * lerpFactor;
       u.sprite.setPosition(sx, sy);
 
-      // Carry sprite — small resource icon above unit
+      // Carry sprite — trails behind the unit based on movement direction
       if (u.carrying) {
         if (!u.carrySprite) {
           u.carrySprite = this.add.text(0, 0, RESOURCE_EMOJI[u.carrying], {
-            fontSize: '10px',
-          }).setOrigin(0.5).setDepth(25);
+            fontSize: '12px',
+          }).setOrigin(0.5).setDepth(19);
         }
-        u.carrySprite.setPosition(sx, sy - 16);
+        // Compute trailing offset: opposite of movement direction
+        const dx = u.targetX - u.x, dy = u.targetY - u.y;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        let trailX = sx, trailY = sy + 14; // default: below unit
+        if (d > 5) {
+          // Trail behind (opposite of heading)
+          trailX = sx - (dx / d) * 18;
+          trailY = sy - (dy / d) * 18;
+        }
+        // Smooth lerp so it feels like it's dragging behind
+        const prevCX = u.carrySprite.x, prevCY = u.carrySprite.y;
+        u.carrySprite.setPosition(
+          prevCX + (trailX - prevCX) * 0.15,
+          prevCY + (trailY - prevCY) * 0.15,
+        );
       } else if (u.carrySprite) {
         u.carrySprite.destroy(); u.carrySprite = null;
       }
