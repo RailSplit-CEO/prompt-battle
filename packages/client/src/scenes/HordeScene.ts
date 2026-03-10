@@ -151,6 +151,8 @@ interface AnimalDef {
   attack: number;
   speed: number; // pixels per second
   tier: number;
+  ability: string; // unique ability name
+  desc: string;    // short description
 }
 
 type ResourceType = 'carrot' | 'meat' | 'crystal';
@@ -283,33 +285,55 @@ const WORLD_H = 3200;
 const P1_BASE = { x: 250, y: WORLD_H - 250 };
 const P2_BASE = { x: WORLD_W - 250, y: 250 };
 
-// Each tier is ~10x stronger than the previous
-// 1 wolf ≈ 10 bunnies, 1 bear ≈ 10 wolves, 1 lion ≈ 10 bears, 1 dragon ≈ 10 lions
+// ─── ANIMAL ROSTER ─────────────────────────────────────────
+// Each animal has a distinct role, stat profile, and unique ability.
+//
+// T1 WORKERS — cheap, resource gatherers
+//   🐰 Bunny  "Swiftfoot"   — Fastest unit. 2x pickup range. Born to gather.
+//   🐢 Turtle "Shell Guard"  — Slowest unit but tankiest T1. 50% DR when stationary.
+//
+// T2 FIGHTERS — mid-game combat specialists
+//   🐺 Wolf   "Pack Tactics" — Fast flanker. +15% damage per nearby wolf (stacks!).
+//   🦂 Scorpion "Venom Sting"— Slow assassin. Deals 5% target max HP bonus dmg per hit.
+//   🦅 Hawk   "Dive Strike"  — Glass cannon. First attack = 3x dmg, 6s cooldown.
+//
+// T3 HEAVIES — expensive powerhouses
+//   🐻 Bear   "Berserker"   — Gets STRONGER as HP drops. 2x attack at 10% HP.
+//   🐊 Croc   "Death Roll"  — Executioner. 3x damage to targets below 40% HP.
+//
+// T4 ELITES — game-changers
+//   🦁 Lion   "War Roar"    — Commander. Allies within 150px get +25% attack.
+//   🔥 Phoenix "Rebirth"    — Immortal. Respawns once at 50% HP on death.
+//
+// T5 LEGENDARY
+//   🐉 Dragon "Inferno"     — Devastator. Massive splash (80px). Crushes everything.
+
 const ANIMALS: Record<string, AnimalDef> = {
-  bunny:     { type: 'bunny',     emoji: '🐰', hp: 20,    attack: 4,    speed: 160, tier: 1 },
-  turtle:    { type: 'turtle',    emoji: '🐢', hp: 40,    attack: 4,    speed: 80,  tier: 1 },
-  wolf:      { type: 'wolf',      emoji: '🐺', hp: 120,   attack: 15,   speed: 140, tier: 2 },
-  scorpion:  { type: 'scorpion',  emoji: '🦂', hp: 100,   attack: 20,   speed: 120, tier: 2 },
-  hawk:      { type: 'hawk',      emoji: '🦅', hp: 80,    attack: 18,   speed: 180, tier: 2 },
-  bear:      { type: 'bear',      emoji: '🐻', hp: 600,   attack: 50,   speed: 100, tier: 3 },
-  crocodile: { type: 'crocodile', emoji: '🐊', hp: 500,   attack: 60,   speed: 90,  tier: 3 },
-  lion:      { type: 'lion',      emoji: '🦁', hp: 2000,  attack: 150,  speed: 120, tier: 4 },
-  phoenix:   { type: 'phoenix',   emoji: '🔥', hp: 1800,  attack: 140,  speed: 110, tier: 4 },
-  dragon:    { type: 'dragon',    emoji: '🐉', hp: 8000,  attack: 500,  speed: 80,  tier: 5 },
+  bunny:     { type: 'bunny',     emoji: '🐰', hp: 15,    attack: 3,    speed: 210, tier: 1, ability: 'Swiftfoot',    desc: '2x pickup range, fastest unit' },
+  turtle:    { type: 'turtle',    emoji: '🐢', hp: 65,    attack: 3,    speed: 55,  tier: 1, ability: 'Shell Guard',  desc: '50% DR when stationary' },
+  wolf:      { type: 'wolf',      emoji: '🐺', hp: 90,    attack: 12,   speed: 165, tier: 2, ability: 'Pack Tactics', desc: '+15% dmg per nearby wolf' },
+  scorpion:  { type: 'scorpion',  emoji: '🦂', hp: 120,   attack: 18,   speed: 85,  tier: 2, ability: 'Venom Sting', desc: '+5% target max HP per hit' },
+  hawk:      { type: 'hawk',      emoji: '🦅', hp: 55,    attack: 28,   speed: 210, tier: 2, ability: 'Dive Strike', desc: 'First hit 3x dmg, 6s CD' },
+  bear:      { type: 'bear',      emoji: '🐻', hp: 800,   attack: 40,   speed: 85,  tier: 3, ability: 'Berserker',   desc: 'Up to 2x atk at low HP' },
+  crocodile: { type: 'crocodile', emoji: '🐊', hp: 500,   attack: 65,   speed: 65,  tier: 3, ability: 'Death Roll',  desc: '3x dmg to targets <40% HP' },
+  lion:      { type: 'lion',      emoji: '🦁', hp: 2000,  attack: 110,  speed: 130, tier: 4, ability: 'War Roar',    desc: 'Nearby allies +25% attack' },
+  phoenix:   { type: 'phoenix',   emoji: '🔥', hp: 1600,  attack: 170,  speed: 120, tier: 4, ability: 'Rebirth',     desc: 'Respawns once at 50% HP' },
+  dragon:    { type: 'dragon',    emoji: '🐉', hp: 12000, attack: 350,  speed: 55,  tier: 5, ability: 'Inferno',     desc: 'Massive 80px splash damage' },
 };
 
-// Hard counter map: attacker type → list of types it deals 2x damage to
+// Hard counter map: attacker → types it deals 2x damage to
+// Designed around the ability matchups:
 const HARD_COUNTERS: Record<string, string[]> = {
-  turtle:    ['bunny'],              // shell blocks weak hits
-  scorpion:  ['bear', 'turtle'],     // armor pierce shreds tanks
-  hawk:      ['scorpion'],           // dive strike picks off scorpions
-  crocodile: ['bear', 'lion'],       // death roll executes big targets
-  phoenix:   ['lion', 'dragon'],     // rebirth outlasts burst damage
-  wolf:      ['scorpion', 'hawk'],   // pack swarms fragile specialists
-  bunny:     [],                     // no hard counters (numbers advantage)
-  bear:      ['turtle', 'crocodile'],// raw power crushes slower tanks
-  lion:      ['crocodile', 'phoenix'],// speed + burst kills before execute/rebirth
-  dragon:    ['phoenix', 'hawk'],    // splash kills phoenix twice, swats hawks
+  bunny:     [],                       // no counters — pure worker, wins by numbers
+  turtle:    ['bunny'],                // shell guard absorbs bunny swarms
+  wolf:      ['hawk', 'scorpion'],     // pack overwhelms fragile specialists
+  scorpion:  ['bear', 'turtle'],       // venom shreds tanky slow targets
+  hawk:      ['scorpion', 'bunny'],    // dive-bombs slow/fragile targets
+  bear:      ['wolf', 'crocodile'],    // berserker rage too tanky to swarm or execute
+  crocodile: ['bear', 'lion'],         // death roll executes the biggest targets
+  lion:      ['wolf', 'phoenix'],      // war roar + stats overwhelm packs and outlast rebirth
+  phoenix:   ['dragon', 'lion'],       // rebirth outlasts burst; can't be one-shot
+  dragon:    ['phoenix', 'hawk'],      // inferno kills phoenix twice, swats hawks from sky
 };
 
 // Procedural map: competitive symmetric layout.
@@ -1190,7 +1214,7 @@ export class HordeScene extends Phaser.Scene {
     for (const [type, def] of Object.entries(ANIMALS)) {
       const count = p1c[type] || 0;
       if (count === 0) continue;
-      armyLines.push(`${def.emoji} ${cap(type)}:  ${count} units`);
+      armyLines.push(`${def.emoji} ${cap(type)}: ${count}  [${def.ability}]`);
     }
     if (armyLines.length === 1) armyLines.push('  (no units yet)');
     this.hudTexts['armies']?.setText(armyLines.join('\n'));
@@ -1481,15 +1505,30 @@ export class HordeScene extends Phaser.Scene {
         const counters = HARD_COUNTERS[u.type];
         if (counters && counters.includes(best.type)) atk *= 2;
 
-        // ─── TURTLE SHELL GUARD: 50% damage reduction when stationary ───
-        const isStationary = pdist(best, { x: best.targetX, y: best.targetY }) < 15;
-        if (best.type === 'turtle' && isStationary) atk *= 0.5;
+        // ─── WOLF PACK TACTICS: +15% damage per nearby friendly wolf ───
+        if (u.type === 'wolf' && u.team !== 0) {
+          const nearbyWolves = this.units.filter(w =>
+            w !== u && !w.dead && w.type === 'wolf' && w.team === u.team && pdist(u, w) < 100
+          ).length;
+          atk *= (1 + nearbyWolves * 0.15);
+        }
 
-        // ─── HAWK DIVE STRIKE: first attack = 2x damage ───
+        // ─── SCORPION VENOM STING: +5% of target's max HP as bonus damage ───
+        if (u.type === 'scorpion') {
+          atk += best.maxHp * 0.05;
+        }
+
+        // ─── HAWK DIVE STRIKE: first attack = 3x damage, 6s cooldown ───
         if (u.type === 'hawk' && u.diveReady) {
-          atk *= 2;
+          atk *= 3;
           u.diveReady = false;
-          u.diveTimer = 5000; // 5s recharge
+          u.diveTimer = 6000;
+        }
+
+        // ─── BEAR BERSERKER: attack scales up as HP drops (up to 2x at 10% HP) ───
+        if (u.type === 'bear') {
+          const missingPct = 1 - (u.hp / u.maxHp); // 0 at full, ~1 at near-death
+          atk *= (1 + missingPct); // 1x at full → 2x at near-death
         }
 
         // ─── CROCODILE DEATH ROLL: 3x to targets below 40% HP ───
@@ -1497,8 +1536,20 @@ export class HordeScene extends Phaser.Scene {
           atk *= 3;
         }
 
-        // Tier 3+ get cleave/splash: damage primary + nearby enemies
-        const splashRadius = uTier >= 5 ? 60 : uTier >= 4 ? 50 : uTier >= 3 ? 40 : 0;
+        // ─── LION WAR ROAR: nearby allies get +25% attack (check if attacker has lion nearby) ───
+        if (u.team !== 0 && u.type !== 'lion') {
+          const hasLionNearby = this.units.some(l =>
+            !l.dead && l.type === 'lion' && l.team === u.team && pdist(u, l) < 150
+          );
+          if (hasLionNearby) atk *= 1.25;
+        }
+
+        // ─── TURTLE SHELL GUARD: 50% damage reduction when stationary ───
+        const isStationary = pdist(best, { x: best.targetX, y: best.targetY }) < 15;
+        if (best.type === 'turtle' && isStationary) atk *= 0.5;
+
+        // Splash: Dragon = 80px, T4 = 50px, T3 = 40px, others = none
+        const splashRadius = u.type === 'dragon' ? 80 : uTier >= 4 ? 50 : uTier >= 3 ? 40 : 0;
         const splashTargets: HUnit[] = [best];
         if (splashRadius > 0) {
           for (const o of this.units) {
@@ -2001,9 +2052,11 @@ export class HordeScene extends Phaser.Scene {
   private updateResourcePickup() {
     for (const u of this.units) {
       if (u.dead || u.carrying || u.team === 0) continue;
+      // Bunny Swiftfoot: 2x pickup range — born to gather
+      const range = u.type === 'bunny' ? PICKUP_RANGE * 2 : PICKUP_RANGE;
       for (const item of this.groundItems) {
         if (item.dead) continue;
-        if (pdist(u, item) < PICKUP_RANGE) {
+        if (pdist(u, item) < range) {
           u.carrying = item.type;
           item.dead = true;
           if (item.sprite) { item.sprite.destroy(); item.sprite = null; }
@@ -2833,6 +2886,7 @@ export class HordeScene extends Phaser.Scene {
         <div style="font-size:9px;color:${isActive ? '#45E6B0' : '#8BAA8B'};font-weight:800;letter-spacing:0.5px;">${name}</div>
         <div style="font-size:11px;color:#f0e8ff;font-weight:700;">${count}</div>
         ${tier ? `<div style="font-size:8px;color:#666;font-weight:600;">${tier}</div>` : ''}
+        ${army !== 'all' && ANIMALS[army] ? `<div style="font-size:7px;color:#C98FFF;font-weight:600;white-space:nowrap;">${ANIMALS[army].ability}</div>` : ''}
       </div>`;
     }
     this.armyBarEl.innerHTML = html;
