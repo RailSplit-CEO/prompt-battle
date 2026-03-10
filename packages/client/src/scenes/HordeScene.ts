@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { FirebaseSync } from '../network/FirebaseSync';
+import { HORDE_SPRITE_CONFIGS } from '../sprites/SpriteConfig';
 
 // ═══════════════════════════════════════════════════════════════
 // GEMINI INTEGRATION
@@ -184,11 +185,14 @@ interface HUnit {
   targetX: number;
   targetY: number;
   attackTimer: number;
-  sprite: Phaser.GameObjects.Text | null;
+  sprite: Phaser.GameObjects.Sprite | null;
   dead: boolean;
   campId: string | null; // if this unit is a camp defender, which camp
   lungeX: number; // sprite offset during attack lunge
   lungeY: number;
+  animState: 'idle' | 'walk' | 'attack';
+  prevSpriteX: number;
+  prevSpriteY: number;
   // Special mechanic flags
   hasRebirth: boolean;   // phoenix: respawn once on death
   diveReady: boolean;    // hawk: next attack does 2x
@@ -662,8 +666,8 @@ export class HordeScene extends Phaser.Scene {
     this.carrotSpawnTimer = 0;
     this.wildRespawnTimer = 0;
     this.baseStockpile = {
-      1: { carrot: 3, meat: 0, crystal: 0 },  // start with 3 carrots
-      2: { carrot: 3, meat: 0, crystal: 0 },
+      1: { carrot: 0, meat: 0, crystal: 0 },
+      2: { carrot: 0, meat: 0, crystal: 0 },
     };
 
     this.syncTimer = 0;
@@ -785,7 +789,7 @@ export class HordeScene extends Phaser.Scene {
         x: gx, y: gy,
         targetX: camp.x + Math.cos(wanderAngle) * wanderR,
         targetY: camp.y + Math.sin(wanderAngle) * wanderR,
-        attackTimer: 0, sprite: null, dead: false,
+        attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
         campId: camp.id, lungeX: 0, lungeY: 0,
         hasRebirth: camp.animalType === 'phoenix',
         diveReady: camp.animalType === 'hawk',
@@ -1279,7 +1283,6 @@ export class HordeScene extends Phaser.Scene {
     this.updateGatherLoops();
     this.updateResourcePickup();
     this.updateDeliveries();
-    this.updateSpawning(delta);
     this.updateMovement(dt);
     this.updateCombat(delta);
     this.updateCampCapture();
@@ -1306,37 +1309,25 @@ export class HordeScene extends Phaser.Scene {
 
   // ─── SPAWNING ────────────────────────────────────────────────
 
-  private updateSpawning(delta: number) {
-    // Base spawning: consumes carrots from stockpile to spawn bunnies
-    for (const team of [1, 2] as const) {
-      if (this.units.filter(u => u.team === team && !u.dead).length >= MAX_UNITS) continue;
-      this.baseSpawnTimers[team] += delta;
-      if (this.baseSpawnTimers[team] >= BASE_SPAWN_MS) {
-        if (this.baseStockpile[team].carrot >= 1) {
-          this.baseSpawnTimers[team] -= BASE_SPAWN_MS;
-          this.baseStockpile[team].carrot -= 1;
-          const b = team === 1 ? P1_BASE : P2_BASE;
-          this.spawnUnit('bunny', team, b.x + (team === 1 ? 60 : -60), b.y + (team === 1 ? -30 : 30));
-        }
-        // Don't subtract timer if no food — it stays ready to spawn when food arrives
+  /** No auto-spawning. Units spawn instantly when food is delivered via gather loops.
+   *  Called from updateDeliveries() when a resource is dropped off. */
+  private trySpawnFromDelivery(team: 1 | 2, location: 'base' | string) {
+    if (this.units.filter(u => u.team === team && !u.dead).length >= MAX_UNITS) return;
+    if (location === 'base') {
+      // Base spawns bunnies from carrots
+      const stock = this.baseStockpile[team];
+      if (stock.carrot >= SPAWN_COSTS['bunny'].amount) {
+        stock.carrot -= SPAWN_COSTS['bunny'].amount;
+        const b = team === 1 ? P1_BASE : P2_BASE;
+        this.spawnUnit('bunny', team, b.x + (team === 1 ? 60 : -60), b.y + (team === 1 ? -30 : 30));
       }
-    }
-
-    // Camp spawning: consumes storedFood when threshold reached
-    for (const camp of this.camps) {
-      if (camp.owner === 0) continue;
-      if (this.units.filter(u => u.team === camp.owner && !u.dead).length >= MAX_UNITS) continue;
+    } else {
+      const camp = this.camps.find(c => c.id === location);
+      if (!camp || camp.owner !== team) return;
       const cost = SPAWN_COSTS[camp.animalType];
-      if (!cost) continue;
-      // Spawn when enough food is stored
-      if (camp.storedFood >= cost.amount) {
-        camp.spawnTimer += delta;
-        if (camp.spawnTimer >= camp.spawnMs) {
-          camp.spawnTimer -= camp.spawnMs;
-          camp.storedFood -= cost.amount;
-          this.spawnUnit(camp.animalType, camp.owner as 1 | 2, camp.x + 20, camp.y + 30);
-        }
-      }
+      if (!cost || camp.storedFood < cost.amount) return;
+      camp.storedFood -= cost.amount;
+      this.spawnUnit(camp.animalType, team, camp.x + 20, camp.y + 30);
     }
   }
 
@@ -1569,7 +1560,7 @@ export class HordeScene extends Phaser.Scene {
         }
         u.attackTimer = ATTACK_CD_MS;
 
-        // Cute lunge toward target
+        // Cute lunge toward target + attack animation
         const ldx = best.x - u.x, ldy = best.y - u.y;
         const ld = Math.sqrt(ldx * ldx + ldy * ldy) || 1;
         const lungeAmt = Math.min(20, ld * 0.4);
@@ -1579,11 +1570,16 @@ export class HordeScene extends Phaser.Scene {
           targets: u, lungeX: 0, lungeY: 0,
           duration: 200, ease: 'Back.easeIn',
         });
+        // Play attack animation
+        if (u.sprite && u.animState !== 'attack' && HORDE_SPRITE_CONFIGS[u.type]) {
+          u.animState = 'attack';
+          u.sprite.play(`h_${u.type}_attack`);
+        }
       } else if (nex && nexD <= COMBAT_RANGE && u.team !== 0) {
         nex.hp -= u.attack * (1 + this.getBuffs(u.team as 1 | 2).attack);
         u.attackTimer = ATTACK_CD_MS;
 
-        // Lunge toward nexus
+        // Lunge toward nexus + attack animation
         const ldx = nex.x - u.x, ldy = nex.y - u.y;
         const ld = Math.sqrt(ldx * ldx + ldy * ldy) || 1;
         const lungeAmt = Math.min(20, ld * 0.4);
@@ -1593,6 +1589,11 @@ export class HordeScene extends Phaser.Scene {
           targets: u, lungeX: 0, lungeY: 0,
           duration: 200, ease: 'Back.easeIn',
         });
+        // Play attack animation
+        if (u.sprite && u.animState !== 'attack' && HORDE_SPRITE_CONFIGS[u.type]) {
+          u.animState = 'attack';
+          u.sprite.play(`h_${u.type}_attack`);
+        }
       }
     }
   }
@@ -1774,14 +1775,41 @@ export class HordeScene extends Phaser.Scene {
         continue;
       }
       if (!u.sprite) {
-        const def = ANIMALS[u.type];
-        // Distinct team colors: gold for elite, amber for neutral, blue/red for players
-        const strokeColor = u.isElite ? '#FFD700' : u.team === 0 ? '#DD8800' : u.team === 1 ? '#3388FF' : '#FF3333';
-        const thickness = u.isElite ? 6 : u.team === 2 ? 5 : u.team === 0 ? 4 : 3;
-        const fontSize = u.isElite ? '28px' : '22px';
-        u.sprite = this.add.text(0, 0, u.isElite ? '👑' : def.emoji, {
-          fontSize, stroke: strokeColor, strokeThickness: thickness,
-        }).setOrigin(0.5).setDepth(20);
+        const spriteConf = HORDE_SPRITE_CONFIGS[u.type];
+        if (spriteConf) {
+          // Create animated sprite
+          u.sprite = this.add.sprite(0, 0, spriteConf.idle.key);
+          const scale = u.isElite ? spriteConf.displayScale * 1.3 : spriteConf.displayScale;
+          u.sprite.setScale(scale);
+          u.sprite.setOrigin(0.5, spriteConf.originY);
+          u.sprite.setDepth(20);
+          u.sprite.play(`h_${u.type}_idle`);
+          u.animState = 'idle';
+
+          // Team tint: neutral=amber, player1=slight blue, player2=slight red, elite=gold
+          if (u.isElite) {
+            u.sprite.setTint(0xFFDD44);
+          } else if (u.team === 0) {
+            u.sprite.setTint(0xFFCC88);
+          } else if (u.team === 2) {
+            u.sprite.setTint(0xFFAAAA);
+          }
+          // team 1 (player) keeps original colors
+
+          // Return to idle after attack animation completes
+          u.sprite.on('animationcomplete', (anim: Phaser.Animations.Animation) => {
+            if (anim.key === `h_${u.type}_attack`) {
+              u.animState = 'idle';
+              if (u.sprite) u.sprite.play(`h_${u.type}_idle`);
+            }
+          });
+        } else {
+          // Fallback for unknown types: use emoji text as Sprite placeholder
+          const def = ANIMALS[u.type];
+          const fallback = this.add.sprite(0, 0, 'particle'); // tiny white dot fallback
+          fallback.setDepth(20);
+          u.sprite = fallback;
+        }
       }
 
       // Sunflower spiral formation offset based on stable unit ID
@@ -1801,6 +1829,32 @@ export class HordeScene extends Phaser.Scene {
       const sx = prev.x + (dispX - prev.x) * lerpFactor;
       const sy = prev.y + (dispY - prev.y) * lerpFactor;
       u.sprite.setPosition(sx, sy);
+
+      // Animation state: flip based on movement, switch idle/walk
+      const movedX = sx - u.prevSpriteX;
+      const movedY = sy - u.prevSpriteY;
+      const isMoving = Math.abs(movedX) > 1 || Math.abs(movedY) > 1;
+
+      // Face direction: use target direction for reliable flipping, fall back to sprite delta
+      const headingX = u.targetX - u.x;
+      if (Math.abs(headingX) > 2) {
+        u.sprite.setFlipX(headingX < 0);
+      } else if (Math.abs(movedX) > 0.3) {
+        u.sprite.setFlipX(movedX < 0);
+      }
+
+      if (u.animState !== 'attack') {
+        if (isMoving && u.animState !== 'walk') {
+          u.animState = 'walk';
+          u.sprite.play(`h_${u.type}_walk`);
+        } else if (!isMoving && u.animState !== 'idle') {
+          u.animState = 'idle';
+          u.sprite.play(`h_${u.type}_idle`);
+        }
+      }
+
+      u.prevSpriteX = sx;
+      u.prevSpriteY = sy;
 
       // Carry sprite — trails behind the unit based on movement direction
       if (u.carrying) {
@@ -1911,11 +1965,12 @@ export class HordeScene extends Phaser.Scene {
     this.carrotSpawnTimer += delta;
     if (this.carrotSpawnTimer < CARROT_SPAWN_MS) return;
     this.carrotSpawnTimer -= CARROT_SPAWN_MS;
-    // Spawn carrots near both bases
-    for (const base of [P1_BASE, P2_BASE]) {
-      const angle = Math.random() * Math.PI * 2;
-      const dist = 80 + Math.random() * 350;
-      this.spawnGroundItem('carrot', base.x + Math.cos(angle) * dist, base.y + Math.sin(angle) * dist);
+    // Spawn carrots randomly across the entire map
+    const MARGIN = 100;
+    for (let i = 0; i < 2; i++) {
+      const x = MARGIN + Math.random() * (WORLD_W - MARGIN * 2);
+      const y = MARGIN + Math.random() * (WORLD_H - MARGIN * 2);
+      this.spawnGroundItem('carrot', x, y);
     }
   }
 
@@ -1969,6 +2024,7 @@ export class HordeScene extends Phaser.Scene {
       if (pdist(u, base) < PICKUP_RANGE + 25) {
         this.baseStockpile[team][u.carrying] += 1;
         this.clearCarrying(u);
+        this.trySpawnFromDelivery(team, 'base');
         continue;
       }
 
@@ -1980,8 +2036,7 @@ export class HordeScene extends Phaser.Scene {
           if (cost && cost.type === u.carrying) {
             camp.storedFood += 1;
             this.clearCarrying(u);
-          } else {
-            // Wrong type for this camp — deliver to base stockpile instead by proximity later
+            this.trySpawnFromDelivery(team, camp.id);
           }
           break;
         }
@@ -2078,7 +2133,7 @@ export class HordeScene extends Phaser.Scene {
         id: this.nextId++, type, team: 0,
         hp: def.hp, maxHp: def.hp, attack: def.attack, speed: def.speed * 0.4,
         x, y, targetX: x + Math.random() * 100 - 50, targetY: y + Math.random() * 100 - 50,
-        attackTimer: 0, sprite: null, dead: false,
+        attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
         campId: null, lungeX: 0, lungeY: 0,
         hasRebirth: false, diveReady: false, diveTimer: 0,
         carrying: null, carrySprite: null, loop: null, isElite: false,
@@ -2095,7 +2150,7 @@ export class HordeScene extends Phaser.Scene {
         id: this.nextId++, type: 'lion', team: 0,
         hp: 2000, maxHp: 2000, attack: 150, speed: 90,
         x, y, targetX: x + Math.random() * 80 - 40, targetY: y + Math.random() * 80 - 40,
-        attackTimer: 0, sprite: null, dead: false,
+        attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
         campId: null, lungeX: 0, lungeY: 0,
         hasRebirth: false, diveReady: false, diveTimer: 0,
         carrying: null, carrySprite: null, loop: null, isElite: true,
@@ -2119,7 +2174,7 @@ export class HordeScene extends Phaser.Scene {
           id: this.nextId++, type, team: 0,
           hp: def.hp, maxHp: def.hp, attack: def.attack, speed: def.speed * 0.4,
           x, y, targetX: x + Math.random() * 80 - 40, targetY: y + Math.random() * 80 - 40,
-          attackTimer: 0, sprite: null, dead: false,
+          attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
           campId: null, lungeX: 0, lungeY: 0,
           hasRebirth: false, diveReady: false, diveTimer: 0,
           carrying: null, carrySprite: null, loop: null, isElite: false,
@@ -2133,7 +2188,7 @@ export class HordeScene extends Phaser.Scene {
           id: this.nextId++, type: 'lion', team: 0,
           hp: 2000, maxHp: 2000, attack: 150, speed: 90,
           x, y, targetX: x + Math.random() * 80 - 40, targetY: y + Math.random() * 80 - 40,
-          attackTimer: 0, sprite: null, dead: false,
+          attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
           campId: null, lungeX: 0, lungeY: 0,
           hasRebirth: false, diveReady: false, diveTimer: 0,
           carrying: null, carrySprite: null, loop: null, isElite: true,
@@ -2232,7 +2287,7 @@ export class HordeScene extends Phaser.Scene {
       id: this.nextId++, type, team,
       hp: maxHp, maxHp, attack: def.attack, speed: def.speed * speedVariance,
       x, y, targetX, targetY,
-      attackTimer: 0, sprite: null, dead: false,
+      attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
       campId: null, lungeX: 0, lungeY: 0,
       hasRebirth: type === 'phoenix',
       diveReady: type === 'hawk',
@@ -2390,7 +2445,7 @@ export class HordeScene extends Phaser.Scene {
           id: su.id, type: su.type, team: su.team as 0 | 1 | 2,
           hp: su.hp, maxHp: su.maxHp, attack: su.attack, speed: su.speed,
           x: su.x, y: su.y, targetX: su.targetX, targetY: su.targetY,
-          attackTimer: 0, sprite: null, dead: false,
+          attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
           campId: su.campId, lungeX: 0, lungeY: 0,
           hasRebirth: su.type === 'phoenix',
           diveReady: su.type === 'hawk',
