@@ -102,6 +102,9 @@ Available step types:
   {"action": "move", "x": 1000, "y": 1000} — move to coordinates
   {"action": "defend", "target": "base|nearest_TYPE_camp"} — guard a location, patrol nearby, fight enemies that approach
   {"action": "attack_enemies"} — seek and fight enemy player units relentlessly
+  {"action": "scout"} — explore the map to reveal camps and enemy positions, AVOIDS all combat
+  {"action": "collect", "resourceType": "carrot|meat|crystal"} — pick up ground resources while AVOIDING enemy units (safe gathering)
+  {"action": "kill_only", "targetType": "skull|spider|..."} — hunt and kill wild animals but IGNORE resource drops (pure combat, no pickup)
 
 The workflow LOOPS automatically. Design the steps so they make a sensible repeating cycle.
 
@@ -141,15 +144,18 @@ KEY: For meat/crystals, include "hunt" step BEFORE "seek_resource". For carrots,
 
 ═══ WORKFLOW EXAMPLES ═══
 
-PRODUCTION (already own camp):
-"make gnomes" → [{"action":"seek_resource","resourceType":"carrot"},{"action":"deliver","target":"nearest_gnome_camp"}]
-"make skulls" → [{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_skull_camp"}]
-"make shamans" → [{"action":"hunt","targetType":"minotaur"},{"action":"seek_resource","resourceType":"crystal"},{"action":"deliver","target":"nearest_shaman_camp"}]
+IMPORTANT: Any command involving "get", "make", "take", "produce", "create", "train", "spawn", or "breed" a unit type ALWAYS uses the FULL BOOTSTRAP workflow. This means: attack_camp FIRST (to capture it if needed), THEN gather resources, THEN deliver. NEVER skip the attack_camp step for production commands.
 
-CROSS-UNIT PRODUCTION:
-"gnomes make skulls" → [{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_skull_camp"}]
-"turtles make pandas" → [{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_panda_camp"}]
-"skulls make skulls" → [{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_skull_camp"}]
+PRODUCTION (ALWAYS bootstrap — capture camp + gather + deliver):
+"make gnomes" → [{"action":"attack_camp","targetAnimal":"gnome","qualifier":"nearest"},{"action":"seek_resource","resourceType":"carrot"},{"action":"deliver","target":"nearest_gnome_camp"}]
+"get skulls" → [{"action":"attack_camp","targetAnimal":"skull","qualifier":"nearest"},{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_skull_camp"}]
+"take pandas" → [{"action":"attack_camp","targetAnimal":"panda","qualifier":"nearest"},{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_panda_camp"}]
+"make shamans" → [{"action":"attack_camp","targetAnimal":"shaman","qualifier":"nearest"},{"action":"hunt","targetType":"minotaur"},{"action":"seek_resource","resourceType":"crystal"},{"action":"deliver","target":"nearest_shaman_camp"}]
+
+CROSS-UNIT PRODUCTION (still bootstraps):
+"gnomes make skulls" → [{"action":"attack_camp","targetAnimal":"skull","qualifier":"nearest"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_skull_camp"}]
+"turtles make pandas" → [{"action":"attack_camp","targetAnimal":"panda","qualifier":"nearest"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_panda_camp"}]
+"skulls make skulls" → [{"action":"attack_camp","targetAnimal":"skull","qualifier":"nearest"},{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_skull_camp"}]
 
 HUNTING:
 "hunt wilds" → [{"action":"hunt"}]
@@ -163,7 +169,6 @@ GATHER & STOCKPILE:
 RAIDING & CAPTURE:
 "raid enemy" → [{"action":"attack_camp","qualifier":"enemy"}]
 "sweep uncaptured" → [{"action":"attack_camp","qualifier":"uncaptured"}]
-"capture and produce skulls" → [{"action":"attack_camp","targetAnimal":"skull","qualifier":"nearest"},{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_skull_camp"}]
 
 DEFEND & ATTACK:
 "defend base" → [{"action":"defend","target":"base"}]
@@ -171,10 +176,21 @@ DEFEND & ATTACK:
 "attack enemies" → [{"action":"attack_enemies"}]
 "hunt enemies then defend" → [{"action":"attack_enemies"},{"action":"defend","target":"base"}]
 
+SCOUTING:
+"scout" / "explore" / "recon" → [{"action":"scout"}]
+
+SAFE GATHERING (avoid enemies):
+"collect meat" / "pick up meat safely" → [{"action":"collect","resourceType":"meat"}]
+"collect carrots" / "gather carrots safely" → [{"action":"collect","resourceType":"carrot"}]
+"collect crystals" → [{"action":"collect","resourceType":"crystal"}]
+
+KILL ONLY (fight but skip drops):
+"just kill" / "kill only" → [{"action":"kill_only"}]
+"kill wilds" / "clear animals" → [{"action":"kill_only"}]
+"kill elites" → [{"action":"kill_only","targetType":"minotaur"}]
+
 STRATEGIC:
 "get started" → bootstrap gnomes (cheapest, fastest economy start)
-"full pipeline" → [{"action":"attack_camp","targetAnimal":"skull","qualifier":"nearest"},{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_skull_camp"}]
-"build up then push" → [{"action":"seek_resource","resourceType":"carrot"},{"action":"deliver","target":"nearest_gnome_camp"},{"action":"attack_camp","qualifier":"enemy"}]
 
 SIMPLE MOVEMENT (no workflow):
 "attack nearest camp" → targetType: "nearest_camp", qualifier: "nearest"
@@ -183,8 +199,8 @@ SIMPLE MOVEMENT (no workflow):
 
 ═══ STRATEGIC REASONING ═══
 Before choosing a workflow, think:
-1. What does the player want? (produce, gather, fight, defend, bootstrap?)
-2. Do they own the required camp? If not → include attack_camp FIRST.
+1. What does the player want? (produce, gather, fight, defend?)
+2. ANY command about getting/making/taking/producing a unit type → ALWAYS use FULL BOOTSTRAP (attack_camp + gather + deliver). Never skip attack_camp.
 3. What resource? (carrots→T1, meat→T2-T3, crystals→T4-T5)
 4. For meat/crystals → include "hunt" BEFORE "seek_resource" (those come from kills).
 5. For carrots → just "seek_resource" (they spawn naturally).
@@ -193,8 +209,8 @@ Before choosing a workflow, think:
 
 ═══ YOUR JOB ═══
 Interpret the player's voice command using your deep understanding of the economy and unit traits.
-- Adapt to current game state — if they lack a camp, capture it first
-- "bootstrap X" → use the bootstrap sequence for unit type X
+- "get X" / "make X" / "take X" / "produce X" / "create X" / "train X" / "spawn X" → ALWAYS bootstrap X (attack_camp + resource gathering + deliver)
+- "bootstrap X" → same as above
 - "get started" → bootstrap gnomes (cheapest start)
 - Be creative — combine steps based on what makes strategic sense
 - If you can tell which unit type is selected, tailor the workflow to their strengths
@@ -298,7 +314,10 @@ type WorkflowStep =
   | { action: 'attack_camp'; campIndex?: number; qualifier?: string; targetAnimal?: string } // go fight a camp
   | { action: 'move'; x: number; y: number }                  // move to position
   | { action: 'defend'; target: string }                      // guard a location: 'base', 'nearest_TYPE_camp', or campId — fight enemies that come near
-  | { action: 'attack_enemies' };                             // seek and fight nearest enemy player units
+  | { action: 'attack_enemies' }                              // seek and fight nearest enemy player units
+  | { action: 'scout' }                                       // explore the map, reveal camps/enemies, avoid combat
+  | { action: 'collect'; resourceType: ResourceType }         // pick up ground resources while avoiding enemies
+  | { action: 'kill_only'; targetType?: string };             // hunt and kill wild animals but ignore drops
 
 interface HWorkflow {
   steps: WorkflowStep[];
@@ -315,6 +334,33 @@ function makeGatherWorkflow(resourceType: ResourceType, deliverTo: string): HWor
     ],
     currentStep: 0,
     label: `${resourceType} → ${deliverTo}`,
+  };
+}
+
+// Build a full bootstrap workflow for an animal type: attack_camp → gather → deliver
+function makeBootstrapWorkflow(animalType: string): HWorkflow {
+  const cost = SPAWN_COSTS[animalType];
+  if (!cost) return makeGatherWorkflow('carrot', 'base');
+
+  const deliverTo = `nearest_${animalType}_camp`;
+  const steps: WorkflowStep[] = [
+    { action: 'attack_camp', targetAnimal: animalType, qualifier: 'nearest' },
+  ];
+
+  // Meat/crystal units need hunting before resource pickup
+  if (cost.type === 'meat') {
+    steps.push({ action: 'hunt' });
+  } else if (cost.type === 'crystal') {
+    steps.push({ action: 'hunt', targetType: 'minotaur' });
+  }
+
+  steps.push({ action: 'seek_resource', resourceType: cost.type });
+  steps.push({ action: 'deliver', target: deliverTo });
+
+  return {
+    steps,
+    currentStep: 0,
+    label: `bootstrap ${animalType}`,
   };
 }
 
@@ -1466,9 +1512,76 @@ export class HordeScene extends Phaser.Scene {
     for (const u of this.units) {
       if (u.dead) continue;
 
-      const dx = u.targetX - u.x, dy = u.targetY - u.y;
+      let dx = u.targetX - u.x, dy = u.targetY - u.y;
       const d = Math.sqrt(dx * dx + dy * dy);
       if (d < 5) continue;
+
+      // Avoidance behavior for bootstrap, scout, and collect workflows
+      if (u.team !== 0 && u.loop) {
+        const curStep = u.loop.steps[u.loop.currentStep];
+        const shouldAvoid = curStep && (
+          // Bootstrap: avoid during seek/deliver
+          (this.isBootstrapWorkflow(u.loop) && (curStep.action === 'seek_resource' || curStep.action === 'deliver'))
+          // Scout: always avoid enemies and camps
+          || curStep.action === 'scout'
+          // Collect: avoid enemies while gathering
+          || curStep.action === 'collect'
+        );
+
+        if (shouldAvoid) {
+          const AVOID_RANGE = 150;
+          let avoidX = 0, avoidY = 0;
+
+          // Avoid enemy units
+          for (const o of this.units) {
+            if (o.dead || o.team === u.team || o.team === 0) continue;
+            const ex = u.x - o.x, ey = u.y - o.y;
+            const ed = Math.sqrt(ex * ex + ey * ey);
+            if (ed < AVOID_RANGE && ed > 1) {
+              const strength = (AVOID_RANGE - ed) / AVOID_RANGE;
+              avoidX += (ex / ed) * strength;
+              avoidY += (ey / ed) * strength;
+            }
+          }
+
+          // Avoid non-target camps (bootstrap avoids non-target camps; scout avoids all)
+          const isScout = curStep.action === 'scout';
+          const targetAnimal = !isScout ? this.getBootstrapAnimal(u.loop) : undefined;
+          for (const c of this.camps) {
+            if (!isScout && targetAnimal && c.animalType === targetAnimal && c.owner === u.team) continue;
+            // Scout avoids camps with defenders
+            if (isScout) {
+              const hasDefenders = this.units.some(g => g.campId === c.id && g.team === 0 && !g.dead);
+              if (!hasDefenders) continue; // safe to pass by cleared camps
+            }
+            const cx2 = u.x - c.x, cy2 = u.y - c.y;
+            const cd = Math.sqrt(cx2 * cx2 + cy2 * cy2);
+            if (cd < AVOID_RANGE && cd > 1) {
+              const strength = (AVOID_RANGE - cd) / AVOID_RANGE;
+              avoidX += (cx2 / cd) * strength;
+              avoidY += (cy2 / cd) * strength;
+            }
+          }
+
+          // Blend avoidance into movement direction
+          if (avoidX !== 0 || avoidY !== 0) {
+            const normD = d > 0 ? d : 1;
+            dx = dx / normD + avoidX * 0.7;
+            dy = dy / normD + avoidY * 0.7;
+            const blendD = Math.sqrt(dx * dx + dy * dy);
+            if (blendD > 0) { dx /= blendD; dy /= blendD; }
+            const buffMult = 1 + this.getBuffs(u.team as 1 | 2).speed;
+            const spd = u.speed * buffMult;
+            const finalSpeed = spd * dt;
+            const moveStep = Math.min(finalSpeed, d);
+            u.x += dx * moveStep;
+            u.y += dy * moveStep;
+            u.x = Math.max(0, Math.min(WORLD_W, u.x));
+            u.y = Math.max(0, Math.min(WORLD_H, u.y));
+            continue;
+          }
+        }
+      }
 
       const buffMult = u.team !== 0 ? (1 + this.getBuffs(u.team as 1 | 2).speed) : 1;
       const spd = u.speed * buffMult;
@@ -1481,6 +1594,18 @@ export class HordeScene extends Phaser.Scene {
       u.x = Math.max(0, Math.min(WORLD_W, u.x));
       u.y = Math.max(0, Math.min(WORLD_H, u.y));
     }
+  }
+
+  /** Check if a workflow is a bootstrap (has an attack_camp step) */
+  private isBootstrapWorkflow(wf: HWorkflow): boolean {
+    return wf.steps.some(s => s.action === 'attack_camp');
+  }
+
+  /** Get the target animal type from a bootstrap workflow's attack_camp step */
+  private getBootstrapAnimal(wf: HWorkflow): string | undefined {
+    const campStep = wf.steps.find(s => s.action === 'attack_camp');
+    if (campStep && campStep.action === 'attack_camp') return campStep.targetAnimal;
+    return undefined;
   }
 
   // ─── COMBAT ──────────────────────────────────────────────────
@@ -2063,8 +2188,9 @@ export class HordeScene extends Phaser.Scene {
       item.age += delta;
       if (item.age >= ITEM_DESPAWN_MS) { item.dead = true; continue; }
       if (!item.sprite) {
+        const itemSize = (item.type === 'carrot' || item.type === 'meat') ? '32px' : '16px';
         item.sprite = this.add.text(item.x, item.y, RESOURCE_EMOJI[item.type], {
-          fontSize: '16px',
+          fontSize: itemSize,
         }).setOrigin(0.5).setDepth(15);
         // Gentle bob animation
         this.tweens.add({ targets: item.sprite, y: item.y - 5, duration: 1200, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
@@ -2084,6 +2210,11 @@ export class HordeScene extends Phaser.Scene {
   private updateResourcePickup() {
     for (const u of this.units) {
       if (u.dead || u.carrying || u.team === 0) continue;
+      // Kill-only units never pick up drops
+      if (u.loop) {
+        const curStep = u.loop.steps[u.loop.currentStep];
+        if (curStep?.action === 'kill_only') continue;
+      }
       // Gnome Nimble Hands: 2x pickup range — born to gather
       const range = u.type === 'gnome' ? PICKUP_RANGE * 2 : PICKUP_RANGE;
       for (const item of this.groundItems) {
@@ -2345,6 +2476,83 @@ export class HordeScene extends Phaser.Scene {
             u.targetX = enemyBase.x; u.targetY = enemyBase.y;
           }
           // Attack_enemies loops never advance — continuous hunting
+          break;
+        }
+
+        case 'scout': {
+          // Explore the map — visit camps to reveal them, avoid enemies
+          // Pick the furthest unvisited camp or wander
+          const scoutTarget = this.camps
+            .filter(c => pdist(u, c) > 200)
+            .sort((a, b) => pdist(u, b) - pdist(u, a));
+          if (scoutTarget.length > 0) {
+            // Pick a random far camp to explore
+            const pick = scoutTarget[Math.floor(Math.random() * Math.min(3, scoutTarget.length))];
+            if (pdist(u, { x: u.targetX, y: u.targetY }) < 30) {
+              u.targetX = pick.x; u.targetY = pick.y;
+            }
+          } else {
+            // All camps close, wander randomly
+            if (pdist(u, { x: u.targetX, y: u.targetY }) < 30) {
+              u.targetX = 100 + Math.random() * (WORLD_W - 200);
+              u.targetY = 100 + Math.random() * (WORLD_H - 200);
+            }
+          }
+          // Scout never advances — loops forever
+          break;
+        }
+
+        case 'collect': {
+          // Pick up ground resources while avoiding enemies — safe gathering
+          if (u.carrying) {
+            // Deliver to base
+            u.targetX = base.x; u.targetY = base.y;
+            break;
+          }
+          // Check if current claim is still valid
+          if (u.claimItemId >= 0) {
+            const claimed = this.groundItems.find(i => i.id === u.claimItemId);
+            if (claimed && !claimed.dead) {
+              u.targetX = claimed.x; u.targetY = claimed.y;
+              break;
+            }
+            u.claimItemId = -1;
+          }
+          // Find nearest unclaimed resource of the right type, avoiding enemies
+          const collectRes = step.resourceType;
+          let bestItem: HGroundItem | null = null, bestItemD = Infinity;
+          for (const item of this.groundItems) {
+            if (item.dead || item.type !== collectRes) continue;
+            if (claimedItems.has(item.id)) continue;
+            // Skip items near enemy units
+            const enemyNearItem = this.units.some(e =>
+              !e.dead && e.team !== 0 && e.team !== team && pdist(e, item) < 200);
+            if (enemyNearItem) continue;
+            const itemD = pdist(u, item);
+            if (itemD < bestItemD) { bestItemD = itemD; bestItem = item; }
+          }
+          if (bestItem) {
+            u.claimItemId = bestItem.id;
+            claimedItems.add(bestItem.id);
+            u.targetX = bestItem.x; u.targetY = bestItem.y;
+          } else {
+            // Nothing safe — wait near base
+            if (pdist(u, base) > 200) { u.targetX = base.x; u.targetY = base.y; }
+          }
+          // Collect never auto-advances — pickup handler advances it
+          break;
+        }
+
+        case 'kill_only': {
+          // Hunt and kill wild animals but do NOT pick up drops
+          const killPrey = this.units
+            .filter(w => w.team === 0 && !w.dead && !w.campId
+              && (!step.targetType || w.type === step.targetType))
+            .sort((a, b) => pdist(u, a) - pdist(u, b));
+          if (killPrey.length > 0) {
+            u.targetX = killPrey[0].x; u.targetY = killPrey[0].y;
+          }
+          // Kill_only never advances — loops forever
           break;
         }
       }
@@ -2943,6 +3151,12 @@ export class HordeScene extends Phaser.Scene {
             return { action: 'defend' as const, target: s.target || 'base' };
           case 'attack_enemies':
             return { action: 'attack_enemies' as const };
+          case 'scout':
+            return { action: 'scout' as const };
+          case 'collect':
+            return { action: 'collect' as const, resourceType: (s.resourceType || 'meat') as ResourceType };
+          case 'kill_only':
+            return { action: 'kill_only' as const, targetType: s.targetType };
           default:
             return { action: 'seek_resource' as const, resourceType: 'carrot' as ResourceType };
         }
@@ -2997,8 +3211,8 @@ export class HordeScene extends Phaser.Scene {
     const subject = this.selectedArmy; // always use selected army
     const base = team === 1 ? P1_BASE : P2_BASE;
 
-    // "make [animal]" commands — set up gather loop for that animal's resource
-    const makeMatch = lo.match(/\b(?:make|produce|spawn|create|breed|train)\s+(?:more\s+)?(\w+)/i);
+    // "get/make/take [animal]" commands — ALWAYS use full bootstrap workflow
+    const makeMatch = lo.match(/\b(?:get|make|take|produce|spawn|create|breed|train)\s+(?:more\s+)?(\w+)/i);
     if (makeMatch) {
       const animalPatterns: [RegExp, string][] = [
         [/gnome(s)?/i, 'gnome'], [/turtle(s)?/i, 'turtle'],
@@ -3016,8 +3230,7 @@ export class HordeScene extends Phaser.Scene {
           const sel = this.units.filter(u => u.team === team && !u.dead && (subject === 'all' || u.type === subject));
           if (sel.length === 0) { this.showFeedback(`No ${subject} units!`, '#FF6B6B'); return; }
 
-          const deliverTo = `nearest_${animal}_camp`;
-          const wf = makeGatherWorkflow(cost.type, deliverTo);
+          const wf = makeBootstrapWorkflow(animal);
           for (const u of sel) { u.loop = { ...wf, currentStep: 0 }; }
           // Store as group workflow for future spawns
           if (subject === 'all') {
@@ -3027,10 +3240,71 @@ export class HordeScene extends Phaser.Scene {
             this.groupWorkflows[`${subject}_${team}`] = wf;
           }
           const emoji = ANIMALS[animal]?.emoji || '';
-          this.showFeedback(`${sel.length} units: ${RESOURCE_EMOJI[cost.type]} → ${emoji} ${cap(animal)} camp`, '#45E6B0');
+          this.showFeedback(`${sel.length} units: bootstrap ${emoji} ${cap(animal)}!`, '#45E6B0');
           return;
         }
       }
+    }
+
+    // Scout / explore / recon commands
+    if (/\b(scout|explore|recon|reconnaissance)\b/i.test(lo)) {
+      const sel = this.units.filter(u => u.team === team && !u.dead && (subject === 'all' || u.type === subject));
+      if (sel.length === 0) { this.showFeedback(`No ${subject} units!`, '#FF6B6B'); return; }
+
+      const wf: HWorkflow = { steps: [{ action: 'scout' }], currentStep: 0, label: 'scouting' };
+      for (const u of sel) { u.loop = { ...wf, currentStep: 0 }; }
+      if (subject === 'all') {
+        const types = new Set(sel.map(u => u.type));
+        for (const t of types) this.groupWorkflows[`${t}_${team}`] = wf;
+      } else {
+        this.groupWorkflows[`${subject}_${team}`] = wf;
+      }
+      this.showFeedback(`${sel.length} units scouting!`, '#45E6B0');
+      return;
+    }
+
+    // Collect safely (avoid enemies) commands
+    if (/\b(collect|pick\s*up)\b.*\b(safe|avoid)/i.test(lo) || /\bcollect\s+(meat|carrot|crystal)/i.test(lo)) {
+      let resType: ResourceType = 'carrot';
+      if (/meat|flesh/i.test(lo)) resType = 'meat';
+      else if (/crystal|gem|diamond/i.test(lo)) resType = 'crystal';
+
+      const sel = this.units.filter(u => u.team === team && !u.dead && (subject === 'all' || u.type === subject));
+      if (sel.length === 0) { this.showFeedback(`No ${subject} units!`, '#FF6B6B'); return; }
+
+      const wf: HWorkflow = { steps: [{ action: 'collect', resourceType: resType }], currentStep: 0, label: `safe ${resType} collect` };
+      for (const u of sel) { u.loop = { ...wf, currentStep: 0 }; }
+      if (subject === 'all') {
+        const types = new Set(sel.map(u => u.type));
+        for (const t of types) this.groupWorkflows[`${t}_${team}`] = wf;
+      } else {
+        this.groupWorkflows[`${subject}_${team}`] = wf;
+      }
+      this.showFeedback(`${sel.length} units safely collecting ${RESOURCE_EMOJI[resType]}!`, '#45E6B0');
+      return;
+    }
+
+    // Kill only (fight but skip drops) commands
+    if (/\b(kill\s*only|just\s*kill|clear\s*animals|kill\s*wilds)\b/i.test(lo)) {
+      const sel = this.units.filter(u => u.team === team && !u.dead && (subject === 'all' || u.type === subject));
+      if (sel.length === 0) { this.showFeedback(`No ${subject} units!`, '#FF6B6B'); return; }
+
+      let targetType: string | undefined;
+      if (/elite|minotaur/i.test(lo)) targetType = 'minotaur';
+
+      const step: WorkflowStep = targetType
+        ? { action: 'kill_only', targetType }
+        : { action: 'kill_only' };
+      const wf: HWorkflow = { steps: [step], currentStep: 0, label: 'kill only' };
+      for (const u of sel) { u.loop = { ...wf, currentStep: 0 }; }
+      if (subject === 'all') {
+        const types = new Set(sel.map(u => u.type));
+        for (const t of types) this.groupWorkflows[`${t}_${team}`] = wf;
+      } else {
+        this.groupWorkflows[`${subject}_${team}`] = wf;
+      }
+      this.showFeedback(`${sel.length} units: kill only mode!`, '#45E6B0');
+      return;
     }
 
     // Gather commands (generic resource gathering)
