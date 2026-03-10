@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { FirebaseSync } from '../network/FirebaseSync';
 import { HORDE_SPRITE_CONFIGS } from '../sprites/SpriteConfig';
-import { MapDef, MapCampSlot, MapZoneDef, assignAnimalsToSlots, getMapById, ALL_MAPS } from '@prompt-battle/shared';
+import { MapDef, MapCampSlot, MapZoneDef, MapTerrainItem, assignAnimalsToSlots, getMapById, ALL_MAPS } from '@prompt-battle/shared';
 import { SoundManager } from '../audio/SoundManager';
 
 // ═══════════════════════════════════════════════════════════════
@@ -640,6 +640,7 @@ interface HordeSceneData {
   playerId?: string;
   amPlayer1?: boolean;
   mapId?: string;
+  mapDef?: MapDef; // direct map definition from editor live sync
 }
 
 interface HordeSyncUnit {
@@ -1075,6 +1076,7 @@ export class HordeScene extends Phaser.Scene {
   // Fog of war
   private fogRT: Phaser.GameObjects.RenderTexture | null = null;
   private fogBrush: Phaser.GameObjects.Graphics | null = null;
+  private fogDisabled = false;
 
   private wasdKeys!: Record<string, Phaser.Input.Keyboard.Key>;
   private spaceKey!: Phaser.Input.Keyboard.Key;
@@ -1128,6 +1130,21 @@ export class HordeScene extends Phaser.Scene {
   private mapDef: MapDef | null = null;
   private activeCampDefs: CampDef[] = CAMP_DEFS;
 
+  // ─── EDITOR LIVE SYNC ──────────────────────────────────────
+  private editorSyncChannel: BroadcastChannel | null = null;
+  private editorSyncTimer = 0;
+  private readonly EDITOR_SYNC_INTERVAL_MS = 500; // push state to editor ~2x/sec
+
+  // ─── IN-GAME MAP EDITOR ──────────────────────────────────────
+  private editorMode = false;
+  private editorPanelEl: HTMLDivElement | null = null;
+  private editorSelected: { type: 'camp' | 'mine' | 'armory' | 'nexus'; index: number } | null = null;
+  private editorDragging = false;
+  private editorDragOffsetX = 0;
+  private editorDragOffsetY = 0;
+  private editorHighlight: Phaser.GameObjects.Arc | null = null;
+  private editorSaveTimeout: ReturnType<typeof setTimeout> | null = null;
+
   // ─── MULTIPLAYER ──────────────────────────────────────────────
   private isOnline = false;
   private isHost = true; // host = runs simulation; guest = renders sync state
@@ -1142,6 +1159,66 @@ export class HordeScene extends Phaser.Scene {
     super({ key: 'HordeScene' });
   }
 
+  // Editor-saved maps loaded from server file
+  private static editorMaps: MapDef[] | null = null;
+
+  /** Synchronous load — tries localStorage (editor's live data) first, then server file */
+  private static loadEditorMapsSync(): void {
+    // 1. Try localStorage — the HTML editor saves here on every change
+    try {
+      const raw = localStorage.getItem('horde-editor-maps');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Convert editor-only _terrain field to terrain
+          HordeScene.editorMaps = parsed.map((m: any) => {
+            const clone = { ...m };
+            // Editor stores terrain as _terrain internally, saved as terrain
+            if (clone._terrain && !clone.terrain) {
+              clone.terrain = clone._terrain;
+            }
+            delete clone._terrain;
+            return clone;
+          });
+          console.log('[Horde] Loaded', parsed.length, 'maps from localStorage:', parsed.map((m: any) => m.id).join(', '));
+          // Log first map's camp positions for debugging
+          const def = HordeScene.editorMaps.find((m: any) => m.id === 'default');
+          if (def) {
+            console.log('[Horde] default map camps:', def.campSlots.length, 'p1Base:', def.p1Base, 'p2Base:', def.p2Base);
+            console.log('[Horde] camp[0]:', def.campSlots[0]?.bluePos, def.campSlots[0]?.redPos);
+          }
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn('[Horde] localStorage parse failed:', e);
+    }
+
+    // 2. Fallback: server file
+    try {
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', '/__save_horde_maps', false); // synchronous
+      xhr.send();
+      console.log('[Horde] Server file XHR status:', xhr.status, 'size:', xhr.responseText?.length);
+      if (xhr.status === 200) {
+        const parsed = JSON.parse(xhr.responseText);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          HordeScene.editorMaps = parsed;
+          console.log('[Horde] Loaded', parsed.length, 'maps from server file:', parsed.map((m: any) => m.id).join(', '));
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn('[Horde] Server file load failed:', e);
+    }
+    HordeScene.editorMaps = null;
+  }
+
+  private static getEditorMap(id: string): MapDef | null {
+    if (!HordeScene.editorMaps) return null;
+    return HordeScene.editorMaps.find((m: MapDef) => m.id === id) || null;
+  }
+
   init(data?: HordeSceneData) {
     this.isOnline = data?.isOnline || false;
     this.gameId = data?.gameId || null;
@@ -1150,15 +1227,35 @@ export class HordeScene extends Phaser.Scene {
     this.isHost = data?.amPlayer1 !== false; // default host if solo
     this.myTeam = this.isHost ? 1 : 2;
 
-    // Map selection: solo can pick any map, multiplayer uses default
-    const mapId = this.isOnline ? 'default' : (data?.mapId || 'default');
-    if (mapId !== 'default') {
-      this.mapDef = getMapById(mapId);
+    // Map selection: direct mapDef from editor, or editor-saved file, or hardcoded, or default
+    if (data?.mapDef) {
+      // Direct map definition from editor live sync restart
+      this.mapDef = data.mapDef;
       const seed = Date.now();
       this.activeCampDefs = makeCampsFromMap(this.mapDef, seed);
     } else {
-      this.mapDef = null;
-      this.activeCampDefs = CAMP_DEFS;
+      // Always re-fetch editor maps from server (synchronous) to pick up latest edits
+      HordeScene.loadEditorMapsSync();
+      const mapId = this.isOnline ? 'default' : (data?.mapId || 'default');
+      const editorMap = HordeScene.getEditorMap(mapId);
+      const resolvedMap = editorMap || getMapById(mapId);
+      this.mapDef = resolvedMap;
+      const seed = Date.now();
+      this.activeCampDefs = makeCampsFromMap(this.mapDef, seed);
+      console.log('[Horde] Map resolution:', mapId, editorMap ? 'FROM EDITOR FILE' : 'FROM HARDCODED',
+        '— camps:', resolvedMap.campSlots.length, 'mines:', resolvedMap.mineSlots?.length || 0);
+      // Log positions so we can verify they match the editor
+      for (let i = 0; i < resolvedMap.campSlots.length; i++) {
+        const s = resolvedMap.campSlots[i];
+        console.log(`[Horde]   camp[${i}] T${s.tier} blue=(${s.bluePos.x},${s.bluePos.y}) red=(${s.redPos.x},${s.redPos.y})`);
+      }
+      console.log('[Horde]   troll:', resolvedMap.trollSlot);
+      console.log('[Horde]   p1Base:', resolvedMap.p1Base, 'p2Base:', resolvedMap.p2Base);
+      // Log generated camp defs (after animal assignment)
+      console.log('[Horde] Generated camps:');
+      for (const c of this.activeCampDefs) {
+        console.log(`[Horde]   ${c.id} ${c.type} at (${c.x},${c.y})`);
+      }
     }
   }
 
@@ -1231,6 +1328,9 @@ export class HordeScene extends Phaser.Scene {
       }
     }
 
+    // ─── EDITOR LIVE SYNC ───
+    this.setupEditorSync();
+
     // ─── ONLINE SETUP ───
     if (this.isOnline && this.gameId) {
       this.firebase = FirebaseSync.getInstance();
@@ -1286,11 +1386,298 @@ export class HordeScene extends Phaser.Scene {
     g.lineStyle(3, 0x122e0e, 0.5);
     g.strokeRect(0, 0, WORLD_W, WORLD_H);
 
+    // ─── TERRAIN PAINT FROM EDITOR ──────────────────────────
+    this.drawTerrain(g);
+
     // Very faint base territory indicators — soft circles, not harsh rings
     g.fillStyle(0x4499FF, 0.04);
     g.fillCircle(P1_BASE.x, P1_BASE.y, 500);
     g.fillStyle(0xFF5555, 0.04);
     g.fillCircle(P2_BASE.x, P2_BASE.y, 500);
+  }
+
+  /** Seeded RNG for consistent terrain decoration placement */
+  private terrainRng(seed: number): () => number {
+    let s = seed;
+    return () => { s = (s * 16807 + 1) % 2147483647; return (s - 1) / 2147483646; };
+  }
+
+  // Terrain base fill colors — fully opaque, drawn first so brush strokes merge
+  private static readonly TERRAIN_BASE: Record<string, number> = {
+    water:  0x14477a,  // deep blue
+    lava:   0x661100,  // dark red
+    swamp:  0x2a3f1a,  // murky green-brown
+    ice:    0x6eaabb,  // cold blue-grey
+    sand:   0xa08840,  // warm tan
+    bridge: 0x6b4422,  // dark wood brown
+    ruins:  0x555566,  // stone grey-purple
+  };
+
+  private drawTerrain(bgGraphics: Phaser.GameObjects.Graphics) {
+    const terrain = this.mapDef?.terrain;
+    if (!terrain || terrain.length === 0) {
+      console.log('[Horde] No terrain data to render');
+      return;
+    }
+    console.log('[Horde] Rendering terrain:', terrain.length, 'items');
+
+    // ── PASS 1: Solid base fills on bgGraphics ──
+    // All ground/liquid types get opaque fills so brush strokes merge into
+    // continuous solid bodies with no gaps.
+    for (const t of terrain) {
+      const baseColor = HordeScene.TERRAIN_BASE[t.type];
+      if (baseColor === undefined) continue;
+      bgGraphics.fillStyle(baseColor, 1.0);
+      const r = (t.radius || 40) + 3; // +3px to seal gaps between adjacent strokes
+      if (t.shape === 'circle') {
+        bgGraphics.fillCircle(t.x, t.y, r);
+      } else if (t.w && t.h) {
+        bgGraphics.fillRect(t.x - t.w / 2 - 2, t.y - t.h / 2 - 2, t.w + 4, t.h + 4);
+      }
+    }
+
+    // ── PASS 2: Decorative surface details ──
+    const dg = this.add.graphics();
+    dg.setDepth(1);
+    const rng = this.terrainRng(42);
+
+    for (let i = 0; i < terrain.length; i++) {
+      const t = terrain[i];
+      const cx = t.x, cy = t.y;
+      const sz = t.shape === 'circle' ? (t.radius || 40) : Math.max(t.w || 40, t.h || 40) / 2;
+      const R = () => rng(); // shorthand
+
+      switch (t.type) {
+
+        // ─── WATER: lighter tint + sparse ripples + foam ─────────
+        case 'water': {
+          dg.fillStyle(0x1a6699, 0.45);
+          dg.fillCircle(cx, cy, sz * 0.8);
+          if (i % 5 === 0) {
+            dg.lineStyle(2.5, 0x3399dd, 0.4);
+            dg.beginPath();
+            dg.arc(cx + (R() - 0.5) * sz, cy + (R() - 0.5) * sz, 10 + R() * 16, 0, Math.PI * 0.85);
+            dg.strokePath();
+          }
+          if (i % 7 === 0) {
+            dg.fillStyle(0xaaddff, 0.3);
+            dg.fillCircle(cx + (R() - 0.5) * sz, cy + (R() - 0.5) * sz, 3 + R() * 5);
+          }
+          break;
+        }
+
+        // ─── LAVA: bright magma layer + glow spots + crust ──────
+        case 'lava': {
+          dg.fillStyle(0xaa2200, 0.65);
+          dg.fillCircle(cx, cy, sz * 0.85);
+          if (i % 3 === 0) {
+            const lx = cx + (R() - 0.5) * sz * 0.7, ly = cy + (R() - 0.5) * sz * 0.7;
+            const gs = 7 + R() * 12;
+            dg.fillStyle(0xff5500, 0.6);
+            dg.fillCircle(lx, ly, gs * 1.3);
+            dg.fillStyle(0xff9900, 0.7);
+            dg.fillCircle(lx, ly, gs);
+            dg.fillStyle(0xffcc00, 0.5);
+            dg.fillCircle(lx, ly, gs * 0.35);
+          }
+          if (i % 5 === 0) {
+            dg.fillStyle(0x331100, 0.45);
+            dg.fillCircle(cx + (R() - 0.5) * sz, cy + (R() - 0.5) * sz, 4 + R() * 6);
+          }
+          break;
+        }
+
+        // ─── SWAMP: murky green-brown + bubbles + reeds ─────────
+        case 'swamp': {
+          dg.fillStyle(0x3a5520, 0.4);
+          dg.fillCircle(cx, cy, sz * 0.8);
+          // Murky dark patches
+          if (i % 3 === 0) {
+            dg.fillStyle(0x1a2a10, 0.35);
+            dg.fillCircle(cx + (R() - 0.5) * sz * 0.6, cy + (R() - 0.5) * sz * 0.6, 8 + R() * 14);
+          }
+          // Bubbles
+          if (i % 6 === 0) {
+            const bx = cx + (R() - 0.5) * sz * 0.7, by = cy + (R() - 0.5) * sz * 0.7;
+            dg.fillStyle(0x556633, 0.5);
+            dg.fillCircle(bx, by, 3 + R() * 3);
+            dg.fillCircle(bx + 5, by - 3, 2 + R() * 2);
+          }
+          // Reeds
+          if (i % 4 === 0) {
+            const rx = cx + (R() - 0.5) * sz * 0.8, ry = cy + (R() - 0.5) * sz * 0.8;
+            dg.lineStyle(2, 0x4a6630, 0.7);
+            dg.beginPath(); dg.moveTo(rx, ry); dg.lineTo(rx - 3, ry - 18 - R() * 10); dg.strokePath();
+            dg.beginPath(); dg.moveTo(rx + 4, ry); dg.lineTo(rx + 6, ry - 15 - R() * 8); dg.strokePath();
+          }
+          break;
+        }
+
+        // ─── ICE: frosted surface + cracks + sparkle ────────────
+        case 'ice': {
+          dg.fillStyle(0x8ad4ee, 0.4);
+          dg.fillCircle(cx, cy, sz * 0.82);
+          // Frost highlight
+          if (i % 4 === 0) {
+            dg.fillStyle(0xcceeff, 0.35);
+            dg.fillCircle(cx + (R() - 0.5) * sz * 0.5, cy + (R() - 0.5) * sz * 0.5, 6 + R() * 10);
+          }
+          // Cracks
+          if (i % 5 === 0) {
+            const sx = cx + (R() - 0.5) * sz * 0.6, sy = cy + (R() - 0.5) * sz * 0.6;
+            dg.lineStyle(1.5, 0xddffff, 0.5);
+            dg.beginPath(); dg.moveTo(sx, sy);
+            dg.lineTo(sx + (R() - 0.5) * 30, sy + (R() - 0.5) * 30);
+            dg.lineTo(sx + (R() - 0.5) * 40, sy + (R() - 0.5) * 40);
+            dg.strokePath();
+          }
+          // Sparkle dots
+          if (i % 8 === 0) {
+            dg.fillStyle(0xffffff, 0.6);
+            dg.fillCircle(cx + (R() - 0.5) * sz, cy + (R() - 0.5) * sz, 1.5 + R() * 2);
+          }
+          break;
+        }
+
+        // ─── SAND: warm ground + dune lines + pebbles ───────────
+        case 'sand': {
+          dg.fillStyle(0xc4a850, 0.35);
+          dg.fillCircle(cx, cy, sz * 0.8);
+          // Dune ridges
+          if (i % 4 === 0) {
+            const dx = cx + (R() - 0.5) * sz * 0.5;
+            const dy = cy + (R() - 0.5) * sz * 0.5;
+            dg.lineStyle(2, 0xd4b866, 0.4);
+            dg.beginPath();
+            dg.arc(dx, dy, 12 + R() * 20, Math.PI * 0.1, Math.PI * 0.9);
+            dg.strokePath();
+          }
+          // Pebbles / small rocks
+          if (i % 6 === 0) {
+            dg.fillStyle(0x8a7a50, 0.5);
+            dg.fillCircle(cx + (R() - 0.5) * sz * 0.7, cy + (R() - 0.5) * sz * 0.7, 2 + R() * 3);
+            dg.fillCircle(cx + (R() - 0.5) * sz * 0.7, cy + (R() - 0.5) * sz * 0.7, 1.5 + R() * 2);
+          }
+          break;
+        }
+
+        // ─── BRIDGE: wood planks ─────────────────────────────────
+        case 'bridge': {
+          // Lighter wood surface
+          dg.fillStyle(0x8a6633, 0.5);
+          dg.fillCircle(cx, cy, sz * 0.75);
+          // Plank lines
+          if (i % 3 === 0) {
+            const px = cx + (R() - 0.5) * sz * 0.5;
+            const py = cy + (R() - 0.5) * sz * 0.5;
+            const angle = R() * Math.PI;
+            const len = 15 + R() * 25;
+            dg.lineStyle(3, 0x553311, 0.55);
+            dg.beginPath();
+            dg.moveTo(px - Math.cos(angle) * len, py - Math.sin(angle) * len);
+            dg.lineTo(px + Math.cos(angle) * len, py + Math.sin(angle) * len);
+            dg.strokePath();
+          }
+          // Nail dots
+          if (i % 5 === 0) {
+            dg.fillStyle(0x444444, 0.6);
+            dg.fillCircle(cx + (R() - 0.5) * sz * 0.5, cy + (R() - 0.5) * sz * 0.5, 1.5);
+            dg.fillCircle(cx + (R() - 0.5) * sz * 0.5, cy + (R() - 0.5) * sz * 0.5, 1.5);
+          }
+          break;
+        }
+
+        // ─── RUINS: stone blocks + broken columns ───────────────
+        case 'ruins': {
+          dg.fillStyle(0x6666777, 0.4);
+          dg.fillCircle(cx, cy, sz * 0.75);
+          // Stone blocks
+          if (i % 3 === 0) {
+            const bx = cx + (R() - 0.5) * sz * 0.6, by = cy + (R() - 0.5) * sz * 0.6;
+            const bw = 8 + R() * 14, bh = 6 + R() * 10;
+            dg.fillStyle(0x777788, 0.7);
+            dg.fillRect(bx - bw / 2, by - bh / 2, bw, bh);
+            dg.lineStyle(1, 0x555566, 0.5);
+            dg.strokeRect(bx - bw / 2, by - bh / 2, bw, bh);
+          }
+          // Broken column
+          if (i % 8 === 0) {
+            const cx2 = cx + (R() - 0.5) * sz * 0.5, cy2 = cy + (R() - 0.5) * sz * 0.5;
+            dg.fillStyle(0x888899, 0.75);
+            dg.fillCircle(cx2, cy2, 5 + R() * 4);
+            dg.fillStyle(0x999aaa, 0.6);
+            dg.fillCircle(cx2, cy2 - 4, 3 + R() * 3);
+          }
+          break;
+        }
+
+        // ─── FOREST: trees with trunks + canopies ───────────────
+        case 'forest': {
+          const n = Math.max(1, Math.floor(sz / 16));
+          for (let j = 0; j < n; j++) {
+            const a = R() * Math.PI * 2, d = R() * sz * 0.75;
+            const tx = cx + Math.cos(a) * d, ty = cy + Math.sin(a) * d;
+            const h = 16 + R() * 22;
+            dg.fillStyle(0x3d2b1a, 0.95);
+            dg.fillRect(tx - 3, ty, 6, h * 0.5);
+            const shade = R() > 0.5 ? 0x2d8a3a : 0x1d6a2a;
+            dg.fillStyle(shade, 0.92);
+            dg.fillCircle(tx, ty - h * 0.2, h * 0.7);
+            dg.fillStyle(0x238a30, 0.85);
+            dg.fillCircle(tx - h * 0.3, ty, h * 0.55);
+            dg.fillCircle(tx + h * 0.3, ty, h * 0.55);
+            dg.fillStyle(0x44bb55, 0.45);
+            dg.fillCircle(tx - h * 0.12, ty - h * 0.3, h * 0.25);
+          }
+          break;
+        }
+
+        // ─── BUSH: thick puff clusters + berries ────────────────
+        case 'bush': {
+          const n = Math.max(1, Math.floor(sz / 18));
+          for (let j = 0; j < n; j++) {
+            const a = R() * Math.PI * 2, d = R() * sz * 0.7;
+            const bx = cx + Math.cos(a) * d, by = cy + Math.sin(a) * d;
+            const r = 8 + R() * 12;
+            const shade = R() > 0.4 ? 0x4a9a3a : 0x3a8a2a;
+            dg.fillStyle(shade, 0.9);
+            dg.fillCircle(bx, by, r);
+            dg.fillCircle(bx - r * 0.7, by + r * 0.3, r * 0.8);
+            dg.fillCircle(bx + r * 0.7, by + r * 0.3, r * 0.8);
+            dg.fillCircle(bx, by - r * 0.5, r * 0.7);
+            if (R() > 0.5) {
+              dg.fillStyle(0xcc3355, 0.85);
+              dg.fillCircle(bx + R() * 6 - 3, by + R() * 6 - 3, 2.5);
+              dg.fillCircle(bx + R() * 6 - 3, by + R() * 6 - 3, 2);
+            }
+          }
+          break;
+        }
+
+        // ─── MOUNTAIN: rock peaks + snow caps + rubble ──────────
+        case 'mountain': {
+          const n = Math.max(1, Math.floor(sz / 20));
+          for (let j = 0; j < n; j++) {
+            const a = R() * Math.PI * 2, d = R() * sz * 0.6;
+            const rx = cx + Math.cos(a) * d, ry = cy + Math.sin(a) * d;
+            const h = 22 + R() * 30;
+            const w = h * (0.55 + R() * 0.35);
+            dg.fillStyle(0x7a7a7a, 0.95);
+            dg.fillTriangle(rx, ry - h, rx - w, ry + h * 0.25, rx + w, ry + h * 0.25);
+            dg.fillStyle(0x555555, 0.7);
+            dg.fillTriangle(rx, ry - h, rx + w, ry + h * 0.25, rx + w * 0.2, ry + h * 0.25);
+            if (h > 28) {
+              dg.fillStyle(0xeaeaea, 0.85);
+              dg.fillTriangle(rx, ry - h, rx - w * 0.3, ry - h * 0.4, rx + w * 0.3, ry - h * 0.4);
+            }
+            dg.fillStyle(0x6a6a6a, 0.75);
+            dg.fillCircle(rx - w * 0.6, ry + h * 0.2, 4 + R() * 5);
+            dg.fillCircle(rx + w * 0.7, ry + h * 0.15, 3 + R() * 5);
+          }
+          break;
+        }
+      }
+    }
   }
 
   // ─── FOG OF WAR ─────────────────────────────────────────────
@@ -1310,6 +1697,11 @@ export class HordeScene extends Phaser.Scene {
 
   private updateFog() {
     if (!this.fogRT || !this.fogBrush) return;
+    if (this.fogDisabled) {
+      this.fogRT.setVisible(false);
+      return;
+    }
+    this.fogRT.setVisible(true);
 
     // Cache vision sources for this frame
     this.buildVisionCache();
@@ -1330,7 +1722,7 @@ export class HordeScene extends Phaser.Scene {
     // Hide/show enemy and neutral unit sprites
     for (const u of this.units) {
       if (u.team === this.myTeam) continue; // always show own units
-      const visible = this.isInVision(u.x, u.y);
+      const visible = this.fogDisabled || this.isInVision(u.x, u.y);
       if (u.sprite) u.sprite.setVisible(visible);
       if (u.carrySprite) u.carrySprite.setVisible(visible);
     }
@@ -1338,7 +1730,7 @@ export class HordeScene extends Phaser.Scene {
     // Hide/show ground items outside vision
     for (const item of this.groundItems) {
       if (item.dead || !item.sprite) continue;
-      item.sprite.setVisible(this.isInVision(item.x, item.y));
+      item.sprite.setVisible(this.fogDisabled || this.isInVision(item.x, item.y));
     }
 
     // Camp visuals: always show outline, but use last-known info if not in vision
@@ -1492,19 +1884,28 @@ export class HordeScene extends Phaser.Scene {
 
   private initMineNodes() {
     this.mineNodes = [];
+    let idx = 0;
+
+    // Use MapDef mine positions if available
+    if (this.mapDef?.mineSlots && this.mapDef.mineSlots.length > 0) {
+      for (const slot of this.mapDef.mineSlots) {
+        this.mineNodes.push({ id: `mine_${idx++}`, x: slot.bluePos.x, y: slot.bluePos.y, sprite: null, label: null });
+        this.mineNodes.push({ id: `mine_${idx++}`, x: slot.redPos.x, y: slot.redPos.y, sprite: null, label: null });
+      }
+      return;
+    }
+
+    // Fallback: hardcoded positions from bases
     const cx = WORLD_W / 2, cy = WORLD_H / 2;
-    // 2 mines per side, placed at ~600px from each base, mirrored
     const mineOffsets = [
       { dist: 600, angle: -0.6 },
       { dist: 650, angle: 0.6 },
     ];
     const baseAngle = Math.atan2(cy - P1_BASE.y, cx - P1_BASE.x);
-    let idx = 0;
     for (const off of mineOffsets) {
       const angle = baseAngle + off.angle;
       const x1 = Math.round(P1_BASE.x + Math.cos(angle) * off.dist);
       const y1 = Math.round(P1_BASE.y + Math.sin(angle) * off.dist);
-      // Mirror for P2
       const x2 = Math.round(cx + (cx - x1));
       const y2 = Math.round(cy + (cy - y1));
       this.mineNodes.push({ id: `mine_${idx++}`, x: x1, y: y1, sprite: null, label: null });
@@ -1514,6 +1915,17 @@ export class HordeScene extends Phaser.Scene {
 
   private initArmories() {
     this.armories = [];
+
+    // Use MapDef armory positions if available
+    if (this.mapDef?.armorySlots && this.mapDef.armorySlots.length > 0) {
+      for (const slot of this.mapDef.armorySlots) {
+        this.armories.push({ x: slot.bluePos.x, y: slot.bluePos.y, team: 1, sprite: null, label: null });
+        this.armories.push({ x: slot.redPos.x, y: slot.redPos.y, team: 2, sprite: null, label: null });
+      }
+      return;
+    }
+
+    // Fallback: random positions near bases
     const cx = WORLD_W / 2, cy = WORLD_H / 2;
     const baseAngle = Math.atan2(cy - P1_BASE.y, cx - P1_BASE.x);
     const eqTypes: EquipmentType[] = ['pickaxe', 'sword', 'shield', 'boots', 'banner'];
@@ -1678,8 +2090,27 @@ export class HordeScene extends Phaser.Scene {
       cam.zoom = Phaser.Math.Clamp(cam.zoom + (deltaY > 0 ? -0.05 : 0.05), 0.2, 2.0);
     });
 
-    // Drag to pan
+    // Drag to pan (or editor drag)
     this.input.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
+      if (this.editorMode && ptr.leftButtonDown()) {
+        const wx = ptr.worldX, wy = ptr.worldY;
+        const hit = this.editorHitTest(wx, wy);
+        if (hit) {
+          this.editorSelected = hit;
+          this.editorDragging = true;
+          const obj = this.editorGetSelectedPos();
+          this.editorDragOffsetX = obj ? obj.x - wx : 0;
+          this.editorDragOffsetY = obj ? obj.y - wy : 0;
+          this.dragMoved = false;
+          this.editorUpdateHighlight();
+          this.editorUpdatePanel();
+          return;
+        } else {
+          this.editorSelected = null;
+          this.editorUpdateHighlight();
+          this.editorUpdatePanel();
+        }
+      }
       if (ptr.rightButtonDown() || ptr.middleButtonDown() || ptr.leftButtonDown()) {
         this.isDragging = true;
         this.dragMoved = false;
@@ -1688,6 +2119,12 @@ export class HordeScene extends Phaser.Scene {
       }
     });
     this.input.on('pointermove', (ptr: Phaser.Input.Pointer) => {
+      if (this.editorDragging && this.editorSelected) {
+        this.dragMoved = true;
+        this.editorMoveSelected(ptr.worldX + this.editorDragOffsetX, ptr.worldY + this.editorDragOffsetY);
+        this.editorUpdateHighlight();
+        return;
+      }
       if (!this.isDragging) return;
       const dx = ptr.x - this.dragPrevX;
       const dy = ptr.y - this.dragPrevY;
@@ -1698,7 +2135,14 @@ export class HordeScene extends Phaser.Scene {
       this.dragPrevY = ptr.y;
     });
     this.input.on('pointerup', (ptr: Phaser.Input.Pointer) => {
-      if (!this.dragMoved && ptr.leftButtonReleased()) {
+      if (this.editorDragging) {
+        this.editorDragging = false;
+        if (this.dragMoved) this.editorAutoSave();
+        this.editorUpdatePanel();
+        this.isDragging = false;
+        return;
+      }
+      if (!this.dragMoved && ptr.leftButtonReleased() && !this.editorMode) {
         // Click (not drag) — try to select a unit for debug
         const wx = ptr.worldX, wy = ptr.worldY;
         let closest: HUnit | null = null, closestD = 40; // 40px click radius
@@ -1805,6 +2249,21 @@ export class HordeScene extends Phaser.Scene {
     eKey.on('down', () => {
       if (document.activeElement === this.textInput) return;
       this.cycleArmy(1);
+    });
+
+    // F2 — toggle in-game map editor
+    const f2Key = this.input.keyboard!.addKey('F2');
+    f2Key.on('down', () => {
+      if (document.activeElement === this.textInput) return;
+      this.toggleEditorMode();
+    });
+
+    // F3 — toggle fog of war
+    const f3Key = this.input.keyboard!.addKey('F3');
+    f3Key.on('down', () => {
+      if (document.activeElement === this.textInput) return;
+      this.fogDisabled = !this.fogDisabled;
+      this.showFeedback(this.fogDisabled ? 'Fog of War: OFF' : 'Fog of War: ON', '#FFD93D');
     });
   }
 
@@ -2372,6 +2831,16 @@ export class HordeScene extends Phaser.Scene {
     const dt = delta / 1000;
     this.updateCamera(dt);
 
+    if (this.editorMode) {
+      // Editor mode: render only, no simulation
+      this.updateUnitSprites();
+      this.updateCampVisuals();
+      this.updateMineVisuals();
+      this.updateArmoryVisuals();
+      this.drawNexusBars();
+      return;
+    }
+
     if (this.isOnline && !this.isHost) {
       // Guest: only render, no simulation — state comes from host via sync
       this.updateUnitSprites();
@@ -2423,6 +2892,13 @@ export class HordeScene extends Phaser.Scene {
         this.syncTimer -= this.SYNC_INTERVAL_MS;
         this.pushHostSync();
       }
+    }
+
+    // Push game state to editor (if connected)
+    this.editorSyncTimer += delta;
+    if (this.editorSyncTimer >= this.EDITOR_SYNC_INTERVAL_MS) {
+      this.editorSyncTimer -= this.EDITOR_SYNC_INTERVAL_MS;
+      this.pushEditorSync();
     }
   }
 
@@ -6245,6 +6721,863 @@ export class HordeScene extends Phaser.Scene {
     return { speed, attack, hp };
   }
 
+  // ─── EDITOR LIVE SYNC ──────────────────────────────────────
+
+  private setupEditorSync() {
+    try {
+      this.editorSyncChannel = new BroadcastChannel('horde-editor-sync');
+    } catch {
+      return; // BroadcastChannel not available
+    }
+
+    this.editorSyncChannel.onmessage = (event: MessageEvent) => {
+      const msg = event.data;
+      switch (msg.type) {
+        case 'MAP_UPDATE':
+          this.handleEditorMapUpdate(msg.map);
+          break;
+        case 'COMMAND':
+          this.handleEditorCommand(msg.cmd, msg.mapDef);
+          break;
+        case 'PING':
+          this.editorSyncChannel?.postMessage({ type: 'PONG', sceneActive: true });
+          break;
+      }
+    };
+  }
+
+  private handleEditorMapUpdate(newMap: MapDef) {
+    if (!newMap) return;
+
+    // If game is running in default mode (no mapDef), store for reference
+    // but only hot-apply positions if camp counts match
+    const hadMapDef = !!this.mapDef;
+    this.mapDef = newMap;
+
+    // If the game was started without a map, we can only overlay —
+    // structural changes (camp count) require a restart via the editor button
+    if (!hadMapDef) return;
+
+    // ── Update base/nexus positions ──
+    const p1 = newMap.p1Base;
+    const p2 = newMap.p2Base;
+    if (this.nexuses.length >= 2) {
+      const n1 = this.nexuses.find(n => n.team === 1);
+      const n2 = this.nexuses.find(n => n.team === 2);
+      if (n1 && (n1.x !== p1.x || n1.y !== p1.y)) {
+        n1.x = p1.x; n1.y = p1.y;
+        n1.container?.setPosition(p1.x, p1.y);
+      }
+      if (n2 && (n2.x !== p2.x || n2.y !== p2.y)) {
+        n2.x = p2.x; n2.y = p2.y;
+        n2.container?.setPosition(p2.x, p2.y);
+      }
+    }
+
+    // ── Update camp positions ──
+    // Map editor camp slots come in pairs (blue/red per slot).
+    // activeCampDefs has 2 entries per slot + optional troll.
+    // We match by index and update positions.
+    const totalSlotCamps = newMap.campSlots.length * 2;
+    for (let slotIdx = 0; slotIdx < newMap.campSlots.length; slotIdx++) {
+      const slot = newMap.campSlots[slotIdx];
+      const blueIdx = slotIdx * 2;
+      const redIdx = slotIdx * 2 + 1;
+
+      // Update activeCampDefs positions
+      if (blueIdx < this.activeCampDefs.length) {
+        this.activeCampDefs[blueIdx].x = slot.bluePos.x;
+        this.activeCampDefs[blueIdx].y = slot.bluePos.y;
+      }
+      if (redIdx < this.activeCampDefs.length) {
+        this.activeCampDefs[redIdx].x = slot.redPos.x;
+        this.activeCampDefs[redIdx].y = slot.redPos.y;
+      }
+
+      // Update camp game objects
+      if (blueIdx < this.camps.length) {
+        const camp = this.camps[blueIdx];
+        camp.x = slot.bluePos.x;
+        camp.y = slot.bluePos.y;
+        camp.area?.setPosition(slot.bluePos.x, slot.bluePos.y);
+        camp.label?.setPosition(slot.bluePos.x, slot.bluePos.y - 55);
+      }
+      if (redIdx < this.camps.length) {
+        const camp = this.camps[redIdx];
+        camp.x = slot.redPos.x;
+        camp.y = slot.redPos.y;
+        camp.area?.setPosition(slot.redPos.x, slot.redPos.y);
+        camp.label?.setPosition(slot.redPos.x, slot.redPos.y - 55);
+      }
+    }
+
+    // ── Update troll camp position ──
+    if (newMap.trollSlot) {
+      // Troll camp is the last one (after all slot pairs)
+      const trollIdx = totalSlotCamps;
+      if (trollIdx < this.camps.length) {
+        const camp = this.camps[trollIdx];
+        camp.x = newMap.trollSlot.x;
+        camp.y = newMap.trollSlot.y;
+        camp.area?.setPosition(newMap.trollSlot.x, newMap.trollSlot.y);
+        camp.label?.setPosition(newMap.trollSlot.x, newMap.trollSlot.y - 55);
+      }
+      if (trollIdx < this.activeCampDefs.length) {
+        this.activeCampDefs[trollIdx].x = newMap.trollSlot.x;
+        this.activeCampDefs[trollIdx].y = newMap.trollSlot.y;
+      }
+    }
+
+    // ── Update neutral unit positions to follow their camps ──
+    // Move camp defenders to track their camp's new position
+    for (const u of this.units) {
+      if (u.team !== 0 || u.dead || !u.campId) continue;
+      const camp = this.camps.find(c => c.id === u.campId);
+      if (!camp) continue;
+      const wanderAngle = Math.random() * Math.PI * 2;
+      const wanderR = 20 + Math.random() * 40;
+      u.targetX = camp.x + Math.cos(wanderAngle) * wanderR;
+      u.targetY = camp.y + Math.sin(wanderAngle) * wanderR;
+    }
+
+    // ── Update mine node positions ──
+    if (newMap.mineSlots && newMap.mineSlots.length > 0) {
+      let mIdx = 0;
+      for (const slot of newMap.mineSlots) {
+        if (mIdx < this.mineNodes.length) {
+          const mine = this.mineNodes[mIdx];
+          mine.x = slot.bluePos.x; mine.y = slot.bluePos.y;
+          mine.sprite?.setPosition(slot.bluePos.x, slot.bluePos.y);
+          mine.label?.setPosition(slot.bluePos.x, slot.bluePos.y - 20);
+        }
+        mIdx++;
+        if (mIdx < this.mineNodes.length) {
+          const mine = this.mineNodes[mIdx];
+          mine.x = slot.redPos.x; mine.y = slot.redPos.y;
+          mine.sprite?.setPosition(slot.redPos.x, slot.redPos.y);
+          mine.label?.setPosition(slot.redPos.x, slot.redPos.y - 20);
+        }
+        mIdx++;
+      }
+    }
+
+    // ── Update armory positions ──
+    if (newMap.armorySlots && newMap.armorySlots.length > 0) {
+      let aIdx = 0;
+      for (const slot of newMap.armorySlots) {
+        if (aIdx < this.armories.length) {
+          const arm = this.armories[aIdx];
+          arm.x = slot.bluePos.x; arm.y = slot.bluePos.y;
+          arm.sprite?.setPosition(slot.bluePos.x, slot.bluePos.y);
+          arm.label?.setPosition(slot.bluePos.x, slot.bluePos.y + 20);
+        }
+        aIdx++;
+        if (aIdx < this.armories.length) {
+          const arm = this.armories[aIdx];
+          arm.x = slot.redPos.x; arm.y = slot.redPos.y;
+          arm.sprite?.setPosition(slot.redPos.x, slot.redPos.y);
+          arm.label?.setPosition(slot.redPos.x, slot.redPos.y + 20);
+        }
+        aIdx++;
+      }
+    }
+  }
+
+  private handleEditorCommand(cmd: string, mapDef?: MapDef) {
+    switch (cmd) {
+      case 'restart':
+        // Restart the scene with the editor's current map
+        if (mapDef) {
+          // Store the map temporarily so init() can pick it up
+          this.scene.restart({ mapDef: mapDef });
+        } else {
+          this.scene.restart();
+        }
+        break;
+    }
+  }
+
+  private pushEditorSync() {
+    if (!this.editorSyncChannel) return;
+    try {
+      const units = this.units
+        .filter(u => !u.dead)
+        .map(u => ({
+          x: Math.round(u.x),
+          y: Math.round(u.y),
+          type: u.type,
+          team: u.team,
+          hp: Math.round(u.hp),
+          maxHp: Math.round(u.maxHp),
+          campId: u.campId || null,
+          dead: u.dead,
+        }));
+
+      const camps = this.camps.map(c => ({
+        id: c.id,
+        x: c.x,
+        y: c.y,
+        owner: c.owner,
+        animalType: c.animalType,
+        tier: c.tier,
+      }));
+
+      const nexuses = this.nexuses.map(n => ({
+        x: n.x,
+        y: n.y,
+        team: n.team,
+        hp: Math.round(n.hp),
+        maxHp: n.maxHp,
+      }));
+
+      const mines = this.mineNodes.map(m => ({
+        id: m.id,
+        x: m.x,
+        y: m.y,
+      }));
+
+      const armories = this.armories.map(a => ({
+        x: a.x,
+        y: a.y,
+        team: a.team,
+      }));
+
+      this.editorSyncChannel.postMessage({
+        type: 'GAME_STATE',
+        units,
+        camps,
+        nexuses,
+        mines,
+        armories,
+        gameTime: this.gameTime,
+        era: this.currentEra,
+      });
+    } catch {
+      // ignore serialization errors
+    }
+  }
+
+  // ─── IN-GAME MAP EDITOR ────────────────────────────────────
+
+  private toggleEditorMode() {
+    this.editorMode = !this.editorMode;
+    if (this.editorMode) {
+      this.editorSelected = null;
+      this.editorDragging = false;
+      this.setupEditorPanel();
+      // Hide game HUD elements
+      if (this.sidebarEl) this.sidebarEl.style.display = 'none';
+      if (this.armyBarEl) this.armyBarEl.style.display = 'none';
+      if (this.textInput) this.textInput.style.display = 'none';
+      if (this.voiceStatusEl) this.voiceStatusEl.style.display = 'none';
+      if (this.cmdHistoryEl) this.cmdHistoryEl.style.display = 'none';
+      if (this.equipPanelEl) this.equipPanelEl.style.display = 'none';
+      if (this.charPanelEl) this.charPanelEl.style.display = 'none';
+      this.showFeedback('Editor Mode (F2 to exit)', '#00ff88');
+    } else {
+      this.editorPanelEl?.remove();
+      this.editorPanelEl = null;
+      this.editorHighlight?.destroy();
+      this.editorHighlight = null;
+      // Restore game HUD
+      if (this.sidebarEl) this.sidebarEl.style.display = '';
+      if (this.armyBarEl) this.armyBarEl.style.display = '';
+      if (this.textInput) this.textInput.style.display = '';
+      if (this.voiceStatusEl) this.voiceStatusEl.style.display = '';
+      if (this.cmdHistoryEl) this.cmdHistoryEl.style.display = '';
+      if (this.equipPanelEl) this.equipPanelEl.style.display = '';
+      if (this.charPanelEl) this.charPanelEl.style.display = '';
+      this.showFeedback('Game Resumed', '#45E6B0');
+    }
+  }
+
+  private setupEditorPanel() {
+    if (this.editorPanelEl) this.editorPanelEl.remove();
+    const container = document.getElementById('game-container') ?? document.body;
+    const panel = document.createElement('div');
+    panel.id = 'horde-editor-panel';
+    panel.style.cssText = `
+      position:absolute;top:0;right:0;width:260px;height:100%;
+      background:rgba(8,12,20,0.92);backdrop-filter:blur(8px);
+      border-left:2px solid #00ff88;z-index:200;overflow-y:auto;padding:14px;
+      font-family:'Nunito',sans-serif;
+      scrollbar-width:thin;scrollbar-color:rgba(0,255,136,0.3) rgba(10,14,25,0.4);
+    `;
+    panel.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <span style="font-size:16px;font-weight:800;color:#00ff88;font-family:'Fredoka',sans-serif;letter-spacing:2px;">MAP EDITOR</span>
+        <span style="font-size:11px;color:#555;">F2 close</span>
+      </div>
+      <div style="background:#FF5555;color:#fff;text-align:center;padding:5px;border-radius:6px;font-weight:800;font-size:12px;margin-bottom:8px;letter-spacing:1px;">GAME PAUSED</div>
+      <div id="editor-sync-bar" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:rgba(0,0,0,0.4);border:1px solid #333;border-radius:6px;margin-bottom:12px;">
+        <div id="editor-sync-dot" style="width:10px;height:10px;border-radius:50%;background:#555;flex-shrink:0;"></div>
+        <div id="editor-sync-text" style="font-size:11px;color:#888;font-weight:700;">No changes yet</div>
+      </div>
+      <div style="font-size:10px;color:#666;margin-bottom:12px;">Click objects to select. Drag to reposition. Auto-saves.</div>
+      <div id="editor-selection-info" style="margin-bottom:14px;min-height:60px;"></div>
+      <div style="margin-bottom:14px;">
+        <div style="font-size:11px;font-weight:800;color:#00ff88;letter-spacing:1px;margin-bottom:6px;">OBJECTS</div>
+        <div id="editor-object-list" style="max-height:300px;overflow-y:auto;"></div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">
+        <button id="editor-add-camp" style="flex:1;padding:6px 8px;background:#1a2a1a;border:1px solid #FFD93D;color:#FFD93D;border-radius:6px;cursor:pointer;font-size:11px;font-weight:700;">+ Camp</button>
+        <button id="editor-add-mine" style="flex:1;padding:6px 8px;background:#1a2a1a;border:1px solid #88ccff;color:#88ccff;border-radius:6px;cursor:pointer;font-size:11px;font-weight:700;">+ Mine</button>
+        <button id="editor-add-armory" style="flex:1;padding:6px 8px;background:#1a2a1a;border:1px solid #cc88ff;color:#cc88ff;border-radius:6px;cursor:pointer;font-size:11px;font-weight:700;">+ Armory</button>
+      </div>
+      <div id="editor-save-status" style="font-size:11px;color:#555;text-align:center;margin-bottom:8px;"></div>
+      <button id="editor-save-btn" style="width:100%;padding:8px;background:#00aa66;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:800;font-size:13px;letter-spacing:1px;">SAVE MAP</button>
+      <button id="editor-restart-btn" style="width:100%;padding:8px;margin-top:6px;background:#aa4400;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:800;font-size:12px;">RESTART WITH CHANGES</button>
+    `;
+    // Inject pulse animation
+    if (!document.getElementById('editor-pulse-style')) {
+      const style = document.createElement('style');
+      style.id = 'editor-pulse-style';
+      style.textContent = `@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }`;
+      document.head.appendChild(style);
+    }
+
+    container.appendChild(panel);
+    this.editorPanelEl = panel;
+
+    // Wire up buttons
+    panel.querySelector('#editor-save-btn')!.addEventListener('click', () => this.editorSaveToServer());
+    panel.querySelector('#editor-restart-btn')!.addEventListener('click', () => {
+      this.editorSaveToServer().then(() => {
+        const mapDef = this.editorBuildMapDef();
+        this.editorMode = false;
+        this.editorPanelEl?.remove();
+        this.editorPanelEl = null;
+        this.editorHighlight?.destroy();
+        this.editorHighlight = null;
+        this.scene.restart({ mapDef });
+      });
+    });
+    panel.querySelector('#editor-add-camp')!.addEventListener('click', () => this.editorAddCampSlot());
+    panel.querySelector('#editor-add-mine')!.addEventListener('click', () => this.editorAddMineSlot());
+    panel.querySelector('#editor-add-armory')!.addEventListener('click', () => this.editorAddArmorySlot());
+
+    // Prevent keyboard events from reaching the game
+    panel.addEventListener('keydown', (e) => e.stopPropagation());
+
+    this.editorUpdatePanel();
+  }
+
+  private editorUpdatePanel() {
+    if (!this.editorPanelEl) return;
+
+    // Selection info
+    const infoEl = this.editorPanelEl.querySelector('#editor-selection-info') as HTMLDivElement;
+    if (this.editorSelected) {
+      const sel = this.editorSelected;
+      const pos = this.editorGetSelectedPos();
+      let info = '';
+      if (sel.type === 'camp') {
+        const c = this.camps[sel.index];
+        info = `
+          <div style="font-size:12px;font-weight:800;color:#FFD93D;margin-bottom:4px;">CAMP: ${c.name}</div>
+          <div style="font-size:11px;color:#aaa;">Type: ${c.animalType} (T${c.tier})</div>
+          <div style="font-size:11px;color:#aaa;">Owner: ${c.owner === 0 ? 'Neutral' : c.owner === 1 ? 'Blue' : 'Red'}</div>
+          <div style="font-size:11px;color:#aaa;">Pos: (${Math.round(pos?.x || 0)}, ${Math.round(pos?.y || 0)})</div>
+          <button id="editor-del-sel" style="margin-top:6px;padding:4px 10px;background:#441a1a;border:1px solid #FF5555;color:#FF5555;border-radius:4px;cursor:pointer;font-size:11px;">Delete</button>
+        `;
+      } else if (sel.type === 'mine') {
+        info = `
+          <div style="font-size:12px;font-weight:800;color:#88ccff;margin-bottom:4px;">MINE NODE</div>
+          <div style="font-size:11px;color:#aaa;">Pos: (${Math.round(pos?.x || 0)}, ${Math.round(pos?.y || 0)})</div>
+          <button id="editor-del-sel" style="margin-top:6px;padding:4px 10px;background:#441a1a;border:1px solid #FF5555;color:#FF5555;border-radius:4px;cursor:pointer;font-size:11px;">Delete</button>
+        `;
+      } else if (sel.type === 'armory') {
+        const a = this.armories[sel.index];
+        info = `
+          <div style="font-size:12px;font-weight:800;color:#cc88ff;margin-bottom:4px;">ARMORY (Team ${a.team})</div>
+          <div style="font-size:11px;color:#aaa;">Pos: (${Math.round(pos?.x || 0)}, ${Math.round(pos?.y || 0)})</div>
+          <button id="editor-del-sel" style="margin-top:6px;padding:4px 10px;background:#441a1a;border:1px solid #FF5555;color:#FF5555;border-radius:4px;cursor:pointer;font-size:11px;">Delete</button>
+        `;
+      } else if (sel.type === 'nexus') {
+        const n = this.nexuses[sel.index];
+        info = `
+          <div style="font-size:12px;font-weight:800;color:${n.team === 1 ? '#4499FF' : '#FF5555'};margin-bottom:4px;">${n.team === 1 ? 'BLUE' : 'RED'} BASE</div>
+          <div style="font-size:11px;color:#aaa;">Pos: (${Math.round(pos?.x || 0)}, ${Math.round(pos?.y || 0)})</div>
+        `;
+      }
+      infoEl.innerHTML = info;
+      const delBtn = infoEl.querySelector('#editor-del-sel');
+      if (delBtn) delBtn.addEventListener('click', () => this.editorDeleteSelected());
+    } else {
+      infoEl.innerHTML = '<div style="font-size:11px;color:#555;font-style:italic;">No selection — click an object</div>';
+    }
+
+    // Object list
+    const listEl = this.editorPanelEl.querySelector('#editor-object-list') as HTMLDivElement;
+    let listHtml = '';
+    // Bases
+    for (let i = 0; i < this.nexuses.length; i++) {
+      const n = this.nexuses[i];
+      const sel = this.editorSelected?.type === 'nexus' && this.editorSelected.index === i;
+      listHtml += `<div style="padding:3px 6px;margin-bottom:2px;border-radius:4px;font-size:11px;cursor:pointer;${sel ? 'background:#1a3a1a;border:1px solid #00ff88;' : 'border:1px solid transparent;'}" data-type="nexus" data-idx="${i}">
+        <span style="color:${n.team === 1 ? '#4499FF' : '#FF5555'};">BASE ${n.team === 1 ? 'Blue' : 'Red'}</span> <span style="color:#555;">(${Math.round(n.x)},${Math.round(n.y)})</span></div>`;
+    }
+    // Camps
+    for (let i = 0; i < this.camps.length; i++) {
+      const c = this.camps[i];
+      const sel = this.editorSelected?.type === 'camp' && this.editorSelected.index === i;
+      const emoji = ANIMALS[c.animalType]?.emoji || '';
+      listHtml += `<div style="padding:3px 6px;margin-bottom:2px;border-radius:4px;font-size:11px;cursor:pointer;${sel ? 'background:#1a3a1a;border:1px solid #00ff88;' : 'border:1px solid transparent;'}" data-type="camp" data-idx="${i}">
+        <span style="color:#FFD93D;">${emoji} ${c.animalType}</span> <span style="color:#555;">(${Math.round(c.x)},${Math.round(c.y)})</span></div>`;
+    }
+    // Mines
+    for (let i = 0; i < this.mineNodes.length; i++) {
+      const m = this.mineNodes[i];
+      const sel = this.editorSelected?.type === 'mine' && this.editorSelected.index === i;
+      listHtml += `<div style="padding:3px 6px;margin-bottom:2px;border-radius:4px;font-size:11px;cursor:pointer;${sel ? 'background:#1a3a1a;border:1px solid #00ff88;' : 'border:1px solid transparent;'}" data-type="mine" data-idx="${i}">
+        <span style="color:#88ccff;">Mine ${m.id}</span> <span style="color:#555;">(${Math.round(m.x)},${Math.round(m.y)})</span></div>`;
+    }
+    // Armories
+    for (let i = 0; i < this.armories.length; i++) {
+      const a = this.armories[i];
+      const sel = this.editorSelected?.type === 'armory' && this.editorSelected.index === i;
+      listHtml += `<div style="padding:3px 6px;margin-bottom:2px;border-radius:4px;font-size:11px;cursor:pointer;${sel ? 'background:#1a3a1a;border:1px solid #00ff88;' : 'border:1px solid transparent;'}" data-type="armory" data-idx="${i}">
+        <span style="color:#cc88ff;">Armory T${a.team}</span> <span style="color:#555;">(${Math.round(a.x)},${Math.round(a.y)})</span></div>`;
+    }
+    listEl.innerHTML = listHtml;
+
+    // Click items in the list to select
+    listEl.querySelectorAll('[data-type]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const type = el.getAttribute('data-type') as 'camp' | 'mine' | 'armory' | 'nexus';
+        const idx = parseInt(el.getAttribute('data-idx')!);
+        this.editorSelected = { type, index: idx };
+        this.editorUpdateHighlight();
+        this.editorUpdatePanel();
+        // Pan camera to selected object
+        const pos = this.editorGetSelectedPos();
+        if (pos) this.cameras.main.centerOn(pos.x, pos.y);
+      });
+    });
+  }
+
+  private editorHitTest(wx: number, wy: number): { type: 'camp' | 'mine' | 'armory' | 'nexus'; index: number } | null {
+    let bestDist = 80;
+    let bestHit: { type: 'camp' | 'mine' | 'armory' | 'nexus'; index: number } | null = null;
+
+    for (let i = 0; i < this.nexuses.length; i++) {
+      const d = pdist({ x: wx, y: wy }, this.nexuses[i]);
+      if (d < bestDist) { bestDist = d; bestHit = { type: 'nexus', index: i }; }
+    }
+    for (let i = 0; i < this.camps.length; i++) {
+      const d = pdist({ x: wx, y: wy }, this.camps[i]);
+      if (d < bestDist) { bestDist = d; bestHit = { type: 'camp', index: i }; }
+    }
+    for (let i = 0; i < this.mineNodes.length; i++) {
+      const d = pdist({ x: wx, y: wy }, this.mineNodes[i]);
+      if (d < bestDist) { bestDist = d; bestHit = { type: 'mine', index: i }; }
+    }
+    for (let i = 0; i < this.armories.length; i++) {
+      const d = pdist({ x: wx, y: wy }, this.armories[i]);
+      if (d < bestDist) { bestDist = d; bestHit = { type: 'armory', index: i }; }
+    }
+    return bestHit;
+  }
+
+  private editorGetSelectedPos(): { x: number; y: number } | null {
+    if (!this.editorSelected) return null;
+    const sel = this.editorSelected;
+    switch (sel.type) {
+      case 'camp': return this.camps[sel.index];
+      case 'mine': return this.mineNodes[sel.index];
+      case 'armory': return this.armories[sel.index];
+      case 'nexus': return this.nexuses[sel.index];
+    }
+  }
+
+  private editorMoveSelected(x: number, y: number) {
+    if (!this.editorSelected) return;
+    const sel = this.editorSelected;
+    // Clamp to world bounds
+    x = Math.max(50, Math.min(WORLD_W - 50, x));
+    y = Math.max(50, Math.min(WORLD_H - 50, y));
+
+    switch (sel.type) {
+      case 'camp': {
+        const camp = this.camps[sel.index];
+        camp.x = Math.round(x); camp.y = Math.round(y);
+        camp.area?.setPosition(camp.x, camp.y);
+        camp.label?.setPosition(camp.x, camp.y - 55);
+        // Also update activeCampDefs
+        if (sel.index < this.activeCampDefs.length) {
+          this.activeCampDefs[sel.index].x = camp.x;
+          this.activeCampDefs[sel.index].y = camp.y;
+        }
+        break;
+      }
+      case 'mine': {
+        const mine = this.mineNodes[sel.index];
+        mine.x = Math.round(x); mine.y = Math.round(y);
+        mine.sprite?.setPosition(mine.x, mine.y);
+        mine.label?.setPosition(mine.x, mine.y - 20);
+        break;
+      }
+      case 'armory': {
+        const arm = this.armories[sel.index];
+        arm.x = Math.round(x); arm.y = Math.round(y);
+        arm.sprite?.setPosition(arm.x, arm.y);
+        arm.label?.setPosition(arm.x, arm.y + 20);
+        break;
+      }
+      case 'nexus': {
+        const n = this.nexuses[sel.index];
+        n.x = Math.round(x); n.y = Math.round(y);
+        n.container?.setPosition(n.x, n.y);
+        n.hpText?.setPosition(n.x, n.y + 50);
+        if (this.hudTexts[`stock_${n.team}`]) {
+          this.hudTexts[`stock_${n.team}`].setPosition(n.x, n.y + 65);
+        }
+        // Redraw HP bars at new position
+        this.drawNexusBars();
+        break;
+      }
+    }
+  }
+
+  private editorUpdateHighlight() {
+    if (this.editorHighlight) {
+      this.editorHighlight.destroy();
+      this.editorHighlight = null;
+    }
+    if (!this.editorSelected) return;
+    const pos = this.editorGetSelectedPos();
+    if (!pos) return;
+    this.editorHighlight = this.add.circle(pos.x, pos.y, 70, 0x00ff88, 0.12)
+      .setStrokeStyle(3, 0x00ff88, 0.8)
+      .setDepth(200);
+  }
+
+  private editorAutoSave() {
+    if (this.editorSaveTimeout) clearTimeout(this.editorSaveTimeout);
+    this.editorSetSyncState('pending');
+    this.editorSaveTimeout = setTimeout(() => this.editorSaveToServer(), 800);
+  }
+
+  private editorSetSyncState(state: 'idle' | 'pending' | 'saving' | 'saved' | 'error') {
+    const dot = this.editorPanelEl?.querySelector('#editor-sync-dot') as HTMLDivElement | null;
+    const text = this.editorPanelEl?.querySelector('#editor-sync-text') as HTMLDivElement | null;
+    const bar = this.editorPanelEl?.querySelector('#editor-sync-bar') as HTMLDivElement | null;
+    if (!dot || !text || !bar) return;
+    switch (state) {
+      case 'idle':
+        dot.style.background = '#555';
+        text.textContent = 'No changes yet';
+        text.style.color = '#888';
+        bar.style.borderColor = '#333';
+        break;
+      case 'pending':
+        dot.style.background = '#FFD93D';
+        dot.style.animation = 'none';
+        text.textContent = 'Unsaved changes...';
+        text.style.color = '#FFD93D';
+        bar.style.borderColor = '#FFD93D';
+        break;
+      case 'saving':
+        dot.style.background = '#FFD93D';
+        dot.style.animation = 'pulse 0.5s infinite';
+        text.textContent = 'Saving to server...';
+        text.style.color = '#FFD93D';
+        bar.style.borderColor = '#FFD93D';
+        break;
+      case 'saved': {
+        const now = new Date();
+        const time = now.toLocaleTimeString();
+        dot.style.background = '#00ff88';
+        dot.style.animation = 'none';
+        text.textContent = `Synced at ${time}`;
+        text.style.color = '#00ff88';
+        bar.style.borderColor = '#00ff88';
+        // Fade back to neutral after 5s
+        setTimeout(() => {
+          if (dot.style.background === 'rgb(0, 255, 136)') {
+            dot.style.background = '#00aa66';
+            text.style.color = '#00aa66';
+            bar.style.borderColor = '#333';
+          }
+        }, 5000);
+        break;
+      }
+      case 'error':
+        dot.style.background = '#FF5555';
+        dot.style.animation = 'none';
+        text.textContent = 'SAVE FAILED!';
+        text.style.color = '#FF5555';
+        bar.style.borderColor = '#FF5555';
+        break;
+    }
+  }
+
+  private editorBuildMapDef(): MapDef {
+    const base = this.mapDef || ALL_MAPS[0];
+
+    // Build campSlots from camps (pairs: blue=even idx, red=odd idx)
+    const campSlots: MapCampSlot[] = [];
+    const campCount = this.camps.length;
+    const hasTroll = campCount % 2 === 1; // odd means last camp is troll
+    const pairCount = hasTroll ? (campCount - 1) / 2 : Math.floor(campCount / 2);
+
+    for (let i = 0; i < pairCount; i++) {
+      const blue = this.camps[i * 2];
+      const red = this.camps[i * 2 + 1];
+      campSlots.push({
+        tier: (blue.tier || 1) as 1 | 2 | 3 | 4,
+        bluePos: { x: blue.x, y: blue.y },
+        redPos: { x: red.x, y: red.y },
+      });
+    }
+
+    const trollSlot = hasTroll
+      ? { x: this.camps[campCount - 1].x, y: this.camps[campCount - 1].y }
+      : base.trollSlot;
+
+    const n1 = this.nexuses.find(n => n.team === 1);
+    const n2 = this.nexuses.find(n => n.team === 2);
+
+    // Mine slots (pairs: blue=even, red=odd)
+    const mineSlots: { bluePos: { x: number; y: number }; redPos: { x: number; y: number } }[] = [];
+    for (let i = 0; i + 1 < this.mineNodes.length; i += 2) {
+      mineSlots.push({
+        bluePos: { x: this.mineNodes[i].x, y: this.mineNodes[i].y },
+        redPos: { x: this.mineNodes[i + 1].x, y: this.mineNodes[i + 1].y },
+      });
+    }
+
+    // Armory slots (pairs: blue=even, red=odd)
+    const armorySlots: { bluePos: { x: number; y: number }; redPos: { x: number; y: number } }[] = [];
+    for (let i = 0; i + 1 < this.armories.length; i += 2) {
+      armorySlots.push({
+        bluePos: { x: this.armories[i].x, y: this.armories[i].y },
+        redPos: { x: this.armories[i + 1].x, y: this.armories[i + 1].y },
+      });
+    }
+
+    return {
+      id: base.id,
+      name: base.name,
+      description: base.description || '',
+      worldW: base.worldW || WORLD_W,
+      worldH: base.worldH || WORLD_H,
+      p1Base: { x: n1?.x || base.p1Base.x, y: n1?.y || base.p1Base.y },
+      p2Base: { x: n2?.x || base.p2Base.x, y: n2?.y || base.p2Base.y },
+      safeRadius: base.safeRadius || 500,
+      campSlots,
+      trollSlot,
+      carrotZones: base.carrotZones || [],
+      wildZones: base.wildZones || [],
+      wildExclusions: base.wildExclusions || [],
+      mineSlots,
+      armorySlots,
+      terrain: base.terrain || [],
+    };
+  }
+
+  private async editorSaveToServer(): Promise<void> {
+    this.editorSetSyncState('saving');
+    const currentMap = this.editorBuildMapDef();
+    let allMaps: MapDef[] = [];
+    try {
+      const res = await fetch('/__save_horde_maps');
+      if (res.ok) {
+        const parsed = await res.json();
+        if (Array.isArray(parsed)) allMaps = parsed;
+      }
+    } catch { /* no existing maps */ }
+
+    const existingIdx = allMaps.findIndex((m: MapDef) => m.id === currentMap.id);
+    if (existingIdx >= 0) {
+      allMaps[existingIdx] = currentMap;
+    } else {
+      allMaps.push(currentMap);
+    }
+
+    try {
+      const res = await fetch('/__save_horde_maps', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(allMaps),
+      });
+      if (res.ok) {
+        HordeScene.editorMaps = allMaps;
+        // Also save to localStorage so HTML editor and game stay in sync
+        try { localStorage.setItem('horde-editor-maps', JSON.stringify(allMaps)); } catch { /* */ }
+        this.editorSetSyncState('saved');
+        this.editorShowSaveStatus('Saved!', '#00ff88');
+      } else {
+        this.editorSetSyncState('error');
+        this.editorShowSaveStatus('Save failed!', '#FF5555');
+      }
+    } catch {
+      this.editorSetSyncState('error');
+      this.editorShowSaveStatus('Save failed!', '#FF5555');
+    }
+  }
+
+  private editorShowSaveStatus(text: string, color: string) {
+    // Panel status
+    const el = this.editorPanelEl?.querySelector('#editor-save-status') as HTMLDivElement | null;
+    if (el) {
+      el.textContent = text;
+      el.style.color = color;
+      setTimeout(() => { if (el) el.textContent = ''; }, 3000);
+    }
+    // Big center toast so it's unmissable
+    const container = document.getElementById('game-container') ?? document.body;
+    const toast = document.createElement('div');
+    toast.style.cssText = `
+      position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) scale(0.8);
+      padding:14px 32px;background:${color === '#00ff88' ? 'rgba(0,80,40,0.95)' : 'rgba(80,0,0,0.95)'};
+      border:2px solid ${color};border-radius:12px;z-index:999;
+      font-family:'Fredoka',sans-serif;font-size:18px;font-weight:800;
+      color:${color};letter-spacing:2px;pointer-events:none;
+      transition:all 0.3s ease;opacity:0;
+    `;
+    toast.textContent = text === 'Saved!' ? 'SAVED' : 'SAVE FAILED';
+    container.appendChild(toast);
+    // Animate in
+    requestAnimationFrame(() => {
+      toast.style.opacity = '1';
+      toast.style.transform = 'translate(-50%,-50%) scale(1)';
+    });
+    // Fade out and remove
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translate(-50%,-60%) scale(0.9)';
+      setTimeout(() => toast.remove(), 300);
+    }, 1200);
+  }
+
+  private editorAddCampSlot() {
+    // Add a pair of camps (blue + red) near the center
+    const cx = WORLD_W / 2, cy = WORLD_H / 2;
+    const offset = 200 + Math.random() * 200;
+    const angle = Math.random() * Math.PI * 2;
+    const x1 = Math.round(cx + Math.cos(angle) * offset);
+    const y1 = Math.round(cy + Math.sin(angle) * offset);
+    const x2 = Math.round(cx + (cx - x1));
+    const y2 = Math.round(cy + (cy - y1));
+
+    // Pick a random animal type (T1)
+    const type = 'gnome';
+    const def = ANIMALS[type];
+    const idx = this.camps.length;
+
+    // Create CampDefs
+    this.activeCampDefs.push({
+      id: `camp_${idx}`, name: `${def.emoji} New Camp`, type,
+      x: x1, y: y1, guards: 1, spawnMs: 4000, buff: { stat: 'attack', value: 0.05 },
+    });
+    this.activeCampDefs.push({
+      id: `camp_${idx + 1}`, name: `${def.emoji} New Camp`, type,
+      x: x2, y: y2, guards: 1, spawnMs: 4000, buff: { stat: 'hp', value: 0.05 },
+    });
+
+    // Create game objects
+    for (const [cx_, cy_, campId, campName] of [[x1, y1, `camp_${idx}`, `${def.emoji} New Camp`], [x2, y2, `camp_${idx + 1}`, `${def.emoji} New Camp`]] as [number, number, string, string][]) {
+      const area = this.add.circle(cx_, cy_, CAMP_RANGE, 0xFFD93D, 0.06)
+        .setStrokeStyle(2, 0xFFD93D, 0.25).setDepth(51);
+      const label = this.add.text(cx_, cy_ - 55, campName, {
+        fontSize: '18px', color: '#FFD93D', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
+        stroke: '#000000', strokeThickness: 4,
+      }).setOrigin(0.5).setDepth(52);
+      const captureBar = this.add.graphics().setDepth(53);
+      this.camps.push({
+        id: campId, name: campName, animalType: type, tier: def.tier,
+        guardCount: 1, x: cx_, y: cy_, owner: 0,
+        spawnMs: 4000, spawnTimer: 0, buff: { stat: 'attack', value: 0.05 },
+        label, area, captureBar, storedFood: 0,
+        scouted: false, lastSeenOwner: 0, lastSeenLabel: '', lastSeenColor: '#FFD93D',
+      });
+    }
+    this.editorAutoSave();
+    this.editorUpdatePanel();
+  }
+
+  private editorAddMineSlot() {
+    const cx = WORLD_W / 2, cy = WORLD_H / 2;
+    const offset = 400 + Math.random() * 300;
+    const angle = Math.random() * Math.PI * 2;
+    const x1 = Math.round(cx + Math.cos(angle) * offset);
+    const y1 = Math.round(cy + Math.sin(angle) * offset);
+    const x2 = Math.round(cx + (cx - x1));
+    const y2 = Math.round(cy + (cy - y1));
+    const idx = this.mineNodes.length;
+    this.mineNodes.push({ id: `mine_${idx}`, x: x1, y: y1, sprite: null, label: null });
+    this.mineNodes.push({ id: `mine_${idx + 1}`, x: x2, y: y2, sprite: null, label: null });
+    // Sprites will be created by updateMineVisuals
+    this.editorAutoSave();
+    this.editorUpdatePanel();
+  }
+
+  private editorAddArmorySlot() {
+    const cx = WORLD_W / 2, cy = WORLD_H / 2;
+    const offset = 300 + Math.random() * 200;
+    const angle = Math.random() * Math.PI * 2;
+    const x1 = Math.round(cx + Math.cos(angle) * offset);
+    const y1 = Math.round(cy + Math.sin(angle) * offset);
+    const x2 = Math.round(cx + (cx - x1));
+    const y2 = Math.round(cy + (cy - y1));
+    this.armories.push({ x: x1, y: y1, team: 1, sprite: null, label: null });
+    this.armories.push({ x: x2, y: y2, team: 2, sprite: null, label: null });
+    this.editorAutoSave();
+    this.editorUpdatePanel();
+  }
+
+  private editorDeleteSelected() {
+    if (!this.editorSelected) return;
+    const sel = this.editorSelected;
+
+    switch (sel.type) {
+      case 'camp': {
+        // Delete camp + its pair (must delete in pairs: even=blue, odd=red)
+        const pairBase = sel.index % 2 === 0 ? sel.index : sel.index - 1;
+        // Remove game objects
+        for (let i = pairBase + 1; i >= pairBase && i < this.camps.length; i--) {
+          const c = this.camps[i];
+          c.area?.destroy();
+          c.label?.destroy();
+          c.captureBar?.destroy();
+          // Remove defenders
+          this.units = this.units.filter(u => u.campId !== c.id);
+        }
+        this.camps.splice(pairBase, 2);
+        this.activeCampDefs.splice(pairBase, 2);
+        break;
+      }
+      case 'mine': {
+        const pairBase = sel.index % 2 === 0 ? sel.index : sel.index - 1;
+        for (let i = pairBase + 1; i >= pairBase && i < this.mineNodes.length; i--) {
+          const m = this.mineNodes[i];
+          m.sprite?.destroy();
+          m.label?.destroy();
+        }
+        this.mineNodes.splice(pairBase, 2);
+        break;
+      }
+      case 'armory': {
+        const pairBase = sel.index % 2 === 0 ? sel.index : sel.index - 1;
+        for (let i = pairBase + 1; i >= pairBase && i < this.armories.length; i--) {
+          const a = this.armories[i];
+          a.sprite?.destroy();
+          a.label?.destroy();
+        }
+        this.armories.splice(pairBase, 2);
+        break;
+      }
+      case 'nexus':
+        // Don't allow deleting nexuses
+        return;
+    }
+    this.editorSelected = null;
+    this.editorUpdateHighlight();
+    this.editorAutoSave();
+    this.editorUpdatePanel();
+  }
+
   // ─── CLEANUP ────────────────────────────────────────────────
 
   private cleanupHTML() {
@@ -6264,5 +7597,9 @@ export class HordeScene extends Phaser.Scene {
     this.pendingHits = [];
     try { this.recognition?.abort(); } catch (_e) { /* */ }
     if (this.firebase) { this.firebase.cleanup(); this.firebase = null; }
+    if (this.editorSyncChannel) { this.editorSyncChannel.close(); this.editorSyncChannel = null; }
+    this.editorPanelEl?.remove(); this.editorPanelEl = null;
+    this.editorHighlight?.destroy(); this.editorHighlight = null;
+    if (this.editorSaveTimeout) { clearTimeout(this.editorSaveTimeout); this.editorSaveTimeout = null; }
   }
 }

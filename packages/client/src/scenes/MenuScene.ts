@@ -416,7 +416,11 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private startHordeMode() {
-    this.showMapPicker();
+    // Skip map picker — go straight to game using the editor-saved map
+    this.cameras.main.fadeOut(400, 27, 16, 64);
+    this.cameras.main.once('camerafadeoutcomplete', () => {
+      this.scene.start('HordeScene', { mapId: 'default' });
+    });
   }
 
   private showMapPicker() {

@@ -57,11 +57,13 @@
       font-size: 11px; font-weight: bold; transition: filter 0.15s;
     }
     .btn:hover { filter: brightness(1.2); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
     .btn-green { background: #27ae60; color: #fff; }
     .btn-red { background: #c0392b; color: #fff; }
     .btn-blue { background: #2980b9; color: #fff; }
     .btn-purple { background: #8e44ad; color: #fff; }
     .btn-gold { background: #d4a017; color: #000; }
+    .btn-gray { background: #555; color: #fff; }
     .btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
 
     /* Terrain palette */
@@ -92,6 +94,7 @@
       margin-bottom: 2px; background: #111; cursor: pointer;
     }
     .camp-item:hover { background: #1a1a3e; }
+    .camp-item.selected { background: #2a2050; border: 1px solid #FFD700; }
     .camp-item .tier-badge {
       display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 9px; font-weight: bold; color: #fff;
     }
@@ -102,8 +105,10 @@
     /* Zone list */
     .zone-item {
       display: flex; align-items: center; gap: 4px; padding: 3px 6px; border-radius: 3px;
-      margin-bottom: 2px; background: #111; font-size: 11px;
+      margin-bottom: 2px; background: #111; font-size: 11px; cursor: pointer;
     }
+    .zone-item:hover { background: #1a1a3e; }
+    .zone-item.selected { background: #2a2050; border: 1px solid #FFD700; }
     .zone-item .del-btn { margin-left: auto; color: #c0392b; cursor: pointer; }
 
     /* ── CANVAS AREA ── */
@@ -120,10 +125,12 @@
 
     /* Status bar */
     #statusbar {
-      position: absolute; bottom: 0; left: 0; right: 0; height: 24px; background: rgba(0,0,0,0.7);
+      position: absolute; bottom: 0; left: 0; right: 0; height: 28px; background: rgba(0,0,0,0.8);
       display: flex; align-items: center; padding: 0 10px; font-size: 11px; color: #888; gap: 16px;
-      z-index: 10;
+      z-index: 10; border-top: 1px solid #333;
     }
+    #statusbar .sep { color: #333; }
+    #statusbar .shortcut { color: #666; font-size: 10px; }
 
     /* Toast */
     .toast {
@@ -149,6 +156,40 @@
       font-size: 11px; resize: none;
     }
     #export-inner .modal-btns { display: flex; gap: 8px; margin-top: 10px; }
+
+    /* ── PROPERTY INSPECTOR ── */
+    #inspector {
+      display: none; padding: 10px 14px; border-bottom: 1px solid #222; background: #1a1a3e;
+    }
+    #inspector.show { display: block; }
+    #inspector h3 { font-size: 12px; color: #FFD700; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+    #inspector .insp-row {
+      display: flex; align-items: center; gap: 6px; font-size: 11px; margin-bottom: 4px;
+    }
+    #inspector .insp-row label { color: #aaa; min-width: 50px; }
+    #inspector .insp-row input {
+      width: 60px; padding: 2px 5px; background: #222; color: #eee; border: 1px solid #444;
+      border-radius: 3px; font-size: 11px; font-family: monospace;
+    }
+    #inspector .insp-row select {
+      padding: 2px 5px; background: #222; color: #eee; border: 1px solid #444;
+      border-radius: 3px; font-size: 11px;
+    }
+    #inspector .insp-actions { display: flex; gap: 6px; margin-top: 8px; }
+
+    /* Undo/redo bar */
+    .undo-bar {
+      display: flex; gap: 4px; align-items: center;
+    }
+    .undo-bar .btn { padding: 4px 8px; font-size: 13px; }
+
+    /* Layer toggles */
+    .layer-toggle {
+      display: flex; align-items: center; gap: 6px; font-size: 11px; color: #ccc;
+      cursor: pointer; padding: 2px 0;
+    }
+    .layer-toggle:hover { color: #FFD700; }
+    .layer-toggle input { accent-color: #FFD700; cursor: pointer; }
   </style>
 </head>
 <body>
@@ -156,56 +197,83 @@
 <div id="sidebar">
   <div class="sidebar-header">
     <h2>Horde Map Editor</h2>
+    <div class="undo-bar">
+      <button class="btn btn-gray" id="btn-undo" title="Undo (Ctrl+Z)" disabled>&#x21A9;</button>
+      <button class="btn btn-gray" id="btn-redo" title="Redo (Ctrl+Y)" disabled>&#x21AA;</button>
+    </div>
+  </div>
+
+  <!-- Property Inspector (shows when something is selected) -->
+  <div id="inspector">
+    <h3><span id="insp-icon"></span><span id="insp-title">Selection</span></h3>
+    <div id="insp-body"></div>
+    <div class="insp-actions">
+      <button class="btn btn-red btn-small" id="btn-delete-sel">Delete</button>
+      <button class="btn btn-purple btn-small" id="btn-duplicate-sel">Duplicate</button>
+    </div>
   </div>
 
   <!-- Map Selection -->
   <div class="section">
-    <div class="section-title">Map <span class="arrow">▾</span></div>
+    <div class="section-title">Map <span class="arrow">&#x25BE;</span></div>
     <div class="section-body">
       <select id="map-select" class="map-select"></select>
       <div class="btn-row" style="margin-top:4px">
-        <button class="btn btn-green" id="btn-new-map">+ New Map</button>
+        <button class="btn btn-green" id="btn-new-map">+ New</button>
         <button class="btn btn-purple" id="btn-duplicate">Duplicate</button>
+        <button class="btn btn-blue" id="btn-reset">Reset</button>
       </div>
     </div>
   </div>
 
   <!-- Map Properties -->
   <div class="section">
-    <div class="section-title" data-toggle="props">Properties <span class="arrow">▾</span></div>
+    <div class="section-title" data-toggle="props">Properties <span class="arrow">&#x25BE;</span></div>
     <div class="section-body" id="sec-props">
       <div class="knob-row"><label>ID</label><input type="text" id="knob-id" style="width:120px"></div>
       <div class="knob-row"><label>Name</label><input type="text" id="knob-name" style="width:120px"></div>
+      <div class="knob-row"><label>Desc</label><input type="text" id="knob-desc" style="width:120px" placeholder="Map description..."></div>
       <div class="knob-row"><label>World W</label><input type="number" id="knob-ww" min="800" max="8000" step="100"><span class="val" id="val-ww"></span></div>
       <div class="knob-row"><label>World H</label><input type="number" id="knob-wh" min="800" max="8000" step="100"><span class="val" id="val-wh"></span></div>
       <div class="knob-row"><label>Safe Radius</label><input type="range" id="knob-safe" min="100" max="1200" step="50"><span class="val" id="val-safe"></span></div>
     </div>
   </div>
 
-  <!-- Tools -->
+  <!-- Tools — grouped by category -->
   <div class="section">
-    <div class="section-title" data-toggle="tools">Tools <span class="arrow">▾</span></div>
+    <div class="section-title" data-toggle="tools">Tools <span class="arrow">&#x25BE;</span></div>
     <div class="section-body" id="sec-tools">
+      <div style="font-size:9px;color:#666;margin-bottom:2px">GENERAL</div>
       <div class="tool-palette">
-        <div class="tool-btn active" data-tool="select">Select</div>
-        <div class="tool-btn" data-tool="place_camp">+ Camp</div>
-        <div class="tool-btn" data-tool="place_troll">+ Troll</div>
-        <div class="tool-btn" data-tool="move_base">Move Base</div>
-        <div class="tool-btn" data-tool="add_carrot_zone">+ Carrot Zone</div>
-        <div class="tool-btn" data-tool="add_wild_zone">+ Wild Zone</div>
-        <div class="tool-btn" data-tool="terrain_paint">Terrain Paint</div>
-        <div class="tool-btn" data-tool="terrain_erase">Terrain Erase</div>
+        <div class="tool-btn active" data-tool="select" title="[V] Select & move objects">&#x1F5D5; Select</div>
+      </div>
+      <div style="font-size:9px;color:#666;margin:6px 0 2px">PLACE OBJECTS</div>
+      <div class="tool-palette">
+        <div class="tool-btn" data-tool="place_camp" title="[C] Click to place camp pair">&#x2694; Camp</div>
+        <div class="tool-btn" data-tool="place_troll" title="Click to place troll boss">&#x1F451; Troll</div>
+        <div class="tool-btn" data-tool="place_mine" title="[M] Click to place mine pair">&#x2699; Mine</div>
+        <div class="tool-btn" data-tool="place_armory" title="[A] Click to place armory pair">&#x2692; Armory</div>
+      </div>
+      <div style="font-size:9px;color:#666;margin:6px 0 2px">ZONES</div>
+      <div class="tool-palette">
+        <div class="tool-btn" data-tool="add_carrot_zone" title="Click to add carrot zone">&#x1F955; Carrot</div>
+        <div class="tool-btn" data-tool="add_wild_zone" title="Click to add wild zone">&#x1F43A; Wild</div>
+      </div>
+      <div style="font-size:9px;color:#666;margin:6px 0 2px">TERRAIN</div>
+      <div class="tool-palette">
+        <div class="tool-btn" data-tool="terrain_paint" title="[B] Paint terrain">&#x1F58C; Paint</div>
+        <div class="tool-btn" data-tool="terrain_erase" title="[E] Erase terrain">&#x1F6AB; Erase</div>
       </div>
     </div>
   </div>
 
-  <!-- Terrain -->
+  <!-- Terrain options (brush) -->
   <div class="section">
-    <div class="section-title" data-toggle="terrain">Terrain <span class="arrow">▾</span></div>
+    <div class="section-title" data-toggle="terrain">Terrain Brush <span class="arrow">&#x25BE;</span></div>
     <div class="section-body" id="sec-terrain">
       <div class="terrain-palette" id="terrain-palette"></div>
       <div class="knob-row" style="margin-top:4px">
-        <label>Brush Size</label>
+        <label>Size</label>
         <input type="range" id="brush-size" min="20" max="400" value="80" step="10">
         <span class="val" id="val-brush">80</span>
       </div>
@@ -219,29 +287,67 @@
     </div>
   </div>
 
-  <!-- Camp Slots -->
+  <!-- Objects list (camps + structures) -->
   <div class="section">
-    <div class="section-title" data-toggle="camps">Camp Slots <span class="arrow">▾</span></div>
-    <div class="section-body" id="sec-camps">
-      <div id="camp-list" class="camp-list"></div>
-      <div class="knob-row" style="margin-top:4px">
-        <label>New camp tier</label>
-        <select id="new-camp-tier" class="map-select" style="width:60px">
+    <div class="section-title" data-toggle="objects">Objects <span id="object-count" style="color:#FFD700;font-size:10px;text-transform:none;letter-spacing:0"></span> <span class="arrow">&#x25BE;</span></div>
+    <div class="section-body" id="sec-objects">
+      <div style="font-size:11px;color:#aaa;margin-bottom:4px;display:flex;align-items:center;justify-content:space-between">
+        Camp Slots
+        <select id="new-camp-tier" class="map-select" style="width:55px;font-size:10px">
           <option value="1">T1</option><option value="2">T2</option>
           <option value="3">T3</option><option value="4">T4</option>
         </select>
       </div>
+      <div id="camp-list" class="camp-list"></div>
+      <div style="font-size:11px;color:#aaa;margin:8px 0 4px">Mine Nodes</div>
+      <div id="mine-list"></div>
+      <div style="font-size:11px;color:#aaa;margin:8px 0 4px">Armories</div>
+      <div id="armory-list"></div>
     </div>
   </div>
 
   <!-- Zones -->
   <div class="section">
-    <div class="section-title" data-toggle="zones">Zones <span class="arrow">▾</span></div>
+    <div class="section-title" data-toggle="zones">Zones <span class="arrow">&#x25BE;</span></div>
     <div class="section-body" id="sec-zones">
       <div style="font-size:11px;color:#aaa;margin-bottom:4px">Carrot Zones</div>
       <div id="carrot-zone-list"></div>
       <div style="font-size:11px;color:#aaa;margin:6px 0 4px">Wild Zones</div>
       <div id="wild-zone-list"></div>
+    </div>
+  </div>
+
+  <!-- Layer Visibility -->
+  <div class="section">
+    <div class="section-title" data-toggle="layers">Layers <span class="arrow">&#x25BE;</span></div>
+    <div class="section-body" id="sec-layers">
+      <label class="layer-toggle"><input type="checkbox" data-layer="camps" checked> &#x2694; Camps</label>
+      <label class="layer-toggle"><input type="checkbox" data-layer="mines" checked> &#x2699; Mines</label>
+      <label class="layer-toggle"><input type="checkbox" data-layer="armories" checked> &#x2692; Armories</label>
+      <label class="layer-toggle"><input type="checkbox" data-layer="carrot_zones" checked> &#x1F955; Carrot Zones</label>
+      <label class="layer-toggle"><input type="checkbox" data-layer="wild_zones" checked> &#x1F43A; Wild Zones</label>
+      <label class="layer-toggle"><input type="checkbox" data-layer="terrain" checked> &#x1F332; Terrain</label>
+      <label class="layer-toggle"><input type="checkbox" data-layer="safe_radius" checked> &#x1F6E1; Safe Radius</label>
+      <label class="layer-toggle"><input type="checkbox" data-layer="grid" checked> &#x1F4CF; Grid</label>
+      <label class="layer-toggle"><input type="checkbox" data-layer="game_overlay" checked> &#x1F3AE; Game Overlay</label>
+    </div>
+  </div>
+
+  <!-- Tier Reference -->
+  <div class="section">
+    <div class="section-title" data-toggle="ref">Tier Reference <span class="arrow collapsed">&#x25BE;</span></div>
+    <div class="section-body collapsed" id="sec-ref">
+      <div style="font-size:10px;line-height:1.6;color:#aaa">
+        <span style="color:#2d7a3a">&#x25CF;</span> <b>T1</b>: gnome, turtle (1&#x1F955;)<br>
+        <span style="color:#2266aa">&#x25CF;</span> <b>T2</b>: skull, spider, gnoll, rogue (3&#x1F356;)<br>
+        <span style="color:#9b59b6">&#x25CF;</span> <b>T3</b>: panda, lizard (5&#x1F356;)<br>
+        <span style="color:#c0392b">&#x25CF;</span> <b>T4</b>: minotaur, shaman (8&#x1F48E;)<br>
+        <span style="color:#FFD700">&#x25CF;</span> <b>T5</b>: troll (12&#x1F48E;)
+      </div>
+      <div style="font-size:10px;line-height:1.6;color:#666;margin-top:6px">
+        <b>Eras:</b> 1=Forage, 2=Hunt(1 camp),<br>
+        3=Expand(3), 4=War(elite/5), 5=End(T4)
+      </div>
     </div>
   </div>
 
@@ -252,8 +358,15 @@
       <button class="btn btn-green" id="btn-copy-json" style="flex:1">Copy JSON</button>
     </div>
     <div class="btn-row" style="margin-top:6px">
-      <button class="btn btn-blue" id="btn-reset" style="flex:1">Reset</button>
       <button class="btn btn-red" id="btn-clear-terrain" style="flex:1">Clear Terrain</button>
+    </div>
+    <div class="btn-row" style="margin-top:6px">
+      <button class="btn btn-green" id="btn-sync-toggle" style="flex:1">&#x1F517; Sync</button>
+      <button class="btn btn-purple" id="btn-sync-restart" style="flex:1">&#x21BB; Restart Game</button>
+    </div>
+    <div style="margin-top:8px; font-size:9px; color:#555; line-height:1.6">
+      <b>Keys:</b> V=Select B=Paint E=Erase C=Camp M=Mine<br>
+      A=Armory F=Fit [/]=Brush Ctrl+Z/Y Del Ctrl+D/C/V
     </div>
   </div>
 </div>
@@ -263,9 +376,17 @@
   <div id="tooltip"></div>
   <div id="statusbar">
     <span id="status-tool">Tool: Select</span>
-    <span id="status-pos">( — , — )</span>
+    <span class="sep">|</span>
+    <span id="status-pos">( -- , -- )</span>
+    <span class="sep">|</span>
     <span id="status-zoom">Zoom: 100%</span>
-    <span style="margin-left:auto">Scroll=Zoom | Right-drag=Pan | Left=Use Tool</span>
+    <span class="sep">|</span>
+    <span id="status-sel">No selection</span>
+    <span class="sep">|</span>
+    <span id="status-undo">Undo: 0</span>
+    <span class="sep">|</span>
+    <span id="status-sync" style="color:#888">Ready</span>
+    <span style="margin-left:auto" class="shortcut">Scroll=Zoom | Right-drag=Pan | Left=Use Tool</span>
   </div>
 </div>
 
@@ -283,26 +404,26 @@
 <script type="module">
 import { ALL_MAPS, TIER_POOLS } from '@prompt-battle/shared';
 
-// ═══════════════════════════════════════════════════════════
+// =================================================================
 // STATE
-// ═══════════════════════════════════════════════════════════
+// =================================================================
 
 const TIER_COLORS = { 1: '#2d7a3a', 2: '#2266aa', 3: '#9b59b6', 4: '#c0392b' };
 const TERRAIN_TYPES = [
-  { id: 'water',    label: 'Water',    color: '#2266CC', icon: '🌊' },
-  { id: 'mountain', label: 'Mountain', color: '#8B8B8B', icon: '⛰️' },
-  { id: 'bush',     label: 'Bush',     color: '#4A8B3A', icon: '🌿' },
-  { id: 'forest',   label: 'Forest',   color: '#2E6B3E', icon: '🌲' },
-  { id: 'lava',     label: 'Lava',     color: '#CC3300', icon: '🔥' },
-  { id: 'sand',     label: 'Sand',     color: '#D4B866', icon: '🏖️' },
-  { id: 'swamp',    label: 'Swamp',    color: '#4A6B3A', icon: '🐸' },
-  { id: 'ice',      label: 'Ice',      color: '#88CCEE', icon: '❄️' },
-  { id: 'ruins',    label: 'Ruins',    color: '#7777AA', icon: '🏚️' },
-  { id: 'bridge',   label: 'Bridge',   color: '#AA8844', icon: '🌉' },
+  { id: 'water',    label: 'Water',    color: '#2266CC', icon: '\u{1F30A}' },
+  { id: 'mountain', label: 'Mountain', color: '#8B8B8B', icon: '\u{26F0}\uFE0F' },
+  { id: 'bush',     label: 'Bush',     color: '#4A8B3A', icon: '\u{1F33F}' },
+  { id: 'forest',   label: 'Forest',   color: '#2E6B3E', icon: '\u{1F332}' },
+  { id: 'lava',     label: 'Lava',     color: '#CC3300', icon: '\u{1F525}' },
+  { id: 'sand',     label: 'Sand',     color: '#D4B866', icon: '\u{1F3D6}\uFE0F' },
+  { id: 'swamp',    label: 'Swamp',    color: '#4A6B3A', icon: '\u{1F438}' },
+  { id: 'ice',      label: 'Ice',      color: '#88CCEE', icon: '\u{2744}\uFE0F' },
+  { id: 'ruins',    label: 'Ruins',    color: '#7777AA', icon: '\u{1F3DA}\uFE0F' },
+  { id: 'bridge',   label: 'Bridge',   color: '#AA8844', icon: '\u{1F309}' },
 ];
 
-let maps = [];          // working copies of all maps
-let mapIdx = 0;         // currently editing
+let maps = [];
+let mapIdx = 0;
 let currentTool = 'select';
 let selectedTerrain = 'water';
 let brushShape = 'circle';
@@ -311,23 +432,175 @@ let brushSize = 80;
 // Camera
 let camX = 0, camY = 0, zoom = 0.2;
 
+// Selection: { type: 'camp'|'troll'|'base'|'carrot_zone'|'wild_zone'|'terrain'|'mine'|'armory', idx?, side? }
+let selection = null;
+
+// Clipboard for copy/paste
+let clipboard = null;
+
 // Dragging state
-let dragging = null;    // { type, idx, offsetX, offsetY, side? }
+let dragging = null;
+let dragStartSnap = null; // snapshot before drag begins
 let panning = false;
 let panStart = { x: 0, y: 0 };
 let camStart = { x: 0, y: 0 };
 let painting = false;
+let paintSnapshot = null; // undo snapshot taken once at paint start
 
-// Terrain features: array of { type, shape, x, y, w, h, radius }
-// Stored per map as maps[i]._terrain
+// Zone resize handles
+let resizing = null; // { type, idx, handle, origZone }
+
+// Layer visibility
+const layerVisible = {
+  camps: true, mines: true, armories: true,
+  carrot_zones: true, wild_zones: true, terrain: true,
+  safe_radius: true, grid: true, game_overlay: true,
+};
+
+// Terrain features stored per map as maps[i]._terrain
 function getMap() { return maps[mapIdx]; }
 function getTerrain() { return getMap()._terrain || (getMap()._terrain = []); }
 
-// ═══════════════════════════════════════════════════════════
-// INIT
-// ═══════════════════════════════════════════════════════════
+// =================================================================
+// UNDO / REDO
+// =================================================================
+
+const MAX_UNDO = 80;
+let undoStack = [];
+let redoStack = [];
 
 function deepClone(obj) { return JSON.parse(JSON.stringify(obj)); }
+
+function snapshotMap() {
+  const m = getMap();
+  return deepClone({ mapIdx, data: m });
+}
+
+function pushUndo() {
+  undoStack.push(snapshotMap());
+  if (undoStack.length > MAX_UNDO) undoStack.shift();
+  redoStack = [];
+  syncUndoButtons();
+}
+
+function undo() {
+  if (undoStack.length === 0) return;
+  redoStack.push(snapshotMap());
+  const snap = undoStack.pop();
+  mapIdx = snap.mapIdx;
+  maps[mapIdx] = snap.data;
+  selection = null;
+  populateMapSelect();
+  syncUI(); render();
+  syncUndoButtons();
+}
+
+function redo() {
+  if (redoStack.length === 0) return;
+  undoStack.push(snapshotMap());
+  const snap = redoStack.pop();
+  mapIdx = snap.mapIdx;
+  maps[mapIdx] = snap.data;
+  selection = null;
+  populateMapSelect();
+  syncUI(); render();
+  syncUndoButtons();
+}
+
+function syncUndoButtons() {
+  document.getElementById('btn-undo').disabled = undoStack.length === 0;
+  document.getElementById('btn-redo').disabled = redoStack.length === 0;
+  document.getElementById('status-undo').textContent = `Undo: ${undoStack.length}`;
+}
+
+// =================================================================
+// PERSISTENCE — auto-save to server file + localStorage fallback
+// =================================================================
+
+const STORAGE_KEY = 'horde-editor-maps';
+const STORAGE_IDX_KEY = 'horde-editor-mapIdx';
+
+let saveTimer = null;
+
+function cleanMapForSave(m) {
+  // Strip _terrain from the saved version (it's editor-only visual data)
+  const clone = deepClone(m);
+  if (clone._terrain && clone._terrain.length > 0) {
+    clone.terrain = clone._terrain;
+  }
+  delete clone._terrain;
+  return clone;
+}
+
+function saveToServer() {
+  try {
+    const cleanMaps = maps.map(cleanMapForSave);
+    updateSaveIndicator('saving');
+    fetch('/__save_horde_maps', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cleanMaps),
+    }).then(res => {
+      if (res.ok) {
+        updateSaveIndicator('saved');
+      } else {
+        updateSaveIndicator('error');
+      }
+    }).catch(() => {
+      updateSaveIndicator('error');
+    });
+    // Also save to localStorage as backup
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(maps));
+    localStorage.setItem(STORAGE_IDX_KEY, String(mapIdx));
+  } catch (e) {
+    updateSaveIndicator('error');
+  }
+}
+
+function scheduleSave() {
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => { saveTimer = null; saveToServer(); }, 800);
+}
+
+async function loadFromServer() {
+  try {
+    const res = await fetch('/__save_horde_maps');
+    if (res.ok) {
+      const parsed = await res.json();
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        maps = parsed.map(m => {
+          const clone = deepClone(m);
+          // Restore _terrain from terrain field
+          if (clone.terrain) { clone._terrain = clone.terrain; delete clone.terrain; }
+          if (!clone._terrain) clone._terrain = [];
+          return clone;
+        });
+        const idx = parseInt(localStorage.getItem(STORAGE_IDX_KEY) || '0');
+        mapIdx = Math.min(idx, maps.length - 1);
+        return true;
+      }
+    }
+  } catch (e) { /* server not available */ }
+  // Fallback: try localStorage
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        maps = parsed;
+        for (const m of maps) { if (!m._terrain) m._terrain = []; }
+        const idx = parseInt(localStorage.getItem(STORAGE_IDX_KEY) || '0');
+        mapIdx = Math.min(idx, maps.length - 1);
+        return true;
+      }
+    }
+  } catch (e) { /* corrupted */ }
+  return false;
+}
+
+// =================================================================
+// INIT
+// =================================================================
 
 function initMaps() {
   maps = ALL_MAPS.map(m => {
@@ -336,6 +609,8 @@ function initMaps() {
     return clone;
   });
 }
+
+// Placeholder — real init happens in boot() below
 initMaps();
 
 const canvas = document.getElementById('map-canvas');
@@ -350,7 +625,6 @@ function resizeCanvas() {
 }
 window.addEventListener('resize', resizeCanvas);
 
-// Center camera on map
 function centerCamera() {
   const m = getMap();
   zoom = Math.min(canvas.width / m.worldW, canvas.height / m.worldH) * 0.85;
@@ -358,9 +632,9 @@ function centerCamera() {
   camY = m.worldH / 2 - (canvas.height / 2) / zoom;
 }
 
-// ═══════════════════════════════════════════════════════════
+// =================================================================
 // COORDINATE TRANSFORMS
-// ═══════════════════════════════════════════════════════════
+// =================================================================
 
 function worldToScreen(wx, wy) {
   return { x: (wx - camX) * zoom, y: (wy - camY) * zoom };
@@ -368,17 +642,458 @@ function worldToScreen(wx, wy) {
 function screenToWorld(sx, sy) {
   return { x: sx / zoom + camX, y: sy / zoom + camY };
 }
+const snap = v => Math.round(v / 10) * 10;
 
-// ═══════════════════════════════════════════════════════════
+// =================================================================
+// SELECTION HELPERS
+// =================================================================
+
+function selEquals(a, b) {
+  if (!a || !b) return false;
+  return a.type === b.type && a.idx === b.idx && a.side === b.side;
+}
+
+function setSelection(sel) {
+  selection = sel;
+  // Auto-switch to select tool when something is selected
+  if (sel && currentTool !== 'select') {
+    currentTool = 'select';
+    document.querySelectorAll('[data-tool]').forEach(b => {
+      b.classList.toggle('active', b.dataset.tool === 'select');
+    });
+    document.getElementById('status-tool').textContent = 'Tool: select';
+  }
+  syncInspector();
+  syncUI();
+  updateStatusSelection();
+  render();
+}
+
+function clearSelection() {
+  selection = null;
+  syncInspector();
+  syncUI();
+  updateStatusSelection();
+  render();
+}
+
+function updateStatusSelection() {
+  const el = document.getElementById('status-sel');
+  if (!selection) { el.textContent = 'No selection'; return; }
+  const m = getMap();
+  switch (selection.type) {
+    case 'base': el.textContent = `Selected: ${selection.side.toUpperCase()} Base`; break;
+    case 'troll': el.textContent = 'Selected: Troll Boss'; break;
+    case 'camp': {
+      const s = m.campSlots[selection.idx];
+      el.textContent = s ? `Selected: Camp #${selection.idx} T${s.tier} (${selection.side})` : 'No selection';
+      break;
+    }
+    case 'carrot_zone': el.textContent = `Selected: Carrot Zone #${selection.idx}`; break;
+    case 'wild_zone': el.textContent = `Selected: Wild Zone #${selection.idx}`; break;
+    case 'terrain': el.textContent = `Selected: Terrain #${selection.idx}`; break;
+    case 'mine': el.textContent = `Selected: Mine #${selection.idx} (${selection.side})`; break;
+    case 'armory': el.textContent = `Selected: Armory #${selection.idx} (${selection.side})`; break;
+    default: el.textContent = 'No selection';
+  }
+}
+
+function deleteSelection() {
+  if (!selection) return;
+  const m = getMap();
+  pushUndo();
+  switch (selection.type) {
+    case 'camp':
+      m.campSlots.splice(selection.idx, 1);
+      break;
+    case 'troll':
+      m.trollSlot = null;
+      break;
+    case 'carrot_zone':
+      m.carrotZones.splice(selection.idx, 1);
+      break;
+    case 'wild_zone':
+      m.wildZones.splice(selection.idx, 1);
+      break;
+    case 'terrain': {
+      const terrain = getTerrain();
+      terrain.splice(selection.idx, 1);
+      break;
+    }
+    case 'mine':
+      if (!m.mineSlots) return;
+      m.mineSlots.splice(selection.idx, 1);
+      break;
+    case 'armory':
+      if (!m.armorySlots) return;
+      m.armorySlots.splice(selection.idx, 1);
+      break;
+    case 'base':
+      showToast("Can't delete a base!");
+      return;
+  }
+  selection = null;
+  syncInspector();
+  syncUI(); render();
+  showToast('Deleted');
+}
+
+function duplicateSelection() {
+  if (!selection) return;
+  const m = getMap();
+  pushUndo();
+  const offset = 50;
+  switch (selection.type) {
+    case 'camp': {
+      const orig = m.campSlots[selection.idx];
+      const clone = deepClone(orig);
+      clone.bluePos.x += offset; clone.bluePos.y += offset;
+      clone.redPos.x += offset; clone.redPos.y += offset;
+      m.campSlots.push(clone);
+      selection = { type: 'camp', idx: m.campSlots.length - 1, side: selection.side };
+      break;
+    }
+    case 'carrot_zone': {
+      const orig = m.carrotZones[selection.idx];
+      const clone = deepClone(orig);
+      clone.x += offset; clone.y += offset;
+      m.carrotZones.push(clone);
+      selection = { type: 'carrot_zone', idx: m.carrotZones.length - 1 };
+      break;
+    }
+    case 'wild_zone': {
+      const orig = m.wildZones[selection.idx];
+      const clone = deepClone(orig);
+      clone.x += offset; clone.y += offset;
+      m.wildZones.push(clone);
+      selection = { type: 'wild_zone', idx: m.wildZones.length - 1 };
+      break;
+    }
+    case 'terrain': {
+      const terrain = getTerrain();
+      const orig = terrain[selection.idx];
+      const clone = deepClone(orig);
+      clone.x += offset; clone.y += offset;
+      terrain.push(clone);
+      selection = { type: 'terrain', idx: terrain.length - 1 };
+      break;
+    }
+    case 'mine': {
+      if (!m.mineSlots) return;
+      const orig = m.mineSlots[selection.idx];
+      const clone = deepClone(orig);
+      clone.bluePos.x += offset; clone.bluePos.y += offset;
+      clone.redPos.x += offset; clone.redPos.y += offset;
+      m.mineSlots.push(clone);
+      selection = { type: 'mine', idx: m.mineSlots.length - 1, side: selection.side };
+      break;
+    }
+    case 'armory': {
+      if (!m.armorySlots) return;
+      const orig = m.armorySlots[selection.idx];
+      const clone = deepClone(orig);
+      clone.bluePos.x += offset; clone.bluePos.y += offset;
+      clone.redPos.x += offset; clone.redPos.y += offset;
+      m.armorySlots.push(clone);
+      selection = { type: 'armory', idx: m.armorySlots.length - 1, side: selection.side };
+      break;
+    }
+    default:
+      showToast("Can't duplicate this");
+      return;
+  }
+  syncInspector();
+  syncUI(); render();
+  showToast('Duplicated');
+}
+
+function copySelection() {
+  if (!selection) return;
+  const m = getMap();
+  switch (selection.type) {
+    case 'camp': clipboard = { type: 'camp', data: deepClone(m.campSlots[selection.idx]) }; break;
+    case 'carrot_zone': clipboard = { type: 'carrot_zone', data: deepClone(m.carrotZones[selection.idx]) }; break;
+    case 'wild_zone': clipboard = { type: 'wild_zone', data: deepClone(m.wildZones[selection.idx]) }; break;
+    case 'terrain': clipboard = { type: 'terrain', data: deepClone(getTerrain()[selection.idx]) }; break;
+    case 'mine': clipboard = { type: 'mine', data: deepClone((m.mineSlots || [])[selection.idx]) }; break;
+    case 'armory': clipboard = { type: 'armory', data: deepClone((m.armorySlots || [])[selection.idx]) }; break;
+    default: showToast("Can't copy this"); return;
+  }
+  showToast('Copied');
+}
+
+function pasteClipboard() {
+  if (!clipboard) return;
+  const m = getMap();
+  pushUndo();
+  const data = deepClone(clipboard.data);
+  const offset = 80;
+  switch (clipboard.type) {
+    case 'camp':
+      data.bluePos.x += offset; data.bluePos.y += offset;
+      data.redPos.x += offset; data.redPos.y += offset;
+      m.campSlots.push(data);
+      selection = { type: 'camp', idx: m.campSlots.length - 1, side: 'blue' };
+      break;
+    case 'carrot_zone':
+      data.x += offset; data.y += offset;
+      m.carrotZones.push(data);
+      selection = { type: 'carrot_zone', idx: m.carrotZones.length - 1 };
+      break;
+    case 'wild_zone':
+      data.x += offset; data.y += offset;
+      m.wildZones.push(data);
+      selection = { type: 'wild_zone', idx: m.wildZones.length - 1 };
+      break;
+    case 'terrain':
+      data.x += offset; data.y += offset;
+      getTerrain().push(data);
+      selection = { type: 'terrain', idx: getTerrain().length - 1 };
+      break;
+    case 'mine':
+      data.bluePos.x += offset; data.bluePos.y += offset;
+      data.redPos.x += offset; data.redPos.y += offset;
+      if (!m.mineSlots) m.mineSlots = [];
+      m.mineSlots.push(data);
+      selection = { type: 'mine', idx: m.mineSlots.length - 1, side: 'blue' };
+      break;
+    case 'armory':
+      data.bluePos.x += offset; data.bluePos.y += offset;
+      data.redPos.x += offset; data.redPos.y += offset;
+      if (!m.armorySlots) m.armorySlots = [];
+      m.armorySlots.push(data);
+      selection = { type: 'armory', idx: m.armorySlots.length - 1, side: 'blue' };
+      break;
+  }
+  syncInspector();
+  syncUI(); render();
+  showToast('Pasted');
+}
+
+// =================================================================
+// PROPERTY INSPECTOR
+// =================================================================
+
+function syncInspector() {
+  const panel = document.getElementById('inspector');
+  const body = document.getElementById('insp-body');
+  const title = document.getElementById('insp-title');
+  const icon = document.getElementById('insp-icon');
+  const delBtn = document.getElementById('btn-delete-sel');
+  const dupBtn = document.getElementById('btn-duplicate-sel');
+
+  if (!selection) {
+    panel.classList.remove('show');
+    return;
+  }
+
+  panel.classList.add('show');
+  const m = getMap();
+
+  switch (selection.type) {
+    case 'base': {
+      const base = selection.side === 'p1' ? m.p1Base : m.p2Base;
+      icon.textContent = selection.side === 'p1' ? '\u{1F535}' : '\u{1F534}';
+      title.textContent = `${selection.side.toUpperCase()} Base`;
+      body.innerHTML = `
+        <div class="insp-row"><label>X</label><input type="number" data-prop="x" value="${base.x}" step="10"></div>
+        <div class="insp-row"><label>Y</label><input type="number" data-prop="y" value="${base.y}" step="10"></div>
+      `;
+      body.querySelectorAll('input').forEach(inp => {
+        inp.addEventListener('change', () => {
+          pushUndo();
+          base[inp.dataset.prop] = parseInt(inp.value) || 0;
+          render();
+        });
+      });
+      delBtn.style.display = 'none';
+      dupBtn.style.display = 'none';
+      break;
+    }
+    case 'troll': {
+      icon.textContent = '\u{1F451}';
+      title.textContent = 'Troll Boss (T5)';
+      const t = m.trollSlot;
+      body.innerHTML = `
+        <div class="insp-row"><label>X</label><input type="number" data-prop="x" value="${t.x}" step="10"></div>
+        <div class="insp-row"><label>Y</label><input type="number" data-prop="y" value="${t.y}" step="10"></div>
+      `;
+      body.querySelectorAll('input').forEach(inp => {
+        inp.addEventListener('change', () => {
+          pushUndo();
+          t[inp.dataset.prop] = parseInt(inp.value) || 0;
+          render();
+        });
+      });
+      delBtn.style.display = '';
+      dupBtn.style.display = 'none';
+      break;
+    }
+    case 'camp': {
+      const slot = m.campSlots[selection.idx];
+      if (!slot) { clearSelection(); return; }
+      icon.textContent = '\u{2694}\uFE0F';
+      title.textContent = `Camp #${selection.idx} T${slot.tier}`;
+      body.innerHTML = `
+        <div class="insp-row"><label>Tier</label>
+          <select data-prop="tier">
+            <option value="1" ${slot.tier===1?'selected':''}>T1</option>
+            <option value="2" ${slot.tier===2?'selected':''}>T2</option>
+            <option value="3" ${slot.tier===3?'selected':''}>T3</option>
+            <option value="4" ${slot.tier===4?'selected':''}>T4</option>
+          </select>
+        </div>
+        <div style="font-size:10px;color:#4499FF;margin:4px 0 2px">Blue Position</div>
+        <div class="insp-row"><label>X</label><input type="number" data-target="blue" data-prop="x" value="${slot.bluePos.x}" step="10"></div>
+        <div class="insp-row"><label>Y</label><input type="number" data-target="blue" data-prop="y" value="${slot.bluePos.y}" step="10"></div>
+        <div style="font-size:10px;color:#FF5555;margin:4px 0 2px">Red Position</div>
+        <div class="insp-row"><label>X</label><input type="number" data-target="red" data-prop="x" value="${slot.redPos.x}" step="10"></div>
+        <div class="insp-row"><label>Y</label><input type="number" data-target="red" data-prop="y" value="${slot.redPos.y}" step="10"></div>
+      `;
+      body.querySelector('select').addEventListener('change', (e) => {
+        pushUndo();
+        slot.tier = parseInt(e.target.value);
+        syncUI(); render();
+      });
+      body.querySelectorAll('input').forEach(inp => {
+        inp.addEventListener('change', () => {
+          pushUndo();
+          const pos = inp.dataset.target === 'blue' ? slot.bluePos : slot.redPos;
+          pos[inp.dataset.prop] = parseInt(inp.value) || 0;
+          render();
+        });
+      });
+      delBtn.style.display = '';
+      dupBtn.style.display = '';
+      break;
+    }
+    case 'carrot_zone':
+    case 'wild_zone': {
+      const arr = selection.type === 'carrot_zone' ? m.carrotZones : m.wildZones;
+      const z = arr[selection.idx];
+      if (!z) { clearSelection(); return; }
+      const isCarrot = selection.type === 'carrot_zone';
+      icon.textContent = isCarrot ? '\u{1F955}' : '\u{1F43A}';
+      title.textContent = `${isCarrot ? 'Carrot' : 'Wild'} Zone #${selection.idx}`;
+      body.innerHTML = `
+        <div class="insp-row"><label>X</label><input type="number" data-prop="x" value="${z.x}" step="10"></div>
+        <div class="insp-row"><label>Y</label><input type="number" data-prop="y" value="${z.y}" step="10"></div>
+        <div class="insp-row"><label>Width</label><input type="number" data-prop="w" value="${z.w}" step="50" min="50"></div>
+        <div class="insp-row"><label>Height</label><input type="number" data-prop="h" value="${z.h}" step="50" min="50"></div>
+      `;
+      body.querySelectorAll('input').forEach(inp => {
+        inp.addEventListener('change', () => {
+          pushUndo();
+          z[inp.dataset.prop] = parseInt(inp.value) || 50;
+          syncUI(); render();
+        });
+      });
+      delBtn.style.display = '';
+      dupBtn.style.display = '';
+      break;
+    }
+    case 'terrain': {
+      const terrain = getTerrain();
+      const t = terrain[selection.idx];
+      if (!t) { clearSelection(); return; }
+      const tc = TERRAIN_TYPES.find(tt => tt.id === t.type);
+      icon.textContent = tc ? tc.icon : '?';
+      title.textContent = `Terrain: ${tc ? tc.label : t.type}`;
+      const isCircle = t.shape === 'circle';
+      body.innerHTML = `
+        <div class="insp-row"><label>Type</label>
+          <select data-prop="type">
+            ${TERRAIN_TYPES.map(tt => `<option value="${tt.id}" ${tt.id===t.type?'selected':''}>${tt.label}</option>`).join('')}
+          </select>
+        </div>
+        <div class="insp-row"><label>X</label><input type="number" data-prop="x" value="${t.x}" step="10"></div>
+        <div class="insp-row"><label>Y</label><input type="number" data-prop="y" value="${t.y}" step="10"></div>
+        ${isCircle
+          ? `<div class="insp-row"><label>Radius</label><input type="number" data-prop="radius" value="${t.radius}" step="10" min="10"></div>`
+          : `<div class="insp-row"><label>Width</label><input type="number" data-prop="w" value="${t.w}" step="10" min="10"></div>
+             <div class="insp-row"><label>Height</label><input type="number" data-prop="h" value="${t.h}" step="10" min="10"></div>`
+        }
+      `;
+      body.querySelector('select').addEventListener('change', (e) => {
+        pushUndo();
+        t.type = e.target.value;
+        syncInspector(); render();
+      });
+      body.querySelectorAll('input').forEach(inp => {
+        inp.addEventListener('change', () => {
+          pushUndo();
+          t[inp.dataset.prop] = parseInt(inp.value) || 10;
+          render();
+        });
+      });
+      delBtn.style.display = '';
+      dupBtn.style.display = '';
+      break;
+    }
+    case 'mine': {
+      const slots = m.mineSlots || [];
+      const slot = slots[selection.idx];
+      if (!slot) { clearSelection(); return; }
+      icon.textContent = '\u2699\uFE0F';
+      title.textContent = `Mine #${selection.idx}`;
+      body.innerHTML = `
+        <div style="font-size:10px;color:#4499FF;margin:4px 0 2px">Blue Position</div>
+        <div class="insp-row"><label>X</label><input type="number" data-target="blue" data-prop="x" value="${slot.bluePos.x}" step="10"></div>
+        <div class="insp-row"><label>Y</label><input type="number" data-target="blue" data-prop="y" value="${slot.bluePos.y}" step="10"></div>
+        <div style="font-size:10px;color:#FF5555;margin:4px 0 2px">Red Position</div>
+        <div class="insp-row"><label>X</label><input type="number" data-target="red" data-prop="x" value="${slot.redPos.x}" step="10"></div>
+        <div class="insp-row"><label>Y</label><input type="number" data-target="red" data-prop="y" value="${slot.redPos.y}" step="10"></div>
+      `;
+      body.querySelectorAll('input').forEach(inp => {
+        inp.addEventListener('change', () => {
+          pushUndo();
+          const pos = inp.dataset.target === 'blue' ? slot.bluePos : slot.redPos;
+          pos[inp.dataset.prop] = parseInt(inp.value) || 0;
+          render();
+        });
+      });
+      delBtn.style.display = '';
+      dupBtn.style.display = '';
+      break;
+    }
+    case 'armory': {
+      const slots = m.armorySlots || [];
+      const slot = slots[selection.idx];
+      if (!slot) { clearSelection(); return; }
+      icon.textContent = '\u2692\uFE0F';
+      title.textContent = `Armory #${selection.idx}`;
+      body.innerHTML = `
+        <div style="font-size:10px;color:#4499FF;margin:4px 0 2px">Blue Position</div>
+        <div class="insp-row"><label>X</label><input type="number" data-target="blue" data-prop="x" value="${slot.bluePos.x}" step="10"></div>
+        <div class="insp-row"><label>Y</label><input type="number" data-target="blue" data-prop="y" value="${slot.bluePos.y}" step="10"></div>
+        <div style="font-size:10px;color:#FF5555;margin:4px 0 2px">Red Position</div>
+        <div class="insp-row"><label>X</label><input type="number" data-target="red" data-prop="x" value="${slot.redPos.x}" step="10"></div>
+        <div class="insp-row"><label>Y</label><input type="number" data-target="red" data-prop="y" value="${slot.redPos.y}" step="10"></div>
+      `;
+      body.querySelectorAll('input').forEach(inp => {
+        inp.addEventListener('change', () => {
+          pushUndo();
+          const pos = inp.dataset.target === 'blue' ? slot.bluePos : slot.redPos;
+          pos[inp.dataset.prop] = parseInt(inp.value) || 0;
+          render();
+        });
+      });
+      delBtn.style.display = '';
+      dupBtn.style.display = '';
+      break;
+    }
+  }
+}
+
+// =================================================================
 // RENDER
-// ═══════════════════════════════════════════════════════════
+// =================================================================
 
 function render() {
   const m = getMap();
   const w = canvas.width, h = canvas.height;
   ctx.clearRect(0, 0, w, h);
 
-  // Background
   ctx.fillStyle = '#0a0a14';
   ctx.fillRect(0, 0, w, h);
 
@@ -391,49 +1106,49 @@ function render() {
   ctx.lineWidth = 1;
   ctx.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
 
-  // Grid
-  drawGrid(m);
-
-  // Terrain features
-  drawTerrain(m);
+  if (layerVisible.grid) drawGrid(m);
+  if (layerVisible.terrain) drawTerrain(m);
 
   // Carrot zones
-  for (const z of m.carrotZones) {
+  if (layerVisible.carrot_zones) m.carrotZones.forEach((z, i) => {
+    const isSel = selection && selection.type === 'carrot_zone' && selection.idx === i;
     const p = worldToScreen(z.x, z.y);
     const s = { x: z.w * zoom, y: z.h * zoom };
-    ctx.fillStyle = 'rgba(255, 165, 0, 0.12)';
+    ctx.fillStyle = isSel ? 'rgba(255, 165, 0, 0.22)' : 'rgba(255, 165, 0, 0.12)';
     ctx.fillRect(p.x, p.y, s.x, s.y);
-    ctx.strokeStyle = 'rgba(255, 165, 0, 0.4)';
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([6, 4]);
+    ctx.strokeStyle = isSel ? 'rgba(255, 215, 0, 0.9)' : 'rgba(255, 165, 0, 0.4)';
+    ctx.lineWidth = isSel ? 2.5 : 1.5;
+    ctx.setLineDash(isSel ? [] : [6, 4]);
     ctx.strokeRect(p.x, p.y, s.x, s.y);
     ctx.setLineDash([]);
-    // Label
     ctx.fillStyle = 'rgba(255,165,0,0.6)';
     ctx.font = `${Math.max(9, 11 * zoom * 4)}px sans-serif`;
     ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-    ctx.fillText('🥕', p.x + 3, p.y + 2);
-  }
+    ctx.fillText('\u{1F955}', p.x + 3, p.y + 2);
+    if (isSel) drawResizeHandles(p.x, p.y, s.x, s.y);
+  });
 
   // Wild zones
-  for (const z of m.wildZones) {
+  if (layerVisible.wild_zones) m.wildZones.forEach((z, i) => {
+    const isSel = selection && selection.type === 'wild_zone' && selection.idx === i;
     const p = worldToScreen(z.x, z.y);
     const s = { x: z.w * zoom, y: z.h * zoom };
-    ctx.fillStyle = 'rgba(255, 50, 50, 0.08)';
+    ctx.fillStyle = isSel ? 'rgba(255, 50, 50, 0.18)' : 'rgba(255, 50, 50, 0.08)';
     ctx.fillRect(p.x, p.y, s.x, s.y);
-    ctx.strokeStyle = 'rgba(255, 50, 50, 0.35)';
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = isSel ? 'rgba(255, 215, 0, 0.9)' : 'rgba(255, 50, 50, 0.35)';
+    ctx.lineWidth = isSel ? 2.5 : 1.5;
+    ctx.setLineDash(isSel ? [] : [4, 4]);
     ctx.strokeRect(p.x, p.y, s.x, s.y);
     ctx.setLineDash([]);
     ctx.fillStyle = 'rgba(255,50,50,0.5)';
     ctx.font = `${Math.max(9, 11 * zoom * 4)}px sans-serif`;
     ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-    ctx.fillText('🐺', p.x + 3, p.y + 2);
-  }
+    ctx.fillText('\u{1F43A}', p.x + 3, p.y + 2);
+    if (isSel) drawResizeHandles(p.x, p.y, s.x, s.y);
+  });
 
   // Wild exclusions
-  for (const ex of m.wildExclusions) {
+  for (const ex of (m.wildExclusions || [])) {
     const p = worldToScreen(ex.x, ex.y);
     const r = ex.radius * zoom;
     ctx.fillStyle = 'rgba(100, 200, 100, 0.05)';
@@ -443,6 +1158,7 @@ function render() {
   }
 
   // Safe radius
+  if (!layerVisible.safe_radius) { /* skip */ } else {
   const drawSafe = (base, color) => {
     const p = worldToScreen(base.x, base.y);
     const r = m.safeRadius * zoom;
@@ -453,9 +1169,10 @@ function render() {
   };
   drawSafe(m.p1Base, 'rgba(68,153,255,0.25)');
   drawSafe(m.p2Base, 'rgba(255,85,85,0.25)');
+  } // end safe_radius layer
 
   // Camp slot connection lines
-  for (const slot of m.campSlots) {
+  if (layerVisible.camps) for (const slot of m.campSlots) {
     const bp = worldToScreen(slot.bluePos.x, slot.bluePos.y);
     const rp = worldToScreen(slot.redPos.x, slot.redPos.y);
     ctx.strokeStyle = 'rgba(255,255,255,0.06)';
@@ -465,17 +1182,24 @@ function render() {
   }
 
   // Camp slots
-  m.campSlots.forEach((slot, i) => {
+  if (layerVisible.camps) m.campSlots.forEach((slot, i) => {
     const tier = slot.tier;
     const r = (5 + tier * 2) * Math.min(1, zoom * 3);
     const tc = TIER_COLORS[tier];
 
-    const drawCamp = (pos, fill) => {
+    const drawCamp = (pos, fill, side) => {
       const p = worldToScreen(pos.x, pos.y);
+      const isSel = selection && selection.type === 'camp' && selection.idx === i && selection.side === side;
       ctx.fillStyle = fill;
       ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = tc; ctx.lineWidth = 2; ctx.stroke();
-      // Label
+      ctx.strokeStyle = isSel ? '#FFD700' : tc;
+      ctx.lineWidth = isSel ? 3 : 2;
+      ctx.stroke();
+      if (isSel) {
+        ctx.strokeStyle = 'rgba(255,215,0,0.3)';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(p.x, p.y, r + 6, 0, Math.PI * 2); ctx.stroke();
+      }
       if (zoom > 0.08) {
         ctx.fillStyle = '#fff';
         ctx.font = `bold ${Math.max(8, r * 0.9)}px monospace`;
@@ -484,17 +1208,25 @@ function render() {
       }
     };
 
-    drawCamp(slot.bluePos, '#4499FF');
-    drawCamp(slot.redPos, '#FF5555');
+    drawCamp(slot.bluePos, '#4499FF', 'blue');
+    drawCamp(slot.redPos, '#FF5555', 'red');
   });
 
   // Troll slot
-  if (m.trollSlot) {
+  if (layerVisible.camps && m.trollSlot) {
     const p = worldToScreen(m.trollSlot.x, m.trollSlot.y);
     const r = 10 * Math.min(1, zoom * 3);
+    const isSel = selection && selection.type === 'troll';
     ctx.fillStyle = '#FFD700';
     ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 2.5; ctx.stroke();
+    ctx.strokeStyle = isSel ? '#fff' : '#c0392b';
+    ctx.lineWidth = isSel ? 3 : 2.5;
+    ctx.stroke();
+    if (isSel) {
+      ctx.strokeStyle = 'rgba(255,215,0,0.3)';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r + 6, 0, Math.PI * 2); ctx.stroke();
+    }
     if (zoom > 0.08) {
       ctx.fillStyle = '#000';
       ctx.font = `bold ${Math.max(8, r * 0.85)}px monospace`;
@@ -503,22 +1235,111 @@ function render() {
     }
   }
 
+  // Mine slots
+  const mines = m.mineSlots || [];
+  if (layerVisible.mines) mines.forEach((slot, i) => {
+    const r = 7 * Math.min(1, zoom * 3);
+
+    const drawMine = (pos, fill, side) => {
+      const p = worldToScreen(pos.x, pos.y);
+      const isSel = selection && selection.type === 'mine' && selection.idx === i && selection.side === side;
+      // Diamond shape for mines
+      ctx.fillStyle = fill;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y - r); ctx.lineTo(p.x + r, p.y);
+      ctx.lineTo(p.x, p.y + r); ctx.lineTo(p.x - r, p.y);
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = isSel ? '#FFD700' : '#888';
+      ctx.lineWidth = isSel ? 3 : 1.5;
+      ctx.stroke();
+      if (isSel) {
+        ctx.strokeStyle = 'rgba(255,215,0,0.3)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r + 6, 0, Math.PI * 2); ctx.stroke();
+      }
+      if (zoom > 0.08) {
+        ctx.fillStyle = '#fff';
+        ctx.font = `bold ${Math.max(7, r * 0.8)}px monospace`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('\u2699', p.x, p.y);
+      }
+    };
+    drawMine(slot.bluePos, '#557799', 'blue');
+    drawMine(slot.redPos, '#995555', 'red');
+
+    // Connection line
+    const bp = worldToScreen(slot.bluePos.x, slot.bluePos.y);
+    const rp = worldToScreen(slot.redPos.x, slot.redPos.y);
+    ctx.strokeStyle = 'rgba(150,150,150,0.08)';
+    ctx.lineWidth = 1; ctx.setLineDash([2, 4]);
+    ctx.beginPath(); ctx.moveTo(bp.x, bp.y); ctx.lineTo(rp.x, rp.y); ctx.stroke();
+    ctx.setLineDash([]);
+  });
+
+  // Armory slots
+  const armories = m.armorySlots || [];
+  if (layerVisible.armories) armories.forEach((slot, i) => {
+    const r = 8 * Math.min(1, zoom * 3);
+
+    const drawArmory = (pos, fill, side) => {
+      const p = worldToScreen(pos.x, pos.y);
+      const isSel = selection && selection.type === 'armory' && selection.idx === i && selection.side === side;
+      // Square shape for armories
+      ctx.fillStyle = fill;
+      ctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
+      ctx.strokeStyle = isSel ? '#FFD700' : '#AA6633';
+      ctx.lineWidth = isSel ? 3 : 2;
+      ctx.strokeRect(p.x - r, p.y - r, r * 2, r * 2);
+      if (isSel) {
+        ctx.strokeStyle = 'rgba(255,215,0,0.3)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r + 6, 0, Math.PI * 2); ctx.stroke();
+      }
+      if (zoom > 0.08) {
+        ctx.fillStyle = '#fff';
+        ctx.font = `bold ${Math.max(7, r * 0.8)}px monospace`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('\u2692', p.x, p.y);
+      }
+    };
+    drawArmory(slot.bluePos, '#334477', 'blue');
+    drawArmory(slot.redPos, '#773344', 'red');
+
+    // Connection line
+    const bp = worldToScreen(slot.bluePos.x, slot.bluePos.y);
+    const rp = worldToScreen(slot.redPos.x, slot.redPos.y);
+    ctx.strokeStyle = 'rgba(170,100,50,0.08)';
+    ctx.lineWidth = 1; ctx.setLineDash([2, 4]);
+    ctx.beginPath(); ctx.moveTo(bp.x, bp.y); ctx.lineTo(rp.x, rp.y); ctx.stroke();
+    ctx.setLineDash([]);
+  });
+
   // Bases
-  const drawBase = (base, color, label) => {
+  const drawBase = (base, color, label, side) => {
     const p = worldToScreen(base.x, base.y);
     const r = 14 * Math.min(1, zoom * 3);
+    const isSel = selection && selection.type === 'base' && selection.side === side;
     ctx.fillStyle = color;
     ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; ctx.stroke();
+    ctx.strokeStyle = isSel ? '#FFD700' : '#fff';
+    ctx.lineWidth = isSel ? 3.5 : 2.5;
+    ctx.stroke();
+    if (isSel) {
+      ctx.strokeStyle = 'rgba(255,215,0,0.3)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r + 8, 0, Math.PI * 2); ctx.stroke();
+    }
     ctx.fillStyle = '#fff';
     ctx.font = `bold ${Math.max(9, r * 0.75)}px sans-serif`;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(label, p.x, p.y);
   };
-  drawBase(m.p1Base, '#4499FF', 'P1');
-  drawBase(m.p2Base, '#FF5555', 'P2');
+  drawBase(m.p1Base, '#4499FF', 'P1', 'p1');
+  drawBase(m.p2Base, '#FF5555', 'P2', 'p2');
 
-  // Brush preview when terrain painting
+  // Brush preview
   if ((currentTool === 'terrain_paint' || currentTool === 'terrain_erase') && lastMouse) {
     const wp = screenToWorld(lastMouse.x, lastMouse.y);
     const sp = worldToScreen(wp.x, wp.y);
@@ -552,18 +1373,24 @@ function drawGrid(m) {
 
 function drawTerrain(m) {
   const terrain = m._terrain || [];
-  for (const t of terrain) {
+  terrain.forEach((t, i) => {
     const tc = TERRAIN_TYPES.find(tt => tt.id === t.type);
-    if (!tc) continue;
+    if (!tc) return;
     const p = worldToScreen(t.x, t.y);
+    const isSel = selection && selection.type === 'terrain' && selection.idx === i;
 
     if (t.shape === 'circle') {
       const sr = t.radius * zoom;
       ctx.fillStyle = tc.color + '55';
       ctx.beginPath(); ctx.arc(p.x, p.y, sr, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = tc.color + '88';
-      ctx.lineWidth = 1.5; ctx.stroke();
-      // Icon
+      ctx.strokeStyle = isSel ? '#FFD700' : tc.color + '88';
+      ctx.lineWidth = isSel ? 2.5 : 1.5;
+      ctx.stroke();
+      if (isSel) {
+        ctx.strokeStyle = 'rgba(255,215,0,0.3)';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(p.x, p.y, sr + 5, 0, Math.PI * 2); ctx.stroke();
+      }
       if (zoom > 0.06 && sr > 12) {
         ctx.font = `${Math.max(10, sr * 0.5)}px sans-serif`;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -573,27 +1400,70 @@ function drawTerrain(m) {
       const sw = t.w * zoom, sh = t.h * zoom;
       ctx.fillStyle = tc.color + '55';
       ctx.fillRect(p.x - sw / 2, p.y - sh / 2, sw, sh);
-      ctx.strokeStyle = tc.color + '88';
-      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = isSel ? '#FFD700' : tc.color + '88';
+      ctx.lineWidth = isSel ? 2.5 : 1.5;
       ctx.strokeRect(p.x - sw / 2, p.y - sh / 2, sw, sh);
+      if (isSel) {
+        ctx.strokeStyle = 'rgba(255,215,0,0.3)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(p.x - sw / 2 - 3, p.y - sh / 2 - 3, sw + 6, sh + 6);
+      }
       if (zoom > 0.06 && sw > 20) {
         ctx.font = `${Math.max(10, Math.min(sw, sh) * 0.3)}px sans-serif`;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText(tc.icon, p.x, p.y);
       }
     }
+  });
+}
+
+// Zone resize handles
+const HANDLE_SIZE = 7;
+
+function drawResizeHandles(sx, sy, sw, sh) {
+  const handles = getResizeHandlePositions(sx, sy, sw, sh);
+  ctx.fillStyle = '#FFD700';
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 1;
+  for (const h of handles) {
+    ctx.fillRect(h.x - HANDLE_SIZE/2, h.y - HANDLE_SIZE/2, HANDLE_SIZE, HANDLE_SIZE);
+    ctx.strokeRect(h.x - HANDLE_SIZE/2, h.y - HANDLE_SIZE/2, HANDLE_SIZE, HANDLE_SIZE);
   }
 }
 
-// ═══════════════════════════════════════════════════════════
+function getResizeHandlePositions(sx, sy, sw, sh) {
+  const mx = sx + sw/2, my = sy + sh/2;
+  return [
+    { x: sx,      y: sy,      cursor: 'nw-resize', handle: 'tl' },
+    { x: mx,      y: sy,      cursor: 'n-resize',  handle: 't'  },
+    { x: sx + sw, y: sy,      cursor: 'ne-resize', handle: 'tr' },
+    { x: sx + sw, y: my,      cursor: 'e-resize',  handle: 'r'  },
+    { x: sx + sw, y: sy + sh, cursor: 'se-resize', handle: 'br' },
+    { x: mx,      y: sy + sh, cursor: 's-resize',  handle: 'b'  },
+    { x: sx,      y: sy + sh, cursor: 'sw-resize', handle: 'bl' },
+    { x: sx,      y: my,      cursor: 'w-resize',  handle: 'l'  },
+  ];
+}
+
+function hitResizeHandle(sx, sy, sw, sh, mx, my) {
+  const handles = getResizeHandlePositions(sx, sy, sw, sh);
+  const hr = HANDLE_SIZE + 3;
+  for (const h of handles) {
+    if (Math.abs(mx - h.x) < hr && Math.abs(my - h.y) < hr) return h;
+  }
+  return null;
+}
+
+// =================================================================
 // UI SYNC
-// ═══════════════════════════════════════════════════════════
+// =================================================================
 
 function syncUI() {
   const m = getMap();
 
   document.getElementById('knob-id').value = m.id;
   document.getElementById('knob-name').value = m.name;
+  document.getElementById('knob-desc').value = m.description || '';
   document.getElementById('knob-ww').value = m.worldW;
   document.getElementById('knob-wh').value = m.worldH;
   document.getElementById('val-ww').textContent = m.worldW;
@@ -605,24 +1475,55 @@ function syncUI() {
   const campList = document.getElementById('camp-list');
   campList.innerHTML = m.campSlots.map((s, i) => {
     const tierClass = `background:${TIER_COLORS[s.tier]}`;
-    return `<div class="camp-item" data-idx="${i}">
+    const sel = selection && selection.type === 'camp' && selection.idx === i ? ' selected' : '';
+    const pool = (TIER_POOLS[s.tier] || []).join('/');
+    return `<div class="camp-item${sel}" data-idx="${i}" data-select-camp="${i}">
       <span class="tier-badge" style="${tierClass}">T${s.tier}</span>
-      <span class="coords" style="color:#4499FF">(${s.bluePos.x},${s.bluePos.y})</span>
-      <span class="coords" style="color:#FF5555">(${s.redPos.x},${s.redPos.y})</span>
-      <span class="del-btn" data-del-camp="${i}">✕</span>
+      <span class="coords" style="color:#888" title="${pool}">${pool.slice(0,12)}</span>
+      <span class="del-btn" data-del-camp="${i}">\u2715</span>
     </div>`;
   }).join('');
 
   // Zone lists
   const czList = document.getElementById('carrot-zone-list');
-  czList.innerHTML = (m.carrotZones || []).map((z, i) =>
-    `<div class="zone-item"><span style="color:orange">🥕</span> (${z.x},${z.y}) ${z.w}x${z.h} <span class="del-btn" data-del-cz="${i}">✕</span></div>`
-  ).join('');
+  czList.innerHTML = (m.carrotZones || []).map((z, i) => {
+    const sel = selection && selection.type === 'carrot_zone' && selection.idx === i ? ' selected' : '';
+    return `<div class="zone-item${sel}" data-select-cz="${i}">\u{1F955} (${z.x},${z.y}) ${z.w}x${z.h} <span class="del-btn" data-del-cz="${i}">\u2715</span></div>`;
+  }).join('');
 
   const wzList = document.getElementById('wild-zone-list');
-  wzList.innerHTML = (m.wildZones || []).map((z, i) =>
-    `<div class="zone-item"><span style="color:red">🐺</span> (${z.x},${z.y}) ${z.w}x${z.h} <span class="del-btn" data-del-wz="${i}">✕</span></div>`
-  ).join('');
+  wzList.innerHTML = (m.wildZones || []).map((z, i) => {
+    const sel = selection && selection.type === 'wild_zone' && selection.idx === i ? ' selected' : '';
+    return `<div class="zone-item${sel}" data-select-wz="${i}">\u{1F43A} (${z.x},${z.y}) ${z.w}x${z.h} <span class="del-btn" data-del-wz="${i}">\u2715</span></div>`;
+  }).join('');
+
+  // Mine list
+  const mineList = document.getElementById('mine-list');
+  if (mineList) {
+    mineList.innerHTML = (m.mineSlots || []).map((s, i) => {
+      const sel = selection && selection.type === 'mine' && selection.idx === i ? ' selected' : '';
+      return `<div class="zone-item${sel}" data-select-mine="${i}">\u2699\uFE0F <span class="coords" style="color:#4499FF">(${s.bluePos.x},${s.bluePos.y})</span> <span class="coords" style="color:#FF5555">(${s.redPos.x},${s.redPos.y})</span> <span class="del-btn" data-del-mine="${i}">\u2715</span></div>`;
+    }).join('');
+  }
+
+  // Armory list
+  const armoryList = document.getElementById('armory-list');
+  if (armoryList) {
+    armoryList.innerHTML = (m.armorySlots || []).map((s, i) => {
+      const sel = selection && selection.type === 'armory' && selection.idx === i ? ' selected' : '';
+      return `<div class="zone-item${sel}" data-select-armory="${i}">\u2692\uFE0F <span class="coords" style="color:#4499FF">(${s.bluePos.x},${s.bluePos.y})</span> <span class="coords" style="color:#FF5555">(${s.redPos.x},${s.redPos.y})</span> <span class="del-btn" data-del-armory="${i}">\u2715</span></div>`;
+    }).join('');
+  }
+
+  // Object count summary
+  const oc = document.getElementById('object-count');
+  if (oc) {
+    const nc = m.campSlots.length;
+    const nm = (m.mineSlots || []).length;
+    const na = (m.armorySlots || []).length;
+    const t = m.trollSlot ? 1 : 0;
+    oc.textContent = `(${nc}C ${nm}M ${na}A ${t}T)`;
+  }
 }
 
 function populateMapSelect() {
@@ -633,9 +1534,9 @@ function populateMapSelect() {
   sel.value = mapIdx;
 }
 
-// ═══════════════════════════════════════════════════════════
+// =================================================================
 // TERRAIN PALETTE
-// ═══════════════════════════════════════════════════════════
+// =================================================================
 
 function buildTerrainPalette() {
   const pal = document.getElementById('terrain-palette');
@@ -655,9 +1556,9 @@ function buildTerrainPalette() {
 }
 buildTerrainPalette();
 
-// ═══════════════════════════════════════════════════════════
+// =================================================================
 // HIT TESTING
-// ═══════════════════════════════════════════════════════════
+// =================================================================
 
 function hitTest(wx, wy) {
   const m = getMap();
@@ -677,7 +1578,36 @@ function hitTest(wx, wy) {
     if (Math.hypot(wx - s.redPos.x, wy - s.redPos.y) < hitR) return { type: 'camp', idx: i, side: 'red' };
   }
 
-  // Carrot zones (edge drag later, for now full rect)
+  // Mines
+  const mineSlots = m.mineSlots || [];
+  for (let i = mineSlots.length - 1; i >= 0; i--) {
+    const s = mineSlots[i];
+    if (Math.hypot(wx - s.bluePos.x, wy - s.bluePos.y) < hitR) return { type: 'mine', idx: i, side: 'blue' };
+    if (Math.hypot(wx - s.redPos.x, wy - s.redPos.y) < hitR) return { type: 'mine', idx: i, side: 'red' };
+  }
+
+  // Armories
+  const armSlots = m.armorySlots || [];
+  for (let i = armSlots.length - 1; i >= 0; i--) {
+    const s = armSlots[i];
+    if (Math.hypot(wx - s.bluePos.x, wy - s.bluePos.y) < hitR) return { type: 'armory', idx: i, side: 'blue' };
+    if (Math.hypot(wx - s.redPos.x, wy - s.redPos.y) < hitR) return { type: 'armory', idx: i, side: 'red' };
+  }
+
+  // Terrain features (reverse order so top-most gets hit first)
+  const terrain = getTerrain();
+  for (let i = terrain.length - 1; i >= 0; i--) {
+    const t = terrain[i];
+    if (t.shape === 'circle') {
+      if (Math.hypot(wx - t.x, wy - t.y) < t.radius) return { type: 'terrain', idx: i };
+    } else {
+      if (wx >= t.x - t.w/2 && wx <= t.x + t.w/2 && wy >= t.y - t.h/2 && wy <= t.y + t.h/2) {
+        return { type: 'terrain', idx: i };
+      }
+    }
+  }
+
+  // Carrot zones
   for (let i = m.carrotZones.length - 1; i >= 0; i--) {
     const z = m.carrotZones[i];
     if (wx >= z.x && wx <= z.x + z.w && wy >= z.y && wy <= z.y + z.h) {
@@ -695,9 +1625,9 @@ function hitTest(wx, wy) {
   return null;
 }
 
-// ═══════════════════════════════════════════════════════════
+// =================================================================
 // MOUSE EVENTS
-// ═══════════════════════════════════════════════════════════
+// =================================================================
 
 let lastMouse = null;
 
@@ -721,11 +1651,13 @@ canvas.addEventListener('mousedown', e => {
 
   // Terrain paint/erase
   if (currentTool === 'terrain_paint') {
+    paintSnapshot = snapshotMap();
     painting = true;
     paintTerrain(wp.x, wp.y);
     return;
   }
   if (currentTool === 'terrain_erase') {
+    paintSnapshot = snapshotMap();
     painting = true;
     eraseTerrain(wp.x, wp.y);
     return;
@@ -733,62 +1665,113 @@ canvas.addEventListener('mousedown', e => {
 
   // Place camp
   if (currentTool === 'place_camp') {
+    pushUndo();
     const tier = parseInt(document.getElementById('new-camp-tier').value);
-    // Place blue at click, red mirrored
     const rx = m.worldW - wp.x;
     const ry = m.worldH - wp.y;
     m.campSlots.push({
       tier,
-      bluePos: { x: Math.round(wp.x / 10) * 10, y: Math.round(wp.y / 10) * 10 },
-      redPos: { x: Math.round(rx / 10) * 10, y: Math.round(ry / 10) * 10 },
+      bluePos: { x: snap(wp.x), y: snap(wp.y) },
+      redPos: { x: snap(rx), y: snap(ry) },
     });
-    syncUI(); render();
+    setSelection({ type: 'camp', idx: m.campSlots.length - 1, side: 'blue' });
     return;
   }
 
   // Place troll
   if (currentTool === 'place_troll') {
-    m.trollSlot = { x: Math.round(wp.x / 10) * 10, y: Math.round(wp.y / 10) * 10 };
-    syncUI(); render();
+    pushUndo();
+    m.trollSlot = { x: snap(wp.x), y: snap(wp.y) };
+    setSelection({ type: 'troll' });
     return;
   }
 
-  // Move base
-  if (currentTool === 'move_base') {
-    const d1 = Math.hypot(wp.x - m.p1Base.x, wp.y - m.p1Base.y);
-    const d2 = Math.hypot(wp.x - m.p2Base.x, wp.y - m.p2Base.y);
-    const side = d1 < d2 ? 'p1' : 'p2';
-    dragging = { type: 'base', side };
+  // Place mine
+  if (currentTool === 'place_mine') {
+    pushUndo();
+    if (!m.mineSlots) m.mineSlots = [];
+    const rx = m.worldW - wp.x;
+    const ry = m.worldH - wp.y;
+    m.mineSlots.push({
+      bluePos: { x: snap(wp.x), y: snap(wp.y) },
+      redPos: { x: snap(rx), y: snap(ry) },
+    });
+    setSelection({ type: 'mine', idx: m.mineSlots.length - 1, side: 'blue' });
+    return;
+  }
+
+  // Place armory
+  if (currentTool === 'place_armory') {
+    pushUndo();
+    if (!m.armorySlots) m.armorySlots = [];
+    const rx = m.worldW - wp.x;
+    const ry = m.worldH - wp.y;
+    m.armorySlots.push({
+      bluePos: { x: snap(wp.x), y: snap(wp.y) },
+      redPos: { x: snap(rx), y: snap(ry) },
+    });
+    setSelection({ type: 'armory', idx: m.armorySlots.length - 1, side: 'blue' });
     return;
   }
 
   // Add carrot zone
   if (currentTool === 'add_carrot_zone') {
+    pushUndo();
     m.carrotZones.push({ x: Math.round(wp.x), y: Math.round(wp.y), w: 600, h: 600 });
-    syncUI(); render();
+    setSelection({ type: 'carrot_zone', idx: m.carrotZones.length - 1 });
     return;
   }
   // Add wild zone
   if (currentTool === 'add_wild_zone') {
+    pushUndo();
     m.wildZones.push({ x: Math.round(wp.x), y: Math.round(wp.y), w: 600, h: 600 });
-    syncUI(); render();
+    setSelection({ type: 'wild_zone', idx: m.wildZones.length - 1 });
     return;
   }
 
-  // Select tool — drag things
+  // Select tool
   if (currentTool === 'select') {
+    // Check resize handles on selected zones first
+    if (selection && (selection.type === 'carrot_zone' || selection.type === 'wild_zone')) {
+      const arr = selection.type === 'carrot_zone' ? m.carrotZones : m.wildZones;
+      const z = arr[selection.idx];
+      if (z) {
+        const zp = worldToScreen(z.x, z.y);
+        const zs = { x: z.w * zoom, y: z.h * zoom };
+        const handle = hitResizeHandle(zp.x, zp.y, zs.x, zs.y, sx, sy);
+        if (handle) {
+          dragStartSnap = snapshotMap();
+          resizing = {
+            type: selection.type,
+            idx: selection.idx,
+            handle: handle.handle,
+            origZone: deepClone(z),
+            startWX: wp.x,
+            startWY: wp.y,
+          };
+          return;
+        }
+      }
+    }
+
     const hit = hitTest(wp.x, wp.y);
     if (hit) {
+      setSelection(hit);
+      dragStartSnap = snapshotMap();
       dragging = { ...hit, offsetX: wp.x, offsetY: wp.y };
 
-      // Store original positions for zone dragging
       if (hit.type === 'carrot_zone') {
         const z = m.carrotZones[hit.idx];
         dragging.origX = z.x; dragging.origY = z.y;
       } else if (hit.type === 'wild_zone') {
         const z = m.wildZones[hit.idx];
         dragging.origX = z.x; dragging.origY = z.y;
+      } else if (hit.type === 'terrain') {
+        const t = getTerrain()[hit.idx];
+        dragging.origX = t.x; dragging.origY = t.y;
       }
+    } else {
+      clearSelection();
     }
   }
 });
@@ -799,24 +1782,31 @@ document.addEventListener('mousemove', e => {
   lastMouse = { x: sx, y: sy };
   const wp = screenToWorld(sx, sy);
 
-  // Update status
   document.getElementById('status-pos').textContent = `(${Math.round(wp.x)}, ${Math.round(wp.y)})`;
 
-  // Tooltip
   const m = getMap();
+
+  // Tooltip
   const hit = hitTest(wp.x, wp.y);
-  if (hit && currentTool === 'select') {
+  if (hit && currentTool === 'select' && !dragging && !resizing) {
     tooltip.style.display = 'block';
     tooltip.style.left = (e.clientX + 14) + 'px';
     tooltip.style.top = (e.clientY + 14) + 'px';
-    if (hit.type === 'base') tooltip.textContent = `${hit.side.toUpperCase()} Base — drag to move`;
-    else if (hit.type === 'troll') tooltip.textContent = 'Troll Boss (T5) — drag to move';
+    if (hit.type === 'base') tooltip.textContent = `${hit.side.toUpperCase()} Base`;
+    else if (hit.type === 'troll') tooltip.textContent = 'Troll Boss (T5)';
     else if (hit.type === 'camp') {
       const s = m.campSlots[hit.idx];
-      tooltip.textContent = `Camp #${hit.idx} T${s.tier} (${hit.side}) — drag to move`;
+      tooltip.textContent = `Camp #${hit.idx} T${s.tier} (${hit.side})`;
     }
-    else if (hit.type === 'carrot_zone') tooltip.textContent = `Carrot Zone #${hit.idx} — drag to move`;
-    else if (hit.type === 'wild_zone') tooltip.textContent = `Wild Zone #${hit.idx} — drag to move`;
+    else if (hit.type === 'carrot_zone') tooltip.textContent = `Carrot Zone #${hit.idx}`;
+    else if (hit.type === 'wild_zone') tooltip.textContent = `Wild Zone #${hit.idx}`;
+    else if (hit.type === 'mine') tooltip.textContent = `Mine #${hit.idx} (${hit.side})`
+    else if (hit.type === 'armory') tooltip.textContent = `Armory #${hit.idx} (${hit.side})`
+    else if (hit.type === 'terrain') {
+      const t = getTerrain()[hit.idx];
+      const tc = TERRAIN_TYPES.find(tt => tt.id === t.type);
+      tooltip.textContent = `Terrain: ${tc ? tc.label : t.type}`;
+    }
   } else {
     tooltip.style.display = 'none';
   }
@@ -837,11 +1827,60 @@ document.addEventListener('mousemove', e => {
     return;
   }
 
+  // Resizing zones
+  if (resizing) {
+    const oz = resizing.origZone;
+    const dx = wp.x - resizing.startWX;
+    const dy = wp.y - resizing.startWY;
+    const arr = resizing.type === 'carrot_zone' ? m.carrotZones : m.wildZones;
+    const z = arr[resizing.idx];
+    if (!z) { resizing = null; return; }
+    const minSize = 50;
+
+    switch (resizing.handle) {
+      case 'tl':
+        z.x = Math.round(oz.x + dx);
+        z.y = Math.round(oz.y + dy);
+        z.w = Math.max(minSize, Math.round(oz.w - dx));
+        z.h = Math.max(minSize, Math.round(oz.h - dy));
+        break;
+      case 't':
+        z.y = Math.round(oz.y + dy);
+        z.h = Math.max(minSize, Math.round(oz.h - dy));
+        break;
+      case 'tr':
+        z.y = Math.round(oz.y + dy);
+        z.w = Math.max(minSize, Math.round(oz.w + dx));
+        z.h = Math.max(minSize, Math.round(oz.h - dy));
+        break;
+      case 'r':
+        z.w = Math.max(minSize, Math.round(oz.w + dx));
+        break;
+      case 'br':
+        z.w = Math.max(minSize, Math.round(oz.w + dx));
+        z.h = Math.max(minSize, Math.round(oz.h + dy));
+        break;
+      case 'b':
+        z.h = Math.max(minSize, Math.round(oz.h + dy));
+        break;
+      case 'bl':
+        z.x = Math.round(oz.x + dx);
+        z.w = Math.max(minSize, Math.round(oz.w - dx));
+        z.h = Math.max(minSize, Math.round(oz.h + dy));
+        break;
+      case 'l':
+        z.x = Math.round(oz.x + dx);
+        z.w = Math.max(minSize, Math.round(oz.w - dx));
+        break;
+    }
+    syncUI(); render();
+    return;
+  }
+
   // Dragging
   if (dragging) {
     const dx = wp.x - dragging.offsetX;
     const dy = wp.y - dragging.offsetY;
-    const snap = v => Math.round(v / 10) * 10;
 
     if (dragging.type === 'base') {
       const base = dragging.side === 'p1' ? m.p1Base : m.p2Base;
@@ -860,12 +1899,39 @@ document.addEventListener('mousemove', e => {
       const z = m.wildZones[dragging.idx];
       z.x = Math.round(dragging.origX + dx);
       z.y = Math.round(dragging.origY + dy);
+    } else if (dragging.type === 'terrain') {
+      const t = getTerrain()[dragging.idx];
+      t.x = Math.round(dragging.origX + dx);
+      t.y = Math.round(dragging.origY + dy);
+    } else if (dragging.type === 'mine') {
+      const slot = (m.mineSlots || [])[dragging.idx];
+      if (slot) {
+        const pos = dragging.side === 'blue' ? slot.bluePos : slot.redPos;
+        pos.x = snap(wp.x); pos.y = snap(wp.y);
+      }
+    } else if (dragging.type === 'armory') {
+      const slot = (m.armorySlots || [])[dragging.idx];
+      if (slot) {
+        const pos = dragging.side === 'blue' ? slot.bluePos : slot.redPos;
+        pos.x = snap(wp.x); pos.y = snap(wp.y);
+      }
     }
     syncUI(); render();
     return;
   }
 
-  // Cursor
+  // Cursor: check resize handles
+  if (currentTool === 'select' && selection && (selection.type === 'carrot_zone' || selection.type === 'wild_zone')) {
+    const arr = selection.type === 'carrot_zone' ? m.carrotZones : m.wildZones;
+    const z = arr[selection.idx];
+    if (z) {
+      const zp = worldToScreen(z.x, z.y);
+      const zs = { x: z.w * zoom, y: z.h * zoom };
+      const handle = hitResizeHandle(zp.x, zp.y, zs.x, zs.y, sx, sy);
+      if (handle) { canvas.style.cursor = handle.cursor; return; }
+    }
+  }
+
   if (currentTool === 'select' && hit) canvas.style.cursor = 'grab';
   else if (currentTool === 'terrain_paint' || currentTool === 'terrain_erase') canvas.style.cursor = 'crosshair';
   else canvas.style.cursor = 'default';
@@ -874,10 +1940,36 @@ document.addEventListener('mousemove', e => {
 });
 
 document.addEventListener('mouseup', () => {
-  if (dragging) { dragging = null; syncUI(); }
+  // Commit undo for drag/resize
+  if (dragging && dragStartSnap) {
+    undoStack.push(dragStartSnap);
+    if (undoStack.length > MAX_UNDO) undoStack.shift();
+    redoStack = [];
+    syncUndoButtons();
+    dragStartSnap = null;
+  }
+  if (resizing && dragStartSnap) {
+    undoStack.push(dragStartSnap);
+    if (undoStack.length > MAX_UNDO) undoStack.shift();
+    redoStack = [];
+    syncUndoButtons();
+    dragStartSnap = null;
+  }
+  if (painting && paintSnapshot) {
+    undoStack.push(paintSnapshot);
+    if (undoStack.length > MAX_UNDO) undoStack.shift();
+    redoStack = [];
+    syncUndoButtons();
+    paintSnapshot = null;
+  }
+
+  dragging = null;
+  resizing = null;
   painting = false;
   panning = false;
   canvas.style.cursor = 'default';
+  syncInspector();
+  syncUI();
 });
 
 // Zoom
@@ -890,7 +1982,6 @@ canvasArea.addEventListener('wheel', e => {
   const delta = e.deltaY > 0 ? -0.02 : 0.02;
   zoom = Math.min(2, Math.max(0.03, zoom + delta * (zoom * 2)));
 
-  // Zoom toward cursor
   const wpAfter = screenToWorld(sx, sy);
   camX += wpBefore.x - wpAfter.x;
   camY += wpBefore.y - wpAfter.y;
@@ -899,9 +1990,9 @@ canvasArea.addEventListener('wheel', e => {
   render();
 }, { passive: false });
 
-// ═══════════════════════════════════════════════════════════
+// =================================================================
 // TERRAIN PAINT / ERASE
-// ═══════════════════════════════════════════════════════════
+// =================================================================
 
 function paintTerrain(wx, wy) {
   const terrain = getTerrain();
@@ -932,14 +2023,19 @@ function eraseTerrain(wx, wy) {
   render();
 }
 
-// ═══════════════════════════════════════════════════════════
+// =================================================================
 // SIDEBAR EVENTS
-// ═══════════════════════════════════════════════════════════
+// =================================================================
 
 // Map select
 document.getElementById('map-select').addEventListener('change', e => {
   mapIdx = parseInt(e.target.value);
+  selection = null;
+  undoStack = [];
+  redoStack = [];
+  syncUndoButtons();
   centerCamera();
+  syncInspector();
   syncUI(); render();
 });
 
@@ -953,6 +2049,11 @@ for (const [knobId, prop, valId] of [
     if (valId) document.getElementById(valId).textContent = getMap()[prop];
     render();
   });
+  document.getElementById(knobId).addEventListener('change', e => {
+    pushUndo();
+    getMap()[prop] = parseInt(e.target.value) || 3200;
+    render();
+  });
 }
 
 document.getElementById('knob-safe').addEventListener('input', e => {
@@ -960,9 +2061,24 @@ document.getElementById('knob-safe').addEventListener('input', e => {
   document.getElementById('val-safe').textContent = e.target.value;
   render();
 });
+document.getElementById('knob-safe').addEventListener('change', () => {
+  pushUndo();
+});
 
-document.getElementById('knob-id').addEventListener('change', e => { getMap().id = e.target.value; populateMapSelect(); });
-document.getElementById('knob-name').addEventListener('change', e => { getMap().name = e.target.value; populateMapSelect(); });
+document.getElementById('knob-id').addEventListener('change', e => {
+  pushUndo();
+  getMap().id = e.target.value;
+  populateMapSelect();
+});
+document.getElementById('knob-name').addEventListener('change', e => {
+  pushUndo();
+  getMap().name = e.target.value;
+  populateMapSelect();
+});
+document.getElementById('knob-desc').addEventListener('change', e => {
+  pushUndo();
+  getMap().description = e.target.value;
+});
 
 // Brush size
 document.getElementById('brush-size').addEventListener('input', e => {
@@ -985,7 +2101,7 @@ document.querySelectorAll('[data-tool]').forEach(btn => {
     currentTool = btn.dataset.tool;
     document.querySelectorAll('[data-tool]').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    document.getElementById('status-tool').textContent = `Tool: ${btn.textContent}`;
+    document.getElementById('status-tool').textContent = `Tool: ${btn.textContent.trim()}`;
   });
 });
 
@@ -1000,13 +2116,30 @@ document.querySelectorAll('.section-title').forEach(title => {
   });
 });
 
-// Delete camp
+// Layer visibility toggles
+document.querySelectorAll('[data-layer]').forEach(cb => {
+  cb.addEventListener('change', () => {
+    layerVisible[cb.dataset.layer] = cb.checked;
+    render();
+  });
+});
+
+// Sidebar list selection: click camp to select on canvas
 document.getElementById('camp-list').addEventListener('click', e => {
   const del = e.target.closest('[data-del-camp]');
   if (del) {
     const idx = parseInt(del.dataset.delCamp);
+    pushUndo();
     getMap().campSlots.splice(idx, 1);
+    if (selection && selection.type === 'camp' && selection.idx === idx) selection = null;
+    syncInspector();
     syncUI(); render();
+    return;
+  }
+  const item = e.target.closest('[data-select-camp]');
+  if (item) {
+    const idx = parseInt(item.dataset.selectCamp);
+    setSelection({ type: 'camp', idx, side: 'blue' });
   }
 });
 
@@ -1014,8 +2147,17 @@ document.getElementById('camp-list').addEventListener('click', e => {
 document.getElementById('carrot-zone-list').addEventListener('click', e => {
   const del = e.target.closest('[data-del-cz]');
   if (del) {
-    getMap().carrotZones.splice(parseInt(del.dataset.delCz), 1);
+    const idx = parseInt(del.dataset.delCz);
+    pushUndo();
+    getMap().carrotZones.splice(idx, 1);
+    if (selection && selection.type === 'carrot_zone' && selection.idx === idx) selection = null;
+    syncInspector();
     syncUI(); render();
+    return;
+  }
+  const item = e.target.closest('[data-select-cz]');
+  if (item) {
+    setSelection({ type: 'carrot_zone', idx: parseInt(item.dataset.selectCz) });
   }
 });
 
@@ -1023,10 +2165,65 @@ document.getElementById('carrot-zone-list').addEventListener('click', e => {
 document.getElementById('wild-zone-list').addEventListener('click', e => {
   const del = e.target.closest('[data-del-wz]');
   if (del) {
-    getMap().wildZones.splice(parseInt(del.dataset.delWz), 1);
+    const idx = parseInt(del.dataset.delWz);
+    pushUndo();
+    getMap().wildZones.splice(idx, 1);
+    if (selection && selection.type === 'wild_zone' && selection.idx === idx) selection = null;
+    syncInspector();
     syncUI(); render();
+    return;
+  }
+  const item = e.target.closest('[data-select-wz]');
+  if (item) {
+    setSelection({ type: 'wild_zone', idx: parseInt(item.dataset.selectWz) });
   }
 });
+
+// Mine list clicks
+document.getElementById('mine-list')?.addEventListener('click', e => {
+  const del = e.target.closest('[data-del-mine]');
+  if (del) {
+    const idx = parseInt(del.dataset.delMine);
+    pushUndo();
+    const m = getMap();
+    if (m.mineSlots) m.mineSlots.splice(idx, 1);
+    if (selection && selection.type === 'mine' && selection.idx === idx) selection = null;
+    syncInspector();
+    syncUI(); render();
+    return;
+  }
+  const item = e.target.closest('[data-select-mine]');
+  if (item) {
+    setSelection({ type: 'mine', idx: parseInt(item.dataset.selectMine), side: 'blue' });
+  }
+});
+
+// Armory list clicks
+document.getElementById('armory-list')?.addEventListener('click', e => {
+  const del = e.target.closest('[data-del-armory]');
+  if (del) {
+    const idx = parseInt(del.dataset.delArmory);
+    pushUndo();
+    const m = getMap();
+    if (m.armorySlots) m.armorySlots.splice(idx, 1);
+    if (selection && selection.type === 'armory' && selection.idx === idx) selection = null;
+    syncInspector();
+    syncUI(); render();
+    return;
+  }
+  const item = e.target.closest('[data-select-armory]');
+  if (item) {
+    setSelection({ type: 'armory', idx: parseInt(item.dataset.selectArmory), side: 'blue' });
+  }
+});
+
+// Undo/redo buttons
+document.getElementById('btn-undo').addEventListener('click', undo);
+document.getElementById('btn-redo').addEventListener('click', redo);
+
+// Delete/duplicate selected buttons
+document.getElementById('btn-delete-sel').addEventListener('click', deleteSelection);
+document.getElementById('btn-duplicate-sel').addEventListener('click', duplicateSelection);
 
 // New map
 document.getElementById('btn-new-map').addEventListener('click', () => {
@@ -1043,44 +2240,67 @@ document.getElementById('btn-new-map').addEventListener('click', () => {
     carrotZones: [{ x: 100, y: 1600, w: 1400, h: 1400 }, { x: 1700, y: 100, w: 1400, h: 1400 }],
     wildZones: [{ x: 800, y: 800, w: 1600, h: 1600 }],
     wildExclusions: [{ x: 300, y: 2900, radius: 500 }, { x: 2900, y: 300, radius: 500 }],
+    mineSlots: [
+      { bluePos: { x: 500, y: 2400 }, redPos: { x: 2700, y: 800 } },
+      { bluePos: { x: 800, y: 2700 }, redPos: { x: 2400, y: 500 } },
+    ],
+    armorySlots: [
+      { bluePos: { x: 550, y: 2650 }, redPos: { x: 2650, y: 550 } },
+    ],
     _terrain: [],
   };
   maps.push(newMap);
   mapIdx = maps.length - 1;
+  selection = null;
+  undoStack = [];
+  redoStack = [];
+  syncUndoButtons();
   populateMapSelect();
   centerCamera();
+  syncInspector();
   syncUI(); render();
 });
 
-// Duplicate
+// Duplicate map
 document.getElementById('btn-duplicate').addEventListener('click', () => {
   const clone = deepClone(getMap());
   clone.id = clone.id + '_copy';
   clone.name = clone.name + ' (Copy)';
   maps.push(clone);
   mapIdx = maps.length - 1;
+  selection = null;
+  undoStack = [];
+  redoStack = [];
+  syncUndoButtons();
   populateMapSelect();
+  syncInspector();
   syncUI(); render();
 });
 
 // Reset
 document.getElementById('btn-reset').addEventListener('click', () => {
   if (mapIdx < ALL_MAPS.length) {
+    if (!confirm('Reset this map to defaults? Your changes will be lost (undo available).')) return;
+    pushUndo();
     maps[mapIdx] = deepClone(ALL_MAPS[mapIdx]);
     maps[mapIdx]._terrain = [];
+    selection = null;
+    syncInspector();
   }
   syncUI(); render();
 });
 
 // Clear terrain
 document.getElementById('btn-clear-terrain').addEventListener('click', () => {
+  pushUndo();
   getMap()._terrain = [];
+  if (selection && selection.type === 'terrain') { selection = null; syncInspector(); }
   render();
 });
 
-// ═══════════════════════════════════════════════════════════
+// =================================================================
 // EXPORT
-// ═══════════════════════════════════════════════════════════
+// =================================================================
 
 function generateCode(m) {
   const indent = '  ';
@@ -1096,7 +2316,6 @@ function generateCode(m) {
   code += `${indent}p2Base: { x: ${m.p2Base.x}, y: ${m.p2Base.y} },\n`;
   code += `${indent}safeRadius: ${m.safeRadius},\n`;
 
-  // Camp slots
   code += `${indent}campSlots: [\n`;
   for (const s of m.campSlots) {
     code += `${i2}{ tier: ${s.tier}, bluePos: { x: ${s.bluePos.x}, y: ${s.bluePos.y} }, redPos: { x: ${s.redPos.x}, y: ${s.redPos.y} } },\n`;
@@ -1105,30 +2324,42 @@ function generateCode(m) {
 
   code += `${indent}trollSlot: ${m.trollSlot ? `{ x: ${m.trollSlot.x}, y: ${m.trollSlot.y} }` : 'null'},\n`;
 
-  // Carrot zones
   code += `${indent}carrotZones: [\n`;
   for (const z of m.carrotZones) {
     code += `${i2}{ x: ${z.x}, y: ${z.y}, w: ${z.w}, h: ${z.h} },\n`;
   }
   code += `${indent}],\n`;
 
-  // Wild zones
   code += `${indent}wildZones: [\n`;
   for (const z of m.wildZones) {
     code += `${i2}{ x: ${z.x}, y: ${z.y}, w: ${z.w}, h: ${z.h} },\n`;
   }
   code += `${indent}],\n`;
 
-  // Wild exclusions
   code += `${indent}wildExclusions: [\n`;
   for (const ex of (m.wildExclusions || [])) {
     code += `${i2}{ x: ${ex.x}, y: ${ex.y}, radius: ${ex.radius} },\n`;
   }
   code += `${indent}],\n`;
 
-  // Terrain features
+  if (m.mineSlots && m.mineSlots.length > 0) {
+    code += `${indent}mineSlots: [\n`;
+    for (const s of m.mineSlots) {
+      code += `${i2}{ bluePos: { x: ${s.bluePos.x}, y: ${s.bluePos.y} }, redPos: { x: ${s.redPos.x}, y: ${s.redPos.y} } },\n`;
+    }
+    code += `${indent}],\n`;
+  }
+
+  if (m.armorySlots && m.armorySlots.length > 0) {
+    code += `${indent}armorySlots: [\n`;
+    for (const s of m.armorySlots) {
+      code += `${i2}{ bluePos: { x: ${s.bluePos.x}, y: ${s.bluePos.y} }, redPos: { x: ${s.redPos.x}, y: ${s.redPos.y} } },\n`;
+    }
+    code += `${indent}],\n`;
+  }
+
   if (m._terrain && m._terrain.length > 0) {
-    code += `${indent}// Terrain features (custom extension)\n`;
+    code += `${indent}// Terrain features\n`;
     code += `${indent}terrain: [\n`;
     for (const t of m._terrain) {
       if (t.shape === 'circle') {
@@ -1181,36 +2412,81 @@ function showToast(msg) {
   setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 1500);
 }
 
-// ═══════════════════════════════════════════════════════════
+// =================================================================
 // KEYBOARD SHORTCUTS
-// ═══════════════════════════════════════════════════════════
+// =================================================================
 
 document.addEventListener('keydown', e => {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
 
-  if (e.key === 's' || e.key === 'S') { currentTool = 'select'; updateToolUI(); }
-  if (e.key === 'p' || e.key === 'P') { currentTool = 'terrain_paint'; updateToolUI(); }
-  if (e.key === 'e' || e.key === 'E') { currentTool = 'terrain_erase'; updateToolUI(); }
-  if (e.key === 'c' || e.key === 'C') { currentTool = 'place_camp'; updateToolUI(); }
-  if (e.key === '[') { brushSize = Math.max(20, brushSize - 20); document.getElementById('brush-size').value = brushSize; document.getElementById('val-brush').value = brushSize; }
-  if (e.key === ']') { brushSize = Math.min(400, brushSize + 20); document.getElementById('brush-size').value = brushSize; document.getElementById('val-brush').value = brushSize; }
-  if (e.key === 'Delete' || e.key === 'Backspace') {
-    // Delete hovered terrain
-    if (lastMouse && (currentTool === 'select')) {
-      const wp = screenToWorld(lastMouse.x, lastMouse.y);
-      const terrain = getTerrain();
-      const idx = terrain.findIndex(t => {
-        const dist = Math.hypot(t.x - wp.x, t.y - wp.y);
-        const tr = t.shape === 'circle' ? t.radius : Math.max(t.w, t.h) / 2;
-        return dist < tr;
-      });
-      if (idx >= 0) { terrain.splice(idx, 1); render(); }
-    }
+  // Undo: Ctrl+Z
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+    e.preventDefault();
+    undo();
+    return;
   }
+  // Redo: Ctrl+Y or Ctrl+Shift+Z
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey) || (e.key === 'Z' && e.shiftKey))) {
+    e.preventDefault();
+    redo();
+    return;
+  }
+  // Copy: Ctrl+C
+  if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+    e.preventDefault();
+    copySelection();
+    return;
+  }
+  // Paste: Ctrl+V
+  if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+    e.preventDefault();
+    pasteClipboard();
+    return;
+  }
+  // Duplicate: Ctrl+D
+  if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
+    e.preventDefault();
+    duplicateSelection();
+    return;
+  }
+
+  // Escape: deselect
+  if (e.key === 'Escape') {
+    clearSelection();
+    // Also close export modal
+    document.getElementById('export-modal').classList.remove('show');
+    return;
+  }
+
+  // Delete / Backspace: delete selected
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    if (selection) {
+      e.preventDefault();
+      deleteSelection();
+    }
+    return;
+  }
+
+  // Tool shortcuts
+  if (e.key === 'v' || e.key === 'V' || e.key === 's' || e.key === 'S') { setTool('select'); }
+  if (e.key === 'b' || e.key === 'B' || e.key === 'p' || e.key === 'P') { setTool('terrain_paint'); }
+  if (e.key === 'e' || e.key === 'E') { setTool('terrain_erase'); }
+  if (e.key === 'c' && !e.ctrlKey && !e.metaKey) { setTool('place_camp'); }
+  if (e.key === 'm' || e.key === 'M') { setTool('place_mine'); }
+  if (e.key === 'a' && !e.ctrlKey && !e.metaKey) { setTool('place_armory'); }
+  if (e.key === '[') { brushSize = Math.max(20, brushSize - 20); document.getElementById('brush-size').value = brushSize; document.getElementById('val-brush').textContent = brushSize; }
+  if (e.key === ']') { brushSize = Math.min(400, brushSize + 20); document.getElementById('brush-size').value = brushSize; document.getElementById('val-brush').textContent = brushSize; }
   if (e.key === 'f' || e.key === 'F') { centerCamera(); render(); }
 });
 
-function updateToolUI() {
+function setTool(tool) {
+  currentTool = tool;
+  // Clear selection when switching away from select tool — only one mode at a time
+  if (tool !== 'select') {
+    selection = null;
+    syncInspector();
+    updateStatusSelection();
+  }
   document.querySelectorAll('[data-tool]').forEach(b => {
     b.classList.toggle('active', b.dataset.tool === currentTool);
   });
@@ -1218,15 +2494,277 @@ function updateToolUI() {
   render();
 }
 
-// ═══════════════════════════════════════════════════════════
-// BOOT
-// ═══════════════════════════════════════════════════════════
+// =================================================================
+// LIVE SYNC (BroadcastChannel) — Editor <-> Game
+// =================================================================
 
-populateMapSelect();
-resizeCanvas();
-centerCamera();
-syncUI();
-render();
+const syncChannel = new BroadcastChannel('horde-editor-sync');
+let syncEnabled = true;
+let gameConnected = false;
+let gameConnectedTimeout = null;
+let gameUnits = [];       // unit snapshots from game
+let gameCamps = [];       // camp state from game
+let gameNexuses = [];     // nexus state from game
+let gameMines = [];       // mine state from game
+let gameArmories = [];    // armory state from game
+let gameEra = 1;          // current era from game
+let syncThrottleTimer = null;
+
+// ── Outbound: broadcast map to game ──
+
+function buildSyncMap() {
+  const m = deepClone(getMap());
+  if (m._terrain?.length) m.terrain = m._terrain;
+  delete m._terrain;
+  return m;
+}
+
+function broadcastMap() {
+  if (!syncEnabled) return;
+  if (syncThrottleTimer) return;
+  syncThrottleTimer = setTimeout(() => {
+    syncThrottleTimer = null;
+    try {
+      syncChannel.postMessage({ type: 'MAP_UPDATE', map: buildSyncMap() });
+    } catch (e) { /* structured clone can fail on circular refs */ }
+  }, 50); // max 20 updates/sec
+}
+
+// Hook broadcastMap into render — every visual change broadcasts
+const _origRender = render;
+render = function() {
+  _origRender();
+  broadcastMap();
+  scheduleSave();
+  // Draw game overlay on top of editor
+  if (gameUnits.length > 0 && syncEnabled && layerVisible.game_overlay) drawGameOverlay();
+};
+
+// ── Inbound: receive game state for overlay ──
+
+syncChannel.onmessage = (e) => {
+  const msg = e.data;
+  switch (msg.type) {
+    case 'GAME_STATE':
+      gameUnits = msg.units || [];
+      gameCamps = msg.camps || [];
+      gameNexuses = msg.nexuses || [];
+      gameMines = msg.mines || [];
+      gameArmories = msg.armories || [];
+      gameEra = msg.era || 1;
+      gameConnected = true;
+      clearTimeout(gameConnectedTimeout);
+      gameConnectedTimeout = setTimeout(() => { gameConnected = false; updateSyncIndicator(); }, 5000);
+      updateSyncIndicator();
+      _origRender();
+      if (syncEnabled && layerVisible.game_overlay) drawGameOverlay();
+      break;
+    case 'PONG':
+      gameConnected = true;
+      clearTimeout(gameConnectedTimeout);
+      gameConnectedTimeout = setTimeout(() => { gameConnected = false; updateSyncIndicator(); }, 5000);
+      updateSyncIndicator();
+      break;
+  }
+};
+
+// Heartbeat: check if game tab is alive
+setInterval(() => {
+  if (syncEnabled) syncChannel.postMessage({ type: 'PING' });
+}, 3000);
+
+// ── Draw game state overlay on editor canvas ──
+
+function drawGameOverlay() {
+  const m = getMap();
+
+  // Draw units from game
+  for (const u of gameUnits) {
+    const p = worldToScreen(u.x, u.y);
+    const isBlue = u.team === 1;
+    const isNeutral = u.team === 0;
+    const r = Math.max(2, 4 * zoom);
+
+    // Unit dot
+    ctx.globalAlpha = 0.8;
+    ctx.fillStyle = isNeutral ? '#FFD700' : isBlue ? '#4499FF' : '#FF5555';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // HP indicator (small bar above unit)
+    if (u.hp < u.maxHp && zoom > 0.1) {
+      const barW = r * 4;
+      const barH = Math.max(1, 2 * zoom);
+      const pct = Math.max(0, u.hp / u.maxHp);
+      ctx.fillStyle = '#000';
+      ctx.fillRect(p.x - barW/2, p.y - r - barH - 1, barW, barH);
+      ctx.fillStyle = pct > 0.5 ? '#45E6B0' : pct > 0.25 ? '#FFD93D' : '#FF5555';
+      ctx.fillRect(p.x - barW/2, p.y - r - barH - 1, barW * pct, barH);
+    }
+
+    // Type label at high zoom
+    if (zoom > 0.25 && u.type) {
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.font = `${Math.max(7, 9 * zoom * 2)}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText(u.type[0].toUpperCase(), p.x, p.y + r + 1);
+    }
+  }
+  ctx.globalAlpha = 1;
+
+  // Draw camp ownership rings from game
+  for (const c of gameCamps) {
+    const p = worldToScreen(c.x, c.y);
+    const r = 120 * zoom; // CAMP_RANGE
+    if (c.owner !== 0) {
+      ctx.strokeStyle = c.owner === 1 ? 'rgba(68,153,255,0.5)' : 'rgba(255,85,85,0.5)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  // Draw nexus HP from game
+  for (const n of gameNexuses) {
+    const p = worldToScreen(n.x, n.y);
+    const barW = 60;
+    const barH = 6;
+    const pct = Math.max(0, n.hp / n.maxHp);
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(p.x - barW/2, p.y + 25, barW, barH);
+    ctx.fillStyle = pct > 0.5 ? '#45E6B0' : pct > 0.25 ? '#FFD93D' : '#FF5555';
+    ctx.fillRect(p.x - barW/2, p.y + 25, barW * pct, barH);
+    ctx.fillStyle = '#fff';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(`${Math.ceil(n.hp)}/${n.maxHp}`, p.x, p.y + 33);
+  }
+
+  // Draw mines from game
+  for (const mine of gameMines) {
+    const p = worldToScreen(mine.x, mine.y);
+    const r = Math.max(3, 5 * zoom);
+    ctx.globalAlpha = 0.7;
+    ctx.fillStyle = '#888';
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y - r); ctx.lineTo(p.x + r, p.y);
+    ctx.lineTo(p.x, p.y + r); ctx.lineTo(p.x - r, p.y);
+    ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // Draw armories from game
+  for (const arm of gameArmories) {
+    const p = worldToScreen(arm.x, arm.y);
+    const r = Math.max(3, 5 * zoom);
+    ctx.globalAlpha = 0.7;
+    ctx.fillStyle = arm.team === 1 ? '#4499FF' : '#FF5555';
+    ctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
+    ctx.strokeStyle = '#AA6633';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(p.x - r, p.y - r, r * 2, r * 2);
+    ctx.globalAlpha = 1;
+  }
+
+  // Game connected badge with era info
+  if (gameUnits.length > 0) {
+    const unitCount = gameUnits.filter(u => !u.dead).length;
+    const eraNames = { 1: 'Foraging', 2: 'Hunting', 3: 'Expansion', 4: 'War', 5: 'Endgame' };
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(canvas.width - 220, 8, 212, 22);
+    ctx.fillStyle = '#45E6B0';
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'top';
+    ctx.fillText(`LIVE: ${unitCount} units | Era ${gameEra}: ${eraNames[gameEra] || '?'}`, canvas.width - 14, 13);
+  }
+}
+
+// ── Save indicator in status bar ──
+
+let saveIndicatorTimer = null;
+function updateSaveIndicator(state) {
+  const el = document.getElementById('status-sync');
+  if (!el) return;
+  if (saveIndicatorTimer) clearTimeout(saveIndicatorTimer);
+  switch (state) {
+    case 'saving':
+      el.textContent = 'Saving...';
+      el.style.color = '#FFD93D';
+      break;
+    case 'saved':
+      el.textContent = 'Saved ✓';
+      el.style.color = '#45E6B0';
+      saveIndicatorTimer = setTimeout(() => { el.textContent = 'Ready'; el.style.color = '#888'; }, 2000);
+      break;
+    case 'error':
+      el.textContent = 'Save FAILED';
+      el.style.color = '#FF5555';
+      saveIndicatorTimer = setTimeout(() => { el.textContent = 'Ready'; el.style.color = '#888'; }, 4000);
+      break;
+    default:
+      el.textContent = 'Ready';
+      el.style.color = '#888';
+  }
+}
+
+// ── Live sync indicator (BroadcastChannel to game tab) ──
+
+function updateSyncIndicator() {
+  // Only update sync if save isn't in progress
+  const el = document.getElementById('status-sync');
+  if (!el) return;
+  if (el.textContent === 'Saving...' || el.textContent === 'Saved ✓') return; // don't overwrite save status
+  if (!syncEnabled) {
+    // don't change — leave save status showing
+  } else if (gameConnected) {
+    el.textContent = 'LIVE ✓';
+    el.style.color = '#45E6B0';
+  }
+}
+
+// ── Sync toggle button ──
+
+document.getElementById('btn-sync-toggle')?.addEventListener('click', () => {
+  syncEnabled = !syncEnabled;
+  updateSyncIndicator();
+  if (syncEnabled) broadcastMap();
+  showToast(syncEnabled ? 'Live sync ON' : 'Live sync OFF');
+});
+
+// ── Restart game button ──
+
+document.getElementById('btn-sync-restart')?.addEventListener('click', () => {
+  syncChannel.postMessage({ type: 'COMMAND', cmd: 'restart', mapDef: buildSyncMap() });
+  showToast('Sent restart to game');
+});
+
+// =================================================================
+// BOOT
+// =================================================================
+
+async function boot() {
+  // Try loading saved maps from server file, then localStorage, then defaults
+  const loaded = await loadFromServer();
+  if (!loaded) {
+    initMaps();
+  }
+  populateMapSelect();
+  resizeCanvas();
+  centerCamera();
+  syncUI();
+  syncInspector();
+  syncUndoButtons();
+  updateSyncIndicator();
+  render();
+  // Send initial map to any open game tab
+  setTimeout(() => broadcastMap(), 500);
+}
+boot();
 </script>
 </body>
 </html>

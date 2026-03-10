@@ -22,6 +22,26 @@ export interface MapZoneDef {
   h: number;
 }
 
+export interface MapMineSlot {
+  bluePos: { x: number; y: number };
+  redPos: { x: number; y: number };
+}
+
+export interface MapArmorySlot {
+  bluePos: { x: number; y: number };
+  redPos: { x: number; y: number };
+}
+
+export interface MapTerrainItem {
+  type: 'water' | 'mountain' | 'bush' | 'forest' | 'lava' | 'sand' | 'swamp' | 'ice' | 'ruins' | 'bridge';
+  shape: 'circle' | 'rect';
+  x: number;
+  y: number;
+  radius?: number; // for circle
+  w?: number;      // for rect
+  h?: number;      // for rect
+}
+
 export interface MapDef {
   id: string;
   name: string;
@@ -36,6 +56,9 @@ export interface MapDef {
   carrotZones: MapZoneDef[];       // areas where carrots can spawn
   wildZones: MapZoneDef[];         // areas where roaming neutrals can spawn
   wildExclusions: { x: number; y: number; radius: number }[]; // extra no-wild zones
+  mineSlots?: MapMineSlot[];       // metal mine positions (blue/red pairs, mirrored)
+  armorySlots?: MapArmorySlot[];   // armory positions (blue/red pairs)
+  terrain?: MapTerrainItem[];      // painted terrain features (water, mountains, etc.)
 }
 
 // ─── TIER POOLS ──────────────────────────────────────────
@@ -43,7 +66,7 @@ export interface MapDef {
 
 export const TIER_POOLS: Record<number, string[]> = {
   1: ['gnome', 'turtle'],
-  2: ['skull', 'spider', 'gnoll'],
+  2: ['skull', 'spider', 'gnoll', 'rogue'],
   3: ['panda', 'lizard'],
   4: ['minotaur', 'shaman'],
 };
@@ -137,6 +160,13 @@ const DEFAULT_MAP: MapDef = {
     { x: 250, y: 2950, radius: 500 },   // P1 base
     { x: 2950, y: 250, radius: 500 },   // P2 base
   ],
+  mineSlots: [
+    { bluePos: { x: 354, y: 2359 }, redPos: { x: 2846, y: 841 } },
+    { bluePos: { x: 889, y: 2831 }, redPos: { x: 2311, y: 369 } },
+  ],
+  armorySlots: [
+    { bluePos: { x: 550, y: 2650 }, redPos: { x: 2650, y: 550 } },
+  ],
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -195,6 +225,13 @@ const CROSSROADS_MAP: MapDef = {
   wildExclusions: [
     { x: 250, y: 2950, radius: 600 },
     { x: 2950, y: 250, radius: 600 },
+  ],
+  mineSlots: [
+    { bluePos: { x: 354, y: 2359 }, redPos: { x: 2846, y: 841 } },
+    { bluePos: { x: 889, y: 2831 }, redPos: { x: 2311, y: 369 } },
+  ],
+  armorySlots: [
+    { bluePos: { x: 550, y: 2650 }, redPos: { x: 2650, y: 550 } },
   ],
 };
 
@@ -257,6 +294,13 @@ const RING_MAP: MapDef = {
     // Inner lake — no wilds inside the water
     { x: 1600, y: 1600, radius: 350 },
   ],
+  mineSlots: [
+    { bluePos: { x: 400, y: 2310 }, redPos: { x: 2800, y: 890 } },
+    { bluePos: { x: 930, y: 2780 }, redPos: { x: 2270, y: 420 } },
+  ],
+  armorySlots: [
+    { bluePos: { x: 600, y: 2600 }, redPos: { x: 2600, y: 600 } },
+  ],
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -317,6 +361,13 @@ const THREE_KINGDOMS_MAP: MapDef = {
   wildExclusions: [
     { x: 300, y: 2900, radius: 650 },
     { x: 2900, y: 300, radius: 650 },
+  ],
+  mineSlots: [
+    { bluePos: { x: 400, y: 2310 }, redPos: { x: 2800, y: 890 } },
+    { bluePos: { x: 930, y: 2780 }, redPos: { x: 2270, y: 420 } },
+  ],
+  armorySlots: [
+    { bluePos: { x: 600, y: 2600 }, redPos: { x: 2600, y: 600 } },
   ],
 };
 
