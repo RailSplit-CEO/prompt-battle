@@ -1516,25 +1516,27 @@ export class HordeScene extends Phaser.Scene {
       const d = Math.sqrt(dx * dx + dy * dy);
       if (d < 5) continue;
 
-      // Avoidance behavior for bootstrap, scout, and collect workflows
+      // Avoidance: any non-combat workflow step avoids enemies & hostile camps
       if (u.team !== 0 && u.loop) {
         const curStep = u.loop.steps[u.loop.currentStep];
-        const shouldAvoid = curStep && (
-          // Bootstrap: avoid during seek/deliver
-          (this.isBootstrapWorkflow(u.loop) && (curStep.action === 'seek_resource' || curStep.action === 'deliver'))
-          // Scout: always avoid enemies and camps
-          || curStep.action === 'scout'
-          // Collect: avoid enemies while gathering
-          || curStep.action === 'collect'
+        // Non-combat = anything except attack_camp, attack_enemies, hunt, kill_only, defend
+        const isCombatStep = curStep && (
+          curStep.action === 'attack_camp'
+          || curStep.action === 'attack_enemies'
+          || curStep.action === 'hunt'
+          || curStep.action === 'kill_only'
+          || curStep.action === 'defend'
         );
+        const shouldAvoid = curStep && !isCombatStep;
 
         if (shouldAvoid) {
           const AVOID_RANGE = 150;
           let avoidX = 0, avoidY = 0;
+          const team = u.team as 1 | 2;
 
-          // Avoid enemy units
+          // Avoid enemy units and neutral camp defenders
           for (const o of this.units) {
-            if (o.dead || o.team === u.team || o.team === 0) continue;
+            if (o.dead || o.team === u.team) continue;
             const ex = u.x - o.x, ey = u.y - o.y;
             const ed = Math.sqrt(ex * ex + ey * ey);
             if (ed < AVOID_RANGE && ed > 1) {
@@ -1544,16 +1546,16 @@ export class HordeScene extends Phaser.Scene {
             }
           }
 
-          // Avoid non-target camps (bootstrap avoids non-target camps; scout avoids all)
-          const isScout = curStep.action === 'scout';
-          const targetAnimal = !isScout ? this.getBootstrapAnimal(u.loop) : undefined;
+          // Avoid hostile camps (not owned by us, with defenders alive)
+          const targetAnimal = this.getBootstrapAnimal(u.loop);
           for (const c of this.camps) {
-            if (!isScout && targetAnimal && c.animalType === targetAnimal && c.owner === u.team) continue;
-            // Scout avoids camps with defenders
-            if (isScout) {
-              const hasDefenders = this.units.some(g => g.campId === c.id && g.team === 0 && !g.dead);
-              if (!hasDefenders) continue; // safe to pass by cleared camps
-            }
+            // Skip our own camps
+            if (c.owner === team) continue;
+            // For bootstrap, skip the target camp we're meant to capture
+            if (targetAnimal && c.animalType === targetAnimal) continue;
+            // Only avoid camps that are actually dangerous (have defenders)
+            const hasDefenders = this.units.some(g => g.campId === c.id && g.team === 0 && !g.dead);
+            if (!hasDefenders && c.owner === 0) continue;
             const cx2 = u.x - c.x, cy2 = u.y - c.y;
             const cd = Math.sqrt(cx2 * cx2 + cy2 * cy2);
             if (cd < AVOID_RANGE && cd > 1) {
@@ -1608,11 +1610,26 @@ export class HordeScene extends Phaser.Scene {
     return undefined;
   }
 
+  /** Check if a unit is on a non-combat workflow step (should avoid enemies, not fight) */
+  private isNonCombatStep(u: HUnit): boolean {
+    if (!u.loop) return false;
+    const step = u.loop.steps[u.loop.currentStep];
+    if (!step) return false;
+    return step.action !== 'attack_camp'
+      && step.action !== 'attack_enemies'
+      && step.action !== 'hunt'
+      && step.action !== 'kill_only'
+      && step.action !== 'defend';
+  }
+
   // ─── COMBAT ──────────────────────────────────────────────────
 
   private updateCombat(delta: number) {
     for (const u of this.units) {
       if (u.dead) continue;
+
+      // Units on non-combat workflow steps don't fight — they flee via movement avoidance
+      if (u.team !== 0 && this.isNonCombatStep(u)) continue;
 
       // Drop food and fight if enemy is nearby
       if (u.carrying && u.team !== 0) {
@@ -2173,12 +2190,16 @@ export class HordeScene extends Phaser.Scene {
     this.carrotSpawnTimer += delta;
     if (this.carrotSpawnTimer < CARROT_SPAWN_MS) return;
     this.carrotSpawnTimer -= CARROT_SPAWN_MS;
-    // Spawn carrots randomly across the entire map
+    // Spawn carrots symmetrically — equal on both sides
     const MARGIN = 100;
-    for (let i = 0; i < 2; i++) {
-      const x = MARGIN + Math.random() * (WORLD_W - MARGIN * 2);
-      const y = MARGIN + Math.random() * (WORLD_H - MARGIN * 2);
+    const cx = WORLD_W / 2, cy = WORLD_H / 2;
+    for (let i = 0; i < 4; i++) {
+      // Random point on P1's half (bottom-left)
+      const x = MARGIN + Math.random() * (cx - MARGIN);
+      const y = cy + Math.random() * (cy - MARGIN);
       this.spawnGroundItem('carrot', x, y);
+      // Mirror to P2's half (top-right)
+      this.spawnGroundItem('carrot', WORLD_W - x, WORLD_H - y);
     }
   }
 
