@@ -1977,22 +1977,53 @@ export class HordeScene extends Phaser.Scene {
   // ─── RESOURCE ECONOMY: GATHER LOOPS ──────────────────────────
 
   private updateGatherLoops() {
+    // Auto-assign idle player units to gather loops (always looping)
+    for (const u of this.units) {
+      if (u.dead || u.team === 0 || u.loop) continue;
+      // If unit is idle (near its target, not carrying)
+      const atTarget = pdist(u, { x: u.targetX, y: u.targetY }) < 25;
+      if (!atTarget && !u.carrying) continue;
+      // Don't auto-gather if enemies are nearby (unit is in combat)
+      const hasNearbyEnemy = this.units.some(e => !e.dead && e.team !== u.team && e.team !== 0 && pdist(u, e) < COMBAT_RANGE + 50);
+      if (hasNearbyEnemy) continue;
+      // Don't auto-gather if near enemy nexus (attacking)
+      const enemyNex = this.nexuses.find(n => n.team !== u.team);
+      if (enemyNex && pdist(u, enemyNex) < COMBAT_RANGE + 80) continue;
+      // Default gather: T1 gathers carrots, T2+ gathers meat
+      const tier = ANIMALS[u.type]?.tier || 1;
+      const resType: ResourceType = tier <= 1 ? 'carrot' : 'meat';
+      let deliverTo = 'base';
+      if (resType === 'meat') {
+        const base = u.team === 1 ? P1_BASE : P2_BASE;
+        const mc = this.camps.filter(c => c.owner === u.team && SPAWN_COSTS[c.animalType]?.type === 'meat')
+          .sort((a, b) => pdist(a, base) - pdist(b, base));
+        if (mc.length > 0) deliverTo = mc[0].id;
+      }
+      u.loop = { action: 'gather', resourceType: resType, deliverTo, phase: u.carrying ? 'delivering' : 'seeking' };
+    }
+
+    // Track which ground items are already targeted so each unit picks a unique one
+    const claimedItems = new Set<number>();
+
     for (const u of this.units) {
       if (u.dead || !u.loop || u.team === 0) continue;
       const team = u.team as 1 | 2;
       const base = team === 1 ? P1_BASE : P2_BASE;
 
       if (u.loop.phase === 'seeking' && !u.carrying) {
-        // Move to nearest matching ground item
+        // Find nearest UNCLAIMED matching ground item unique to this unit
         let best: HGroundItem | null = null, bestD = Infinity;
         for (const item of this.groundItems) {
           if (item.dead || item.type !== u.loop.resourceType) continue;
+          if (claimedItems.has(item.id)) continue; // skip already-claimed
           const d = pdist(u, item);
           if (d < bestD) { bestD = d; best = item; }
         }
-        if (best) { u.targetX = best.x; u.targetY = best.y; }
-        else {
-          // No items of this type — idle near base
+        if (best) {
+          claimedItems.add(best.id); // claim it
+          u.targetX = best.x; u.targetY = best.y;
+        } else {
+          // No unclaimed items — wait near base
           if (pdist(u, base) > 200) { u.targetX = base.x; u.targetY = base.y; }
         }
       } else if (u.loop.phase === 'delivering' && u.carrying) {
@@ -2013,16 +2044,39 @@ export class HordeScene extends Phaser.Scene {
 
   // ─── RESOURCE ECONOMY: WILD ANIMALS ──────────────────────────
 
+  /** Spawn position on the outskirts — edges and corners of the map, away from bases */
+  private randomOutskirtsPos(): { x: number; y: number } {
+    const MARGIN = 150;
+    const EDGE_BAND = 500; // how deep into the map "outskirts" extends
+    let x: number, y: number;
+    for (let attempt = 0; attempt < 50; attempt++) {
+      // Pick a random edge (top, bottom, left, right)
+      const edge = Math.floor(Math.random() * 4);
+      if (edge === 0) { // top
+        x = MARGIN + Math.random() * (WORLD_W - MARGIN * 2);
+        y = MARGIN + Math.random() * EDGE_BAND;
+      } else if (edge === 1) { // bottom
+        x = MARGIN + Math.random() * (WORLD_W - MARGIN * 2);
+        y = WORLD_H - MARGIN - Math.random() * EDGE_BAND;
+      } else if (edge === 2) { // left
+        x = MARGIN + Math.random() * EDGE_BAND;
+        y = MARGIN + Math.random() * (WORLD_H - MARGIN * 2);
+      } else { // right
+        x = WORLD_W - MARGIN - Math.random() * EDGE_BAND;
+        y = MARGIN + Math.random() * (WORLD_H - MARGIN * 2);
+      }
+      if (pdist({ x, y }, P1_BASE) > 500 && pdist({ x, y }, P2_BASE) > 500) return { x, y };
+    }
+    return { x: WORLD_W / 2, y: MARGIN + 100 }; // fallback
+  }
+
   private spawnWildAnimals() {
     const wildTypes = ['bunny', 'turtle', 'wolf', 'scorpion', 'hawk'];
     for (let i = 0; i < WILD_ANIMAL_COUNT; i++) {
       const type = wildTypes[Math.floor(Math.random() * wildTypes.length)];
       const def = ANIMALS[type];
-      let x: number, y: number;
-      do {
-        x = 200 + Math.random() * (WORLD_W - 400);
-        y = 200 + Math.random() * (WORLD_H - 400);
-      } while (pdist({ x, y }, P1_BASE) < 500 || pdist({ x, y }, P2_BASE) < 500);
+      const pos = this.randomOutskirtsPos();
+      const { x, y } = pos;
       this.units.push({
         id: this.nextId++, type, team: 0,
         hp: def.hp, maxHp: def.hp, attack: def.attack, speed: def.speed * 0.4,
@@ -2062,9 +2116,8 @@ export class HordeScene extends Phaser.Scene {
         const wt = ['bunny', 'turtle', 'wolf', 'scorpion', 'hawk'];
         const type = wt[Math.floor(Math.random() * wt.length)];
         const def = ANIMALS[type];
-        let x: number, y: number;
-        do { x = 200 + Math.random() * (WORLD_W - 400); y = 200 + Math.random() * (WORLD_H - 400);
-        } while (pdist({ x, y }, P1_BASE) < 500 || pdist({ x, y }, P2_BASE) < 500);
+        const pos = this.randomOutskirtsPos();
+        const { x, y } = pos;
         this.units.push({
           id: this.nextId++, type, team: 0,
           hp: def.hp, maxHp: def.hp, attack: def.attack, speed: def.speed * 0.4,
@@ -2090,14 +2143,36 @@ export class HordeScene extends Phaser.Scene {
         });
       }
     }
-    // Wander wild animals
+    // Wander wild animals — stay on outskirts, don't drift to center
+    const cx = WORLD_W / 2, cy = WORLD_H / 2;
     for (const u of this.units) {
       if (u.team !== 0 || u.campId || u.dead) continue;
       if (pdist(u, { x: u.targetX, y: u.targetY }) < 15) {
-        const a = Math.random() * Math.PI * 2;
-        const r = 80 + Math.random() * 200;
-        u.targetX = Math.max(100, Math.min(WORLD_W - 100, u.x + Math.cos(a) * r));
-        u.targetY = Math.max(100, Math.min(WORLD_H - 100, u.y + Math.sin(a) * r));
+        // If too close to center, push back toward nearest edge
+        const distToCenter = pdist(u, { x: cx, y: cy });
+        if (distToCenter < 800) {
+          // Move away from center toward nearest edge
+          const awayX = u.x - cx, awayY = u.y - cy;
+          const awayD = Math.sqrt(awayX * awayX + awayY * awayY) || 1;
+          const pushR = 300 + Math.random() * 300;
+          u.targetX = Math.max(100, Math.min(WORLD_W - 100, u.x + (awayX / awayD) * pushR));
+          u.targetY = Math.max(100, Math.min(WORLD_H - 100, u.y + (awayY / awayD) * pushR));
+        } else {
+          // Normal wander along the edges
+          const a = Math.random() * Math.PI * 2;
+          const r = 80 + Math.random() * 150;
+          let nx = u.x + Math.cos(a) * r;
+          let ny = u.y + Math.sin(a) * r;
+          // Clamp to world and keep away from center
+          nx = Math.max(100, Math.min(WORLD_W - 100, nx));
+          ny = Math.max(100, Math.min(WORLD_H - 100, ny));
+          if (pdist({ x: nx, y: ny }, { x: cx, y: cy }) < 700) {
+            // Re-roll toward outskirts
+            const pos = this.randomOutskirtsPos();
+            nx = pos.x; ny = pos.y;
+          }
+          u.targetX = nx; u.targetY = ny;
+        }
       }
     }
   }
