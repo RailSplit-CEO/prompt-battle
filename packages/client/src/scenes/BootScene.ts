@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { AnimalType, UNIT_DEFS } from '@prompt-battle/shared';
 import { SPRITE_CONFIGS, HORDE_SPRITE_CONFIGS, ANIM_FRAME_RATES } from '../sprites/SpriteConfig';
+import { SoundManager } from '../audio/SoundManager';
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -16,6 +17,9 @@ export class BootScene extends Phaser.Scene {
 
     // ─── Load enemy sprite sheets ──────────────────────────
     this.loadEnemySprites();
+
+    // ─── Load sound effects ──────────────────────────────────
+    SoundManager.preload(this);
 
     const { width, height } = this.cameras.main;
     this.cameras.main.setBackgroundColor('#1B1040');
