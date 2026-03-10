@@ -24,6 +24,17 @@ interface GameContext {
   selectedArmy: string;
 }
 
+// ─── Behavior Modifiers ──────────────────────────────────────
+// Modify HOW units execute their workflow, not WHAT they do.
+// Three independent, composable axes.
+interface BehaviorMods {
+  formation: 'normal' | 'spread' | 'tight';
+  caution: 'normal' | 'safe' | 'aggressive';
+  pacing: 'normal' | 'rush' | 'efficient';
+}
+
+const DEFAULT_MODS: BehaviorMods = { formation: 'normal', caution: 'normal', pacing: 'normal' };
+
 interface HordeCommand {
   targetType: 'camp' | 'nearest_camp' | 'sweep_camps' | 'nexus' | 'base' | 'position' | 'defend' | 'retreat' | 'workflow';
   targetAnimal?: string;
@@ -32,6 +43,9 @@ interface HordeCommand {
   // LLM-defined workflow steps — the LLM decides the full loop
   workflow?: { action: string; resourceType?: string; target?: string; targetType?: string; campIndex?: number; qualifier?: string; targetAnimal?: string; x?: number; y?: number }[];
   narration?: string;
+  // Behavior modifiers — change how units execute, not what they do
+  modifiers?: { formation?: string | null; caution?: string | null; pacing?: string | null };
+  modifierOnly?: boolean; // true = only change modifiers, keep existing workflow
 }
 
 async function parseWithGemini(
@@ -53,7 +67,7 @@ async function parseWithGemini(
   const prompt = `You are the AI commander for a voice-controlled RTS game called "Horde Capture." The player speaks commands and you interpret them into game actions. You deeply understand the game's economy and must reason about what the player wants.
 
 ═══ GAME ECONOMY ═══
-Resources: 🥕 Carrots (spawn on ground everywhere), 🍖 Meat (drops from killed wild animals), 💎 Crystals (drops from elite prey)
+Resources: 🥕 Carrots (spawn on ground everywhere), 🍖 Meat (drops from killed wild animals), 💎 Crystals (drops from elite prey), ⚙️ Metal (mined from mine nodes on the map)
 
 SPAWN COSTS — each unit type requires a specific resource delivered to its camp:
   Tier 1: gnome (🧝) = 1 carrot, turtle (🐢) = 1 carrot
@@ -62,9 +76,11 @@ SPAWN COSTS — each unit type requires a specific resource delivered to its cam
   Tier 4: minotaur (🐂) = 8 crystals, shaman (🔮) = 8 crystals
   Tier 5: troll (👹) = 12 crystals
 
-HOW SPAWNING WORKS: Units gather a resource → carry it to a camp of the desired type → camp uses it to spawn that unit type. E.g. "make gnomes" means gather carrots and deliver to a gnome camp. "make skulls" means gather meat and deliver to a skull camp.
+HOW SPAWNING WORKS: Units gather a resource → carry it to a camp of the desired type → camp uses it to spawn that unit type. E.g. "make gnomes" means gather carrots and deliver to a gnome camp. "make skulls" means gather meat and deliver to a skull camp. Base stores resources but does NOT spawn units — only camps spawn units. Each team gets 1 free gnome from base every 30 seconds automatically.
 
 To produce a unit, you MUST own a camp of that type. Camps start neutral with defenders — kill the defenders to capture.
+
+MINES: ⛏️ Mine nodes are located on the map. Units can mine metal from them using the "mine" workflow step. Metal is used for forge upgrades at base.
 
 ═══ CURRENT GAME STATE ═══
 Time: ${Math.floor(ctx.gameTime / 1000)}s
@@ -81,6 +97,23 @@ ${campList}
 NEXUS HP: mine=${ctx.nexusHp.mine}/50000, enemy=${ctx.nexusHp.enemy}/50000
 
 Ground items nearby: 🥕${ctx.groundCarrots} carrots, 🍖${ctx.groundMeat} meat, 💎${ctx.groundCrystals} crystals on the map
+
+═══ BEHAVIOR MODIFIERS ═══
+The player can set persistent modifiers that change HOW units execute. Modifiers don't change WHAT units do — just the style.
+Available modifiers (all optional, persist until changed):
+
+FORMATION: "spread" (fan out, space apart) | "tight" (group up, stay close) | null (clear)
+  Keywords: spread out/fan out/scatter → spread | group up/stick together/stay close/cluster → tight
+
+CAUTION: "safe" (retreat when hurt, avoid more, hunt weaker prey) | "aggressive" (no avoidance, engage from far, carriers fight) | null (clear)
+  Keywords: careful/don't die/play safe/be careful → safe | go hard/no mercy/be aggressive/attack everything → aggressive
+
+PACING: "rush" (faster restarts, lower idle tolerance) | "efficient" (1 claim per resource, smart picks) | null (clear)
+  Keywords: rush/hurry/go fast → rush | be efficient/smart/one at a time → efficient
+
+DISAMBIGUATION: "rush the base" → attack nexus (NOT rush modifier). "rush economy" → rush modifier.
+  "go hard" → aggressive. Modifier-only commands (no workflow change): "be more careful" → modifierOnly=true.
+  "back to normal" / "reset" → clear all modifiers. "stop spreading" → formation=null.
 
 ═══ ACTIONS ═══
 Simple movement commands (no workflow needed):
@@ -106,6 +139,7 @@ Available step types:
   {"action": "scout"} — explore the map to reveal camps and enemy positions, AVOIDS all combat
   {"action": "collect", "resourceType": "carrot|meat|crystal"} — pick up ground resources while AVOIDING enemy units (safe gathering)
   {"action": "kill_only", "targetType": "skull|spider|..."} — hunt and kill wild animals but IGNORE resource drops (pure combat, no pickup)
+  {"action": "mine"} — go to nearest mine node and extract metal, then carry it back
 
 The workflow LOOPS automatically. Design the steps so they make a sensible repeating cycle.
 
@@ -119,6 +153,7 @@ TURTLE (T1, 🐢): Slow but carries 10x resources per trip! Ultimate hauler. 1 c
 SKULL (T2, 💀): Cheats death once (survives lethal at 1 HP). Good fighter. 3 meat. Can self-sustain: hunt → pick meat → deliver to own camp.
 SPIDER (T2, 🕷️): Fast ambusher. Great for raiding and hit-and-run. 3 meat.
 GNOLL (T2, 🐺): Ranged attacker (120 range vs normal 60). Excellent for defense and kiting. 3 meat.
+ROGUE (T2, 🗡️): Fast assassin. 3x damage on first hit against a new target (Backstab). Great for hit-and-run. 3 meat.
 PANDA (T3, 🐼): Tanky brawler, high HP. Excellent frontline defender. 5 meat.
 LIZARD (T3, 🦎): Agile, good damage. Great raider. 5 meat.
 MINOTAUR (T4, 🐂): Massive HP and damage. Late-game powerhouse. 8 crystals.
@@ -137,6 +172,7 @@ KEY: For meat/crystals, include "hunt" step BEFORE "seek_resource". For carrots,
 "bootstrap skulls": [{"action":"attack_camp","targetAnimal":"skull","qualifier":"nearest"},{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_skull_camp"}]
 "bootstrap spiders": [{"action":"attack_camp","targetAnimal":"spider","qualifier":"nearest"},{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_spider_camp"}]
 "bootstrap gnolls": [{"action":"attack_camp","targetAnimal":"gnoll","qualifier":"nearest"},{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_gnoll_camp"}]
+"bootstrap rogues": [{"action":"attack_camp","targetAnimal":"rogue","qualifier":"nearest"},{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_rogue_camp"}]
 "bootstrap pandas": [{"action":"attack_camp","targetAnimal":"panda","qualifier":"nearest"},{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_panda_camp"}]
 "bootstrap lizards": [{"action":"attack_camp","targetAnimal":"lizard","qualifier":"nearest"},{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_lizard_camp"}]
 "bootstrap minotaurs": [{"action":"attack_camp","targetAnimal":"minotaur","qualifier":"nearest"},{"action":"hunt","targetType":"minotaur"},{"action":"seek_resource","resourceType":"crystal"},{"action":"deliver","target":"nearest_minotaur_camp"}]
@@ -190,6 +226,10 @@ KILL ONLY (fight but skip drops):
 "kill wilds" / "clear animals" → [{"action":"kill_only"}]
 "kill elites" → [{"action":"kill_only","targetType":"minotaur"}]
 
+MINING:
+"mine metal" → [{"action":"mine"},{"action":"deliver","target":"base"}]
+"farm metal" → [{"action":"mine"},{"action":"deliver","target":"base"}]
+
 STRATEGIC:
 "get started" → bootstrap gnomes (cheapest, fastest economy start)
 
@@ -230,13 +270,15 @@ JSON ONLY (no markdown):
   "campIndex": <index or -1>,
   "qualifier": "<nearest|furthest|weakest|uncaptured|enemy or omit>",
   "workflow": [<array of step objects, only if targetType=workflow>],
-  "narration": "<One dramatic sentence>"
+  "narration": "<One dramatic sentence>",
+  "modifiers": {"formation": "spread|tight|null", "caution": "safe|aggressive|null", "pacing": "rush|efficient|null"},
+  "modifierOnly": false
 }`;
 
   const body = JSON.stringify({
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: {
-      maxOutputTokens: 512,
+      maxOutputTokens: 700,
       responseMimeType: 'application/json',
     },
   });
@@ -294,7 +336,7 @@ interface AnimalDef {
   desc: string;    // short description
 }
 
-type ResourceType = 'carrot' | 'meat' | 'crystal';
+type ResourceType = 'carrot' | 'meat' | 'crystal' | 'metal';
 
 interface HGroundItem {
   id: number;
@@ -304,6 +346,14 @@ interface HGroundItem {
   sprite: Phaser.GameObjects.Text | null;
   dead: boolean;
   age: number; // ms since spawn, for despawn
+}
+
+interface HMineNode {
+  id: string;
+  x: number;
+  y: number;
+  sprite: Phaser.GameObjects.Text | null;
+  label: Phaser.GameObjects.Text | null;
 }
 
 // ─── LLM-Defined Workflows ────────────────────────────────
@@ -318,7 +368,8 @@ type WorkflowStep =
   | { action: 'attack_enemies' }                              // seek and fight nearest enemy player units
   | { action: 'scout' }                                       // explore the map, reveal camps/enemies, avoid combat
   | { action: 'collect'; resourceType: ResourceType }         // pick up ground resources while avoiding enemies
-  | { action: 'kill_only'; targetType?: string };             // hunt and kill wild animals but ignore drops
+  | { action: 'kill_only'; targetType?: string }              // hunt and kill wild animals but ignore drops
+  | { action: 'mine' };                                       // go to nearest mine, extract metal
 
 interface HWorkflow {
   steps: WorkflowStep[];
@@ -390,6 +441,7 @@ interface HUnit {
   hasRebirth: boolean;   // skull: cheats death once (survives at 1 HP)
   diveReady: boolean;    // (unused, kept for interface compat)
   diveTimer: number;     // (unused, kept for interface compat)
+  lastAttackTarget: number; // rogue backstab: id of last target attacked (-1 = none, first hit = 3x)
   // Resource economy
   carrying: ResourceType | null;
   carrySprite: Phaser.GameObjects.Text | null;
@@ -397,6 +449,7 @@ interface HUnit {
   isElite: boolean; // golden elite prey — drops crystals
   idleTimer: number; // ms spent idle — restarts loop after 4s
   claimItemId: number; // id of ground item this unit is pathing to (-1 = none)
+  mods: BehaviorMods; // behavior modifiers (formation, caution, pacing)
 }
 
 interface CampDef {
@@ -518,6 +571,7 @@ const ANIMALS: Record<string, AnimalDef> = {
   minotaur:  { type: 'minotaur',  emoji: '🐂', hp: 2200,  attack: 110,  speed: 120, tier: 4, ability: 'War Cry',      desc: 'Nearby allies +25% attack' },
   shaman:    { type: 'shaman',    emoji: '🔮', hp: 1400,  attack: 180,  speed: 100, tier: 4, ability: 'Arcane Blast', desc: 'All attacks splash 60px' },
   troll:     { type: 'troll',     emoji: '👹', hp: 14000, attack: 350,  speed: 50,  tier: 5, ability: 'Club Slam',    desc: 'Massive 90px splash, slows enemies' },
+  rogue:     { type: 'rogue',     emoji: '🗡️', hp: 60,    attack: 45,   speed: 200, tier: 2, ability: 'Backstab',    desc: '3x damage on first hit against a target' },
 };
 
 // Hard counter map: attacker → types it deals 2x damage to
@@ -533,6 +587,7 @@ const HARD_COUNTERS: Record<string, string[]> = {
   minotaur:  ['skull', 'shaman'],      // war cry + stats overwhelm undying and casters
   shaman:    ['troll', 'minotaur'],    // arcane blast burns down big slow targets
   troll:     ['shaman', 'gnoll'],      // club slam crushes casters and ranged
+  rogue:     ['gnome', 'shaman'],     // backstab bursts down fragile targets
 };
 
 // Procedural map: competitive symmetric layout.
@@ -597,6 +652,11 @@ const CAMP_NAMES: Record<string, string[]> = {
     'Tremor Trail', 'Twisted Tower', 'Thorned Thicket', 'Titan Tarn',
     'Tusk Terrace', 'Tyrant Top', 'Thrash Trench', 'Troll Tunnel',
   ],
+  rogue: [
+    'Rogue Ravine', 'Razor Ridge', 'Raider Roost', 'Reaper Run',
+    'Ruin Reach', 'Raven Rest', 'Rascal Row', 'Rustblade Ruins',
+    'Rebel Rise', 'Ridgeback Run', 'Rogue Retreat', 'Raptor Roost',
+  ],
 };
 
 // Track used names to guarantee uniqueness
@@ -619,11 +679,11 @@ function makeCamps(): CampDef[] {
   for (const k of Object.keys(usedNames)) delete usedNames[k];
 
   const GUARD_COUNT: Record<string, number> = {
-    gnome: 1, turtle: 1, skull: 1, spider: 1, gnoll: 1,
+    gnome: 1, turtle: 1, skull: 1, spider: 1, gnoll: 1, rogue: 1,
     panda: 1, lizard: 1, minotaur: 1, shaman: 1, troll: 1,
   };
   const SPAWN_MS: Record<string, number> = {
-    gnome: 4000, turtle: 4500, skull: 6000, spider: 6000, gnoll: 5500,
+    gnome: 4000, turtle: 4500, skull: 6000, spider: 6000, gnoll: 5500, rogue: 5500,
     panda: 7500, lizard: 7500, minotaur: 10000, shaman: 10000, troll: 15000,
   };
 
@@ -633,8 +693,6 @@ function makeCamps(): CampDef[] {
   let idx = 0;
 
   // ─── ONE CAMP PER UNIT TYPE PER SIDE (mirrored) ───
-  // Layout: T1 near base, T2 mid, T3 far mid, T4 deep contested
-  // Each unit type gets exactly 1 camp on each side = 18 camps (9 pairs)
   const campLayout: { type: string; distFromBase: number; angleOffset: number }[] = [
     // T1 — close to base
     { type: 'gnome',  distFromBase: 400,  angleOffset: -0.4 },
@@ -643,6 +701,7 @@ function makeCamps(): CampDef[] {
     { type: 'skull',  distFromBase: 800,  angleOffset: -0.6 },
     { type: 'spider', distFromBase: 850,  angleOffset: 0.0 },
     { type: 'gnoll',  distFromBase: 900,  angleOffset: 0.6 },
+    { type: 'rogue',  distFromBase: 750,  angleOffset: 0.8 },
     // T3 — far mid
     { type: 'panda',  distFromBase: 1300, angleOffset: -0.3 },
     { type: 'lizard', distFromBase: 1350, angleOffset: 0.3 },
@@ -705,11 +764,11 @@ function makeCampsFromMap(mapDef: MapDef, seed: number): CampDef[] {
   for (const k of Object.keys(usedNames)) delete usedNames[k];
 
   const GUARD_COUNT: Record<string, number> = {
-    gnome: 1, turtle: 1, skull: 1, spider: 1, gnoll: 1,
+    gnome: 1, turtle: 1, skull: 1, spider: 1, gnoll: 1, rogue: 1,
     panda: 1, lizard: 1, minotaur: 1, shaman: 1, troll: 1,
   };
   const SPAWN_MS: Record<string, number> = {
-    gnome: 4000, turtle: 4500, skull: 6000, spider: 6000, gnoll: 5500,
+    gnome: 4000, turtle: 4500, skull: 6000, spider: 6000, gnoll: 5500, rogue: 5500,
     panda: 7500, lizard: 7500, minotaur: 10000, shaman: 10000, troll: 15000,
   };
 
@@ -758,7 +817,8 @@ function makeCampsFromMap(mapDef: MapDef, seed: number): CampDef[] {
 }
 const NEXUS_MAX_HP = 50000;
 const MAX_UNITS = 80;
-const BASE_SPAWN_MS = 5000;
+const BASE_SPAWN_MS = 5000; // (legacy, unused)
+const FREE_GNOME_MS = 30000; // free gnome from base every 30s
 const ATTACK_CD_MS = 1500;
 const COMBAT_RANGE = 80;
 const CAMP_RANGE = 120;
@@ -779,8 +839,9 @@ const SPAWN_COSTS: Record<string, { type: ResourceType; amount: number }> = {
   minotaur:  { type: 'crystal', amount: 8 },
   shaman:    { type: 'crystal', amount: 8 },
   troll:     { type: 'crystal', amount: 12 },
+  rogue:     { type: 'meat',    amount: 3 },
 };
-const RESOURCE_EMOJI: Record<ResourceType, string> = { carrot: '🥕', meat: '🍖', crystal: '💎' };
+const RESOURCE_EMOJI: Record<ResourceType, string> = { carrot: '🥕', meat: '🍖', crystal: '💎', metal: '⚙️' };
 const CARROT_SPAWN_MS = 5000;       // new carrots every 5s
 const MAX_GROUND_ITEMS = 150;
 const ITEM_DESPAWN_MS = 90000;      // ground items vanish after 90s
@@ -788,6 +849,9 @@ const PICKUP_RANGE = 35;
 const WILD_ANIMAL_COUNT = 30;       // neutral roaming animals — concentrated in corners
 const ELITE_PREY_COUNT = 3;         // golden elite prey (T4 stats, drop crystals)
 const WILD_RESPAWN_MS = 20000;      // respawn wild animals every 20s
+const MINE_COUNT = 4; // 2 per side, mirrored
+const MINE_TICK_MS = 2000; // mine produces metal every 2s while a unit stands on it
+const MINE_RANGE = 50; // how close to be "mining"
 
 function pdist(a: { x: number; y: number }, b: { x: number; y: number }): number {
   const dx = a.x - b.x, dy = a.y - b.y;
@@ -802,6 +866,7 @@ export class HordeScene extends Phaser.Scene {
   private units: HUnit[] = [];
   private camps: HCamp[] = [];
   private nexuses: HNexus[] = [];
+  private mineNodes: HMineNode[] = [];
   private nextId = 0;
   private gameTime = 0;
   private gameOver = false;
@@ -815,9 +880,13 @@ export class HordeScene extends Phaser.Scene {
   private nextItemId = 0;
   private carrotSpawnTimer = 0;
   private wildRespawnTimer = 0;
+  private freeGnomeTimer = 0;
+  // Era progression — goal-based unlocks
+  private currentEra = 1;
+  private eliteKillCount = 0;
   private baseStockpile = {
-    1: { carrot: 0, meat: 0, crystal: 0 },
-    2: { carrot: 0, meat: 0, crystal: 0 },
+    1: { carrot: 0, meat: 0, crystal: 0, metal: 0 },
+    2: { carrot: 0, meat: 0, crystal: 0, metal: 0 },
   };
 
   private hudTexts: Record<string, Phaser.GameObjects.Text> = {};
@@ -856,6 +925,7 @@ export class HordeScene extends Phaser.Scene {
   private rallyPoints: Record<string, { x: number; y: number }> = {};
   // Active workflow per group — new spawns inherit this automatically
   private groupWorkflows: Record<string, HWorkflow> = {};
+  private groupModifiers: Record<string, BehaviorMods> = {};
   private activeSweeps: Record<string, {
     team: 1 | 2; subject: string;
     targets: { x: number; y: number; id: string }[]; currentIdx: number;
@@ -871,6 +941,7 @@ export class HordeScene extends Phaser.Scene {
   };
   private selectionLabel: Phaser.GameObjects.Text | null = null;
   private armyBarEl: HTMLDivElement | null = null;
+  private charPanelEl: HTMLDivElement | null = null;
 
   // ─── MAP CONFIG ──────────────────────────────────────────────
   private mapDef: MapDef | null = null;
@@ -923,14 +994,18 @@ export class HordeScene extends Phaser.Scene {
     this.hudTexts = {};
     this.rallyPoints = {};
     this.activeSweeps = {};
+    this.groupModifiers = {};
     this.selectedArmy = 'all';
     this.groundItems = [];
     this.nextItemId = 0;
     this.carrotSpawnTimer = 0;
     this.wildRespawnTimer = 0;
+    this.freeGnomeTimer = 0;
+    this.currentEra = 1;
+    this.eliteKillCount = 0;
     this.baseStockpile = {
-      1: { carrot: 0, meat: 0, crystal: 0 },
-      2: { carrot: 0, meat: 0, crystal: 0 },
+      1: { carrot: 0, meat: 0, crystal: 0, metal: 0 },
+      2: { carrot: 0, meat: 0, crystal: 0, metal: 0 },
     };
 
     this.syncTimer = 0;
@@ -938,6 +1013,7 @@ export class HordeScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor('#1a1a2e');
     this.drawBackground();
     this.setupCamps();
+    this.initMineNodes();
     this.setupNexuses();
     this.setupFog();
     this.setupCamera();
@@ -951,7 +1027,7 @@ export class HordeScene extends Phaser.Scene {
         this.spawnUnit('gnome', 1, P1_BASE.x + 50 + i * 20, P1_BASE.y - 50);
         this.spawnUnit('gnome', 2, P2_BASE.x - 50 - i * 20, P2_BASE.y + 50);
       }
-      this.spawnWildAnimals();
+      // Wild animals no longer spawn at start — they unlock with Era 2
     }
 
     // ─── ONLINE SETUP ───
@@ -1022,8 +1098,8 @@ export class HordeScene extends Phaser.Scene {
     // RenderTexture covering the whole world — filled dark, erased around allies
     this.fogRT = this.add.renderTexture(0, 0, WORLD_W, WORLD_H)
       .setOrigin(0)
-      .setDepth(50) // above world objects (units=20, camps=5-6, nexus=8-9, items=15) but below HUD (100)
-      .setAlpha(1.0);
+      .setDepth(50) // above world objects (units=20, items=15) but below camps-above-fog (51-53) and HUD (100)
+      .setAlpha(0.65); // semi-transparent — looks like real fog you can see through
 
     // Reusable brush for punching vision holes — sharp binary cutoff
     this.fogBrush = this.make.graphics({ x: 0, y: 0 }, false);
@@ -1140,13 +1216,14 @@ export class HordeScene extends Phaser.Scene {
 
       const area = this.add.circle(def.x, def.y, CAMP_RANGE, 0xFFD93D, 0.06);
       area.setStrokeStyle(2, 0xFFD93D, 0.25);
+      area.setDepth(51); // above fog (50) — always visible through fog
 
       const label = this.add.text(def.x, def.y - 55, def.name, {
         fontSize: '18px', color: '#FFD93D', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
         stroke: '#000000', strokeThickness: 4,
-      }).setOrigin(0.5).setDepth(5);
+      }).setOrigin(0.5).setDepth(52); // above fog — shows "???" or scouted type
 
-      const captureBar = this.add.graphics().setDepth(6);
+      const captureBar = this.add.graphics().setDepth(53); // above fog
 
       const camp: HCamp = {
         id: def.id, name: def.name, animalType: def.type, tier: animalDef.tier,
@@ -1158,11 +1235,23 @@ export class HordeScene extends Phaser.Scene {
       };
       this.camps.push(camp);
 
-      // Spawn real neutral defender units around the camp (host/solo only; guest gets via sync)
+      // Spawn defenders only for camps whose tier is unlocked by the current era
       if (!this.isOnline || this.isHost) {
-        this.spawnCampDefenders(camp);
+        if (animalDef.tier <= this.eraMaxTier()) {
+          this.spawnCampDefenders(camp);
+        }
       }
     }
+  }
+
+  /** Max animal tier unlocked at current era */
+  private eraMaxTier(): number {
+    return this.currentEra; // Era 1→T1, Era 2→T2, Era 3→T3, Era 4→T4, Era 5→T5
+  }
+
+  /** Is this camp active (tier unlocked) in the current era? */
+  private isCampActive(camp: HCamp): boolean {
+    return (ANIMALS[camp.animalType]?.tier || 1) <= this.eraMaxTier();
   }
 
   private spawnCampDefenders(camp: HCamp) {
@@ -1187,7 +1276,101 @@ export class HordeScene extends Phaser.Scene {
         hasRebirth: camp.animalType === 'skull',
         diveReady: false,
         diveTimer: 0,
+        lastAttackTarget: -1, mods: { ...DEFAULT_MODS },
         carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
+      });
+    }
+  }
+
+  // ─── MINE NODES ─────────────────────────────────────────────
+
+  private initMineNodes() {
+    this.mineNodes = [];
+    const cx = WORLD_W / 2, cy = WORLD_H / 2;
+    // 2 mines per side, placed at ~600px from each base, mirrored
+    const mineOffsets = [
+      { dist: 600, angle: -0.6 },
+      { dist: 650, angle: 0.6 },
+    ];
+    const baseAngle = Math.atan2(cy - P1_BASE.y, cx - P1_BASE.x);
+    let idx = 0;
+    for (const off of mineOffsets) {
+      const angle = baseAngle + off.angle;
+      const x1 = Math.round(P1_BASE.x + Math.cos(angle) * off.dist);
+      const y1 = Math.round(P1_BASE.y + Math.sin(angle) * off.dist);
+      // Mirror for P2
+      const x2 = Math.round(cx + (cx - x1));
+      const y2 = Math.round(cy + (cy - y1));
+      this.mineNodes.push({ id: `mine_${idx++}`, x: x1, y: y1, sprite: null, label: null });
+      this.mineNodes.push({ id: `mine_${idx++}`, x: x2, y: y2, sprite: null, label: null });
+    }
+  }
+
+
+  // ─── ERA PROGRESSION ─────────────────────────────────────────
+  private static readonly ERA_NAMES: Record<number, string> = { 1: 'Foraging', 2: 'Hunting', 3: 'Expansion', 4: 'War', 5: 'Endgame' };
+
+  private updateEraProgression() {
+    if (this.currentEra >= 5) return;
+    const oc = Math.max(this.camps.filter(c => c.owner === 1).length, this.camps.filter(c => c.owner === 2).length);
+    const t4 = this.camps.some(c => (c.owner === 1 || c.owner === 2) && (ANIMALS[c.animalType]?.tier || 1) >= 4);
+    let t = this.currentEra;
+    if (t === 1 && oc >= 1) t = 2;
+    if (t === 2 && oc >= 3) t = 3;
+    if (t === 3 && (this.eliteKillCount > 0 || oc >= 5)) t = 4;
+    if (t === 4 && t4) t = 5;
+    if (t > this.currentEra) this.advanceEra(t);
+  }
+
+  private advanceEra(ne: number) {
+    const om = this.eraMaxTier();
+    this.currentEra = ne;
+    const nm = this.eraMaxTier();
+    this.showFeedback(`Era ${ne}: ${HordeScene.ERA_NAMES[ne]} — Tier ${nm} unlocked!`, '#45E6B0');
+    for (const c of this.camps) {
+      const ti = ANIMALS[c.animalType]?.tier || 1;
+      if (ti > om && ti <= nm && c.owner === 0 && !this.units.some(u => u.campId === c.id && !u.dead)) {
+        this.spawnCampDefenders(c);
+      }
+    }
+    if (ne === 2) this.spawnWildAnimalsForEra(['skull', 'spider', 'gnoll'], WILD_ANIMAL_COUNT);
+    if (ne === 3) this.spawnWildAnimalsForEra(['panda', 'lizard'], 10);
+    if (ne === 4) this.spawnElitePreyBatch();
+  }
+
+  private spawnWildAnimalsForEra(types: string[], count: number) {
+    for (let i = 0; i < count; i++) {
+      const type = types[Math.floor(Math.random() * types.length)];
+      const def = ANIMALS[type];
+      if (!def) continue;
+      const p = this.randomOutskirtsPos();
+      this.units.push({
+        id: this.nextId++, type, team: 0,
+        hp: def.hp, maxHp: def.hp, attack: def.attack, speed: def.speed * 0.4,
+        x: p.x, y: p.y, targetX: p.x + Math.random() * 100 - 50, targetY: p.y + Math.random() * 100 - 50,
+        attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
+        campId: null, lungeX: 0, lungeY: 0,
+        hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, mods: { ...DEFAULT_MODS },
+        carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
+      });
+    }
+  }
+
+  private spawnElitePreyBatch() {
+    for (let i = 0; i < ELITE_PREY_COUNT; i++) {
+      let x: number, y: number;
+      do {
+        x = WORLD_W * 0.2 + Math.random() * (WORLD_W * 0.6);
+        y = WORLD_H * 0.2 + Math.random() * (WORLD_H * 0.6);
+      } while (pdist({ x, y }, P1_BASE) < 600 || pdist({ x, y }, P2_BASE) < 600);
+      this.units.push({
+        id: this.nextId++, type: 'minotaur', team: 0,
+        hp: 2000, maxHp: 2000, attack: 150, speed: 90,
+        x, y, targetX: x + Math.random() * 80 - 40, targetY: y + Math.random() * 80 - 40,
+        attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
+        campId: null, lungeX: 0, lungeY: 0,
+        hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, mods: { ...DEFAULT_MODS },
+        carrying: null, carrySprite: null, loop: null, isElite: true, idleTimer: 0, claimItemId: -1,
       });
     }
   }
@@ -1595,6 +1778,75 @@ export class HordeScene extends Phaser.Scene {
     ].join('\n'), {
       fontSize: '10px', color: '#4A6B4A', fontFamily: '"Nunito", sans-serif', lineSpacing: 2, align: 'right',
     }).setOrigin(1, 1).setScrollFactor(0).setDepth(100);
+
+    // ─── Character Details Panel (Bestiary) ─────────────────────
+    const charToggle = document.createElement('button');
+    charToggle.id = 'horde-char-toggle';
+    charToggle.textContent = '\u{1F4D6}';
+    charToggle.style.cssText = `
+      position:absolute;top:10px;right:260px;width:36px;height:36px;
+      z-index:100;border:1px solid #3D5040;border-radius:8px;
+      background:rgba(13,26,13,0.88);color:#45E6B0;font-size:18px;
+      cursor:pointer;display:flex;align-items:center;justify-content:center;
+      font-family:'Nunito',sans-serif;padding:0;
+    `;
+    charToggle.addEventListener('click', () => {
+      if (this.charPanelEl) {
+        const vis = this.charPanelEl.style.display === 'none';
+        this.charPanelEl.style.display = vis ? 'block' : 'none';
+        charToggle.style.right = vis ? '260px' : '10px';
+      }
+    });
+    document.getElementById('game-container')!.appendChild(charToggle);
+
+    const charPanel = document.createElement('div');
+    charPanel.id = 'horde-char-panel';
+    charPanel.style.cssText = `
+      position:absolute;top:10px;right:10px;width:240px;max-height:calc(100vh - 20px);
+      overflow-y:auto;z-index:99;
+      background:rgba(13,26,13,0.88);border:1px solid #3D5040;border-radius:12px;
+      padding:10px;font-family:'Nunito',sans-serif;
+      scrollbar-width:thin;scrollbar-color:rgba(69,230,176,0.35) rgba(13,26,13,0.4);
+    `;
+
+    const tierColors: Record<number, string> = { 1: '#44CC44', 2: '#4499FF', 3: '#FF9933', 4: '#FF4444', 5: '#FFD700' };
+    const unitData = [
+      { emoji: '\u{1F9DD}', name: 'Gnome', hp: 15, atk: 3, spd: 210, tier: 1, ability: 'Nimble Hands', desc: '2x pickup range, fastest gatherer', cost: '1\u{1F955}' },
+      { emoji: '\u{1F422}', name: 'Turtle', hp: 65, atk: 3, spd: 55, tier: 1, ability: 'Shell Stance', desc: '60% DR when guarding (stationary)', cost: '1\u{1F955}' },
+      { emoji: '\u{1F480}', name: 'Skull', hp: 80, atk: 14, spd: 155, tier: 2, ability: 'Undying', desc: 'Cheats death once (survives at 1 HP)', cost: '3\u{1F356}' },
+      { emoji: '\u{1F577}\uFE0F', name: 'Spider', hp: 120, atk: 18, spd: 85, tier: 2, ability: 'Venom Bite', desc: '+5% target max HP per hit', cost: '3\u{1F356}' },
+      { emoji: '\u{1F43A}', name: 'Gnoll', hp: 55, atk: 28, spd: 175, tier: 2, ability: 'Bone Toss', desc: 'Extended range (120 vs 80)', cost: '3\u{1F356}' },
+      { emoji: '\u{1F5E1}\uFE0F', name: 'Rogue', hp: 60, atk: 45, spd: 200, tier: 2, ability: 'Backstab', desc: '3x damage on first hit against a new target', cost: '3\u{1F356}' },
+      { emoji: '\u{1F43C}', name: 'Panda', hp: 900, atk: 35, spd: 80, tier: 3, ability: 'Thick Hide', desc: 'Regenerates 1% max HP/sec', cost: '5\u{1F356}' },
+      { emoji: '\u{1F98E}', name: 'Lizard', hp: 450, atk: 70, spd: 110, tier: 3, ability: 'Cold Blood', desc: '3x dmg to targets below 40% HP', cost: '5\u{1F955}' },
+      { emoji: '\u{1F402}', name: 'Minotaur', hp: 2200, atk: 110, spd: 120, tier: 4, ability: 'War Cry', desc: 'Nearby allies +25% attack', cost: '8\u{1F48E}' },
+      { emoji: '\u{1F52E}', name: 'Shaman', hp: 1400, atk: 180, spd: 100, tier: 4, ability: 'Arcane Blast', desc: 'All attacks splash 60px', cost: '8\u{1F48E}' },
+      { emoji: '\u{1F479}', name: 'Troll', hp: 14000, atk: 350, spd: 50, tier: 5, ability: 'Club Slam', desc: 'Massive 90px splash, slows enemies', cost: '20\u{1F48E}' },
+    ];
+
+    let panelHTML = `<div style="font-size:12px;color:#45E6B0;font-weight:800;letter-spacing:1.5px;margin-bottom:8px;text-align:center;">BESTIARY</div>`;
+    for (const u of unitData) {
+      const tc = tierColors[u.tier];
+      panelHTML += `
+        <div style="background:rgba(30,50,30,0.6);border:1px solid #3D5040;border-radius:8px;padding:7px 8px;margin-bottom:6px;">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
+            <span style="font-size:18px;">${u.emoji}</span>
+            <span style="font-size:12px;font-weight:800;color:#f0e8ff;">${u.name}</span>
+            <span style="font-size:9px;font-weight:700;color:${tc};background:rgba(0,0,0,0.4);padding:1px 5px;border-radius:4px;margin-left:auto;">T${u.tier}</span>
+          </div>
+          <div style="display:flex;gap:8px;font-size:10px;color:#8BAA8B;margin-bottom:3px;">
+            <span>\u2764\uFE0F ${u.hp}</span>
+            <span>\u2694\uFE0F ${u.atk}</span>
+            <span>\u{1F3C3} ${u.spd}</span>
+            <span style="margin-left:auto;color:#FFD93D;">${u.cost}</span>
+          </div>
+          <div style="font-size:10px;color:#C98FFF;font-weight:700;">${u.ability}</div>
+          <div style="font-size:9px;color:#8BAA8B;font-style:italic;">${u.desc}</div>
+        </div>`;
+    }
+    charPanel.innerHTML = panelHTML;
+    document.getElementById('game-container')!.appendChild(charPanel);
+    this.charPanelEl = charPanel;
   }
 
   private updateHUD() {
@@ -1611,7 +1863,7 @@ export class HordeScene extends Phaser.Scene {
 
     // Timer
     const secs = Math.floor(this.gameTime / 1000);
-    this.hudTexts['timer']?.setText(`${Math.floor(secs / 60)}:${(secs % 60).toString().padStart(2, '0')}`);
+    const eraName = HordeScene.ERA_NAMES[this.currentEra] || ""; this.hudTexts["timer"]?.setText(Math.floor(secs / 60) + ":" + (secs % 60).toString().padStart(2, "0") + "  Era " + this.currentEra + ": " + eraName);
 
     // ─── YOUR ARMIES (left panel) ───
     const armyLines: string[] = [];
@@ -1641,7 +1893,8 @@ export class HordeScene extends Phaser.Scene {
 
     // ─── PRODUCTION (food-gated) ───
     const prodLines: string[] = [];
-    prodLines.push(`🧝 Base: 1🥕/gnome (${BASE_SPAWN_MS / 1000}s)`);
+    const gnomeCountdown = Math.max(0, Math.ceil((FREE_GNOME_MS - this.freeGnomeTimer) / 1000));
+    prodLines.push(`🧝 Base: free gnome in ${gnomeCountdown}s`);
     const myCamps = this.camps.filter(c => c.owner === myT);
     for (const c of myCamps) {
       const cost = SPAWN_COSTS[c.animalType];
@@ -1700,6 +1953,7 @@ export class HordeScene extends Phaser.Scene {
       // Guest: only render, no simulation — state comes from host via sync
       this.updateUnitSprites();
       this.updateCampVisuals();
+      this.updateMineVisuals();
       this.drawNexusBars();
       this.updateFog();
       this.updateFogVisibility();
@@ -1709,6 +1963,7 @@ export class HordeScene extends Phaser.Scene {
 
     // Host (or solo): run full simulation
     this.gameTime += delta;
+    this.updateFreeGnomes(delta);
     this.updateCarrotSpawning(delta);
     this.updateWildAnimals(delta);
     this.updateWorkflows();
@@ -1717,6 +1972,7 @@ export class HordeScene extends Phaser.Scene {
     this.updateMovement(dt);
     this.updateCombat(delta);
     this.updateCampCapture();
+    this.updateEraProgression();
     this.updateSweeps();
     // Only run AI when solo (not online PvP)
     if (!this.isOnline) this.updateAI(delta);
@@ -1725,6 +1981,7 @@ export class HordeScene extends Phaser.Scene {
     this.updateUnitSprites();
     this.updateDebugOverlay();
     this.updateCampVisuals();
+    this.updateMineVisuals();
     this.drawNexusBars();
     this.updateFog();
     this.updateFogVisibility();
@@ -1743,18 +2000,25 @@ export class HordeScene extends Phaser.Scene {
 
   // ─── SPAWNING ────────────────────────────────────────────────
 
-  /** No auto-spawning. Units spawn instantly when food is delivered via gather loops.
+  /** Free gnome from base every 30 seconds for both teams */
+  private updateFreeGnomes(delta: number) {
+    this.freeGnomeTimer += delta;
+    if (this.freeGnomeTimer < FREE_GNOME_MS) return;
+    this.freeGnomeTimer -= FREE_GNOME_MS;
+    for (const team of [1, 2] as const) {
+      if (this.units.filter(u => u.team === team && !u.dead).length >= MAX_UNITS) continue;
+      const b = team === 1 ? P1_BASE : P2_BASE;
+      this.spawnUnit('gnome', team, b.x + (team === 1 ? 60 : -60), b.y + (team === 1 ? -30 : 30));
+    }
+  }
+
+  /** Units spawn when food is delivered to camps. Base just stores resources.
    *  Called from updateDeliveries() when a resource is dropped off. */
   private trySpawnFromDelivery(team: 1 | 2, location: 'base' | string) {
     if (this.units.filter(u => u.team === team && !u.dead).length >= MAX_UNITS) return;
     if (location === 'base') {
-      // Base spawns gnomes from carrots
-      const stock = this.baseStockpile[team];
-      if (stock.carrot >= SPAWN_COSTS['gnome'].amount) {
-        stock.carrot -= SPAWN_COSTS['gnome'].amount;
-        const b = team === 1 ? P1_BASE : P2_BASE;
-        this.spawnUnit('gnome', team, b.x + (team === 1 ? 60 : -60), b.y + (team === 1 ? -30 : 30));
-      }
+      // Base only stores — no spawning from base deliveries
+      return;
     } else {
       const camp = this.camps.find(c => c.id === location);
       if (!camp || camp.owner !== team) return;
@@ -1776,9 +2040,9 @@ export class HordeScene extends Phaser.Scene {
       if (d < 5) continue;
 
       // Avoidance: units carrying food on non-combat steps steer around threats
-      // Uses a tight range so units can navigate between two enemies
-      if (u.team !== 0 && this.isNonCombatStep(u)) {
-        const AVOID_RANGE = 100; // tight range so units can fit between threats
+      // Caution modifiers: safe = wider avoidance (180), aggressive = no avoidance
+      if (u.team !== 0 && this.isNonCombatStep(u) && u.mods.caution !== 'aggressive') {
+        const AVOID_RANGE = u.mods.caution === 'safe' ? 180 : 100;
         let avoidX = 0, avoidY = 0;
         const team = u.team as 1 | 2;
 
@@ -1852,6 +2116,44 @@ export class HordeScene extends Phaser.Scene {
       // Clamp to world bounds
       u.x = Math.max(0, Math.min(WORLD_W, u.x));
       u.y = Math.max(0, Math.min(WORLD_H, u.y));
+
+      // Formation: spread — repel from nearby same-team allies (min 120px)
+      // Exempt turtles in combat (preserve Shell Stance)
+      if (u.mods.formation === 'spread' && !(u.type === 'turtle' && u.animState === 'attack')) {
+        const SPREAD_MIN = 120;
+        for (const ally of this.units) {
+          if (ally === u || ally.dead || ally.team !== u.team) continue;
+          const adx = u.x - ally.x, ady = u.y - ally.y;
+          const ad = Math.sqrt(adx * adx + ady * ady);
+          if (ad < SPREAD_MIN && ad > 1) {
+            const push = ((SPREAD_MIN - ad) / SPREAD_MIN) * 0.3;
+            u.x += (adx / ad) * push * u.speed * dt;
+            u.y += (ady / ad) * push * u.speed * dt;
+          }
+        }
+        u.x = Math.max(0, Math.min(WORLD_W, u.x));
+        u.y = Math.max(0, Math.min(WORLD_H, u.y));
+      }
+
+      // Formation: tight — leash to group centroid (max 150px)
+      if (u.mods.formation === 'tight') {
+        const allies = this.units.filter(a => !a.dead && a.team === u.team && a.type === u.type && a.mods.formation === 'tight');
+        if (allies.length > 1) {
+          let cx = 0, cy = 0;
+          for (const a of allies) { cx += a.x; cy += a.y; }
+          cx /= allies.length; cy /= allies.length;
+          const distToCentroid = Math.sqrt((u.x - cx) ** 2 + (u.y - cy) ** 2);
+          if (distToCentroid > 150) {
+            const pull = Math.min(1, (distToCentroid - 150) / 200) * u.speed * dt;
+            const dx2 = cx - u.x, dy2 = cy - u.y;
+            const d2 = Math.sqrt(dx2 * dx2 + dy2 * dy2) || 1;
+            u.x += (dx2 / d2) * pull;
+            u.y += (dy2 / d2) * pull;
+            u.x = Math.max(0, Math.min(WORLD_W, u.x));
+            u.y = Math.max(0, Math.min(WORLD_H, u.y));
+          }
+        }
+      }
     }
   }
 
@@ -1879,23 +2181,80 @@ export class HordeScene extends Phaser.Scene {
       && step.action !== 'defend';
   }
 
+  /** Spread out: assign each searching unit a unique angular sector from map center
+   *  so they fan out evenly across the map instead of clumping. */
+  private spreadOut(u: HUnit) {
+    // Only pick a new target once we've reached the current one
+    if (pdist(u, { x: u.targetX, y: u.targetY }) > 30) return;
+
+    if (!u.loop) return;
+    const step = u.loop.steps[u.loop.currentStep];
+    if (!step) return;
+
+    // Gather all allies (including this unit) on the same workflow action
+    const searchers = this.units.filter(a =>
+      !a.dead && a.team === u.team
+      && a.loop && a.loop.steps[a.loop.currentStep]?.action === step.action);
+
+    const cx = WORLD_W / 2, cy = WORLD_H / 2;
+
+    if (searchers.length <= 1) {
+      // Solo — random direction from map center
+      const angle = Math.random() * Math.PI * 2;
+      const range = 300 + Math.random() * 500;
+      u.targetX = Math.max(100, Math.min(WORLD_W - 100, cx + Math.cos(angle) * range));
+      u.targetY = Math.max(100, Math.min(WORLD_H - 100, cy + Math.sin(angle) * range));
+      return;
+    }
+
+    // Sort searchers by ID for stable sector assignment
+    searchers.sort((a, b) => a.id - b.id);
+    const myIndex = searchers.indexOf(u);
+    const n = searchers.length;
+
+    // Each unit gets a unique sector wedge from the map center
+    const sectorAngle = (2 * Math.PI) / n;
+    const baseAngle = sectorAngle * myIndex;
+    // Add small random jitter within the sector so units don't path to the exact same point
+    const angle = baseAngle + (Math.random() * 0.6 - 0.3) * sectorAngle;
+    const range = 400 + Math.random() * 600;
+
+    u.targetX = Math.max(100, Math.min(WORLD_W - 100, cx + Math.cos(angle) * range));
+    u.targetY = Math.max(100, Math.min(WORLD_H - 100, cy + Math.sin(angle) * range));
+  }
+
   // ─── COMBAT ──────────────────────────────────────────────────
 
   private updateCombat(delta: number) {
     for (const u of this.units) {
       if (u.dead) continue;
 
-      // Scouts and collectors always skip combat (pacifist); carrying units on non-combat steps also skip
-      if (u.team !== 0 && this.isNonCombatStep(u)) {
-        const step = u.loop ? u.loop.steps[u.loop.currentStep] : undefined;
-        const pacifist = step && (step.action === 'scout' || step.action === 'collect');
-        if (pacifist || u.carrying) continue;
+      // Caution: safe — retreat to base at 40% HP (skulls exempt — let Undying proc)
+      if (u.team !== 0 && u.mods.caution === 'safe' && u.type !== 'skull') {
+        if (u.hp / u.maxHp < 0.4) {
+          const retreatBase = u.team === 1 ? P1_BASE : P2_BASE;
+          u.targetX = retreatBase.x; u.targetY = retreatBase.y;
+          continue; // skip combat, flee
+        }
       }
 
-      // Non-carrying units drop food and fight if enemy is nearby
+      // Scouts and collectors always skip combat (pacifist); carrying units on non-combat steps also skip
+      // Caution: aggressive — carrying units fight back instead of skipping
+      if (u.team !== 0 && this.isNonCombatStep(u)) {
+        const step = u.loop ? u.loop.steps[u.loop.currentStep] : undefined;
+        const pacifist = step && (step.action === 'scout' || step.action === 'collect' && u.mods.caution !== 'aggressive');
+        if (pacifist || (u.carrying && u.mods.caution !== 'aggressive')) continue;
+      }
+
       if (u.carrying && u.team !== 0) {
         const combatRange = u.type === 'gnoll' ? 120 : COMBAT_RANGE;
-        const enemyNear = this.units.some(o => !o.dead && o.team !== u.team && o.team !== 0 && pdist(u, o) <= combatRange + 30);
+        const onCombatStep = !this.isNonCombatStep(u);
+        // Include neutral defenders as threats when on attack_camp step
+        const isAttackingCamp = u.loop?.steps[u.loop.currentStep]?.action === 'attack_camp';
+        const enemyNear = this.units.some(o =>
+          !o.dead && o.team !== u.team
+          && (o.team !== 0 || isAttackingCamp)
+          && pdist(u, o) <= combatRange + 30);
         if (enemyNear) {
           // Drop carried resource on the ground and engage
           this.spawnGroundItem(u.carrying, u.x, u.y);
@@ -1905,13 +2264,13 @@ export class HordeScene extends Phaser.Scene {
           if (u.loop) {
             const step = u.loop.steps[u.loop.currentStep];
             if (step?.action === 'deliver') {
-              // Go back to seek step
               u.loop.currentStep = (u.loop.currentStep - 1 + u.loop.steps.length) % u.loop.steps.length;
             }
           }
-        } else {
-          continue; // No enemies — keep carrying, skip combat
+        } else if (!onCombatStep) {
+          continue; // Non-combat step, no enemies — keep carrying, skip combat
         }
+        // Combat step with no nearby enemy — fall through to normal combat processing
       }
 
       // PANDA "Thick Hide": regenerate 1% max HP per second
@@ -1925,7 +2284,9 @@ export class HordeScene extends Phaser.Scene {
 
       // Find closest enemy: team 0 attacks anyone, team 1/2 attack each other AND team 0
       // GNOLL "Bone Toss": extended combat range (120 vs 80)
-      const unitCombatRange = u.type === 'gnoll' ? 120 : COMBAT_RANGE;
+      // Caution: aggressive — engage enemies from 200px even mid-delivery (but not through nexus area)
+      const baseCombatRange = u.type === 'gnoll' ? 120 : COMBAT_RANGE;
+      const unitCombatRange = u.mods.caution === 'aggressive' ? Math.max(baseCombatRange, 200) : baseCombatRange;
       let best: HUnit | null = null, bestD = Infinity;
       for (const o of this.units) {
         if (o.dead || o.team === u.team) continue;
@@ -1955,6 +2316,14 @@ export class HordeScene extends Phaser.Scene {
         // ─── LIZARD COLD BLOOD: 3x to targets below 40% HP ───
         if (u.type === 'lizard' && best.hp / best.maxHp < 0.4) {
           atk *= 3;
+        }
+
+        // ─── ROGUE BACKSTAB: 3x damage on first hit against a new target ───
+        if (u.type === 'rogue') {
+          if (u.lastAttackTarget !== best.id) {
+            atk *= 3;
+          }
+          u.lastAttackTarget = best.id;
         }
 
         // ─── MINOTAUR WAR CRY: nearby allies get +25% attack (check if attacker has minotaur nearby) ───
@@ -1990,6 +2359,14 @@ export class HordeScene extends Phaser.Scene {
           }
 
           target.hp -= dmg;
+          // Tight formation safety: units hit by splash auto-scatter briefly
+          if (target !== best && !target.dead && target.mods.formation === 'tight') {
+            // Push away from splash center to avoid repeated splash wipes
+            const scatterDx = target.x - best.x, scatterDy = target.y - best.y;
+            const scatterD = Math.sqrt(scatterDx * scatterDx + scatterDy * scatterDy) || 1;
+            target.targetX = target.x + (scatterDx / scatterD) * 80;
+            target.targetY = target.y + (scatterDy / scatterD) * 80;
+          }
 
           // ─── TROLL CLUB SLAM: enemies hit by troll get their attack cooldown doubled ───
           if (u.type === 'troll' && !target.dead) {
@@ -2015,6 +2392,7 @@ export class HordeScene extends Phaser.Scene {
             this.spawnGroundItem('meat', target.x + (Math.random() - 0.5) * 20, target.y + (Math.random() - 0.5) * 20);
             // Elite prey drops crystals
             if (target.isElite) {
+              this.eliteKillCount++;
               for (let ci = 0; ci < 3; ci++) {
                 this.spawnGroundItem('crystal', target.x + (Math.random() - 0.5) * 40, target.y + (Math.random() - 0.5) * 40);
               }
@@ -2080,6 +2458,9 @@ export class HordeScene extends Phaser.Scene {
 
   private updateCampCapture() {
     for (const camp of this.camps) {
+      // Skip dormant camps (tier not yet unlocked by era)
+      if (!this.isCampActive(camp)) continue;
+
       const defenders = this.units.filter(u => u.campId === camp.id && u.team === 0 && !u.dead);
 
       // Make neutral defenders patrol around their camp — always walking
@@ -2323,6 +2704,14 @@ export class HordeScene extends Phaser.Scene {
       const distToTarget = Math.sqrt((u.targetX - u.x) ** 2 + (u.targetY - u.y) ** 2);
       const isMoving = distToTarget > 8;
 
+      // ─── ROGUE HOP: bouncy hop animation while moving ───
+      if (u.type === 'rogue' && isMoving) {
+        const hopHeight = 8;
+        const hopSpeed = 12; // hops per second
+        const hopOffset = -Math.abs(Math.sin((this.gameTime / 1000) * hopSpeed * Math.PI + u.id * 1.7)) * hopHeight;
+        u.sprite.setPosition(sx, sy + hopOffset);
+      }
+
       // Face direction: use target direction for reliable flipping
       const headingX = u.targetX - u.x;
       if (Math.abs(headingX) > 2) {
@@ -2346,7 +2735,7 @@ export class HordeScene extends Phaser.Scene {
       if (u.carrying) {
         if (!u.carrySprite) {
           u.carrySprite = this.add.text(0, 0, RESOURCE_EMOJI[u.carrying], {
-            fontSize: '12px',
+            fontSize: '20px',
           }).setOrigin(0.5).setDepth(19);
         }
         // Compute trailing offset: opposite of movement direction
@@ -2416,8 +2805,29 @@ export class HordeScene extends Phaser.Scene {
     ].join('\n'));
   }
 
+  private updateMineVisuals() {
+    for (const mine of this.mineNodes) {
+      if (!mine.sprite) {
+        mine.sprite = this.add.text(mine.x, mine.y, '⛏️', { fontSize: '32px' }).setOrigin(0.5).setDepth(14);
+        mine.label = this.add.text(mine.x, mine.y + 25, 'Mine', {
+          fontSize: '11px', color: '#FFD700',
+          stroke: '#000', strokeThickness: 2,
+        }).setOrigin(0.5).setDepth(14);
+      }
+      // Show how many units are mining here
+      const miners = this.units.filter(u => !u.dead && u.team !== 0
+        && u.loop?.steps[u.loop.currentStep]?.action === 'mine'
+        && pdist(u, mine) < MINE_RANGE);
+      if (mine.label) {
+        mine.label.setText(miners.length > 0 ? `Mine (${miners.length} mining)` : 'Mine');
+      }
+    }
+  }
+
   private updateCampVisuals() {
     for (const c of this.camps) {
+      // Dormant camps (tier not yet unlocked) — dim and show locked label
+      if (!this.isCampActive(c) && c.owner === 0) { c.area?.setFillStyle(0x555555, 0.03); c.area?.setStrokeStyle(2, 0x555555, 0.12); if (c.captureBar) c.captureBar.clear(); if (c.label) { const zoom = this.cameras.main.zoom; c.label.setScale(Math.max(0.8, 1.0 / zoom)); const tier = ANIMALS[c.animalType]?.tier || 1; c.label.setText(c.name + ' [T' + tier + ' locked]'); c.label.setColor('#555555'); } continue; }
       const color = c.owner === 0 ? 0xFFD93D : TEAM_COLORS[c.owner as 1 | 2];
       c.area?.setFillStyle(color, 0.08);
       c.area?.setStrokeStyle(2, color, 0.3);
@@ -2547,20 +2957,25 @@ export class HordeScene extends Phaser.Scene {
   private updateResourcePickup() {
     for (const u of this.units) {
       if (u.dead || u.carrying || u.team === 0) continue;
-      // Kill-only units never pick up drops
-      if (u.loop) {
-        const curStep = u.loop.steps[u.loop.currentStep];
-        if (curStep?.action === 'kill_only') continue;
-      }
+      // Only pick up items on steps that actively want resources
+      if (!u.loop) continue;
+      const curStep = u.loop.steps[u.loop.currentStep];
+      if (!curStep || (curStep.action !== 'seek_resource' && curStep.action !== 'collect' && curStep.action !== 'hunt')) continue;
       // Gnome Nimble Hands: 2x pickup range — born to gather
       const range = u.type === 'gnome' ? PICKUP_RANGE * 2 : PICKUP_RANGE;
       for (const item of this.groundItems) {
         if (item.dead) continue;
-        // Only pick up resources matching the workflow's target resource type
-        if (u.loop) {
-          const curStep = u.loop.steps[u.loop.currentStep];
-          if (curStep?.action === 'seek_resource' && item.type !== curStep.resourceType) continue;
-          if (curStep?.action === 'collect' && item.type !== curStep.resourceType) continue;
+        // Filter by matching resource type
+        if (curStep.action === 'seek_resource' && item.type !== curStep.resourceType) continue;
+        if (curStep.action === 'collect' && item.type !== curStep.resourceType) continue;
+        if (curStep.action === 'hunt') {
+          let huntRes: string | null = null;
+          for (let i = 1; i < u.loop.steps.length; i++) {
+            const next = u.loop.steps[(u.loop.currentStep + i) % u.loop.steps.length];
+            if (next.action === 'seek_resource' && next.resourceType) { huntRes = next.resourceType; break; }
+          }
+          if (!huntRes) huntRes = curStep.targetType === 'minotaur' ? 'crystal' : 'meat';
+          if (item.type !== huntRes) continue;
         }
         if (pdist(u, item) < range) {
           u.carrying = item.type;
@@ -2568,10 +2983,7 @@ export class HordeScene extends Phaser.Scene {
           item.dead = true;
           if (item.sprite) { item.sprite.destroy(); item.sprite = null; }
           // Picked up a resource — advance workflow past seek_resource step
-          if (u.loop) {
-            const step = u.loop.steps[u.loop.currentStep];
-            if (step?.action === 'seek_resource') this.advanceWorkflow(u);
-          }
+          if (curStep.action === 'seek_resource') this.advanceWorkflow(u);
           break;
         }
       }
@@ -2673,7 +3085,8 @@ export class HordeScene extends Phaser.Scene {
         const isIdle = distToTarget < 10 && !u.carrying && u.animState !== 'attack';
         if (isIdle) {
           u.idleTimer += dt;
-          if (u.idleTimer >= 4000) {
+          const idleThreshold = u.mods.pacing === 'rush' ? 1500 : u.mods.pacing === 'efficient' ? 6000 : 4000;
+          if (u.idleTimer >= idleThreshold) {
             u.loop.currentStep = 0;
             u.idleTimer = 0;
           }
@@ -2708,7 +3121,8 @@ export class HordeScene extends Phaser.Scene {
           let bestAny: HGroundItem | null = null, bestAnyD = Infinity;
           for (const item of this.groundItems) {
             if (item.dead || item.type !== step.resourceType) continue;
-            if ((claimCounts.get(item.id) || 0) >= 3 && item.id !== u.claimItemId) continue;
+            const maxClaims = u.mods.pacing === 'efficient' ? 1 : 3;
+            if ((claimCounts.get(item.id) || 0) >= maxClaims && item.id !== u.claimItemId) continue;
             const itemD = pdist(u, item);
             // Track best of ANY matching resource (claimed or not)
             if (itemD < bestAnyD) { bestAnyD = itemD; bestAny = item; }
@@ -2718,8 +3132,12 @@ export class HordeScene extends Phaser.Scene {
             }
           }
           // Prefer unclaimed, fall back to any available resource (shared claim)
-          const best = bestUnclaimed || bestAny;
-          const bestD = bestUnclaimed ? bestUnclaimedD : bestAnyD;
+          let best = bestUnclaimed || bestAny;
+          let bestD = bestUnclaimed ? bestUnclaimedD : bestAnyD;
+          // Pacing: efficient — prefer resources with best distance/competition ratio
+          if (u.mods.pacing === 'efficient' && bestUnclaimed) {
+            best = bestUnclaimed; bestD = bestUnclaimedD; // always prefer unclaimed
+          }
           if (best && (u.claimItemId < 0 || bestD < currentClaimDist * 0.7)) {
             // Switch to closer resource (must be 30%+ closer to avoid thrashing)
             if (u.claimItemId >= 0) claimedItems.delete(u.claimItemId);
@@ -2731,13 +3149,8 @@ export class HordeScene extends Phaser.Scene {
             const claimed = this.groundItems.find(i => i.id === u.claimItemId)!;
             u.targetX = claimed.x; u.targetY = claimed.y;
           } else {
-            // Truly nothing on the map — spread out to forage
-            if (pdist(u, { x: u.targetX, y: u.targetY }) < 30) {
-              const angle = Math.random() * Math.PI * 2;
-              const range = 200 + Math.random() * 400;
-              u.targetX = Math.max(50, Math.min(WORLD_W - 50, u.x + Math.cos(angle) * range));
-              u.targetY = Math.max(50, Math.min(WORLD_H - 50, u.y + Math.sin(angle) * range));
-            }
+            // Truly nothing on the map — spread out away from allies to cover ground
+            this.spreadOut(u);
           }
           break;
         }
@@ -2753,39 +3166,63 @@ export class HordeScene extends Phaser.Scene {
           if (target) {
             u.targetX = target.x; u.targetY = target.y;
           } else {
-            // Target camp not owned — go capture the nearest one of that type
-            const nearestMatch = step.target.match(/^nearest_(\w+)_camp$/);
-            if (nearestMatch) {
-              const animalType = nearestMatch[1];
-              const unowned = this.camps
-                .filter(c => c.animalType === animalType && c.owner !== team)
-                .sort((a, b) => pdist(a, base) - pdist(b, base));
-              if (unowned.length > 0) {
-                // Drop food, go capture, workflow will re-seek after
-                this.spawnGroundItem(u.carrying, u.x, u.y);
-                u.carrying = null;
-                if (u.carrySprite) { u.carrySprite.destroy(); u.carrySprite = null; }
-                u.targetX = unowned[0].x; u.targetY = unowned[0].y;
-                break;
-              }
+            // Target camp lost — drop food and restart workflow from step 0
+            this.spawnGroundItem(u.carrying, u.x, u.y);
+            u.carrying = null;
+            if (u.carrySprite) { u.carrySprite.destroy(); u.carrySprite = null; }
+            if (u.loop) {
+              u.loop.currentStep = 0;
+            } else {
+              u.targetX = base.x; u.targetY = base.y;
             }
-            // Last fallback: deliver to base
-            u.targetX = base.x; u.targetY = base.y;
           }
           break;
         }
 
         case 'hunt': {
-          // Find nearest wild animal to attack
+          // If we picked up a resource from a kill, advance
+          if (u.carrying) { this.advanceWorkflow(u); break; }
+
+          // Determine the resource type we're hunting for (look ahead to next seek_resource step)
+          const huntResType: ResourceType | null = (() => {
+            if (!u.loop) return null;
+            for (let i = 1; i < u.loop.steps.length; i++) {
+              const next = u.loop.steps[(u.loop.currentStep + i) % u.loop.steps.length];
+              if (next.action === 'seek_resource') return (next.resourceType as ResourceType) || null;
+            }
+            return step.targetType === 'minotaur' ? 'crystal' : 'meat';
+          })();
+
+          // Look on the ground first — if matching resource exists, go pick it up
+          if (huntResType) {
+            const groundRes = this.groundItems
+              .filter(i => !i.dead && i.type === huntResType)
+              .sort((a, b) => pdist(u, a) - pdist(u, b));
+            if (groundRes.length > 0) {
+              u.targetX = groundRes[0].x; u.targetY = groundRes[0].y;
+              break;
+            }
+          }
+
+          // No resource on ground — hunt the lowest tier wild animal (weakest first)
+          // Caution: safe — only hunt prey at or below own tier (not 2+ below, that was too restrictive)
+          const myTier = ANIMALS[u.type]?.tier || 1;
           const prey = this.units
             .filter(w => w.team === 0 && !w.dead && !w.campId
-              && (!step.targetType || w.type === step.targetType))
-            .sort((a, b) => pdist(u, a) - pdist(u, b));
+              && (!step.targetType || w.type === step.targetType)
+              && (u.mods.caution !== 'safe' || (ANIMALS[w.type]?.tier || 1) <= myTier))
+            .sort((a, b) => {
+              const tierA = ANIMALS[a.type]?.tier || 1;
+              const tierB = ANIMALS[b.type]?.tier || 1;
+              if (tierA !== tierB) return tierA - tierB; // lowest tier first
+              return pdist(u, a) - pdist(u, b); // then nearest
+            });
           if (prey.length > 0) {
             u.targetX = prey[0].x; u.targetY = prey[0].y;
+          } else {
+            // No prey and no ground resource — spread out to find something
+            this.spreadOut(u);
           }
-          // If we picked up a resource from a kill, advance
-          if (u.carrying) this.advanceWorkflow(u);
           break;
         }
 
@@ -2794,6 +3231,12 @@ export class HordeScene extends Phaser.Scene {
           if (step.targetAnimal) {
             const ownedOfType = this.camps.some(c => c.animalType === step.targetAnimal && c.owner === team);
             if (ownedOfType) { this.advanceWorkflow(u); break; }
+          }
+          // Drop carried food before going to attack a camp
+          if (u.carrying) {
+            this.spawnGroundItem(u.carrying, u.x, u.y);
+            u.carrying = null;
+            if (u.carrySprite) { u.carrySprite.destroy(); u.carrySprite = null; }
           }
           // Find target camp
           let targetCamp: HCamp | undefined;
@@ -2808,8 +3251,25 @@ export class HordeScene extends Phaser.Scene {
           }
           if (targetCamp) {
             u.targetX = targetCamp.x; u.targetY = targetCamp.y;
+            // Formation: tight — wait for group within 120px before engaging
+            if (u.mods.formation === 'tight' && targetCamp.owner !== team) {
+              const allies = this.units.filter(a => !a.dead && a.team === team && a.type === u.type
+                && a.loop?.steps[a.loop.currentStep]?.action === 'attack_camp');
+              const nearCamp = allies.filter(a => pdist(a, targetCamp) < 120);
+              if (nearCamp.length < allies.length * 0.6) {
+                // Wait — don't advance into the camp yet, hold at 130px
+                const distToCamp = pdist(u, targetCamp);
+                if (distToCamp < 130) {
+                  u.targetX = u.x; u.targetY = u.y; // hold position
+                }
+                break;
+              }
+            }
             // If captured, advance
             if (targetCamp.owner === team) this.advanceWorkflow(u);
+          } else {
+            // No target camp found — spread out
+            this.spreadOut(u);
           }
           break;
         }
@@ -2824,6 +3284,11 @@ export class HordeScene extends Phaser.Scene {
           // Guard a location — go there and stay, fighting anything that comes close
           const guardPos = this.resolveDeliverTarget(step.target, team) || base;
           const distToGuard = pdist(u, guardPos);
+          // Caution: safe + defend — retreat TO guard point when hurt (guard point IS the safe spot)
+          if (u.mods.caution === 'safe' && u.hp / u.maxHp < 0.4 && distToGuard > 30) {
+            u.targetX = guardPos.x; u.targetY = guardPos.y;
+            break;
+          }
           // If far from guard point, go there
           if (distToGuard > 120) {
             u.targetX = guardPos.x; u.targetY = guardPos.y;
@@ -2941,6 +3406,32 @@ export class HordeScene extends Phaser.Scene {
           // Kill_only never advances — loops forever
           break;
         }
+
+        case 'mine': {
+          // If carrying metal, advance to next step (probably deliver)
+          if (u.carrying) { this.advanceWorkflow(u); break; }
+          // Find nearest mine node
+          const nearestMine = this.mineNodes
+            .slice()
+            .sort((a, b) => pdist(u, a) - pdist(u, b))[0];
+          if (nearestMine) {
+            u.targetX = nearestMine.x; u.targetY = nearestMine.y;
+            // If at the mine, extract metal
+            if (pdist(u, nearestMine) < MINE_RANGE) {
+              // Mine tick — produce metal periodically
+              // Use idleTimer as mining timer (repurposed when at mine)
+              u.idleTimer += this.game.loop.delta;
+              if (u.idleTimer >= MINE_TICK_MS) {
+                u.idleTimer -= MINE_TICK_MS;
+                u.carrying = 'metal';
+                // carrySprite will be created by the rendering code
+              }
+            }
+          } else {
+            this.spreadOut(u);
+          }
+          break;
+        }
       }
     }
   }
@@ -3033,7 +3524,7 @@ export class HordeScene extends Phaser.Scene {
         x, y, targetX: x + Math.random() * 100 - 50, targetY: y + Math.random() * 100 - 50,
         attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
         campId: null, lungeX: 0, lungeY: 0,
-        hasRebirth: false, diveReady: false, diveTimer: 0,
+        hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, mods: { ...DEFAULT_MODS },
         carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
       });
     }
@@ -3050,13 +3541,14 @@ export class HordeScene extends Phaser.Scene {
         x, y, targetX: x + Math.random() * 80 - 40, targetY: y + Math.random() * 80 - 40,
         attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
         campId: null, lungeX: 0, lungeY: 0,
-        hasRebirth: false, diveReady: false, diveTimer: 0,
+        hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, mods: { ...DEFAULT_MODS },
         carrying: null, carrySprite: null, loop: null, isElite: true, idleTimer: 0, claimItemId: -1,
       });
     }
   }
 
   private updateWildAnimals(delta: number) {
+    if (this.currentEra < 2) return; // No wild animals before Era 2
     this.wildRespawnTimer += delta;
     if (this.wildRespawnTimer >= WILD_RESPAWN_MS) {
       this.wildRespawnTimer -= WILD_RESPAWN_MS;
@@ -3074,11 +3566,11 @@ export class HordeScene extends Phaser.Scene {
           x, y, targetX: x + Math.random() * 80 - 40, targetY: y + Math.random() * 80 - 40,
           attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
           campId: null, lungeX: 0, lungeY: 0,
-          hasRebirth: false, diveReady: false, diveTimer: 0,
+          hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, mods: { ...DEFAULT_MODS },
           carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
         });
       }
-      if (elites.length < ELITE_PREY_COUNT) {
+      if (this.currentEra >= 4 && elites.length < ELITE_PREY_COUNT) {
         let x: number, y: number;
         do { x = WORLD_W * 0.2 + Math.random() * (WORLD_W * 0.6); y = WORLD_H * 0.2 + Math.random() * (WORLD_H * 0.6);
         } while (pdist({ x, y }, P1_BASE) < 600 || pdist({ x, y }, P2_BASE) < 600);
@@ -3088,7 +3580,7 @@ export class HordeScene extends Phaser.Scene {
           x, y, targetX: x + Math.random() * 80 - 40, targetY: y + Math.random() * 80 - 40,
           attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
           campId: null, lungeX: 0, lungeY: 0,
-          hasRebirth: false, diveReady: false, diveTimer: 0,
+          hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, mods: { ...DEFAULT_MODS },
           carrying: null, carrySprite: null, loop: null, isElite: true, idleTimer: 0, claimItemId: -1,
         });
       }
@@ -3206,6 +3698,7 @@ export class HordeScene extends Phaser.Scene {
       hasRebirth: type === 'skull',
       diveReady: false,
       diveTimer: 0,
+      lastAttackTarget: -1,
       carrying: null, carrySprite: null,
       // Inherit active group workflow so new spawns auto-join the loop
       loop: this.groupWorkflows[`${type}_${team}`]
@@ -3214,7 +3707,41 @@ export class HordeScene extends Phaser.Scene {
       isElite: false,
       idleTimer: 0,
       claimItemId: -1,
+      mods: this.groupModifiers[`${type}_${team}`]
+        ? { ...this.groupModifiers[`${type}_${team}`] }
+        : { ...DEFAULT_MODS },
     });
+  }
+
+  /** Apply behavior modifiers to units of the selected army. Sticky: only update axes explicitly set. */
+  private applyModifiers(mods: { formation?: string | null; caution?: string | null; pacing?: string | null }, subject: string, team: 1 | 2) {
+    const sel = this.units.filter(u => u.team === team && !u.dead && (subject === 'all' || u.type === subject));
+    const types = subject === 'all' ? new Set(sel.map(u => u.type)) : new Set([subject]);
+
+    for (const type of types) {
+      const key = `${type}_${team}`;
+      if (!this.groupModifiers[key]) this.groupModifiers[key] = { ...DEFAULT_MODS };
+      const gm = this.groupModifiers[key];
+
+      // null = clear that axis back to normal. undefined = leave unchanged (sticky).
+      if (mods.formation !== undefined) gm.formation = (mods.formation as any) || 'normal';
+      if (mods.caution !== undefined) gm.caution = (mods.caution as any) || 'normal';
+      if (mods.pacing !== undefined) gm.pacing = (mods.pacing as any) || 'normal';
+    }
+
+    // Apply to living units
+    for (const u of sel) {
+      const key = `${u.type}_${team}`;
+      const gm = this.groupModifiers[key] || DEFAULT_MODS;
+      u.mods = { ...gm };
+    }
+
+    // Log for debugging
+    const active = [];
+    if (mods.formation && mods.formation !== 'normal') active.push(`formation:${mods.formation}`);
+    if (mods.caution && mods.caution !== 'normal') active.push(`caution:${mods.caution}`);
+    if (mods.pacing && mods.pacing !== 'normal') active.push(`pacing:${mods.pacing}`);
+    if (active.length > 0) console.log(`[Mods] ${subject} team ${team}: ${active.join(', ')}`);
   }
 
   private sendUnitsTo(units: HUnit[], tx: number, ty: number, setRally = false) {
@@ -3374,6 +3901,7 @@ export class HordeScene extends Phaser.Scene {
           hasRebirth: su.type === 'skull',
           diveReady: false,
           diveTimer: 0,
+          lastAttackTarget: -1, mods: { ...DEFAULT_MODS },
           carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
         });
       }
@@ -3458,6 +3986,21 @@ export class HordeScene extends Phaser.Scene {
     const subject = this.selectedArmy; // army is selected via Q/E keys, not parsed from voice
     const base = team === 1 ? P1_BASE : P2_BASE;
     let tx = 0, ty = 0, found = false;
+
+    // Apply behavior modifiers (sticky — only update axes that are explicitly set)
+    if (cmd.modifiers) {
+      this.applyModifiers(cmd.modifiers, subject, team);
+    }
+
+    // Modifier-only command: update modifiers but keep existing workflow
+    if (cmd.modifierOnly) {
+      const modNames = [];
+      if (cmd.modifiers?.formation) modNames.push(`formation: ${cmd.modifiers.formation}`);
+      if (cmd.modifiers?.caution) modNames.push(`caution: ${cmd.modifiers.caution}`);
+      if (cmd.modifiers?.pacing) modNames.push(`pacing: ${cmd.modifiers.pacing}`);
+      this.showFeedback(cmd.narration || `Behavior updated: ${modNames.join(', ')}`, '#FFD93D');
+      return true;
+    }
 
     if (cmd.targetType === 'nexus') {
       const n = this.nexuses.find(n2 => n2.team !== team)!;
@@ -3565,13 +4108,20 @@ export class HordeScene extends Phaser.Scene {
             return { action: 'collect' as const, resourceType: (s.resourceType || 'meat') as ResourceType };
           case 'kill_only':
             return { action: 'kill_only' as const, targetType: s.targetType };
+          case 'mine':
+            return { action: 'mine' as const };
           default:
             return { action: 'seek_resource' as const, resourceType: 'carrot' as ResourceType };
         }
       });
 
       const workflow: HWorkflow = { steps, currentStep: 0, label: cmd.narration || 'Custom workflow' };
-      for (const u of sel) { u.loop = { ...workflow, currentStep: 0 }; }
+      for (const u of sel) {
+        u.loop = { ...workflow, currentStep: 0 };
+        // Ensure mods are up-to-date from group modifiers
+        const gm = this.groupModifiers[`${u.type}_${team}`];
+        if (gm) u.mods = { ...gm };
+      }
 
       // Store as group workflow so new spawns inherit it
       if (subject === 'all') {
@@ -3618,6 +4168,20 @@ export class HordeScene extends Phaser.Scene {
     const lo = text.toLowerCase();
     const subject = this.selectedArmy; // always use selected army
     const base = team === 1 ? P1_BASE : P2_BASE;
+
+    // Local modifier parsing fallback
+    const localMods: { formation?: string | null; caution?: string | null; pacing?: string | null } = {};
+    let hasLocalMods = false;
+    if (/\b(spread out|fan out|scatter|don'?t clump)\b/i.test(lo)) { localMods.formation = 'spread'; hasLocalMods = true; }
+    if (/\b(group up|stick together|stay close|cluster|bunch up)\b/i.test(lo)) { localMods.formation = 'tight'; hasLocalMods = true; }
+    if (/\b(play safe|be careful|careful|don'?t die|stay alive|cautious)\b/i.test(lo)) { localMods.caution = 'safe'; hasLocalMods = true; }
+    if (/\b(go hard|no mercy|be aggressive|aggressive|attack everything)\b/i.test(lo)) { localMods.caution = 'aggressive'; hasLocalMods = true; }
+    if (/\b(rush|hurry|go fast|faster)\b/i.test(lo) && !/\brush (the |their |enemy )?(base|nexus|camp)/i.test(lo)) { localMods.pacing = 'rush'; hasLocalMods = true; }
+    if (/\b(be efficient|efficient|smart|one at a time)\b/i.test(lo)) { localMods.pacing = 'efficient'; hasLocalMods = true; }
+    if (/\b(back to normal|reset (modifiers|behavior)|normal formation|stop spreading|stop grouping)\b/i.test(lo)) {
+      localMods.formation = null; localMods.caution = null; localMods.pacing = null; hasLocalMods = true;
+    }
+    if (hasLocalMods) this.applyModifiers(localMods, subject, team);
 
     // "get/make/take [animal]" commands — ALWAYS use full bootstrap workflow
     const makeMatch = lo.match(/\b(?:get|make|take|produce|spawn|create|breed|train)\s+(?:more\s+)?(\w+)/i);
@@ -3925,6 +4489,8 @@ export class HordeScene extends Phaser.Scene {
     this.selectionLabel = null;
     this.armyBarEl?.remove(); this.armyBarEl = null;
     this.cmdHistoryEl?.remove(); this.cmdHistoryEl = null;
+    this.charPanelEl?.remove(); this.charPanelEl = null;
+    document.getElementById('horde-char-toggle')?.remove();
     try { this.recognition?.abort(); } catch (_e) { /* */ }
     if (this.firebase) { this.firebase.cleanup(); this.firebase = null; }
   }
