@@ -663,9 +663,9 @@ export class HordeScene extends Phaser.Scene {
       const area = this.add.circle(def.x, def.y, CAMP_RANGE, 0xFFD93D, 0.06);
       area.setStrokeStyle(2, 0xFFD93D, 0.25);
 
-      const label = this.add.text(def.x, def.y - 50, def.name, {
-        fontSize: '14px', color: '#FFD93D', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
-        stroke: '#000000', strokeThickness: 3,
+      const label = this.add.text(def.x, def.y - 55, def.name, {
+        fontSize: '18px', color: '#FFD93D', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
+        stroke: '#000000', strokeThickness: 4,
       }).setOrigin(0.5).setDepth(5);
 
       const captureBar = this.add.graphics().setDepth(6);
@@ -1657,14 +1657,22 @@ export class HordeScene extends Phaser.Scene {
         }
       }
 
-      // Label
-      if (c.owner === 0 && defenders.length > 0) {
-        c.label?.setText(`${c.name} (${defenders.length}/${c.guardCount})`);
-        c.label?.setColor('#FFD93D');
-      } else {
-        const tag = c.owner === 0 ? ' (cleared!)' : c.owner === 1 ? ' [YOU]' : ' [ENEMY]';
-        c.label?.setText(c.name + tag);
-        c.label?.setColor(c.owner === 0 ? '#45E6B0' : c.owner === 1 ? '#4499FF' : '#FF5555');
+      // Label — scale inversely with zoom so text stays readable at any zoom level
+      if (c.label) {
+        const zoom = this.cameras.main.zoom;
+        const baseScale = 1.0 / zoom; // counter the zoom
+        const minScale = 0.8;  // don't get too tiny when zoomed in a lot
+        const scale = Math.max(minScale, baseScale);
+        c.label.setScale(scale);
+
+        if (c.owner === 0 && defenders.length > 0) {
+          c.label.setText(`${c.name} (${defenders.length}/${c.guardCount})`);
+          c.label.setColor('#FFD93D');
+        } else {
+          const tag = c.owner === 0 ? ' (cleared!)' : c.owner === 1 ? ' [YOU]' : ' [ENEMY]';
+          c.label.setText(c.name + tag);
+          c.label.setColor(c.owner === 0 ? '#45E6B0' : c.owner === 1 ? '#4499FF' : '#FF5555');
+        }
       }
     }
   }
