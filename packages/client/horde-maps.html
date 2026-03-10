@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Horde Maps Viewer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0d0a18; color: #eee; font-family: 'Segoe UI', sans-serif; padding: 20px; }
+    h1 { text-align: center; margin-bottom: 8px; font-size: 22px; color: #FFD700; }
+    .subtitle { text-align: center; color: #888; font-size: 13px; margin-bottom: 20px; }
+    .maps-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 1400px; margin: 0 auto; }
+    .map-card {
+      background: #16213e; border: 1px solid #333; border-radius: 10px; padding: 16px;
+      cursor: pointer; transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .map-card:hover { border-color: #FFD700; box-shadow: 0 0 12px rgba(255,215,0,0.2); }
+    .map-card.selected { border-color: #FFD700; box-shadow: 0 0 16px rgba(255,215,0,0.35); }
+    .map-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .map-name { font-size: 16px; font-weight: bold; color: #FFD700; }
+    .map-id { font-size: 11px; color: #666; font-family: monospace; }
+    .map-desc { font-size: 12px; color: #aaa; margin-bottom: 10px; }
+    .canvas-wrap { position: relative; background: #111; border-radius: 6px; overflow: hidden; }
+    canvas { width: 100%; display: block; }
+
+    /* Legend */
+    .legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .legend-item { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #aaa; }
+    .legend-dot { width: 10px; height: 10px; border-radius: 50%; border: 1px solid #555; }
+    .legend-rect { width: 10px; height: 10px; border: 1px solid #555; }
+
+    /* Detail panel */
+    #detail-panel {
+      max-width: 1400px; margin: 24px auto 0; background: #16213e; border: 1px solid #333;
+      border-radius: 10px; padding: 20px; display: none;
+    }
+    #detail-panel h2 { color: #FFD700; font-size: 18px; margin-bottom: 12px; }
+    .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .detail-section h3 { font-size: 13px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+    .detail-section table { width: 100%; font-size: 12px; border-collapse: collapse; }
+    .detail-section td, .detail-section th { padding: 4px 8px; text-align: left; border-bottom: 1px solid #222; }
+    .detail-section th { color: #888; font-size: 11px; }
+    .tier-badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; }
+    .t1 { background: #2d7a3a; color: #fff; }
+    .t2 { background: #2266aa; color: #fff; }
+    .t3 { background: #9b59b6; color: #fff; }
+    .t4 { background: #c0392b; color: #fff; }
+
+    .edit-hint { margin-top: 16px; background: #0d0a18; border: 1px solid #333; border-radius: 8px; padding: 14px; font-size: 12px; color: #aaa; }
+    .edit-hint code { background: #222; padding: 2px 6px; border-radius: 3px; color: #FFD700; font-size: 11px; }
+    .edit-hint h4 { color: #eee; margin-bottom: 6px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h1>Horde Mode Maps</h1>
+  <p class="subtitle">Click a map to see details and learn how to edit it</p>
+  <div class="maps-grid" id="maps-grid"></div>
+  <div id="detail-panel"></div>
+
+  <script type="module">
+    import { ALL_MAPS, TIER_POOLS } from '@prompt-battle/shared';
+
+    const TIER_COLORS = { 1: '#2d7a3a', 2: '#2266aa', 3: '#9b59b6', 4: '#c0392b' };
+    const TIER_LABELS = { 1: 'T1', 2: 'T2', 3: 'T3', 4: 'T4' };
+    const TIER_ANIMALS = { 1: 'gnome, turtle', 2: 'skull, spider, gnoll', 3: 'panda, lizard', 4: 'minotaur, shaman' };
+
+    const grid = document.getElementById('maps-grid');
+    const detailPanel = document.getElementById('detail-panel');
+
+    function renderMap(canvas, map) {
+      const scale = canvas.width / map.worldW;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Background
+      ctx.fillStyle = '#1a2a1a';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Carrot zones
+      for (const z of map.carrotZones) {
+        ctx.fillStyle = 'rgba(255, 165, 0, 0.12)';
+        ctx.fillRect(z.x * scale, z.y * scale, z.w * scale, z.h * scale);
+        ctx.strokeStyle = 'rgba(255, 165, 0, 0.3)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 3]);
+        ctx.strokeRect(z.x * scale, z.y * scale, z.w * scale, z.h * scale);
+        ctx.setLineDash([]);
+      }
+
+      // Wild zones
+      for (const z of map.wildZones) {
+        ctx.fillStyle = 'rgba(255, 50, 50, 0.08)';
+        ctx.fillRect(z.x * scale, z.y * scale, z.w * scale, z.h * scale);
+        ctx.strokeStyle = 'rgba(255, 50, 50, 0.25)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        ctx.strokeRect(z.x * scale, z.y * scale, z.w * scale, z.h * scale);
+        ctx.setLineDash([]);
+      }
+
+      // Wild exclusions
+      for (const ex of map.wildExclusions) {
+        ctx.fillStyle = 'rgba(100, 200, 100, 0.06)';
+        ctx.beginPath();
+        ctx.arc(ex.x * scale, ex.y * scale, ex.radius * scale, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(100, 200, 100, 0.2)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 3]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // Safe radius around bases
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.arc(map.p1Base.x * scale, map.p1Base.y * scale, map.safeRadius * scale, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(map.p2Base.x * scale, map.p2Base.y * scale, map.safeRadius * scale, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Camp slots — lines connecting blue/red pairs
+      for (const slot of map.campSlots) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 4]);
+        ctx.beginPath();
+        ctx.moveTo(slot.bluePos.x * scale, slot.bluePos.y * scale);
+        ctx.lineTo(slot.redPos.x * scale, slot.redPos.y * scale);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // Camp slots — dots
+      for (const slot of map.campSlots) {
+        const r = 5 + slot.tier * 1.5;
+        const color = TIER_COLORS[slot.tier];
+
+        // Blue side
+        ctx.fillStyle = '#4499FF';
+        ctx.beginPath();
+        ctx.arc(slot.bluePos.x * scale, slot.bluePos.y * scale, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Red side
+        ctx.fillStyle = '#FF5555';
+        ctx.beginPath();
+        ctx.arc(slot.redPos.x * scale, slot.redPos.y * scale, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Tier label
+        ctx.fillStyle = '#fff';
+        ctx.font = `bold ${Math.max(8, r)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(TIER_LABELS[slot.tier], slot.bluePos.x * scale, slot.bluePos.y * scale);
+        ctx.fillText(TIER_LABELS[slot.tier], slot.redPos.x * scale, slot.redPos.y * scale);
+      }
+
+      // Troll slot
+      if (map.trollSlot) {
+        const tx = map.trollSlot.x * scale;
+        const ty = map.trollSlot.y * scale;
+        ctx.fillStyle = '#FFD700';
+        ctx.beginPath();
+        ctx.arc(tx, ty, 10, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#c0392b';
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+        ctx.fillStyle = '#000';
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('T5', tx, ty);
+      }
+
+      // Bases
+      // P1 (blue)
+      ctx.fillStyle = '#4499FF';
+      ctx.beginPath();
+      ctx.arc(map.p1Base.x * scale, map.p1Base.y * scale, 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('P1', map.p1Base.x * scale, map.p1Base.y * scale);
+
+      // P2 (red)
+      ctx.fillStyle = '#FF5555';
+      ctx.beginPath();
+      ctx.arc(map.p2Base.x * scale, map.p2Base.y * scale, 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.fillText('P2', map.p2Base.x * scale, map.p2Base.y * scale);
+
+      // Map name overlay
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillRect(0, 0, canvas.width, 22);
+      ctx.fillStyle = '#FFD700';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText(map.name, 6, 4);
+    }
+
+    function showDetail(map, idx) {
+      document.querySelectorAll('.map-card').forEach(c => c.classList.remove('selected'));
+      document.querySelectorAll('.map-card')[idx]?.classList.add('selected');
+
+      const slotsRows = map.campSlots.map((s, i) => {
+        const tierClass = `t${s.tier}`;
+        const animals = TIER_ANIMALS[s.tier];
+        return `<tr>
+          <td>${i}</td>
+          <td><span class="tier-badge ${tierClass}">${TIER_LABELS[s.tier]}</span></td>
+          <td style="color:#4499FF">(${s.bluePos.x}, ${s.bluePos.y})</td>
+          <td style="color:#FF5555">(${s.redPos.x}, ${s.redPos.y})</td>
+          <td style="color:#888">${animals}</td>
+        </tr>`;
+      }).join('');
+
+      const carrotRows = map.carrotZones.map((z, i) =>
+        `<tr><td>${i}</td><td>(${z.x}, ${z.y})</td><td>${z.w} x ${z.h}</td></tr>`
+      ).join('');
+
+      const wildRows = map.wildZones.map((z, i) =>
+        `<tr><td>${i}</td><td>(${z.x}, ${z.y})</td><td>${z.w} x ${z.h}</td></tr>`
+      ).join('');
+
+      detailPanel.style.display = 'block';
+      detailPanel.innerHTML = `
+        <h2>${map.name} <span style="color:#666;font-size:13px;font-weight:normal">(${map.id})</span></h2>
+        <p style="color:#aaa;font-size:13px;margin-bottom:14px">${map.description}</p>
+        <p style="font-size:12px;color:#888;margin-bottom:14px">
+          World: ${map.worldW} x ${map.worldH} &nbsp;|&nbsp;
+          P1 Base: <span style="color:#4499FF">(${map.p1Base.x}, ${map.p1Base.y})</span> &nbsp;|&nbsp;
+          P2 Base: <span style="color:#FF5555">(${map.p2Base.x}, ${map.p2Base.y})</span> &nbsp;|&nbsp;
+          Safe radius: ${map.safeRadius} &nbsp;|&nbsp;
+          Troll: ${map.trollSlot ? `(${map.trollSlot.x}, ${map.trollSlot.y})` : 'none'}
+        </p>
+
+        <div class="detail-grid">
+          <div class="detail-section">
+            <h3>Camp Slots (${map.campSlots.length})</h3>
+            <table>
+              <tr><th>#</th><th>Tier</th><th>Blue Pos</th><th>Red Pos</th><th>Possible Animals</th></tr>
+              ${slotsRows}
+            </table>
+          </div>
+          <div class="detail-section">
+            <h3>Carrot Zones (${map.carrotZones.length})</h3>
+            <table>
+              <tr><th>#</th><th>Origin</th><th>Size</th></tr>
+              ${carrotRows}
+            </table>
+            <h3 style="margin-top:14px">Wild Zones (${map.wildZones.length})</h3>
+            <table>
+              <tr><th>#</th><th>Origin</th><th>Size</th></tr>
+              ${wildRows}
+            </table>
+          </div>
+        </div>
+
+        <div class="edit-hint">
+          <h4>How to Edit This Map</h4>
+          <p>Open <code>packages/shared/src/data/maps.ts</code> and find the map object with <code>id: '${map.id}'</code>.</p>
+          <br/>
+          <p><strong>Camp positions:</strong> Edit <code>campSlots[]</code>. Each slot has a <code>tier</code> (1-4), <code>bluePos</code>, and <code>redPos</code>. Animals are randomly assigned from the tier pool at game start.</p>
+          <br/>
+          <p><strong>Bases:</strong> Edit <code>p1Base</code> and <code>p2Base</code>. Coordinates are in world pixels (map is ${map.worldW}x${map.worldH}).</p>
+          <br/>
+          <p><strong>Resource spawns:</strong> Edit <code>carrotZones[]</code> (orange rectangles) — where carrots spawn on the ground.</p>
+          <br/>
+          <p><strong>Enemy spawns:</strong> Edit <code>wildZones[]</code> (red rectangles) — where roaming neutral animals appear. <code>wildExclusions[]</code> keeps wilds away from bases.</p>
+          <br/>
+          <p><strong>Add a new map:</strong> Copy an existing <code>MapDef</code>, change the <code>id</code>/<code>name</code>, adjust positions, and add it to <code>ALL_MAPS[]</code>.</p>
+          <br/>
+          <p><strong>Troll boss:</strong> Edit <code>trollSlot</code> — the center T5 camp (always a troll). Set to <code>null</code> to remove it.</p>
+        </div>
+      `;
+      detailPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    // Build map cards
+    ALL_MAPS.forEach((map, idx) => {
+      const card = document.createElement('div');
+      card.className = 'map-card';
+      card.innerHTML = `
+        <div class="map-header">
+          <span class="map-name">${map.name}</span>
+          <span class="map-id">${map.id}</span>
+        </div>
+        <div class="map-desc">${map.description}</div>
+        <div class="canvas-wrap">
+          <canvas id="map-${idx}" width="500" height="500"></canvas>
+        </div>
+        <div class="legend">
+          <div class="legend-item"><div class="legend-dot" style="background:#4499FF"></div> P1 Base/Camps</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#FF5555"></div> P2 Base/Camps</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#FFD700;border-color:#c0392b"></div> Troll Boss</div>
+          <div class="legend-item"><div class="legend-rect" style="background:rgba(255,165,0,0.3)"></div> Carrot Zones</div>
+          <div class="legend-item"><div class="legend-rect" style="background:rgba(255,50,50,0.2)"></div> Wild Zones</div>
+          <div class="legend-item"><div class="legend-dot" style="background:${TIER_COLORS[1]}"></div> T1</div>
+          <div class="legend-item"><div class="legend-dot" style="background:${TIER_COLORS[2]}"></div> T2</div>
+          <div class="legend-item"><div class="legend-dot" style="background:${TIER_COLORS[3]}"></div> T3</div>
+          <div class="legend-item"><div class="legend-dot" style="background:${TIER_COLORS[4]}"></div> T4</div>
+        </div>
+      `;
+      card.onclick = () => showDetail(map, idx);
+      grid.appendChild(card);
+
+      const canvas = document.getElementById(`map-${idx}`);
+      renderMap(canvas, map);
+    });
+
+    // Auto-select first map
+    showDetail(ALL_MAPS[0], 0);
+  </script>
+</body>
+</html>

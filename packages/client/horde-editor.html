@@ -1,0 +1,1232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Horde Map Editor</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0d0a18; color: #eee; font-family: 'Segoe UI', sans-serif; display: flex; height: 100vh; overflow: hidden; user-select: none; }
+
+    /* ── LEFT SIDEBAR ── */
+    #sidebar {
+      width: 280px; min-width: 280px; background: #16213e; display: flex; flex-direction: column;
+      border-right: 1px solid #333; overflow-y: auto; overflow-x: hidden;
+    }
+    #sidebar::-webkit-scrollbar { width: 6px; }
+    #sidebar::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+
+    .sidebar-header {
+      padding: 12px 14px; background: #0f3460; border-bottom: 1px solid #333;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .sidebar-header h2 { font-size: 14px; color: #FFD700; }
+
+    .section {
+      border-bottom: 1px solid #222; padding: 10px 14px;
+    }
+    .section-title {
+      font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px;
+      margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between;
+      cursor: pointer;
+    }
+    .section-title:hover { color: #FFD700; }
+    .section-title .arrow { font-size: 10px; transition: transform 0.2s; }
+    .section-title .arrow.collapsed { transform: rotate(-90deg); }
+    .section-body { display: flex; flex-direction: column; gap: 6px; }
+    .section-body.collapsed { display: none; }
+
+    /* Map selector */
+    .map-select { width: 100%; padding: 6px 8px; background: #222; color: #eee; border: 1px solid #444; border-radius: 4px; font-size: 12px; }
+
+    /* Knob rows */
+    .knob-row {
+      display: flex; align-items: center; gap: 6px; font-size: 12px;
+    }
+    .knob-row label { flex: 1; color: #aaa; min-width: 70px; }
+    .knob-row input[type="number"], .knob-row input[type="text"] {
+      width: 65px; padding: 3px 6px; background: #222; color: #eee; border: 1px solid #444;
+      border-radius: 3px; font-size: 11px; font-family: monospace;
+    }
+    .knob-row input[type="range"] { flex: 1; accent-color: #FFD700; }
+    .knob-row .val { width: 35px; text-align: right; color: #FFD700; font-size: 11px; font-family: monospace; }
+
+    /* Buttons */
+    .btn {
+      padding: 6px 10px; border: none; border-radius: 5px; cursor: pointer;
+      font-size: 11px; font-weight: bold; transition: filter 0.15s;
+    }
+    .btn:hover { filter: brightness(1.2); }
+    .btn-green { background: #27ae60; color: #fff; }
+    .btn-red { background: #c0392b; color: #fff; }
+    .btn-blue { background: #2980b9; color: #fff; }
+    .btn-purple { background: #8e44ad; color: #fff; }
+    .btn-gold { background: #d4a017; color: #000; }
+    .btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
+
+    /* Terrain palette */
+    .terrain-palette { display: flex; flex-wrap: wrap; gap: 4px; }
+    .terrain-btn {
+      width: 42px; height: 36px; border: 2px solid #333; border-radius: 5px;
+      cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      font-size: 8px; font-weight: bold; color: #fff; text-shadow: 0 0 3px #000;
+      transition: border-color 0.15s, transform 0.1s;
+    }
+    .terrain-btn:hover { border-color: #FFD700; transform: scale(1.08); }
+    .terrain-btn.active { border-color: #FFD700; box-shadow: 0 0 8px rgba(255,215,0,0.4); }
+    .terrain-btn .icon { font-size: 14px; }
+
+    /* Tool buttons */
+    .tool-palette { display: flex; flex-wrap: wrap; gap: 4px; }
+    .tool-btn {
+      padding: 5px 10px; border: 2px solid #333; border-radius: 5px; cursor: pointer;
+      font-size: 11px; background: #222; color: #eee; transition: all 0.15s;
+    }
+    .tool-btn:hover { border-color: #FFD700; }
+    .tool-btn.active { border-color: #FFD700; background: #2a2040; box-shadow: 0 0 6px rgba(255,215,0,0.3); }
+
+    /* Camp list */
+    .camp-list { font-size: 11px; }
+    .camp-item {
+      display: flex; align-items: center; gap: 4px; padding: 4px 6px; border-radius: 3px;
+      margin-bottom: 2px; background: #111; cursor: pointer;
+    }
+    .camp-item:hover { background: #1a1a3e; }
+    .camp-item .tier-badge {
+      display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 9px; font-weight: bold; color: #fff;
+    }
+    .camp-item .coords { color: #888; font-family: monospace; font-size: 10px; }
+    .camp-item .del-btn { margin-left: auto; color: #c0392b; cursor: pointer; font-size: 13px; }
+    .camp-item .del-btn:hover { color: #ff4444; }
+
+    /* Zone list */
+    .zone-item {
+      display: flex; align-items: center; gap: 4px; padding: 3px 6px; border-radius: 3px;
+      margin-bottom: 2px; background: #111; font-size: 11px;
+    }
+    .zone-item .del-btn { margin-left: auto; color: #c0392b; cursor: pointer; }
+
+    /* ── CANVAS AREA ── */
+    #canvas-area {
+      flex: 1; position: relative; overflow: hidden; background: #111;
+    }
+    canvas { position: absolute; top: 0; left: 0; }
+
+    /* Tooltip */
+    #tooltip {
+      position: fixed; background: rgba(0,0,0,0.9); padding: 6px 10px; border-radius: 4px;
+      font-size: 11px; pointer-events: none; display: none; z-index: 20; font-family: monospace;
+    }
+
+    /* Status bar */
+    #statusbar {
+      position: absolute; bottom: 0; left: 0; right: 0; height: 24px; background: rgba(0,0,0,0.7);
+      display: flex; align-items: center; padding: 0 10px; font-size: 11px; color: #888; gap: 16px;
+      z-index: 10;
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%);
+      background: #27ae60; color: #fff; padding: 10px 24px; border-radius: 8px;
+      font-weight: bold; z-index: 100; transition: opacity 0.3s; font-size: 13px;
+    }
+
+    /* Export modal */
+    #export-modal {
+      display: none; position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,0.6);
+      align-items: center; justify-content: center;
+    }
+    #export-modal.show { display: flex; }
+    #export-inner {
+      background: #16213e; border: 1px solid #444; border-radius: 10px; padding: 20px;
+      width: 700px; max-height: 80vh; display: flex; flex-direction: column;
+    }
+    #export-inner h3 { color: #FFD700; margin-bottom: 10px; }
+    #export-inner textarea {
+      flex: 1; min-height: 400px; background: #0d0a18; color: #eee; border: 1px solid #333;
+      border-radius: 6px; padding: 10px; font-family: 'Cascadia Code', 'Fira Code', monospace;
+      font-size: 11px; resize: none;
+    }
+    #export-inner .modal-btns { display: flex; gap: 8px; margin-top: 10px; }
+  </style>
+</head>
+<body>
+
+<div id="sidebar">
+  <div class="sidebar-header">
+    <h2>Horde Map Editor</h2>
+  </div>
+
+  <!-- Map Selection -->
+  <div class="section">
+    <div class="section-title">Map <span class="arrow">▾</span></div>
+    <div class="section-body">
+      <select id="map-select" class="map-select"></select>
+      <div class="btn-row" style="margin-top:4px">
+        <button class="btn btn-green" id="btn-new-map">+ New Map</button>
+        <button class="btn btn-purple" id="btn-duplicate">Duplicate</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Map Properties -->
+  <div class="section">
+    <div class="section-title" data-toggle="props">Properties <span class="arrow">▾</span></div>
+    <div class="section-body" id="sec-props">
+      <div class="knob-row"><label>ID</label><input type="text" id="knob-id" style="width:120px"></div>
+      <div class="knob-row"><label>Name</label><input type="text" id="knob-name" style="width:120px"></div>
+      <div class="knob-row"><label>World W</label><input type="number" id="knob-ww" min="800" max="8000" step="100"><span class="val" id="val-ww"></span></div>
+      <div class="knob-row"><label>World H</label><input type="number" id="knob-wh" min="800" max="8000" step="100"><span class="val" id="val-wh"></span></div>
+      <div class="knob-row"><label>Safe Radius</label><input type="range" id="knob-safe" min="100" max="1200" step="50"><span class="val" id="val-safe"></span></div>
+    </div>
+  </div>
+
+  <!-- Tools -->
+  <div class="section">
+    <div class="section-title" data-toggle="tools">Tools <span class="arrow">▾</span></div>
+    <div class="section-body" id="sec-tools">
+      <div class="tool-palette">
+        <div class="tool-btn active" data-tool="select">Select</div>
+        <div class="tool-btn" data-tool="place_camp">+ Camp</div>
+        <div class="tool-btn" data-tool="place_troll">+ Troll</div>
+        <div class="tool-btn" data-tool="move_base">Move Base</div>
+        <div class="tool-btn" data-tool="add_carrot_zone">+ Carrot Zone</div>
+        <div class="tool-btn" data-tool="add_wild_zone">+ Wild Zone</div>
+        <div class="tool-btn" data-tool="terrain_paint">Terrain Paint</div>
+        <div class="tool-btn" data-tool="terrain_erase">Terrain Erase</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Terrain -->
+  <div class="section">
+    <div class="section-title" data-toggle="terrain">Terrain <span class="arrow">▾</span></div>
+    <div class="section-body" id="sec-terrain">
+      <div class="terrain-palette" id="terrain-palette"></div>
+      <div class="knob-row" style="margin-top:4px">
+        <label>Brush Size</label>
+        <input type="range" id="brush-size" min="20" max="400" value="80" step="10">
+        <span class="val" id="val-brush">80</span>
+      </div>
+      <div class="knob-row">
+        <label>Shape</label>
+        <div class="tool-palette">
+          <div class="tool-btn active" data-shape="circle">Circle</div>
+          <div class="tool-btn" data-shape="rect">Rect</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Camp Slots -->
+  <div class="section">
+    <div class="section-title" data-toggle="camps">Camp Slots <span class="arrow">▾</span></div>
+    <div class="section-body" id="sec-camps">
+      <div id="camp-list" class="camp-list"></div>
+      <div class="knob-row" style="margin-top:4px">
+        <label>New camp tier</label>
+        <select id="new-camp-tier" class="map-select" style="width:60px">
+          <option value="1">T1</option><option value="2">T2</option>
+          <option value="3">T3</option><option value="4">T4</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- Zones -->
+  <div class="section">
+    <div class="section-title" data-toggle="zones">Zones <span class="arrow">▾</span></div>
+    <div class="section-body" id="sec-zones">
+      <div style="font-size:11px;color:#aaa;margin-bottom:4px">Carrot Zones</div>
+      <div id="carrot-zone-list"></div>
+      <div style="font-size:11px;color:#aaa;margin:6px 0 4px">Wild Zones</div>
+      <div id="wild-zone-list"></div>
+    </div>
+  </div>
+
+  <!-- Actions -->
+  <div class="section" style="margin-top:auto">
+    <div class="btn-row">
+      <button class="btn btn-gold" id="btn-export" style="flex:1">Export Code</button>
+      <button class="btn btn-green" id="btn-copy-json" style="flex:1">Copy JSON</button>
+    </div>
+    <div class="btn-row" style="margin-top:6px">
+      <button class="btn btn-blue" id="btn-reset" style="flex:1">Reset</button>
+      <button class="btn btn-red" id="btn-clear-terrain" style="flex:1">Clear Terrain</button>
+    </div>
+  </div>
+</div>
+
+<div id="canvas-area">
+  <canvas id="map-canvas"></canvas>
+  <div id="tooltip"></div>
+  <div id="statusbar">
+    <span id="status-tool">Tool: Select</span>
+    <span id="status-pos">( — , — )</span>
+    <span id="status-zoom">Zoom: 100%</span>
+    <span style="margin-left:auto">Scroll=Zoom | Right-drag=Pan | Left=Use Tool</span>
+  </div>
+</div>
+
+<div id="export-modal">
+  <div id="export-inner">
+    <h3>Export Map Definition</h3>
+    <textarea id="export-code" readonly></textarea>
+    <div class="modal-btns">
+      <button class="btn btn-green" id="btn-copy-export">Copy to Clipboard</button>
+      <button class="btn btn-blue" id="btn-close-export">Close</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { ALL_MAPS, TIER_POOLS } from '@prompt-battle/shared';
+
+// ═══════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════
+
+const TIER_COLORS = { 1: '#2d7a3a', 2: '#2266aa', 3: '#9b59b6', 4: '#c0392b' };
+const TERRAIN_TYPES = [
+  { id: 'water',    label: 'Water',    color: '#2266CC', icon: '🌊' },
+  { id: 'mountain', label: 'Mountain', color: '#8B8B8B', icon: '⛰️' },
+  { id: 'bush',     label: 'Bush',     color: '#4A8B3A', icon: '🌿' },
+  { id: 'forest',   label: 'Forest',   color: '#2E6B3E', icon: '🌲' },
+  { id: 'lava',     label: 'Lava',     color: '#CC3300', icon: '🔥' },
+  { id: 'sand',     label: 'Sand',     color: '#D4B866', icon: '🏖️' },
+  { id: 'swamp',    label: 'Swamp',    color: '#4A6B3A', icon: '🐸' },
+  { id: 'ice',      label: 'Ice',      color: '#88CCEE', icon: '❄️' },
+  { id: 'ruins',    label: 'Ruins',    color: '#7777AA', icon: '🏚️' },
+  { id: 'bridge',   label: 'Bridge',   color: '#AA8844', icon: '🌉' },
+];
+
+let maps = [];          // working copies of all maps
+let mapIdx = 0;         // currently editing
+let currentTool = 'select';
+let selectedTerrain = 'water';
+let brushShape = 'circle';
+let brushSize = 80;
+
+// Camera
+let camX = 0, camY = 0, zoom = 0.2;
+
+// Dragging state
+let dragging = null;    // { type, idx, offsetX, offsetY, side? }
+let panning = false;
+let panStart = { x: 0, y: 0 };
+let camStart = { x: 0, y: 0 };
+let painting = false;
+
+// Terrain features: array of { type, shape, x, y, w, h, radius }
+// Stored per map as maps[i]._terrain
+function getMap() { return maps[mapIdx]; }
+function getTerrain() { return getMap()._terrain || (getMap()._terrain = []); }
+
+// ═══════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════
+
+function deepClone(obj) { return JSON.parse(JSON.stringify(obj)); }
+
+function initMaps() {
+  maps = ALL_MAPS.map(m => {
+    const clone = deepClone(m);
+    clone._terrain = [];
+    return clone;
+  });
+}
+initMaps();
+
+const canvas = document.getElementById('map-canvas');
+const ctx = canvas.getContext('2d');
+const canvasArea = document.getElementById('canvas-area');
+const tooltip = document.getElementById('tooltip');
+
+function resizeCanvas() {
+  canvas.width = canvasArea.clientWidth;
+  canvas.height = canvasArea.clientHeight;
+  render();
+}
+window.addEventListener('resize', resizeCanvas);
+
+// Center camera on map
+function centerCamera() {
+  const m = getMap();
+  zoom = Math.min(canvas.width / m.worldW, canvas.height / m.worldH) * 0.85;
+  camX = m.worldW / 2 - (canvas.width / 2) / zoom;
+  camY = m.worldH / 2 - (canvas.height / 2) / zoom;
+}
+
+// ═══════════════════════════════════════════════════════════
+// COORDINATE TRANSFORMS
+// ═══════════════════════════════════════════════════════════
+
+function worldToScreen(wx, wy) {
+  return { x: (wx - camX) * zoom, y: (wy - camY) * zoom };
+}
+function screenToWorld(sx, sy) {
+  return { x: sx / zoom + camX, y: sy / zoom + camY };
+}
+
+// ═══════════════════════════════════════════════════════════
+// RENDER
+// ═══════════════════════════════════════════════════════════
+
+function render() {
+  const m = getMap();
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  // Background
+  ctx.fillStyle = '#0a0a14';
+  ctx.fillRect(0, 0, w, h);
+
+  // World bounds
+  const tl = worldToScreen(0, 0);
+  const br = worldToScreen(m.worldW, m.worldH);
+  ctx.fillStyle = '#1a2a1a';
+  ctx.fillRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+  ctx.strokeStyle = '#444';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+
+  // Grid
+  drawGrid(m);
+
+  // Terrain features
+  drawTerrain(m);
+
+  // Carrot zones
+  for (const z of m.carrotZones) {
+    const p = worldToScreen(z.x, z.y);
+    const s = { x: z.w * zoom, y: z.h * zoom };
+    ctx.fillStyle = 'rgba(255, 165, 0, 0.12)';
+    ctx.fillRect(p.x, p.y, s.x, s.y);
+    ctx.strokeStyle = 'rgba(255, 165, 0, 0.4)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeRect(p.x, p.y, s.x, s.y);
+    ctx.setLineDash([]);
+    // Label
+    ctx.fillStyle = 'rgba(255,165,0,0.6)';
+    ctx.font = `${Math.max(9, 11 * zoom * 4)}px sans-serif`;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    ctx.fillText('🥕', p.x + 3, p.y + 2);
+  }
+
+  // Wild zones
+  for (const z of m.wildZones) {
+    const p = worldToScreen(z.x, z.y);
+    const s = { x: z.w * zoom, y: z.h * zoom };
+    ctx.fillStyle = 'rgba(255, 50, 50, 0.08)';
+    ctx.fillRect(p.x, p.y, s.x, s.y);
+    ctx.strokeStyle = 'rgba(255, 50, 50, 0.35)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
+    ctx.strokeRect(p.x, p.y, s.x, s.y);
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(255,50,50,0.5)';
+    ctx.font = `${Math.max(9, 11 * zoom * 4)}px sans-serif`;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    ctx.fillText('🐺', p.x + 3, p.y + 2);
+  }
+
+  // Wild exclusions
+  for (const ex of m.wildExclusions) {
+    const p = worldToScreen(ex.x, ex.y);
+    const r = ex.radius * zoom;
+    ctx.fillStyle = 'rgba(100, 200, 100, 0.05)';
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(100, 200, 100, 0.2)';
+    ctx.lineWidth = 1; ctx.setLineDash([3, 4]); ctx.stroke(); ctx.setLineDash([]);
+  }
+
+  // Safe radius
+  const drawSafe = (base, color) => {
+    const p = worldToScreen(base.x, base.y);
+    const r = m.safeRadius * zoom;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1; ctx.setLineDash([8, 5]);
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+  };
+  drawSafe(m.p1Base, 'rgba(68,153,255,0.25)');
+  drawSafe(m.p2Base, 'rgba(255,85,85,0.25)');
+
+  // Camp slot connection lines
+  for (const slot of m.campSlots) {
+    const bp = worldToScreen(slot.bluePos.x, slot.bluePos.y);
+    const rp = worldToScreen(slot.redPos.x, slot.redPos.y);
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 1; ctx.setLineDash([3, 5]);
+    ctx.beginPath(); ctx.moveTo(bp.x, bp.y); ctx.lineTo(rp.x, rp.y); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Camp slots
+  m.campSlots.forEach((slot, i) => {
+    const tier = slot.tier;
+    const r = (5 + tier * 2) * Math.min(1, zoom * 3);
+    const tc = TIER_COLORS[tier];
+
+    const drawCamp = (pos, fill) => {
+      const p = worldToScreen(pos.x, pos.y);
+      ctx.fillStyle = fill;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = tc; ctx.lineWidth = 2; ctx.stroke();
+      // Label
+      if (zoom > 0.08) {
+        ctx.fillStyle = '#fff';
+        ctx.font = `bold ${Math.max(8, r * 0.9)}px monospace`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(`T${tier}`, p.x, p.y);
+      }
+    };
+
+    drawCamp(slot.bluePos, '#4499FF');
+    drawCamp(slot.redPos, '#FF5555');
+  });
+
+  // Troll slot
+  if (m.trollSlot) {
+    const p = worldToScreen(m.trollSlot.x, m.trollSlot.y);
+    const r = 10 * Math.min(1, zoom * 3);
+    ctx.fillStyle = '#FFD700';
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 2.5; ctx.stroke();
+    if (zoom > 0.08) {
+      ctx.fillStyle = '#000';
+      ctx.font = `bold ${Math.max(8, r * 0.85)}px monospace`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('T5', p.x, p.y);
+    }
+  }
+
+  // Bases
+  const drawBase = (base, color, label) => {
+    const p = worldToScreen(base.x, base.y);
+    const r = 14 * Math.min(1, zoom * 3);
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.font = `bold ${Math.max(9, r * 0.75)}px sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(label, p.x, p.y);
+  };
+  drawBase(m.p1Base, '#4499FF', 'P1');
+  drawBase(m.p2Base, '#FF5555', 'P2');
+
+  // Brush preview when terrain painting
+  if ((currentTool === 'terrain_paint' || currentTool === 'terrain_erase') && lastMouse) {
+    const wp = screenToWorld(lastMouse.x, lastMouse.y);
+    const sp = worldToScreen(wp.x, wp.y);
+    const sr = brushSize * zoom;
+    ctx.strokeStyle = currentTool === 'terrain_erase' ? '#FF4444' : '#FFD700';
+    ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]);
+    if (brushShape === 'circle') {
+      ctx.beginPath(); ctx.arc(sp.x, sp.y, sr, 0, Math.PI * 2); ctx.stroke();
+    } else {
+      ctx.strokeRect(sp.x - sr, sp.y - sr, sr * 2, sr * 2);
+    }
+    ctx.setLineDash([]);
+  }
+}
+
+function drawGrid(m) {
+  const step = 200;
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+  ctx.lineWidth = 0.5;
+  for (let x = 0; x <= m.worldW; x += step) {
+    const p = worldToScreen(x, 0);
+    const p2 = worldToScreen(x, m.worldH);
+    ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+  }
+  for (let y = 0; y <= m.worldH; y += step) {
+    const p = worldToScreen(0, y);
+    const p2 = worldToScreen(m.worldW, y);
+    ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+  }
+}
+
+function drawTerrain(m) {
+  const terrain = m._terrain || [];
+  for (const t of terrain) {
+    const tc = TERRAIN_TYPES.find(tt => tt.id === t.type);
+    if (!tc) continue;
+    const p = worldToScreen(t.x, t.y);
+
+    if (t.shape === 'circle') {
+      const sr = t.radius * zoom;
+      ctx.fillStyle = tc.color + '55';
+      ctx.beginPath(); ctx.arc(p.x, p.y, sr, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = tc.color + '88';
+      ctx.lineWidth = 1.5; ctx.stroke();
+      // Icon
+      if (zoom > 0.06 && sr > 12) {
+        ctx.font = `${Math.max(10, sr * 0.5)}px sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(tc.icon, p.x, p.y);
+      }
+    } else {
+      const sw = t.w * zoom, sh = t.h * zoom;
+      ctx.fillStyle = tc.color + '55';
+      ctx.fillRect(p.x - sw / 2, p.y - sh / 2, sw, sh);
+      ctx.strokeStyle = tc.color + '88';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(p.x - sw / 2, p.y - sh / 2, sw, sh);
+      if (zoom > 0.06 && sw > 20) {
+        ctx.font = `${Math.max(10, Math.min(sw, sh) * 0.3)}px sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(tc.icon, p.x, p.y);
+      }
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// UI SYNC
+// ═══════════════════════════════════════════════════════════
+
+function syncUI() {
+  const m = getMap();
+
+  document.getElementById('knob-id').value = m.id;
+  document.getElementById('knob-name').value = m.name;
+  document.getElementById('knob-ww').value = m.worldW;
+  document.getElementById('knob-wh').value = m.worldH;
+  document.getElementById('val-ww').textContent = m.worldW;
+  document.getElementById('val-wh').textContent = m.worldH;
+  document.getElementById('knob-safe').value = m.safeRadius;
+  document.getElementById('val-safe').textContent = m.safeRadius;
+
+  // Camp list
+  const campList = document.getElementById('camp-list');
+  campList.innerHTML = m.campSlots.map((s, i) => {
+    const tierClass = `background:${TIER_COLORS[s.tier]}`;
+    return `<div class="camp-item" data-idx="${i}">
+      <span class="tier-badge" style="${tierClass}">T${s.tier}</span>
+      <span class="coords" style="color:#4499FF">(${s.bluePos.x},${s.bluePos.y})</span>
+      <span class="coords" style="color:#FF5555">(${s.redPos.x},${s.redPos.y})</span>
+      <span class="del-btn" data-del-camp="${i}">✕</span>
+    </div>`;
+  }).join('');
+
+  // Zone lists
+  const czList = document.getElementById('carrot-zone-list');
+  czList.innerHTML = (m.carrotZones || []).map((z, i) =>
+    `<div class="zone-item"><span style="color:orange">🥕</span> (${z.x},${z.y}) ${z.w}x${z.h} <span class="del-btn" data-del-cz="${i}">✕</span></div>`
+  ).join('');
+
+  const wzList = document.getElementById('wild-zone-list');
+  wzList.innerHTML = (m.wildZones || []).map((z, i) =>
+    `<div class="zone-item"><span style="color:red">🐺</span> (${z.x},${z.y}) ${z.w}x${z.h} <span class="del-btn" data-del-wz="${i}">✕</span></div>`
+  ).join('');
+}
+
+function populateMapSelect() {
+  const sel = document.getElementById('map-select');
+  sel.innerHTML = maps.map((m, i) =>
+    `<option value="${i}">${m.name} (${m.id})</option>`
+  ).join('');
+  sel.value = mapIdx;
+}
+
+// ═══════════════════════════════════════════════════════════
+// TERRAIN PALETTE
+// ═══════════════════════════════════════════════════════════
+
+function buildTerrainPalette() {
+  const pal = document.getElementById('terrain-palette');
+  pal.innerHTML = '';
+  for (const t of TERRAIN_TYPES) {
+    const btn = document.createElement('div');
+    btn.className = 'terrain-btn' + (t.id === selectedTerrain ? ' active' : '');
+    btn.style.background = t.color;
+    btn.innerHTML = `<span class="icon">${t.icon}</span><span>${t.label}</span>`;
+    btn.onclick = () => {
+      selectedTerrain = t.id;
+      pal.querySelectorAll('.terrain-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    };
+    pal.appendChild(btn);
+  }
+}
+buildTerrainPalette();
+
+// ═══════════════════════════════════════════════════════════
+// HIT TESTING
+// ═══════════════════════════════════════════════════════════
+
+function hitTest(wx, wy) {
+  const m = getMap();
+  const hitR = 30 / zoom;
+
+  // Bases
+  if (Math.hypot(wx - m.p1Base.x, wy - m.p1Base.y) < hitR) return { type: 'base', side: 'p1' };
+  if (Math.hypot(wx - m.p2Base.x, wy - m.p2Base.y) < hitR) return { type: 'base', side: 'p2' };
+
+  // Troll
+  if (m.trollSlot && Math.hypot(wx - m.trollSlot.x, wy - m.trollSlot.y) < hitR) return { type: 'troll' };
+
+  // Camp slots
+  for (let i = m.campSlots.length - 1; i >= 0; i--) {
+    const s = m.campSlots[i];
+    if (Math.hypot(wx - s.bluePos.x, wy - s.bluePos.y) < hitR) return { type: 'camp', idx: i, side: 'blue' };
+    if (Math.hypot(wx - s.redPos.x, wy - s.redPos.y) < hitR) return { type: 'camp', idx: i, side: 'red' };
+  }
+
+  // Carrot zones (edge drag later, for now full rect)
+  for (let i = m.carrotZones.length - 1; i >= 0; i--) {
+    const z = m.carrotZones[i];
+    if (wx >= z.x && wx <= z.x + z.w && wy >= z.y && wy <= z.y + z.h) {
+      return { type: 'carrot_zone', idx: i };
+    }
+  }
+  // Wild zones
+  for (let i = m.wildZones.length - 1; i >= 0; i--) {
+    const z = m.wildZones[i];
+    if (wx >= z.x && wx <= z.x + z.w && wy >= z.y && wy <= z.y + z.h) {
+      return { type: 'wild_zone', idx: i };
+    }
+  }
+
+  return null;
+}
+
+// ═══════════════════════════════════════════════════════════
+// MOUSE EVENTS
+// ═══════════════════════════════════════════════════════════
+
+let lastMouse = null;
+
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+canvas.addEventListener('mousedown', e => {
+  const rect = canvas.getBoundingClientRect();
+  const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+  const wp = screenToWorld(sx, sy);
+
+  // Pan with right-click or middle-click
+  if (e.button === 1 || e.button === 2) {
+    panning = true;
+    panStart = { x: e.clientX, y: e.clientY };
+    camStart = { x: camX, y: camY };
+    canvas.style.cursor = 'grabbing';
+    return;
+  }
+
+  const m = getMap();
+
+  // Terrain paint/erase
+  if (currentTool === 'terrain_paint') {
+    painting = true;
+    paintTerrain(wp.x, wp.y);
+    return;
+  }
+  if (currentTool === 'terrain_erase') {
+    painting = true;
+    eraseTerrain(wp.x, wp.y);
+    return;
+  }
+
+  // Place camp
+  if (currentTool === 'place_camp') {
+    const tier = parseInt(document.getElementById('new-camp-tier').value);
+    // Place blue at click, red mirrored
+    const rx = m.worldW - wp.x;
+    const ry = m.worldH - wp.y;
+    m.campSlots.push({
+      tier,
+      bluePos: { x: Math.round(wp.x / 10) * 10, y: Math.round(wp.y / 10) * 10 },
+      redPos: { x: Math.round(rx / 10) * 10, y: Math.round(ry / 10) * 10 },
+    });
+    syncUI(); render();
+    return;
+  }
+
+  // Place troll
+  if (currentTool === 'place_troll') {
+    m.trollSlot = { x: Math.round(wp.x / 10) * 10, y: Math.round(wp.y / 10) * 10 };
+    syncUI(); render();
+    return;
+  }
+
+  // Move base
+  if (currentTool === 'move_base') {
+    const d1 = Math.hypot(wp.x - m.p1Base.x, wp.y - m.p1Base.y);
+    const d2 = Math.hypot(wp.x - m.p2Base.x, wp.y - m.p2Base.y);
+    const side = d1 < d2 ? 'p1' : 'p2';
+    dragging = { type: 'base', side };
+    return;
+  }
+
+  // Add carrot zone
+  if (currentTool === 'add_carrot_zone') {
+    m.carrotZones.push({ x: Math.round(wp.x), y: Math.round(wp.y), w: 600, h: 600 });
+    syncUI(); render();
+    return;
+  }
+  // Add wild zone
+  if (currentTool === 'add_wild_zone') {
+    m.wildZones.push({ x: Math.round(wp.x), y: Math.round(wp.y), w: 600, h: 600 });
+    syncUI(); render();
+    return;
+  }
+
+  // Select tool — drag things
+  if (currentTool === 'select') {
+    const hit = hitTest(wp.x, wp.y);
+    if (hit) {
+      dragging = { ...hit, offsetX: wp.x, offsetY: wp.y };
+
+      // Store original positions for zone dragging
+      if (hit.type === 'carrot_zone') {
+        const z = m.carrotZones[hit.idx];
+        dragging.origX = z.x; dragging.origY = z.y;
+      } else if (hit.type === 'wild_zone') {
+        const z = m.wildZones[hit.idx];
+        dragging.origX = z.x; dragging.origY = z.y;
+      }
+    }
+  }
+});
+
+document.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+  lastMouse = { x: sx, y: sy };
+  const wp = screenToWorld(sx, sy);
+
+  // Update status
+  document.getElementById('status-pos').textContent = `(${Math.round(wp.x)}, ${Math.round(wp.y)})`;
+
+  // Tooltip
+  const m = getMap();
+  const hit = hitTest(wp.x, wp.y);
+  if (hit && currentTool === 'select') {
+    tooltip.style.display = 'block';
+    tooltip.style.left = (e.clientX + 14) + 'px';
+    tooltip.style.top = (e.clientY + 14) + 'px';
+    if (hit.type === 'base') tooltip.textContent = `${hit.side.toUpperCase()} Base — drag to move`;
+    else if (hit.type === 'troll') tooltip.textContent = 'Troll Boss (T5) — drag to move';
+    else if (hit.type === 'camp') {
+      const s = m.campSlots[hit.idx];
+      tooltip.textContent = `Camp #${hit.idx} T${s.tier} (${hit.side}) — drag to move`;
+    }
+    else if (hit.type === 'carrot_zone') tooltip.textContent = `Carrot Zone #${hit.idx} — drag to move`;
+    else if (hit.type === 'wild_zone') tooltip.textContent = `Wild Zone #${hit.idx} — drag to move`;
+  } else {
+    tooltip.style.display = 'none';
+  }
+
+  // Panning
+  if (panning) {
+    camX = camStart.x - (e.clientX - panStart.x) / zoom;
+    camY = camStart.y - (e.clientY - panStart.y) / zoom;
+    render();
+    return;
+  }
+
+  // Painting terrain
+  if (painting) {
+    if (currentTool === 'terrain_paint') paintTerrain(wp.x, wp.y);
+    else if (currentTool === 'terrain_erase') eraseTerrain(wp.x, wp.y);
+    render();
+    return;
+  }
+
+  // Dragging
+  if (dragging) {
+    const dx = wp.x - dragging.offsetX;
+    const dy = wp.y - dragging.offsetY;
+    const snap = v => Math.round(v / 10) * 10;
+
+    if (dragging.type === 'base') {
+      const base = dragging.side === 'p1' ? m.p1Base : m.p2Base;
+      base.x = snap(wp.x); base.y = snap(wp.y);
+    } else if (dragging.type === 'troll') {
+      m.trollSlot.x = snap(wp.x); m.trollSlot.y = snap(wp.y);
+    } else if (dragging.type === 'camp') {
+      const slot = m.campSlots[dragging.idx];
+      const pos = dragging.side === 'blue' ? slot.bluePos : slot.redPos;
+      pos.x = snap(wp.x); pos.y = snap(wp.y);
+    } else if (dragging.type === 'carrot_zone') {
+      const z = m.carrotZones[dragging.idx];
+      z.x = Math.round(dragging.origX + dx);
+      z.y = Math.round(dragging.origY + dy);
+    } else if (dragging.type === 'wild_zone') {
+      const z = m.wildZones[dragging.idx];
+      z.x = Math.round(dragging.origX + dx);
+      z.y = Math.round(dragging.origY + dy);
+    }
+    syncUI(); render();
+    return;
+  }
+
+  // Cursor
+  if (currentTool === 'select' && hit) canvas.style.cursor = 'grab';
+  else if (currentTool === 'terrain_paint' || currentTool === 'terrain_erase') canvas.style.cursor = 'crosshair';
+  else canvas.style.cursor = 'default';
+
+  if (currentTool === 'terrain_paint' || currentTool === 'terrain_erase') render();
+});
+
+document.addEventListener('mouseup', () => {
+  if (dragging) { dragging = null; syncUI(); }
+  painting = false;
+  panning = false;
+  canvas.style.cursor = 'default';
+});
+
+// Zoom
+canvasArea.addEventListener('wheel', e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+  const wpBefore = screenToWorld(sx, sy);
+
+  const delta = e.deltaY > 0 ? -0.02 : 0.02;
+  zoom = Math.min(2, Math.max(0.03, zoom + delta * (zoom * 2)));
+
+  // Zoom toward cursor
+  const wpAfter = screenToWorld(sx, sy);
+  camX += wpBefore.x - wpAfter.x;
+  camY += wpBefore.y - wpAfter.y;
+
+  document.getElementById('status-zoom').textContent = `Zoom: ${Math.round(zoom * 100)}%`;
+  render();
+}, { passive: false });
+
+// ═══════════════════════════════════════════════════════════
+// TERRAIN PAINT / ERASE
+// ═══════════════════════════════════════════════════════════
+
+function paintTerrain(wx, wy) {
+  const terrain = getTerrain();
+  const feature = {
+    type: selectedTerrain,
+    shape: brushShape,
+    x: Math.round(wx),
+    y: Math.round(wy),
+  };
+  if (brushShape === 'circle') {
+    feature.radius = brushSize;
+  } else {
+    feature.w = brushSize * 2;
+    feature.h = brushSize * 2;
+  }
+  terrain.push(feature);
+  render();
+}
+
+function eraseTerrain(wx, wy) {
+  const terrain = getTerrain();
+  const r = brushSize;
+  getMap()._terrain = terrain.filter(t => {
+    const dist = Math.hypot(t.x - wx, t.y - wy);
+    const tr = t.shape === 'circle' ? t.radius : Math.max(t.w, t.h) / 2;
+    return dist > r + tr * 0.5;
+  });
+  render();
+}
+
+// ═══════════════════════════════════════════════════════════
+// SIDEBAR EVENTS
+// ═══════════════════════════════════════════════════════════
+
+// Map select
+document.getElementById('map-select').addEventListener('change', e => {
+  mapIdx = parseInt(e.target.value);
+  centerCamera();
+  syncUI(); render();
+});
+
+// Property knobs
+for (const [knobId, prop, valId] of [
+  ['knob-ww', 'worldW', 'val-ww'],
+  ['knob-wh', 'worldH', 'val-wh'],
+]) {
+  document.getElementById(knobId).addEventListener('input', e => {
+    getMap()[prop] = parseInt(e.target.value) || 3200;
+    if (valId) document.getElementById(valId).textContent = getMap()[prop];
+    render();
+  });
+}
+
+document.getElementById('knob-safe').addEventListener('input', e => {
+  getMap().safeRadius = parseInt(e.target.value);
+  document.getElementById('val-safe').textContent = e.target.value;
+  render();
+});
+
+document.getElementById('knob-id').addEventListener('change', e => { getMap().id = e.target.value; populateMapSelect(); });
+document.getElementById('knob-name').addEventListener('change', e => { getMap().name = e.target.value; populateMapSelect(); });
+
+// Brush size
+document.getElementById('brush-size').addEventListener('input', e => {
+  brushSize = parseInt(e.target.value);
+  document.getElementById('val-brush').textContent = brushSize;
+});
+
+// Brush shape
+document.querySelectorAll('[data-shape]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    brushShape = btn.dataset.shape;
+    document.querySelectorAll('[data-shape]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  });
+});
+
+// Tool selection
+document.querySelectorAll('[data-tool]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    currentTool = btn.dataset.tool;
+    document.querySelectorAll('[data-tool]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('status-tool').textContent = `Tool: ${btn.textContent}`;
+  });
+});
+
+// Section toggles
+document.querySelectorAll('.section-title').forEach(title => {
+  title.addEventListener('click', () => {
+    const body = title.nextElementSibling;
+    if (!body || !body.classList.contains('section-body')) return;
+    body.classList.toggle('collapsed');
+    const arrow = title.querySelector('.arrow');
+    if (arrow) arrow.classList.toggle('collapsed');
+  });
+});
+
+// Delete camp
+document.getElementById('camp-list').addEventListener('click', e => {
+  const del = e.target.closest('[data-del-camp]');
+  if (del) {
+    const idx = parseInt(del.dataset.delCamp);
+    getMap().campSlots.splice(idx, 1);
+    syncUI(); render();
+  }
+});
+
+// Delete carrot zone
+document.getElementById('carrot-zone-list').addEventListener('click', e => {
+  const del = e.target.closest('[data-del-cz]');
+  if (del) {
+    getMap().carrotZones.splice(parseInt(del.dataset.delCz), 1);
+    syncUI(); render();
+  }
+});
+
+// Delete wild zone
+document.getElementById('wild-zone-list').addEventListener('click', e => {
+  const del = e.target.closest('[data-del-wz]');
+  if (del) {
+    getMap().wildZones.splice(parseInt(del.dataset.delWz), 1);
+    syncUI(); render();
+  }
+});
+
+// New map
+document.getElementById('btn-new-map').addEventListener('click', () => {
+  const newMap = {
+    id: `custom_${Date.now()}`,
+    name: 'New Map',
+    description: 'Custom horde map',
+    worldW: 3200, worldH: 3200,
+    p1Base: { x: 300, y: 2900 },
+    p2Base: { x: 2900, y: 300 },
+    safeRadius: 500,
+    campSlots: [],
+    trollSlot: { x: 1600, y: 1600 },
+    carrotZones: [{ x: 100, y: 1600, w: 1400, h: 1400 }, { x: 1700, y: 100, w: 1400, h: 1400 }],
+    wildZones: [{ x: 800, y: 800, w: 1600, h: 1600 }],
+    wildExclusions: [{ x: 300, y: 2900, radius: 500 }, { x: 2900, y: 300, radius: 500 }],
+    _terrain: [],
+  };
+  maps.push(newMap);
+  mapIdx = maps.length - 1;
+  populateMapSelect();
+  centerCamera();
+  syncUI(); render();
+});
+
+// Duplicate
+document.getElementById('btn-duplicate').addEventListener('click', () => {
+  const clone = deepClone(getMap());
+  clone.id = clone.id + '_copy';
+  clone.name = clone.name + ' (Copy)';
+  maps.push(clone);
+  mapIdx = maps.length - 1;
+  populateMapSelect();
+  syncUI(); render();
+});
+
+// Reset
+document.getElementById('btn-reset').addEventListener('click', () => {
+  if (mapIdx < ALL_MAPS.length) {
+    maps[mapIdx] = deepClone(ALL_MAPS[mapIdx]);
+    maps[mapIdx]._terrain = [];
+  }
+  syncUI(); render();
+});
+
+// Clear terrain
+document.getElementById('btn-clear-terrain').addEventListener('click', () => {
+  getMap()._terrain = [];
+  render();
+});
+
+// ═══════════════════════════════════════════════════════════
+// EXPORT
+// ═══════════════════════════════════════════════════════════
+
+function generateCode(m) {
+  const indent = '  ';
+  const i2 = '    ';
+
+  let code = `const ${m.id.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_MAP: MapDef = {\n`;
+  code += `${indent}id: '${m.id}',\n`;
+  code += `${indent}name: '${m.name}',\n`;
+  code += `${indent}description: '${m.description || ''}',\n`;
+  code += `${indent}worldW: ${m.worldW},\n`;
+  code += `${indent}worldH: ${m.worldH},\n`;
+  code += `${indent}p1Base: { x: ${m.p1Base.x}, y: ${m.p1Base.y} },\n`;
+  code += `${indent}p2Base: { x: ${m.p2Base.x}, y: ${m.p2Base.y} },\n`;
+  code += `${indent}safeRadius: ${m.safeRadius},\n`;
+
+  // Camp slots
+  code += `${indent}campSlots: [\n`;
+  for (const s of m.campSlots) {
+    code += `${i2}{ tier: ${s.tier}, bluePos: { x: ${s.bluePos.x}, y: ${s.bluePos.y} }, redPos: { x: ${s.redPos.x}, y: ${s.redPos.y} } },\n`;
+  }
+  code += `${indent}],\n`;
+
+  code += `${indent}trollSlot: ${m.trollSlot ? `{ x: ${m.trollSlot.x}, y: ${m.trollSlot.y} }` : 'null'},\n`;
+
+  // Carrot zones
+  code += `${indent}carrotZones: [\n`;
+  for (const z of m.carrotZones) {
+    code += `${i2}{ x: ${z.x}, y: ${z.y}, w: ${z.w}, h: ${z.h} },\n`;
+  }
+  code += `${indent}],\n`;
+
+  // Wild zones
+  code += `${indent}wildZones: [\n`;
+  for (const z of m.wildZones) {
+    code += `${i2}{ x: ${z.x}, y: ${z.y}, w: ${z.w}, h: ${z.h} },\n`;
+  }
+  code += `${indent}],\n`;
+
+  // Wild exclusions
+  code += `${indent}wildExclusions: [\n`;
+  for (const ex of (m.wildExclusions || [])) {
+    code += `${i2}{ x: ${ex.x}, y: ${ex.y}, radius: ${ex.radius} },\n`;
+  }
+  code += `${indent}],\n`;
+
+  // Terrain features
+  if (m._terrain && m._terrain.length > 0) {
+    code += `${indent}// Terrain features (custom extension)\n`;
+    code += `${indent}terrain: [\n`;
+    for (const t of m._terrain) {
+      if (t.shape === 'circle') {
+        code += `${i2}{ type: '${t.type}', shape: 'circle', x: ${t.x}, y: ${t.y}, radius: ${t.radius} },\n`;
+      } else {
+        code += `${i2}{ type: '${t.type}', shape: 'rect', x: ${t.x}, y: ${t.y}, w: ${t.w}, h: ${t.h} },\n`;
+      }
+    }
+    code += `${indent}],\n`;
+  }
+
+  code += `};\n`;
+  return code;
+}
+
+document.getElementById('btn-export').addEventListener('click', () => {
+  const code = generateCode(getMap());
+  document.getElementById('export-code').value = code;
+  document.getElementById('export-modal').classList.add('show');
+});
+
+document.getElementById('btn-copy-json').addEventListener('click', async () => {
+  const m = deepClone(getMap());
+  delete m._terrain;
+  if (getMap()._terrain?.length) m.terrain = getMap()._terrain;
+  await navigator.clipboard.writeText(JSON.stringify(m, null, 2));
+  showToast('JSON copied!');
+});
+
+document.getElementById('btn-copy-export').addEventListener('click', async () => {
+  await navigator.clipboard.writeText(document.getElementById('export-code').value);
+  showToast('Code copied!');
+});
+
+document.getElementById('btn-close-export').addEventListener('click', () => {
+  document.getElementById('export-modal').classList.remove('show');
+});
+
+document.getElementById('export-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('export-modal')) {
+    document.getElementById('export-modal').classList.remove('show');
+  }
+});
+
+function showToast(msg) {
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 1500);
+}
+
+// ═══════════════════════════════════════════════════════════
+// KEYBOARD SHORTCUTS
+// ═══════════════════════════════════════════════════════════
+
+document.addEventListener('keydown', e => {
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+
+  if (e.key === 's' || e.key === 'S') { currentTool = 'select'; updateToolUI(); }
+  if (e.key === 'p' || e.key === 'P') { currentTool = 'terrain_paint'; updateToolUI(); }
+  if (e.key === 'e' || e.key === 'E') { currentTool = 'terrain_erase'; updateToolUI(); }
+  if (e.key === 'c' || e.key === 'C') { currentTool = 'place_camp'; updateToolUI(); }
+  if (e.key === '[') { brushSize = Math.max(20, brushSize - 20); document.getElementById('brush-size').value = brushSize; document.getElementById('val-brush').value = brushSize; }
+  if (e.key === ']') { brushSize = Math.min(400, brushSize + 20); document.getElementById('brush-size').value = brushSize; document.getElementById('val-brush').value = brushSize; }
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    // Delete hovered terrain
+    if (lastMouse && (currentTool === 'select')) {
+      const wp = screenToWorld(lastMouse.x, lastMouse.y);
+      const terrain = getTerrain();
+      const idx = terrain.findIndex(t => {
+        const dist = Math.hypot(t.x - wp.x, t.y - wp.y);
+        const tr = t.shape === 'circle' ? t.radius : Math.max(t.w, t.h) / 2;
+        return dist < tr;
+      });
+      if (idx >= 0) { terrain.splice(idx, 1); render(); }
+    }
+  }
+  if (e.key === 'f' || e.key === 'F') { centerCamera(); render(); }
+});
+
+function updateToolUI() {
+  document.querySelectorAll('[data-tool]').forEach(b => {
+    b.classList.toggle('active', b.dataset.tool === currentTool);
+  });
+  document.getElementById('status-tool').textContent = `Tool: ${currentTool}`;
+  render();
+}
+
+// ═══════════════════════════════════════════════════════════
+// BOOT
+// ═══════════════════════════════════════════════════════════
+
+populateMapSelect();
+resizeCanvas();
+centerCamera();
+syncUI();
+render();
+</script>
+</body>
+</html>
