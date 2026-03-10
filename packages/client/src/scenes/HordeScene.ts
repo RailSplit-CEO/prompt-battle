@@ -11,10 +11,11 @@ const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GE
 const GEMINI_MAX_RETRIES = 3;
 
 interface HordeCommand {
-  targetType: 'camp' | 'nearest_camp' | 'sweep_camps' | 'nexus' | 'base' | 'position' | 'defend' | 'retreat';
+  targetType: 'camp' | 'nearest_camp' | 'sweep_camps' | 'nexus' | 'base' | 'position' | 'defend' | 'retreat' | 'gather';
   targetAnimal?: string; // filter camps by animal type
   campIndex?: number; // specific camp index (-1 = auto-pick)
   qualifier?: 'nearest' | 'furthest' | 'weakest' | 'strongest' | 'uncaptured' | 'enemy';
+  gatherResource?: ResourceType; // for gather commands
   narration?: string;
 }
 
@@ -46,6 +47,7 @@ ACTIONS:
 - "nexus": Attack enemy nexus/base/throne.
 - "base"/"defend"/"retreat": Go home / hold position / fall back.
 - "position": Go to map center.
+- "gather": Gather resources. Set gatherResource to "carrot", "meat", or "crystal". Units loop: pick up → deliver → repeat.
 
 QUALIFIERS (for nearest_camp): nearest, furthest, weakest, uncaptured, enemy
 
@@ -60,6 +62,12 @@ EXAMPLES:
 - "enemy camps" → nearest_camp, qualifier=enemy
 - "defend" → defend
 - "retreat" → retreat
+- "gather carrots" → gather, gatherResource=carrot
+- "gather meat" → gather, gatherResource=meat
+- "get food" → gather, gatherResource=carrot
+- "collect crystals" → gather, gatherResource=crystal
+- "farm" → gather, gatherResource=carrot
+- "make more bunnies" → gather, gatherResource=carrot
 
 RULES:
 - Output exactly ONE command (army selection is handled separately).
@@ -70,10 +78,11 @@ COMMAND: "${rawText}"
 
 JSON ONLY (no markdown):
 {
-  "targetType": "<camp|nearest_camp|sweep_camps|nexus|base|position|defend|retreat>",
+  "targetType": "<camp|nearest_camp|sweep_camps|nexus|base|position|defend|retreat|gather>",
   "targetAnimal": "<bunny|turtle|wolf|scorpion|hawk|bear|crocodile|lion|phoenix|dragon or omit>",
   "campIndex": <index or -1>,
   "qualifier": "<nearest|furthest|weakest|uncaptured|enemy or omit>",
+  "gatherResource": "<carrot|meat|crystal or omit>",
   "narration": "<One dramatic sentence>"
 }`;
 
@@ -136,6 +145,25 @@ interface AnimalDef {
   tier: number;
 }
 
+type ResourceType = 'carrot' | 'meat' | 'crystal';
+
+interface HGroundItem {
+  id: number;
+  type: ResourceType;
+  x: number;
+  y: number;
+  sprite: Phaser.GameObjects.Text | null;
+  dead: boolean;
+  age: number; // ms since spawn, for despawn
+}
+
+interface HGatherLoop {
+  action: 'gather';
+  resourceType: ResourceType;
+  deliverTo: string; // campId or 'base'
+  phase: 'seeking' | 'carrying' | 'delivering';
+}
+
 interface HUnit {
   id: number;
   type: string;
@@ -158,6 +186,11 @@ interface HUnit {
   hasRebirth: boolean;   // phoenix: respawn once on death
   diveReady: boolean;    // hawk: next attack does 2x
   diveTimer: number;     // hawk: cooldown before dive recharges
+  // Resource economy
+  carrying: ResourceType | null;
+  carrySprite: Phaser.GameObjects.Text | null;
+  loop: HGatherLoop | null;
+  isElite: boolean; // golden elite prey — drops crystals
 }
 
 interface CampDef {
@@ -186,6 +219,7 @@ interface HCamp {
   label: Phaser.GameObjects.Text | null;
   area: Phaser.GameObjects.Arc | null;
   captureBar: Phaser.GameObjects.Graphics | null;
+  storedFood: number; // food stored toward next spawn
 }
 
 interface HNexus {
@@ -493,6 +527,28 @@ const AI_TICK_MS = 4000;
 const TEAM_COLORS = { 1: 0x4499FF, 2: 0xFF5555 };
 const GOLDEN_ANGLE = 2.39996;
 
+// ─── RESOURCE ECONOMY ──────────────────────────────────────
+const SPAWN_COSTS: Record<string, { type: ResourceType; amount: number }> = {
+  bunny:     { type: 'carrot',  amount: 1 },
+  turtle:    { type: 'carrot',  amount: 1 },
+  wolf:      { type: 'meat',    amount: 3 },
+  scorpion:  { type: 'meat',    amount: 3 },
+  hawk:      { type: 'meat',    amount: 3 },
+  bear:      { type: 'meat',    amount: 5 },
+  crocodile: { type: 'meat',    amount: 5 },
+  lion:      { type: 'crystal', amount: 8 },
+  phoenix:   { type: 'crystal', amount: 8 },
+  dragon:    { type: 'crystal', amount: 12 },
+};
+const RESOURCE_EMOJI: Record<ResourceType, string> = { carrot: '🥕', meat: '🍖', crystal: '💎' };
+const CARROT_SPAWN_MS = 4000;       // new carrot every 4s
+const MAX_GROUND_ITEMS = 120;
+const ITEM_DESPAWN_MS = 90000;      // ground items vanish after 90s
+const PICKUP_RANGE = 35;
+const WILD_ANIMAL_COUNT = 15;       // neutral roaming animals on outskirts
+const ELITE_PREY_COUNT = 3;         // golden elite prey (T4 stats, drop crystals)
+const WILD_RESPAWN_MS = 20000;      // respawn wild animals every 20s
+
 function pdist(a: { x: number; y: number }, b: { x: number; y: number }): number {
   const dx = a.x - b.x, dy = a.y - b.y;
   return Math.sqrt(dx * dx + dy * dy);
@@ -513,6 +569,16 @@ export class HordeScene extends Phaser.Scene {
 
   private baseSpawnTimers = { 1: 0, 2: 0 };
   private aiTimer = 0;
+
+  // Resource economy
+  private groundItems: HGroundItem[] = [];
+  private nextItemId = 0;
+  private carrotSpawnTimer = 0;
+  private wildRespawnTimer = 0;
+  private baseStockpile = {
+    1: { carrot: 0, meat: 0, crystal: 0 },
+    2: { carrot: 0, meat: 0, crystal: 0 },
+  };
 
   private hudTexts: Record<string, Phaser.GameObjects.Text> = {};
   private textInput: HTMLInputElement | null = null;
@@ -584,6 +650,14 @@ export class HordeScene extends Phaser.Scene {
     this.rallyPoints = {};
     this.activeSweeps = {};
     this.selectedArmy = 'all';
+    this.groundItems = [];
+    this.nextItemId = 0;
+    this.carrotSpawnTimer = 0;
+    this.wildRespawnTimer = 0;
+    this.baseStockpile = {
+      1: { carrot: 3, meat: 0, crystal: 0 },  // start with 3 carrots
+      2: { carrot: 3, meat: 0, crystal: 0 },
+    };
 
     this.syncTimer = 0;
 
@@ -602,6 +676,7 @@ export class HordeScene extends Phaser.Scene {
         this.spawnUnit('bunny', 1, P1_BASE.x + 50 + i * 20, P1_BASE.y - 50);
         this.spawnUnit('bunny', 2, P2_BASE.x - 50 - i * 20, P2_BASE.y + 50);
       }
+      this.spawnWildAnimals();
     }
 
     // ─── ONLINE SETUP ───
@@ -675,7 +750,7 @@ export class HordeScene extends Phaser.Scene {
         guardCount: def.guards,
         x: def.x, y: def.y, owner: 0,
         spawnMs: def.spawnMs, spawnTimer: 0, buff: def.buff,
-        label, area, captureBar,
+        label, area, captureBar, storedFood: 0,
       };
       this.camps.push(camp);
 
@@ -708,6 +783,7 @@ export class HordeScene extends Phaser.Scene {
         hasRebirth: camp.animalType === 'phoenix',
         diveReady: camp.animalType === 'hawk',
         diveTimer: 0,
+        carrying: null, carrySprite: null, loop: null, isElite: false,
       });
     }
   }
@@ -753,6 +829,22 @@ export class HordeScene extends Phaser.Scene {
       g.fillStyle(pct > 0.5 ? 0x45E6B0 : pct > 0.25 ? 0xFFD93D : 0xFF5555);
       g.fillRoundedRect(n.x - w / 2, n.y + 38, w * pct, h, 4);
       n.hpText!.setText(`${Math.max(0, Math.ceil(n.hp))}/${n.maxHp}`);
+
+      // Show stockpile near nexus (world-space, scales with zoom)
+      const stock = this.baseStockpile[n.team as 1 | 2];
+      const stockText = `🥕${stock.carrot} 🍖${stock.meat} 💎${stock.crystal}`;
+      if (!this.hudTexts[`stock_${n.team}`]) {
+        this.hudTexts[`stock_${n.team}`] = this.add.text(n.x, n.y + 65, stockText, {
+          fontSize: '13px', color: '#f0e8ff', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
+          stroke: '#000', strokeThickness: 3, backgroundColor: 'rgba(0,0,0,0.5)',
+          padding: { x: 6, y: 2 },
+        }).setOrigin(0.5).setDepth(9);
+      } else {
+        this.hudTexts[`stock_${n.team}`].setText(stockText);
+      }
+      // Scale inversely with zoom
+      const zoom = this.cameras.main.zoom;
+      this.hudTexts[`stock_${n.team}`].setScale(Math.max(0.8, 1.0 / zoom));
     }
   }
 
@@ -981,23 +1073,33 @@ export class HordeScene extends Phaser.Scene {
       fontSize: '12px', color: '#f0e8ff', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold', lineSpacing: 5,
     }).setScrollFactor(0).setDepth(100);
 
+    // Resources section
+    this.hudTexts['resHeader'] = this.add.text(16, 195, 'RESOURCES', {
+      fontSize: '13px', color: '#45E6B0', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
+      letterSpacing: 1,
+    }).setScrollFactor(0).setDepth(100);
+
+    this.hudTexts['resources'] = this.add.text(16, 215, '', {
+      fontSize: '12px', color: '#f0e8ff', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold', lineSpacing: 3,
+    }).setScrollFactor(0).setDepth(100);
+
     // Production section
-    this.hudTexts['prodHeader'] = this.add.text(16, 220, 'PRODUCTION', {
+    this.hudTexts['prodHeader'] = this.add.text(16, 265, 'PRODUCTION', {
       fontSize: '13px', color: '#C98FFF', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
       letterSpacing: 1,
     }).setScrollFactor(0).setDepth(100);
 
-    this.hudTexts['production'] = this.add.text(16, 240, '', {
+    this.hudTexts['production'] = this.add.text(16, 285, '', {
       fontSize: '12px', color: '#cbb8ee', fontFamily: '"Nunito", sans-serif', fontStyle: '600', lineSpacing: 4,
     }).setScrollFactor(0).setDepth(100);
 
     // Camps section
-    this.hudTexts['campsHeader'] = this.add.text(16, 340, 'CAMPS', {
+    this.hudTexts['campsHeader'] = this.add.text(16, 385, 'CAMPS', {
       fontSize: '13px', color: '#FFD93D', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
       letterSpacing: 1,
     }).setScrollFactor(0).setDepth(100);
 
-    this.hudTexts['camps'] = this.add.text(16, 360, '', {
+    this.hudTexts['camps'] = this.add.text(16, 405, '', {
       fontSize: '11px', color: '#f0e8ff', fontFamily: '"Nunito", sans-serif', fontStyle: '600', lineSpacing: 3,
     }).setScrollFactor(0).setDepth(100);
 
@@ -1049,7 +1151,7 @@ export class HordeScene extends Phaser.Scene {
       'SPACE: Voice  |  Type below: Text',
       'Q/E: Cycle army  |  TAB: Next  |  1-0: Direct pick',
       'Commands apply to selected army',
-      '"attack nearest camp" | "sweep camps"',
+      '"attack nearest camp" | "sweep camps" | "gather carrots"',
     ].join('\n'), {
       fontSize: '10px', color: '#4A6B4A', fontFamily: '"Nunito", sans-serif', lineSpacing: 2, align: 'right',
     }).setOrigin(1, 1).setScrollFactor(0).setDepth(100);
@@ -1082,23 +1184,31 @@ export class HordeScene extends Phaser.Scene {
     if (armyLines.length === 1) armyLines.push('  (no units yet)');
     this.hudTexts['armies']?.setText(armyLines.join('\n'));
 
-    // ─── PRODUCTION RATES ───
-    // Base always produces 1 bunny / 10s
+    // ─── RESOURCES ───
+    const stock = this.baseStockpile[myT as 1 | 2];
+    const resLines = [
+      `🥕 Carrots: ${stock.carrot}`,
+      `🍖 Meat: ${stock.meat}`,
+      `💎 Crystals: ${stock.crystal}`,
+    ];
+    // Show camp food progress for owned camps
+    const foodCamps = this.camps.filter(c => c.owner === myT);
+    for (const c of foodCamps) {
+      const cost = SPAWN_COSTS[c.animalType];
+      if (cost) resLines.push(`  ${ANIMALS[c.animalType]?.emoji || ''} ${cap(c.animalType)}: ${c.storedFood}/${cost.amount}`);
+    }
+    this.hudTexts['resources']?.setText(resLines.join('\n'));
+
+    // ─── PRODUCTION (food-gated) ───
     const prodLines: string[] = [];
-    const prodRates: Record<string, number> = {};
-    // Base production
-    prodRates['bunny'] = (prodRates['bunny'] || 0) + 60 / (BASE_SPAWN_MS / 1000);
-    // Camp production
+    prodLines.push(`🐰 Base: 1🥕/bunny (${BASE_SPAWN_MS / 1000}s)`);
     const myCamps = this.camps.filter(c => c.owner === myT);
     for (const c of myCamps) {
-      prodRates[c.animalType] = (prodRates[c.animalType] || 0) + 60 / (c.spawnMs / 1000);
+      const cost = SPAWN_COSTS[c.animalType];
+      if (!cost) continue;
+      const emoji = ANIMALS[c.animalType]?.emoji || '';
+      prodLines.push(`${emoji} ${cap(c.animalType)}: ${cost.amount}${RESOURCE_EMOJI[cost.type]} (${c.spawnMs / 1000}s)`);
     }
-    for (const [type, rate] of Object.entries(prodRates)) {
-      const def = ANIMALS[type];
-      if (!def) continue;
-      prodLines.push(`${def.emoji} ${cap(type)}: ${rate.toFixed(1)}/min`);
-    }
-    if (prodLines.length === 0) prodLines.push('  Base: 🐰 6/min');
     this.hudTexts['production']?.setText(prodLines.join('\n'));
 
     // ─── CAMPS ───
@@ -1157,6 +1267,11 @@ export class HordeScene extends Phaser.Scene {
 
     // Host (or solo): run full simulation
     this.gameTime += delta;
+    this.updateCarrotSpawning(delta);
+    this.updateWildAnimals(delta);
+    this.updateGatherLoops();
+    this.updateResourcePickup();
+    this.updateDeliveries();
     this.updateSpawning(delta);
     this.updateMovement(dt);
     this.updateCombat(delta);
@@ -1165,6 +1280,7 @@ export class HordeScene extends Phaser.Scene {
     // Only run AI when solo (not online PvP)
     if (!this.isOnline) this.updateAI(delta);
     this.cleanupDead();
+    this.updateGroundItems(delta);
     this.updateUnitSprites();
     this.updateCampVisuals();
     this.drawNexusBars();
@@ -1184,23 +1300,35 @@ export class HordeScene extends Phaser.Scene {
   // ─── SPAWNING ────────────────────────────────────────────────
 
   private updateSpawning(delta: number) {
+    // Base spawning: consumes carrots from stockpile to spawn bunnies
     for (const team of [1, 2] as const) {
       if (this.units.filter(u => u.team === team && !u.dead).length >= MAX_UNITS) continue;
       this.baseSpawnTimers[team] += delta;
       if (this.baseSpawnTimers[team] >= BASE_SPAWN_MS) {
-        this.baseSpawnTimers[team] -= BASE_SPAWN_MS;
-        const b = team === 1 ? P1_BASE : P2_BASE;
-        this.spawnUnit('bunny', team, b.x + (team === 1 ? 60 : -60), b.y + (team === 1 ? -30 : 30));
+        if (this.baseStockpile[team].carrot >= 1) {
+          this.baseSpawnTimers[team] -= BASE_SPAWN_MS;
+          this.baseStockpile[team].carrot -= 1;
+          const b = team === 1 ? P1_BASE : P2_BASE;
+          this.spawnUnit('bunny', team, b.x + (team === 1 ? 60 : -60), b.y + (team === 1 ? -30 : 30));
+        }
+        // Don't subtract timer if no food — it stays ready to spawn when food arrives
       }
     }
 
+    // Camp spawning: consumes storedFood when threshold reached
     for (const camp of this.camps) {
       if (camp.owner === 0) continue;
       if (this.units.filter(u => u.team === camp.owner && !u.dead).length >= MAX_UNITS) continue;
-      camp.spawnTimer += delta;
-      if (camp.spawnTimer >= camp.spawnMs) {
-        camp.spawnTimer -= camp.spawnMs;
-        this.spawnUnit(camp.animalType, camp.owner as 1 | 2, camp.x + 20, camp.y + 30);
+      const cost = SPAWN_COSTS[camp.animalType];
+      if (!cost) continue;
+      // Spawn when enough food is stored
+      if (camp.storedFood >= cost.amount) {
+        camp.spawnTimer += delta;
+        if (camp.spawnTimer >= camp.spawnMs) {
+          camp.spawnTimer -= camp.spawnMs;
+          camp.storedFood -= cost.amount;
+          this.spawnUnit(camp.animalType, camp.owner as 1 | 2, camp.x + 20, camp.y + 30);
+        }
       }
     }
   }
@@ -1321,6 +1449,8 @@ export class HordeScene extends Phaser.Scene {
   private updateCombat(delta: number) {
     for (const u of this.units) {
       if (u.dead) continue;
+      // Units carrying resources can't fight
+      if (u.carrying) continue;
       u.attackTimer -= delta;
 
       // Hawk dive recharge: after 5s without attacking, dive is ready again
@@ -1395,7 +1525,6 @@ export class HordeScene extends Phaser.Scene {
           if (target.hp <= 0 && target.type === 'phoenix' && target.hasRebirth) {
             target.hp = target.maxHp * 0.5;
             target.hasRebirth = false;
-            // Flash gold to indicate rebirth
             if (target.sprite) {
               this.tweens.killTweensOf(target.sprite);
               target.sprite.setAlpha(1);
@@ -1406,6 +1535,19 @@ export class HordeScene extends Phaser.Scene {
             }
           } else if (target.hp <= 0) {
             target.dead = true;
+            // Drop meat on death (all units)
+            this.spawnGroundItem('meat', target.x + (Math.random() - 0.5) * 20, target.y + (Math.random() - 0.5) * 20);
+            // Elite prey drops crystals
+            if (target.isElite) {
+              for (let ci = 0; ci < 3; ci++) {
+                this.spawnGroundItem('crystal', target.x + (Math.random() - 0.5) * 40, target.y + (Math.random() - 0.5) * 40);
+              }
+            }
+            // Drop carried resource
+            if (target.carrying) {
+              this.spawnGroundItem(target.carrying, target.x, target.y);
+              target.carrying = null;
+            }
           }
 
           // Hit flash
@@ -1545,8 +1687,30 @@ export class HordeScene extends Phaser.Scene {
     if (this.aiTimer < AI_TICK_MS) return;
     this.aiTimer -= AI_TICK_MS;
 
+    // AI resource management: assign some idle units to gather
     const aiUnits = this.units.filter(u => u.team === 2 && !u.dead);
-    const idle = aiUnits.filter(u => pdist(u, { x: u.targetX, y: u.targetY }) < 20);
+    const gatherers = aiUnits.filter(u => u.loop);
+    const nonGatherers = aiUnits.filter(u => !u.loop);
+
+    // Keep ~30% of units gathering if we have few resources
+    const stock = this.baseStockpile[2];
+    const needGatherers = (stock.carrot < 5 || stock.meat < 3) && gatherers.length < Math.ceil(aiUnits.length * 0.3);
+    if (needGatherers) {
+      const idle = nonGatherers.filter(u => !u.carrying && pdist(u, { x: u.targetX, y: u.targetY }) < 30);
+      const toAssign = idle.slice(0, Math.max(1, Math.floor(idle.length * 0.3)));
+      const resType: ResourceType = stock.carrot < 3 ? 'carrot' : 'meat';
+      let deliverTo = 'base';
+      if (resType === 'meat') {
+        const mc = this.camps.filter(c => c.owner === 2 && SPAWN_COSTS[c.animalType]?.type === 'meat')
+          .sort((a, b) => pdist(a, P2_BASE) - pdist(b, P2_BASE));
+        if (mc.length > 0) deliverTo = mc[0].id;
+      }
+      for (const u of toAssign) {
+        u.loop = { action: 'gather', resourceType: resType, deliverTo, phase: 'seeking' };
+      }
+    }
+
+    const idle = nonGatherers.filter(u => pdist(u, { x: u.targetX, y: u.targetY }) < 20);
     if (idle.length === 0) return;
 
     // Find best target camp
@@ -1559,7 +1723,6 @@ export class HordeScene extends Phaser.Scene {
 
     for (const c of uncaptured) {
       if (c.owner === 0) {
-        // Check strength of neutral defenders at this camp
         const defenders = this.units.filter(u => u.campId === c.id && u.team === 0 && !u.dead);
         const gp = defenders.reduce((s, u) => s + u.attack * u.hp, 0);
         if (power > gp * 1.5) { target = c; break; }
@@ -1568,7 +1731,7 @@ export class HordeScene extends Phaser.Scene {
       }
     }
 
-    if (!target && aiUnits.length > 20) {
+    if (!target && idle.length > 20) {
       target = this.nexuses.find(n => n.team === 1)!;
     }
 
@@ -1578,8 +1741,11 @@ export class HordeScene extends Phaser.Scene {
     const nex = this.nexuses.find(n => n.team === 2)!;
     const threats = this.units.filter(u => u.team === 1 && !u.dead && pdist(u, nex) < 300);
     if (threats.length > 0) {
-      const defs = aiUnits.filter(u => pdist(u, nex) < 600);
-      if (defs.length > 0) this.sendUnitsTo(defs, nex.x, nex.y);
+      const defs = nonGatherers.filter(u => pdist(u, nex) < 600);
+      if (defs.length > 0) {
+        for (const u of defs) { u.loop = null; } // Cancel gather for defense
+        this.sendUnitsTo(defs, nex.x, nex.y);
+      }
     }
   }
 
@@ -1602,13 +1768,12 @@ export class HordeScene extends Phaser.Scene {
       }
       if (!u.sprite) {
         const def = ANIMALS[u.type];
-        // Distinct team colors: gold for neutral, blue for player, bright red for enemy
-        const strokeColor = u.team === 0 ? '#DD8800' : u.team === 1 ? '#3388FF' : '#FF3333';
-        const thickness = u.team === 2 ? 5 : u.team === 0 ? 4 : 3;
-        u.sprite = this.add.text(0, 0, def.emoji, {
-          fontSize: '22px',
-          stroke: strokeColor,
-          strokeThickness: thickness,
+        // Distinct team colors: gold for elite, amber for neutral, blue/red for players
+        const strokeColor = u.isElite ? '#FFD700' : u.team === 0 ? '#DD8800' : u.team === 1 ? '#3388FF' : '#FF3333';
+        const thickness = u.isElite ? 6 : u.team === 2 ? 5 : u.team === 0 ? 4 : 3;
+        const fontSize = u.isElite ? '28px' : '22px';
+        u.sprite = this.add.text(0, 0, u.isElite ? '👑' : def.emoji, {
+          fontSize, stroke: strokeColor, strokeThickness: thickness,
         }).setOrigin(0.5).setDepth(20);
       }
 
@@ -1629,6 +1794,18 @@ export class HordeScene extends Phaser.Scene {
       const sx = prev.x + (dispX - prev.x) * lerpFactor;
       const sy = prev.y + (dispY - prev.y) * lerpFactor;
       u.sprite.setPosition(sx, sy);
+
+      // Carry sprite — small resource icon above unit
+      if (u.carrying) {
+        if (!u.carrySprite) {
+          u.carrySprite = this.add.text(0, 0, RESOURCE_EMOJI[u.carrying], {
+            fontSize: '10px',
+          }).setOrigin(0.5).setDepth(25);
+        }
+        u.carrySprite.setPosition(sx, sy - 16);
+      } else if (u.carrySprite) {
+        u.carrySprite.destroy(); u.carrySprite = null;
+      }
     }
   }
 
@@ -1670,7 +1847,15 @@ export class HordeScene extends Phaser.Scene {
           c.label.setColor('#FFD93D');
         } else {
           const tag = c.owner === 0 ? ' (cleared!)' : c.owner === 1 ? ' [YOU]' : ' [ENEMY]';
-          c.label.setText(c.name + tag);
+          // Show food progress for owned camps
+          let foodTag = '';
+          if (c.owner !== 0) {
+            const cost = SPAWN_COSTS[c.animalType];
+            if (cost && c.storedFood > 0) {
+              foodTag = ` ${RESOURCE_EMOJI[cost.type]}${c.storedFood}/${cost.amount}`;
+            }
+          }
+          c.label.setText(c.name + tag + foodTag);
           c.label.setColor(c.owner === 0 ? '#45E6B0' : c.owner === 1 ? '#4499FF' : '#FF5555');
         }
       }
@@ -1681,9 +1866,240 @@ export class HordeScene extends Phaser.Scene {
 
   private cleanupDead() {
     this.units = this.units.filter(u => {
-      if (u.dead && u.sprite) { u.sprite.destroy(); u.sprite = null; }
+      if (u.dead) {
+        if (u.sprite) { u.sprite.destroy(); u.sprite = null; }
+        if (u.carrySprite) { u.carrySprite.destroy(); u.carrySprite = null; }
+      }
       return !u.dead;
     });
+  }
+
+  // ─── RESOURCE ECONOMY: GROUND ITEMS ──────────────────────────
+
+  private spawnGroundItem(type: ResourceType, x: number, y: number) {
+    if (this.groundItems.filter(i => !i.dead).length >= MAX_GROUND_ITEMS) return;
+    this.groundItems.push({
+      id: this.nextItemId++, type,
+      x: Math.max(20, Math.min(WORLD_W - 20, x)),
+      y: Math.max(20, Math.min(WORLD_H - 20, y)),
+      sprite: null, dead: false, age: 0,
+    });
+  }
+
+  private updateCarrotSpawning(delta: number) {
+    this.carrotSpawnTimer += delta;
+    if (this.carrotSpawnTimer < CARROT_SPAWN_MS) return;
+    this.carrotSpawnTimer -= CARROT_SPAWN_MS;
+    // Spawn carrots near both bases
+    for (const base of [P1_BASE, P2_BASE]) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 80 + Math.random() * 350;
+      this.spawnGroundItem('carrot', base.x + Math.cos(angle) * dist, base.y + Math.sin(angle) * dist);
+    }
+  }
+
+  private updateGroundItems(delta: number) {
+    for (const item of this.groundItems) {
+      if (item.dead) continue;
+      item.age += delta;
+      if (item.age >= ITEM_DESPAWN_MS) { item.dead = true; continue; }
+      if (!item.sprite) {
+        item.sprite = this.add.text(item.x, item.y, RESOURCE_EMOJI[item.type], {
+          fontSize: '16px',
+        }).setOrigin(0.5).setDepth(15);
+        // Gentle bob animation
+        this.tweens.add({ targets: item.sprite, y: item.y - 5, duration: 1200, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+      }
+      // Fade near end of life
+      const remaining = ITEM_DESPAWN_MS - item.age;
+      if (remaining < 10000 && item.sprite) item.sprite.setAlpha(remaining / 10000);
+    }
+    this.groundItems = this.groundItems.filter(i => {
+      if (i.dead && i.sprite) { i.sprite.destroy(); i.sprite = null; }
+      return !i.dead;
+    });
+  }
+
+  // ─── RESOURCE ECONOMY: PICKUP & DELIVERY ─────────────────────
+
+  private updateResourcePickup() {
+    for (const u of this.units) {
+      if (u.dead || u.carrying || u.team === 0) continue;
+      for (const item of this.groundItems) {
+        if (item.dead) continue;
+        if (pdist(u, item) < PICKUP_RANGE) {
+          u.carrying = item.type;
+          item.dead = true;
+          if (item.sprite) { item.sprite.destroy(); item.sprite = null; }
+          if (u.loop) u.loop.phase = 'delivering';
+          break;
+        }
+      }
+    }
+  }
+
+  private updateDeliveries() {
+    for (const u of this.units) {
+      if (u.dead || !u.carrying || u.team === 0) continue;
+      const team = u.team as 1 | 2;
+      const base = team === 1 ? P1_BASE : P2_BASE;
+
+      // Deliver to own base
+      if (pdist(u, base) < PICKUP_RANGE + 25) {
+        this.baseStockpile[team][u.carrying] += 1;
+        this.clearCarrying(u);
+        continue;
+      }
+
+      // Deliver to owned camp that needs this resource type
+      for (const camp of this.camps) {
+        if (camp.owner !== team) continue;
+        if (pdist(u, camp) < PICKUP_RANGE + 25) {
+          const cost = SPAWN_COSTS[camp.animalType];
+          if (cost && cost.type === u.carrying) {
+            camp.storedFood += 1;
+            this.clearCarrying(u);
+          } else {
+            // Wrong type for this camp — deliver to base stockpile instead by proximity later
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  private clearCarrying(u: HUnit) {
+    u.carrying = null;
+    if (u.carrySprite) { u.carrySprite.destroy(); u.carrySprite = null; }
+    if (u.loop) u.loop.phase = 'seeking';
+  }
+
+  // ─── RESOURCE ECONOMY: GATHER LOOPS ──────────────────────────
+
+  private updateGatherLoops() {
+    for (const u of this.units) {
+      if (u.dead || !u.loop || u.team === 0) continue;
+      const team = u.team as 1 | 2;
+      const base = team === 1 ? P1_BASE : P2_BASE;
+
+      if (u.loop.phase === 'seeking' && !u.carrying) {
+        // Move to nearest matching ground item
+        let best: HGroundItem | null = null, bestD = Infinity;
+        for (const item of this.groundItems) {
+          if (item.dead || item.type !== u.loop.resourceType) continue;
+          const d = pdist(u, item);
+          if (d < bestD) { bestD = d; best = item; }
+        }
+        if (best) { u.targetX = best.x; u.targetY = best.y; }
+        else {
+          // No items of this type — idle near base
+          if (pdist(u, base) > 200) { u.targetX = base.x; u.targetY = base.y; }
+        }
+      } else if (u.loop.phase === 'delivering' && u.carrying) {
+        // Head to delivery target
+        if (u.loop.deliverTo === 'base') {
+          u.targetX = base.x; u.targetY = base.y;
+        } else {
+          const camp = this.camps.find(c => c.id === u.loop!.deliverTo);
+          if (camp && camp.owner === team) {
+            u.targetX = camp.x; u.targetY = camp.y;
+          } else {
+            u.targetX = base.x; u.targetY = base.y;
+          }
+        }
+      }
+    }
+  }
+
+  // ─── RESOURCE ECONOMY: WILD ANIMALS ──────────────────────────
+
+  private spawnWildAnimals() {
+    const wildTypes = ['bunny', 'turtle', 'wolf', 'scorpion', 'hawk'];
+    for (let i = 0; i < WILD_ANIMAL_COUNT; i++) {
+      const type = wildTypes[Math.floor(Math.random() * wildTypes.length)];
+      const def = ANIMALS[type];
+      let x: number, y: number;
+      do {
+        x = 200 + Math.random() * (WORLD_W - 400);
+        y = 200 + Math.random() * (WORLD_H - 400);
+      } while (pdist({ x, y }, P1_BASE) < 500 || pdist({ x, y }, P2_BASE) < 500);
+      this.units.push({
+        id: this.nextId++, type, team: 0,
+        hp: def.hp, maxHp: def.hp, attack: def.attack, speed: def.speed * 0.4,
+        x, y, targetX: x + Math.random() * 100 - 50, targetY: y + Math.random() * 100 - 50,
+        attackTimer: 0, sprite: null, dead: false,
+        campId: null, lungeX: 0, lungeY: 0,
+        hasRebirth: false, diveReady: false, diveTimer: 0,
+        carrying: null, carrySprite: null, loop: null, isElite: false,
+      });
+    }
+    // Elite golden prey — very strong, drops crystals
+    for (let i = 0; i < ELITE_PREY_COUNT; i++) {
+      let x: number, y: number;
+      do {
+        x = WORLD_W * 0.2 + Math.random() * (WORLD_W * 0.6);
+        y = WORLD_H * 0.2 + Math.random() * (WORLD_H * 0.6);
+      } while (pdist({ x, y }, P1_BASE) < 600 || pdist({ x, y }, P2_BASE) < 600);
+      this.units.push({
+        id: this.nextId++, type: 'lion', team: 0,
+        hp: 2000, maxHp: 2000, attack: 150, speed: 90,
+        x, y, targetX: x + Math.random() * 80 - 40, targetY: y + Math.random() * 80 - 40,
+        attackTimer: 0, sprite: null, dead: false,
+        campId: null, lungeX: 0, lungeY: 0,
+        hasRebirth: false, diveReady: false, diveTimer: 0,
+        carrying: null, carrySprite: null, loop: null, isElite: true,
+      });
+    }
+  }
+
+  private updateWildAnimals(delta: number) {
+    this.wildRespawnTimer += delta;
+    if (this.wildRespawnTimer >= WILD_RESPAWN_MS) {
+      this.wildRespawnTimer -= WILD_RESPAWN_MS;
+      const wilds = this.units.filter(u => u.team === 0 && !u.campId && !u.dead && !u.isElite);
+      const elites = this.units.filter(u => u.team === 0 && !u.campId && !u.dead && u.isElite);
+      if (wilds.length < WILD_ANIMAL_COUNT) {
+        const wt = ['bunny', 'turtle', 'wolf', 'scorpion', 'hawk'];
+        const type = wt[Math.floor(Math.random() * wt.length)];
+        const def = ANIMALS[type];
+        let x: number, y: number;
+        do { x = 200 + Math.random() * (WORLD_W - 400); y = 200 + Math.random() * (WORLD_H - 400);
+        } while (pdist({ x, y }, P1_BASE) < 500 || pdist({ x, y }, P2_BASE) < 500);
+        this.units.push({
+          id: this.nextId++, type, team: 0,
+          hp: def.hp, maxHp: def.hp, attack: def.attack, speed: def.speed * 0.4,
+          x, y, targetX: x + Math.random() * 80 - 40, targetY: y + Math.random() * 80 - 40,
+          attackTimer: 0, sprite: null, dead: false,
+          campId: null, lungeX: 0, lungeY: 0,
+          hasRebirth: false, diveReady: false, diveTimer: 0,
+          carrying: null, carrySprite: null, loop: null, isElite: false,
+        });
+      }
+      if (elites.length < ELITE_PREY_COUNT) {
+        let x: number, y: number;
+        do { x = WORLD_W * 0.2 + Math.random() * (WORLD_W * 0.6); y = WORLD_H * 0.2 + Math.random() * (WORLD_H * 0.6);
+        } while (pdist({ x, y }, P1_BASE) < 600 || pdist({ x, y }, P2_BASE) < 600);
+        this.units.push({
+          id: this.nextId++, type: 'lion', team: 0,
+          hp: 2000, maxHp: 2000, attack: 150, speed: 90,
+          x, y, targetX: x + Math.random() * 80 - 40, targetY: y + Math.random() * 80 - 40,
+          attackTimer: 0, sprite: null, dead: false,
+          campId: null, lungeX: 0, lungeY: 0,
+          hasRebirth: false, diveReady: false, diveTimer: 0,
+          carrying: null, carrySprite: null, loop: null, isElite: true,
+        });
+      }
+    }
+    // Wander wild animals
+    for (const u of this.units) {
+      if (u.team !== 0 || u.campId || u.dead) continue;
+      if (pdist(u, { x: u.targetX, y: u.targetY }) < 15) {
+        const a = Math.random() * Math.PI * 2;
+        const r = 80 + Math.random() * 200;
+        u.targetX = Math.max(100, Math.min(WORLD_W - 100, u.x + Math.cos(a) * r));
+        u.targetY = Math.max(100, Math.min(WORLD_H - 100, u.y + Math.sin(a) * r));
+      }
+    }
   }
 
   private checkWin() {
@@ -1749,6 +2165,7 @@ export class HordeScene extends Phaser.Scene {
       hasRebirth: type === 'phoenix',
       diveReady: type === 'hawk',
       diveTimer: 0,
+      carrying: null, carrySprite: null, loop: null, isElite: false,
     });
   }
 
@@ -1906,6 +2323,7 @@ export class HordeScene extends Phaser.Scene {
           hasRebirth: su.type === 'phoenix',
           diveReady: su.type === 'hawk',
           diveTimer: 0,
+          carrying: null, carrySprite: null, loop: null, isElite: false,
         });
       }
     }
@@ -2043,6 +2461,33 @@ export class HordeScene extends Phaser.Scene {
         }
       }
 
+    } else if (cmd.targetType === 'gather') {
+      // Set up gather loop for selected units
+      const resType = cmd.gatherResource || 'carrot';
+      const sel = this.units.filter(u => u.team === team && !u.dead && (subject === 'all' || u.type === subject));
+      if (sel.length === 0) {
+        this.showFeedback(`No ${subject} units!`, '#FF6B6B');
+        return true;
+      }
+
+      // Find best delivery target for this resource
+      let deliverTo = 'base';
+      if (resType !== 'carrot') {
+        // Find nearest owned camp that needs this resource type
+        const base = team === 1 ? P1_BASE : P2_BASE;
+        const matchingCamps = this.camps
+          .filter(c => c.owner === team && SPAWN_COSTS[c.animalType]?.type === resType)
+          .sort((a, b) => pdist(a, base) - pdist(b, base));
+        if (matchingCamps.length > 0) deliverTo = matchingCamps[0].id;
+      }
+
+      for (const u of sel) {
+        u.loop = { action: 'gather', resourceType: resType, deliverTo, phase: 'seeking' };
+      }
+      const emoji = RESOURCE_EMOJI[resType];
+      this.showFeedback(cmd.narration || `${sel.length} units gathering ${emoji}!`, '#45E6B0');
+      return true;
+
     } else if (cmd.targetType === 'position') {
       tx = WORLD_W / 2; ty = WORLD_H / 2; found = true;
     }
@@ -2054,6 +2499,8 @@ export class HordeScene extends Phaser.Scene {
       this.showFeedback(`No ${subject} units!`, '#FF6B6B');
       return true;
     }
+    // Clear gather loops — new command overrides
+    for (const u of sel) { u.loop = null; }
     this.sendUnitsTo(sel, tx, ty, true);
     const label = subject === 'all' ? 'All units' : `${sel.length} ${subject}(s)`;
     const narration = cmd.narration || `${label} moving out!`;
@@ -2065,6 +2512,26 @@ export class HordeScene extends Phaser.Scene {
     const lo = text.toLowerCase();
     const subject = this.selectedArmy; // always use selected army
     const base = team === 1 ? P1_BASE : P2_BASE;
+
+    // Gather commands
+    if (/\b(gather|collect|farm|forage|harvest|get food|make more)\b/i.test(lo)) {
+      let resType: ResourceType = 'carrot';
+      if (/meat|flesh|kill/i.test(lo)) resType = 'meat';
+      else if (/crystal|gem|diamond|elite/i.test(lo)) resType = 'crystal';
+
+      const sel = this.units.filter(u => u.team === team && !u.dead && (subject === 'all' || u.type === subject));
+      if (sel.length === 0) { this.showFeedback(`No ${subject} units!`, '#FF6B6B'); return; }
+
+      let deliverTo = 'base';
+      if (resType !== 'carrot') {
+        const matchCamps = this.camps.filter(c => c.owner === team && SPAWN_COSTS[c.animalType]?.type === resType)
+          .sort((a, b) => pdist(a, base) - pdist(b, base));
+        if (matchCamps.length > 0) deliverTo = matchCamps[0].id;
+      }
+      for (const u of sel) { u.loop = { action: 'gather', resourceType: resType, deliverTo, phase: 'seeking' }; }
+      this.showFeedback(`${sel.length} units gathering ${RESOURCE_EMOJI[resType]}!`, '#45E6B0');
+      return;
+    }
 
     let tx = 0, ty = 0, found = false;
 
@@ -2128,6 +2595,7 @@ export class HordeScene extends Phaser.Scene {
       this.showFeedback(`No ${subject} units!`, '#FF6B6B');
       return;
     }
+    for (const u of sel) { u.loop = null; } // Clear gather loops
     this.sendUnitsTo(sel, tx, ty, true);
     const emoji = subject === 'all' ? '' : (ANIMALS[subject]?.emoji + ' ' || '');
     const label = subject === 'all' ? 'All units' : `${emoji}${sel.length} ${cap(subject)}(s)`;
