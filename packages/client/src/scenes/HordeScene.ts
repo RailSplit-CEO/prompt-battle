@@ -80,7 +80,20 @@ HOW SPAWNING WORKS: Units gather a resource → carry it to a camp of the desire
 
 To produce a unit, you MUST own a camp of that type. Camps start neutral with defenders — kill the defenders to capture.
 
-MINES: ⛏️ Mine nodes are located on the map. Units can mine metal from them using the "mine" workflow step. Metal is used for forge upgrades at base.
+ARMORY: 🏛️ Each team has an Armory building on their side of the map. Players can unlock equipment with resources, then units walk to the Armory to pick items up. Equipment is permanent (doesn't drop on death). Units can carry a resource AND have equipment.
+
+EQUIPMENT (unlock once, unlimited pickups):
+  ⛏️ Pickaxe (5🥕): Required to mine metal. +25% gather speed.
+  ⚔️ Sword (5🍖+3⚙️): +50% attack, +25% attack speed. Offensive specialist.
+  🛡️ Shield (5🍖+3⚙️): +60% HP, -25% damage taken, -15% speed. Tank.
+  👢 Boots (5🥕+2⚙️): +60% move speed, +50% pickup range. Fast runner.
+  🚩 Banner (8🍖+5⚙️): Aura — nearby allies +20% atk, +15% speed. Commander.
+
+MINES: ⛏️ Mine nodes on the map. Only units with a Pickaxe can mine metal. Metal is used to unlock equipment.
+
+To equip: include {"action":"equip","equipmentType":"pickaxe|sword|shield|boots|banner"} step BEFORE other steps. Unit walks to Armory, picks up item, then continues.
+Example: "get pickaxes then go mine" → [{"action":"equip","equipmentType":"pickaxe"},{"action":"mine"},{"action":"deliver","target":"base"}]
+Example: "get swords and attack wolf camp" → [{"action":"equip","equipmentType":"sword"},{"action":"attack_camp","targetAnimal":"gnoll","qualifier":"nearest"}]
 
 ═══ CURRENT GAME STATE ═══
 Time: ${Math.floor(ctx.gameTime / 1000)}s
@@ -139,7 +152,8 @@ Available step types:
   {"action": "scout"} — explore the map to reveal camps and enemy positions, AVOIDS all combat
   {"action": "collect", "resourceType": "carrot|meat|crystal"} — pick up ground resources while AVOIDING enemy units (safe gathering)
   {"action": "kill_only", "targetType": "skull|spider|..."} — hunt and kill wild animals but IGNORE resource drops (pure combat, no pickup)
-  {"action": "mine"} — go to nearest mine node and extract metal, then carry it back
+  {"action": "mine"} — go to nearest mine node and extract metal, then carry it back (requires Pickaxe)
+  {"action": "equip", "equipmentType": "pickaxe|sword|shield|boots|banner"} — walk to team Armory, pick up equipment
 
 The workflow LOOPS automatically. Design the steps so they make a sensible repeating cycle.
 
@@ -334,6 +348,7 @@ interface AnimalDef {
   tier: number;
   ability: string; // unique ability name
   desc: string;    // short description
+  mineSpeed: number; // mining speed multiplier (1.0 = base 2s tick, higher = faster)
 }
 
 type ResourceType = 'carrot' | 'meat' | 'crystal' | 'metal';
@@ -435,6 +450,7 @@ interface HUnit {
   lungeX: number; // sprite offset during attack lunge
   lungeY: number;
   animState: 'idle' | 'walk' | 'attack';
+  attackFaceX: number | null; // x of current attack target for facing
   prevSpriteX: number;
   prevSpriteY: number;
   // Special mechanic flags
@@ -561,17 +577,17 @@ const P2_BASE = { x: WORLD_W - 250, y: 250 };
 //   👹 Troll   "Club Slam"    — Massive 90px splash, slows enemies.
 
 const ANIMALS: Record<string, AnimalDef> = {
-  gnome:     { type: 'gnome',     emoji: '🧝', hp: 15,    attack: 3,    speed: 210, tier: 1, ability: 'Nimble Hands', desc: '2x pickup range, fastest gatherer' },
-  turtle:    { type: 'turtle',    emoji: '🐢', hp: 65,    attack: 3,    speed: 55,  tier: 1, ability: 'Shell Stance', desc: '60% DR when guarding (stationary)' },
-  skull:     { type: 'skull',     emoji: '💀', hp: 80,    attack: 14,   speed: 155, tier: 2, ability: 'Undying',      desc: 'Cheats death once (survives at 1 HP)' },
-  spider:    { type: 'spider',    emoji: '🕷️', hp: 120,   attack: 18,   speed: 85,  tier: 2, ability: 'Venom Bite',   desc: '+5% target max HP per hit' },
-  gnoll:     { type: 'gnoll',     emoji: '🐺', hp: 55,    attack: 28,   speed: 175, tier: 2, ability: 'Bone Toss',    desc: 'Extended range (120 vs 80)' },
-  panda:     { type: 'panda',     emoji: '🐼', hp: 900,   attack: 35,   speed: 80,  tier: 3, ability: 'Thick Hide',   desc: 'Regenerates 1% max HP/sec' },
-  lizard:    { type: 'lizard',    emoji: '🦎', hp: 450,   attack: 70,   speed: 110, tier: 3, ability: 'Cold Blood',   desc: '3x dmg to targets below 40% HP' },
-  minotaur:  { type: 'minotaur',  emoji: '🐂', hp: 2200,  attack: 110,  speed: 120, tier: 4, ability: 'War Cry',      desc: 'Nearby allies +25% attack' },
-  shaman:    { type: 'shaman',    emoji: '🔮', hp: 1400,  attack: 180,  speed: 100, tier: 4, ability: 'Arcane Blast', desc: 'All attacks splash 60px' },
-  troll:     { type: 'troll',     emoji: '👹', hp: 14000, attack: 350,  speed: 50,  tier: 5, ability: 'Club Slam',    desc: 'Massive 90px splash, slows enemies' },
-  rogue:     { type: 'rogue',     emoji: '🗡️', hp: 60,    attack: 45,   speed: 200, tier: 2, ability: 'Backstab',    desc: '3x damage on first hit against a target' },
+  gnome:     { type: 'gnome',     emoji: '🧝', hp: 15,    attack: 3,    speed: 210, tier: 1, ability: 'Nimble Hands', desc: '2x pickup range, fastest gatherer', mineSpeed: 2.0 },
+  turtle:    { type: 'turtle',    emoji: '🐢', hp: 65,    attack: 3,    speed: 55,  tier: 1, ability: 'Shell Stance', desc: '60% DR when guarding (stationary)', mineSpeed: 1.5 },
+  skull:     { type: 'skull',     emoji: '💀', hp: 80,    attack: 14,   speed: 155, tier: 2, ability: 'Undying',      desc: 'Cheats death once (survives at 1 HP)', mineSpeed: 0.8 },
+  spider:    { type: 'spider',    emoji: '🕷️', hp: 120,   attack: 18,   speed: 85,  tier: 2, ability: 'Venom Bite',   desc: '+5% target max HP per hit', mineSpeed: 0.6 },
+  gnoll:     { type: 'gnoll',     emoji: '🐺', hp: 55,    attack: 28,   speed: 175, tier: 2, ability: 'Bone Toss',    desc: 'Extended range (120 vs 80)', mineSpeed: 0.8 },
+  panda:     { type: 'panda',     emoji: '🐼', hp: 900,   attack: 35,   speed: 80,  tier: 3, ability: 'Thick Hide',   desc: 'Regenerates 1% max HP/sec', mineSpeed: 0.5 },
+  lizard:    { type: 'lizard',    emoji: '🦎', hp: 450,   attack: 70,   speed: 110, tier: 3, ability: 'Cold Blood',   desc: '3x dmg to targets below 40% HP', mineSpeed: 0.7 },
+  minotaur:  { type: 'minotaur',  emoji: '🐂', hp: 2200,  attack: 110,  speed: 120, tier: 4, ability: 'War Cry',      desc: 'Nearby allies +25% attack', mineSpeed: 0.4 },
+  shaman:    { type: 'shaman',    emoji: '🔮', hp: 1400,  attack: 180,  speed: 100, tier: 4, ability: 'Arcane Blast', desc: 'All attacks splash 60px', mineSpeed: 0.5 },
+  troll:     { type: 'troll',     emoji: '👹', hp: 14000, attack: 350,  speed: 50,  tier: 5, ability: 'Club Slam',    desc: 'Massive 90px splash, slows enemies', mineSpeed: 0.3 },
+  rogue:     { type: 'rogue',     emoji: '🗡️', hp: 60,    attack: 45,   speed: 200, tier: 2, ability: 'Backstab',    desc: '3x damage on first hit against a target', mineSpeed: 1.0 },
 };
 
 // Hard counter map: attacker → types it deals 2x damage to
@@ -842,6 +858,36 @@ const SPAWN_COSTS: Record<string, { type: ResourceType; amount: number }> = {
   rogue:     { type: 'meat',    amount: 3 },
 };
 const RESOURCE_EMOJI: Record<ResourceType, string> = { carrot: '🥕', meat: '🍖', crystal: '💎', metal: '⚙️' };
+
+// ─── FORGE UPGRADES ──────────────────────────────────────
+interface ForgeUpgrade {
+  id: string;
+  name: string;
+  emoji: string;
+  tier: 1 | 2 | 3;
+  cost: Partial<Record<ResourceType, number>>;
+  effect: string; // description
+}
+
+const FORGE_UPGRADES: ForgeUpgrade[] = [
+  // Tier 1 — Carrots + Metal
+  { id: 'iron_weapons',    name: 'Iron Weapons',    emoji: '⚔️', tier: 1, cost: { carrot: 5, metal: 3 }, effect: '+20% attack' },
+  { id: 'wooden_shields',  name: 'Wooden Shields',  emoji: '🛡️', tier: 1, cost: { carrot: 5, metal: 3 }, effect: '+20% max HP' },
+  { id: 'swift_boots',     name: 'Swift Boots',     emoji: '👢', tier: 1, cost: { carrot: 5, metal: 3 }, effect: '+15% speed' },
+  { id: 'gatherer_gloves', name: 'Gatherer Gloves', emoji: '🧤', tier: 1, cost: { carrot: 5, metal: 2 }, effect: '+50% pickup range' },
+  // Tier 2 — Meat + Metal (requires 2 T1 upgrades)
+  { id: 'steel_weapons',   name: 'Steel Weapons',   emoji: '🗡️', tier: 2, cost: { meat: 8, metal: 5 }, effect: '+30% attack' },
+  { id: 'chainmail',       name: 'Chainmail',       emoji: '🔗', tier: 2, cost: { meat: 8, metal: 5 }, effect: '+30% max HP' },
+  { id: 'war_drums',       name: 'War Drums',       emoji: '🥁', tier: 2, cost: { meat: 6, metal: 4 }, effect: '-25% attack cooldown' },
+  { id: 'lifesteal',       name: 'Lifesteal',       emoji: '🩸', tier: 2, cost: { meat: 10, metal: 6 }, effect: '10% lifesteal' },
+  { id: 'thorns',          name: 'Thorns',          emoji: '🌹', tier: 2, cost: { meat: 8, metal: 5 }, effect: '15% damage reflect' },
+  // Tier 3 — Crystals + Metal (requires 2 T2 upgrades)
+  { id: 'enchanted_blades', name: 'Enchanted Blades', emoji: '✨', tier: 3, cost: { crystal: 6, metal: 8 }, effect: '+50% attack' },
+  { id: 'dragon_scale',     name: 'Dragon Scale',     emoji: '🐉', tier: 3, cost: { crystal: 6, metal: 8 }, effect: '+50% max HP' },
+  { id: 'berserker_rage',   name: 'Berserker Rage',   emoji: '💢', tier: 3, cost: { crystal: 5, metal: 6 }, effect: '2x attack speed below 30% HP' },
+  { id: 'siege_mastery',    name: 'Siege Mastery',     emoji: '🏰', tier: 3, cost: { crystal: 5, metal: 6 }, effect: '+100% nexus damage' },
+];
+
 const CARROT_SPAWN_MS = 5000;       // new carrots every 5s
 const MAX_GROUND_ITEMS = 150;
 const ITEM_DESPAWN_MS = 90000;      // ground items vanish after 90s
@@ -888,6 +934,7 @@ export class HordeScene extends Phaser.Scene {
     1: { carrot: 0, meat: 0, crystal: 0, metal: 0 },
     2: { carrot: 0, meat: 0, crystal: 0, metal: 0 },
   };
+  private forgeUpgrades: Record<1 | 2, Set<string>> = { 1: new Set(), 2: new Set() };
 
   private hudTexts: Record<string, Phaser.GameObjects.Text> = {};
   private textInput: HTMLInputElement | null = null;
@@ -1007,6 +1054,7 @@ export class HordeScene extends Phaser.Scene {
       1: { carrot: 0, meat: 0, crystal: 0, metal: 0 },
       2: { carrot: 0, meat: 0, crystal: 0, metal: 0 },
     };
+    this.forgeUpgrades = { 1: new Set(), 2: new Set() };
 
     this.syncTimer = 0;
 
@@ -1276,7 +1324,7 @@ export class HordeScene extends Phaser.Scene {
         hasRebirth: camp.animalType === 'skull',
         diveReady: false,
         diveTimer: 0,
-        lastAttackTarget: -1, mods: { ...DEFAULT_MODS },
+        lastAttackTarget: -1, attackFaceX: null, mods: { ...DEFAULT_MODS },
         carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
       });
     }
@@ -1350,7 +1398,7 @@ export class HordeScene extends Phaser.Scene {
         x: p.x, y: p.y, targetX: p.x + Math.random() * 100 - 50, targetY: p.y + Math.random() * 100 - 50,
         attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
         campId: null, lungeX: 0, lungeY: 0,
-        hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, mods: { ...DEFAULT_MODS },
+        hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, attackFaceX: null, mods: { ...DEFAULT_MODS },
         carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
       });
     }
@@ -1369,7 +1417,7 @@ export class HordeScene extends Phaser.Scene {
         x, y, targetX: x + Math.random() * 80 - 40, targetY: y + Math.random() * 80 - 40,
         attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
         campId: null, lungeX: 0, lungeY: 0,
-        hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, mods: { ...DEFAULT_MODS },
+        hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, attackFaceX: null, mods: { ...DEFAULT_MODS },
         carrying: null, carrySprite: null, loop: null, isElite: true, idleTimer: 0, claimItemId: -1,
       });
     }
@@ -1904,6 +1952,32 @@ export class HordeScene extends Phaser.Scene {
     }
     this.hudTexts['production']?.setText(prodLines.join('\n'));
 
+    // ─── FORGE ───
+    const forgeLines: string[] = ['FORGE:'];
+    const myUpgrades = this.forgeUpgrades[myT as 1 | 2];
+    const ownedT1 = [...myUpgrades].filter(id => FORGE_UPGRADES.find(u => u.id === id)?.tier === 1).length;
+    const ownedT2 = [...myUpgrades].filter(id => FORGE_UPGRADES.find(u => u.id === id)?.tier === 2).length;
+    for (const up of FORGE_UPGRADES) {
+      const owned = myUpgrades.has(up.id);
+      const locked = (up.tier === 2 && ownedT1 < 2) || (up.tier === 3 && ownedT2 < 2);
+      const costStr = Object.entries(up.cost).map(([r, a]) => `${a}${RESOURCE_EMOJI[r as ResourceType]}`).join('+');
+      if (owned) {
+        forgeLines.push(`  ${up.emoji} ${up.name} ✅`);
+      } else if (locked) {
+        forgeLines.push(`  🔒 ${up.name} (T${up.tier})`);
+      } else {
+        forgeLines.push(`  ${up.emoji} ${up.name}: ${costStr}`);
+      }
+    }
+    if (!this.hudTexts['forge']) {
+      this.hudTexts['forge'] = this.add.text(10, 520, '', {
+        fontSize: '11px', color: '#FFD700',
+        stroke: '#000', strokeThickness: 2,
+        lineSpacing: 2,
+      }).setScrollFactor(0).setDepth(100);
+    }
+    this.hudTexts['forge']?.setText(forgeLines.join('\n'));
+
     // ─── CAMPS ───
     const yourCamps = this.camps.filter(c => c.owner === myT).length;
     const enemyCamps = this.camps.filter(c => c.owner === enemyT).length;
@@ -2010,6 +2084,46 @@ export class HordeScene extends Phaser.Scene {
       const b = team === 1 ? P1_BASE : P2_BASE;
       this.spawnUnit('gnome', team, b.x + (team === 1 ? 60 : -60), b.y + (team === 1 ? -30 : 30));
     }
+  }
+
+  /** Purchase a forge upgrade for a team — deducts resources from base stockpile */
+  private purchaseUpgrade(team: 1 | 2, upgradeId: string): boolean {
+    const upgrade = FORGE_UPGRADES.find(u => u.id === upgradeId);
+    if (!upgrade) return false;
+    if (this.forgeUpgrades[team].has(upgradeId)) return false; // already owned
+
+    // Check tier requirements
+    const ownedCount = (tier: number) =>
+      [...this.forgeUpgrades[team]].filter(id => FORGE_UPGRADES.find(u => u.id === id)?.tier === tier).length;
+    if (upgrade.tier === 2 && ownedCount(1) < 2) return false;
+    if (upgrade.tier === 3 && ownedCount(2) < 2) return false;
+
+    // Check resources
+    const stock = this.baseStockpile[team];
+    for (const [res, amt] of Object.entries(upgrade.cost)) {
+      if ((stock[res as ResourceType] || 0) < amt!) return false;
+    }
+
+    // Deduct resources
+    for (const [res, amt] of Object.entries(upgrade.cost)) {
+      stock[res as ResourceType] -= amt!;
+    }
+
+    this.forgeUpgrades[team].add(upgradeId);
+
+    // Apply HP upgrades immediately to existing units
+    if (upgradeId === 'wooden_shields' || upgradeId === 'chainmail' || upgradeId === 'dragon_scale') {
+      const hpMult = upgradeId === 'wooden_shields' ? 0.20 : upgradeId === 'chainmail' ? 0.30 : 0.50;
+      for (const u of this.units) {
+        if (u.team === team && !u.dead) {
+          const bonus = u.maxHp * hpMult;
+          u.maxHp += bonus;
+          u.hp += bonus;
+        }
+      }
+    }
+
+    return true;
   }
 
   /** Units spawn when food is delivered to camps. Base just stores resources.
@@ -2359,6 +2473,8 @@ export class HordeScene extends Phaser.Scene {
           }
 
           target.hp -= dmg;
+          // Floating damage number
+          this.spawnDmgNumber(target.x, target.y - 10, dmg, target === best, u);
           // Tight formation safety: units hit by splash auto-scatter briefly
           if (target !== best && !target.dead && target.mods.formation === 'tight') {
             // Push away from splash center to avoid repeated splash wipes
@@ -2404,6 +2520,16 @@ export class HordeScene extends Phaser.Scene {
             }
           }
 
+          // Forge: Lifesteal — heal attacker for 10% of damage dealt
+          if (u.team !== 0 && this.forgeUpgrades[u.team as 1 | 2]?.has('lifesteal') && !target.dead) {
+            u.hp = Math.min(u.maxHp, u.hp + dmg * 0.10);
+          }
+          // Forge: Thorns — reflect 15% damage back to attacker
+          if (target.team !== 0 && this.forgeUpgrades[target.team as 1 | 2]?.has('thorns') && !target.dead) {
+            u.hp -= dmg * 0.15;
+            if (u.hp <= 0) { u.dead = true; u.claimItemId = -1; }
+          }
+
           // Hit flash
           if (target.sprite && !target.dead) {
             this.tweens.killTweensOf(target.sprite);
@@ -2414,38 +2540,29 @@ export class HordeScene extends Phaser.Scene {
             });
           }
         }
-        u.attackTimer = ATTACK_CD_MS;
+        let cd = ATTACK_CD_MS;
+        if (u.team !== 0 && this.forgeUpgrades[u.team as 1 | 2]?.has('war_drums')) cd *= 0.75;
+        u.attackTimer = cd;
+        // Forge: Berserker Rage — 2x attack speed below 30% HP
+        if (u.team !== 0 && u.hp / u.maxHp < 0.3 && this.forgeUpgrades[u.team as 1 | 2]?.has('berserker_rage')) {
+          u.attackTimer = Math.round(u.attackTimer / 2);
+        }
 
-        // Cute lunge toward target + attack animation
-        const ldx = best.x - u.x, ldy = best.y - u.y;
-        const ld = Math.sqrt(ldx * ldx + ldy * ldy) || 1;
-        const lungeAmt = Math.min(20, ld * 0.4);
-        u.lungeX = (ldx / ld) * lungeAmt;
-        u.lungeY = (ldy / ld) * lungeAmt;
-        this.tweens.add({
-          targets: u, lungeX: 0, lungeY: 0,
-          duration: 200, ease: 'Back.easeIn',
-        });
-        // Play attack animation
+        // Face attack target + play attack animation (no lunge movement)
+        u.attackFaceX = best.x;
         if (u.sprite && u.animState !== 'attack' && HORDE_SPRITE_CONFIGS[u.type]) {
           u.animState = 'attack';
           u.sprite.play(`h_${u.type}_attack`);
         }
       } else if (nex && nexD <= COMBAT_RANGE && u.team !== 0) {
-        nex.hp -= u.attack * (1 + this.getBuffs(u.team as 1 | 2).attack);
+        let nexDmg = u.attack * (1 + this.getBuffs(u.team as 1 | 2).attack);
+        if (this.forgeUpgrades[u.team as 1 | 2]?.has('siege_mastery')) nexDmg *= 2;
+        nex.hp -= nexDmg;
+        this.spawnDmgNumber(nex.x, nex.y - 20, nexDmg, true, u);
         u.attackTimer = ATTACK_CD_MS;
 
-        // Lunge toward nexus + attack animation
-        const ldx = nex.x - u.x, ldy = nex.y - u.y;
-        const ld = Math.sqrt(ldx * ldx + ldy * ldy) || 1;
-        const lungeAmt = Math.min(20, ld * 0.4);
-        u.lungeX = (ldx / ld) * lungeAmt;
-        u.lungeY = (ldy / ld) * lungeAmt;
-        this.tweens.add({
-          targets: u, lungeX: 0, lungeY: 0,
-          duration: 200, ease: 'Back.easeIn',
-        });
-        // Play attack animation
+        // Face nexus + play attack animation (no lunge movement)
+        u.attackFaceX = nex.x;
         if (u.sprite && u.animState !== 'attack' && HORDE_SPRITE_CONFIGS[u.type]) {
           u.animState = 'attack';
           u.sprite.play(`h_${u.type}_attack`);
@@ -2690,8 +2807,8 @@ export class HordeScene extends Phaser.Scene {
       const grp = groups.get(`${u.type}_${u.team}`) || [u];
       const idx = grp.indexOf(u);
       const r = Math.min(Math.sqrt(idx) * tierSpacing, maxSpread);
-      const dispX = u.x + Math.cos(a) * r + (u.lungeX || 0);
-      const dispY = u.y + Math.sin(a) * r + (u.lungeY || 0);
+      const dispX = u.x + Math.cos(a) * r;
+      const dispY = u.y + Math.sin(a) * r;
       // Smooth sprite position to avoid jitter
       const prev = u.sprite;
       const lerpFactor = 0.3;
@@ -2712,13 +2829,17 @@ export class HordeScene extends Phaser.Scene {
         u.sprite.setPosition(sx, sy + hopOffset);
       }
 
-      // Face direction: use target direction for reliable flipping
-      const headingX = u.targetX - u.x;
-      if (Math.abs(headingX) > 2) {
-        u.sprite.setFlipX(headingX < 0);
+      // Face direction: face attack target when attacking, otherwise face movement target
+      if (u.animState === 'attack' && u.attackFaceX !== null) {
+        const atkDx = u.attackFaceX - u.x;
+        if (Math.abs(atkDx) > 2) u.sprite.setFlipX(atkDx < 0);
+      } else {
+        const headingX = u.targetX - u.x;
+        if (Math.abs(headingX) > 2) u.sprite.setFlipX(headingX < 0);
       }
 
       if (u.animState !== 'attack') {
+        u.attackFaceX = null;
         if (isMoving && u.animState !== 'walk') {
           u.animState = 'walk';
           u.sprite.play(`h_${u.type}_walk`);
@@ -2962,7 +3083,8 @@ export class HordeScene extends Phaser.Scene {
       const curStep = u.loop.steps[u.loop.currentStep];
       if (!curStep || (curStep.action !== 'seek_resource' && curStep.action !== 'collect' && curStep.action !== 'hunt')) continue;
       // Gnome Nimble Hands: 2x pickup range — born to gather
-      const range = u.type === 'gnome' ? PICKUP_RANGE * 2 : PICKUP_RANGE;
+      let range = u.type === 'gnome' ? PICKUP_RANGE * 2 : PICKUP_RANGE;
+      if (this.forgeUpgrades[u.team as 1 | 2]?.has('gatherer_gloves')) range *= 1.5;
       for (const item of this.groundItems) {
         if (item.dead) continue;
         // Filter by matching resource type
@@ -3113,43 +3235,30 @@ export class HordeScene extends Phaser.Scene {
             const claimed = this.groundItems.find(i => i.id === u.claimItemId);
             if (!claimed || claimed.dead) u.claimItemId = -1;
           }
-          // Scan for nearest resource — prefer unclaimed, but allow shared claims
+          // Scan for nearest unclaimed resource — exclusive claims, no sharing
           const currentClaimDist = u.claimItemId >= 0
             ? pdist(u, this.groundItems.find(i => i.id === u.claimItemId)!)
             : Infinity;
-          let bestUnclaimed: HGroundItem | null = null, bestUnclaimedD = Infinity;
-          let bestAny: HGroundItem | null = null, bestAnyD = Infinity;
+          let bestItem: HGroundItem | null = null, bestItemD = Infinity;
           for (const item of this.groundItems) {
             if (item.dead || item.type !== step.resourceType) continue;
-            const maxClaims = u.mods.pacing === 'efficient' ? 1 : 3;
-            if ((claimCounts.get(item.id) || 0) >= maxClaims && item.id !== u.claimItemId) continue;
+            // Exclusive: skip items claimed by another unit
+            if (claimedItems.has(item.id) && item.id !== u.claimItemId) continue;
             const itemD = pdist(u, item);
-            // Track best of ANY matching resource (claimed or not)
-            if (itemD < bestAnyD) { bestAnyD = itemD; bestAny = item; }
-            // Track best unclaimed
-            if (!claimedItems.has(item.id) || item.id === u.claimItemId) {
-              if (itemD < bestUnclaimedD) { bestUnclaimedD = itemD; bestUnclaimed = item; }
-            }
+            if (itemD < bestItemD) { bestItemD = itemD; bestItem = item; }
           }
-          // Prefer unclaimed, fall back to any available resource (shared claim)
-          let best = bestUnclaimed || bestAny;
-          let bestD = bestUnclaimed ? bestUnclaimedD : bestAnyD;
-          // Pacing: efficient — prefer resources with best distance/competition ratio
-          if (u.mods.pacing === 'efficient' && bestUnclaimed) {
-            best = bestUnclaimed; bestD = bestUnclaimedD; // always prefer unclaimed
-          }
-          if (best && (u.claimItemId < 0 || bestD < currentClaimDist * 0.7)) {
+          if (bestItem && (u.claimItemId < 0 || bestItemD < currentClaimDist * 0.7)) {
             // Switch to closer resource (must be 30%+ closer to avoid thrashing)
             if (u.claimItemId >= 0) claimedItems.delete(u.claimItemId);
-            u.claimItemId = best.id;
-            claimedItems.add(best.id);
-            u.targetX = best.x; u.targetY = best.y;
+            u.claimItemId = bestItem.id;
+            claimedItems.add(bestItem.id);
+            u.targetX = bestItem.x; u.targetY = bestItem.y;
           } else if (u.claimItemId >= 0) {
             // Keep pathing to current claim
             const claimed = this.groundItems.find(i => i.id === u.claimItemId)!;
             u.targetX = claimed.x; u.targetY = claimed.y;
           } else {
-            // Truly nothing on the map — spread out away from allies to cover ground
+            // Nothing unclaimed on the map — spread out to cover ground
             this.spreadOut(u);
           }
           break;
@@ -3193,12 +3302,16 @@ export class HordeScene extends Phaser.Scene {
             return step.targetType === 'minotaur' ? 'crystal' : 'meat';
           })();
 
-          // Look on the ground first — if matching resource exists, go pick it up
+          // Look on the ground first — if matching unclaimed resource exists, go pick it up
           if (huntResType) {
             const groundRes = this.groundItems
-              .filter(i => !i.dead && i.type === huntResType)
+              .filter(i => !i.dead && i.type === huntResType
+                && (!claimedItems.has(i.id) || i.id === u.claimItemId))
               .sort((a, b) => pdist(u, a) - pdist(u, b));
             if (groundRes.length > 0) {
+              if (u.claimItemId >= 0) claimedItems.delete(u.claimItemId);
+              u.claimItemId = groundRes[0].id;
+              claimedItems.add(groundRes[0].id);
               u.targetX = groundRes[0].x; u.targetY = groundRes[0].y;
               break;
             }
@@ -3418,11 +3531,13 @@ export class HordeScene extends Phaser.Scene {
             u.targetX = nearestMine.x; u.targetY = nearestMine.y;
             // If at the mine, extract metal
             if (pdist(u, nearestMine) < MINE_RANGE) {
-              // Mine tick — produce metal periodically
+              // Mine tick — produce metal periodically, scaled by unit's mineSpeed
               // Use idleTimer as mining timer (repurposed when at mine)
+              const mineSpeedMul = ANIMALS[u.type]?.mineSpeed || 1.0;
+              const tickMs = MINE_TICK_MS / mineSpeedMul;
               u.idleTimer += this.game.loop.delta;
-              if (u.idleTimer >= MINE_TICK_MS) {
-                u.idleTimer -= MINE_TICK_MS;
+              if (u.idleTimer >= tickMs) {
+                u.idleTimer -= tickMs;
                 u.carrying = 'metal';
                 // carrySprite will be created by the rendering code
               }
@@ -3524,7 +3639,7 @@ export class HordeScene extends Phaser.Scene {
         x, y, targetX: x + Math.random() * 100 - 50, targetY: y + Math.random() * 100 - 50,
         attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
         campId: null, lungeX: 0, lungeY: 0,
-        hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, mods: { ...DEFAULT_MODS },
+        hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, attackFaceX: null, mods: { ...DEFAULT_MODS },
         carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
       });
     }
@@ -3541,7 +3656,7 @@ export class HordeScene extends Phaser.Scene {
         x, y, targetX: x + Math.random() * 80 - 40, targetY: y + Math.random() * 80 - 40,
         attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
         campId: null, lungeX: 0, lungeY: 0,
-        hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, mods: { ...DEFAULT_MODS },
+        hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, attackFaceX: null, mods: { ...DEFAULT_MODS },
         carrying: null, carrySprite: null, loop: null, isElite: true, idleTimer: 0, claimItemId: -1,
       });
     }
@@ -3566,7 +3681,7 @@ export class HordeScene extends Phaser.Scene {
           x, y, targetX: x + Math.random() * 80 - 40, targetY: y + Math.random() * 80 - 40,
           attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
           campId: null, lungeX: 0, lungeY: 0,
-          hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, mods: { ...DEFAULT_MODS },
+          hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, attackFaceX: null, mods: { ...DEFAULT_MODS },
           carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
         });
       }
@@ -3580,7 +3695,7 @@ export class HordeScene extends Phaser.Scene {
           x, y, targetX: x + Math.random() * 80 - 40, targetY: y + Math.random() * 80 - 40,
           attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
           campId: null, lungeX: 0, lungeY: 0,
-          hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, mods: { ...DEFAULT_MODS },
+          hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, attackFaceX: null, mods: { ...DEFAULT_MODS },
           carrying: null, carrySprite: null, loop: null, isElite: true, idleTimer: 0, claimItemId: -1,
         });
       }
@@ -3698,7 +3813,7 @@ export class HordeScene extends Phaser.Scene {
       hasRebirth: type === 'skull',
       diveReady: false,
       diveTimer: 0,
-      lastAttackTarget: -1,
+      lastAttackTarget: -1, attackFaceX: null,
       carrying: null, carrySprite: null,
       // Inherit active group workflow so new spawns auto-join the loop
       loop: this.groupWorkflows[`${type}_${team}`]
@@ -3901,7 +4016,7 @@ export class HordeScene extends Phaser.Scene {
           hasRebirth: su.type === 'skull',
           diveReady: false,
           diveTimer: 0,
-          lastAttackTarget: -1, mods: { ...DEFAULT_MODS },
+          lastAttackTarget: -1, attackFaceX: null, mods: { ...DEFAULT_MODS },
           carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
         });
       }
@@ -4300,6 +4415,37 @@ export class HordeScene extends Phaser.Scene {
       return;
     }
 
+    // "upgrade [name]" / "buy [name]" / "research [name]"
+    const upgradeMatch = lo.match(/\b(?:upgrade|buy|research|forge|unlock)\s+(.+)/i);
+    if (upgradeMatch) {
+      const query = upgradeMatch[1].toLowerCase().trim();
+      // Find best matching upgrade
+      const match = FORGE_UPGRADES.find(u =>
+        u.name.toLowerCase().includes(query) || u.id.includes(query.replace(/\s+/g, '_'))
+      );
+      if (match) {
+        const success = this.purchaseUpgrade(team, match.id);
+        if (success) {
+          this.showFeedback(`${match.emoji} ${match.name} researched!`, '#FFD700');
+        } else if (this.forgeUpgrades[team].has(match.id)) {
+          this.showFeedback(`Already have ${match.name}!`, '#FF6B6B');
+        } else {
+          // Check why it failed
+          const ownedT1 = [...this.forgeUpgrades[team]].filter(id => FORGE_UPGRADES.find(u => u.id === id)?.tier === 1).length;
+          const ownedT2 = [...this.forgeUpgrades[team]].filter(id => FORGE_UPGRADES.find(u => u.id === id)?.tier === 2).length;
+          if (match.tier === 2 && ownedT1 < 2) {
+            this.showFeedback(`Need 2 Tier 1 upgrades first!`, '#FF6B6B');
+          } else if (match.tier === 3 && ownedT2 < 2) {
+            this.showFeedback(`Need 2 Tier 2 upgrades first!`, '#FF6B6B');
+          } else {
+            const needed = Object.entries(match.cost).map(([r, a]) => `${a}${RESOURCE_EMOJI[r as ResourceType]}`).join(' ');
+            this.showFeedback(`Not enough resources! Need ${needed}`, '#FF6B6B');
+          }
+        }
+        return;
+      }
+    }
+
     let tx = 0, ty = 0, found = false;
 
     // Nexus / enemy base
@@ -4375,6 +4521,69 @@ export class HordeScene extends Phaser.Scene {
     const emoji = subject === 'all' ? '' : (ANIMALS[subject]?.emoji + ' ' || '');
     const label = subject === 'all' ? 'All units' : `${emoji}${sel.length} ${cap(subject)}(s)`;
     this.showFeedback(`${label} moving out!`, '#45E6B0');
+  }
+
+  // ─── FLOATING DAMAGE NUMBERS ────────────────────────────────
+  // Style matches horde-overview.html: bold, float up, fade out, scale 1.2→0.7
+  private dmgNumberPool: Phaser.GameObjects.Text[] = [];
+  private dmgNumberIdx = 0;
+  private readonly DMG_POOL_SIZE = 60;
+
+  private spawnDmgNumber(x: number, y: number, amount: number, isPrimary: boolean, attacker: HUnit) {
+    // Color based on attacker's team relative to viewer
+    let color: string;
+    if (attacker.team === 0) {
+      color = '#ff9944'; // neutral/wild — orange
+    } else if (attacker.team === this.myTeam) {
+      color = '#5fdd5f'; // my team dealing damage — green
+    } else {
+      color = '#e04040'; // enemy dealing damage — red
+    }
+    const fontSize = isPrimary ? 14 : 11;
+    const alpha = isPrimary ? 1 : 0.75;
+
+    // Random scatter so overlapping hits don't stack
+    const offsetX = (Math.random() - 0.5) * 24;
+    const offsetY = (Math.random() - 0.5) * 8;
+    const displayAmount = Math.ceil(amount);
+
+    // Reuse pooled text objects to avoid GC pressure
+    let txt: Phaser.GameObjects.Text;
+    if (this.dmgNumberPool.length < this.DMG_POOL_SIZE) {
+      txt = this.add.text(0, 0, '', {
+        fontFamily: '"Fredoka", "Segoe UI", sans-serif',
+        fontStyle: 'bold',
+        fontSize: '14px',
+        color: '#fff',
+        stroke: '#000',
+        strokeThickness: 3,
+      }).setDepth(500).setOrigin(0.5);
+      this.dmgNumberPool.push(txt);
+    } else {
+      txt = this.dmgNumberPool[this.dmgNumberIdx % this.DMG_POOL_SIZE];
+      this.dmgNumberIdx++;
+      this.tweens.killTweensOf(txt);
+    }
+
+    txt.setText(`-${displayAmount}`)
+      .setPosition(x + offsetX, y + offsetY - 5)
+      .setColor(color)
+      .setFontSize(fontSize)
+      .setAlpha(alpha)
+      .setScale(isPrimary ? 1.3 : 1.0)
+      .setVisible(true);
+
+    // Animate: float up, shrink, fade — matching dmgFloat keyframes
+    this.tweens.add({
+      targets: txt,
+      y: txt.y - 35,
+      scaleX: isPrimary ? 0.7 : 0.5,
+      scaleY: isPrimary ? 0.7 : 0.5,
+      alpha: 0,
+      duration: 750,
+      ease: 'Cubic.easeOut',
+      onComplete: () => { txt.setVisible(false); },
+    });
   }
 
   private showFeedback(msg: string, color: string) {
@@ -4478,6 +4687,12 @@ export class HordeScene extends Phaser.Scene {
       else if (s === 'hp') hp += c.buff.value;
       else if (s === 'all') { speed += c.buff.value; attack += c.buff.value; hp += c.buff.value; }
     }
+    // Forge upgrade bonuses
+    const owned = this.forgeUpgrades[team];
+    if (owned.has('iron_weapons')) attack += 0.20;
+    if (owned.has('steel_weapons')) attack += 0.30;
+    if (owned.has('enchanted_blades')) attack += 0.50;
+    if (owned.has('swift_boots')) speed += 0.15;
     return { speed, attack, hp };
   }
 
