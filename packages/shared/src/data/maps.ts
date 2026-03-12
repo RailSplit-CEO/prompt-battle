@@ -10,7 +10,7 @@
 // Multiplayer: always uses 'default'.
 
 export interface MapCampSlot {
-  tier: 1 | 2 | 3 | 4;
+  tier: 0 | 1 | 2 | 3 | 4;
   bluePos: { x: number; y: number };
   redPos: { x: number; y: number };
 }
@@ -30,16 +30,35 @@ export interface MapMineSlot {
 export interface MapArmorySlot {
   bluePos: { x: number; y: number };
   redPos: { x: number; y: number };
+  equipmentType?: EquipmentType;
 }
 
-export interface MapTerrainItem {
-  type: 'water' | 'mountain' | 'bush' | 'forest' | 'lava' | 'sand' | 'swamp' | 'ice' | 'ruins' | 'bridge';
-  shape: 'circle' | 'rect';
+export interface MapTowerSlot {
+  bluePos: { x: number; y: number };
+  redPos: { x: number; y: number };
+}
+
+export interface MapBushZone {
+  blueZone: { x: number; y: number; w: number; h: number };
+  redZone: { x: number; y: number; w: number; h: number };
+}
+
+export interface MapRockDef {
+  bluePos: { x: number; y: number };
+  redPos: { x: number; y: number };
+  variant: 1 | 2 | 3;
+}
+
+// ─── TILE GRID TYPES ──────────────────────────────────────
+export const TILE_SIZE = 64;
+export type TileValue = 0 | 1 | 2 | 3; // 0=normal(grass), 1=high_ground, 2=water, 3=rock(impassable)
+export type EquipmentType = 'pickaxe' | 'sword' | 'shield' | 'boots' | 'banner';
+
+export interface MapEventCircle {
   x: number;
   y: number;
-  radius?: number; // for circle
-  w?: number;      // for rect
-  h?: number;      // for rect
+  radius: number;
+  id?: string;
 }
 
 export interface MapDef {
@@ -58,13 +77,22 @@ export interface MapDef {
   wildExclusions: { x: number; y: number; radius: number }[]; // extra no-wild zones
   mineSlots?: MapMineSlot[];       // metal mine positions (blue/red pairs, mirrored)
   armorySlots?: MapArmorySlot[];   // armory positions (blue/red pairs)
-  terrain?: MapTerrainItem[];      // painted terrain features (water, mountains, etc.)
+  tiles?: number[][];              // 2D grid [row][col], values: 0=normal, 1=high_ground, 2=water
+  tilesetColor?: number;           // 1-5, default 4
+  groundLayer?: (number | null)[][];   // per-cell tileset indices for ground layer (index = tilesetRow * 9 + tilesetCol)
+  highLayer?: (number | null)[][];     // per-cell tileset indices for high ground layer overlay
+  eventCircles?: MapEventCircle[]; // event trigger zones
+  grassTint?: number[][];          // per-cell grass tint overlay (0=none, 1=light, 2=dark, 3=yellow, 4=brown, 5=damp)
+  towerSlots?: MapTowerSlot[];     // defensive tower positions (blue/red pairs)
+  bushZones?: MapBushZone[];       // LoL-style brush zones (hide units inside, blue/red pairs)
+  rockPositions?: MapRockDef[];    // decorative rock positions (blue/red pairs)
 }
 
 // ─── TIER POOLS ──────────────────────────────────────────
 // Animals available for random assignment per tier
 
 export const TIER_POOLS: Record<number, string[]> = {
+  0: ['gnome'],
   1: ['gnome', 'turtle'],
   2: ['skull', 'spider', 'hyena', 'rogue'],
   3: ['panda', 'lizard'],
@@ -85,24 +113,30 @@ function seededShuffle<T>(arr: T[], rng: () => number): T[] {
 // ─── ASSIGN ANIMALS TO CAMP SLOTS ───────────────────────
 // Returns array parallel to campSlots with assigned animal type.
 // Mirrored slots (blue/red) always get the same animal.
-// Each animal appears at most once per tier (wraps if more slots than animals).
+// Guarantees one of each animal type per tier before wrapping.
 
 export function assignAnimalsToSlots(
   slots: MapCampSlot[],
   rng: () => number,
 ): string[] {
-  // Group slots by tier
+  // Slot 0 is always gnome (the safe starter camp near base)
+  const result: string[] = new Array(slots.length);
+  if (slots.length > 0) result[0] = 'gnome';
+
+  // Group remaining slots by tier
   const tierGroups: Map<number, number[]> = new Map();
   slots.forEach((slot, i) => {
+    if (i === 0) return; // already assigned gnome
     if (!tierGroups.has(slot.tier)) tierGroups.set(slot.tier, []);
     tierGroups.get(slot.tier)!.push(i);
   });
 
-  const result: string[] = new Array(slots.length);
-
   for (const [tier, indices] of tierGroups) {
-    const pool = TIER_POOLS[tier] || [];
+    let pool = TIER_POOLS[tier] || [];
     if (pool.length === 0) continue;
+
+    // For T1, exclude gnome since slot 0 already has it
+    if (tier === 1) pool = pool.filter(a => a !== 'gnome');
 
     const shuffled = seededShuffle(pool, rng);
     for (let i = 0; i < indices.length; i++) {
@@ -114,124 +148,175 @@ export function assignAnimalsToSlots(
 }
 
 // ═══════════════════════════════════════════════════════════════
-// MAP 0: DEFAULT — The Diagonal (current map, used in multiplayer)
+// MAP 0: THE DIAGONAL — Classic LoL-style symmetric layout
 // ═══════════════════════════════════════════════════════════════
+//
+//  Bases at opposite corners (SW blue, NE red).
+//  Three lanes: top lane, mid lane, bot lane.
+//  Jungle between lanes with camps at key intersections.
+//  Towers guard lane approaches. Bushes at ambush points.
+//  River runs diagonal from NW to SE through center.
 
 const DEFAULT_MAP: MapDef = {
   id: 'default',
   name: 'The Diagonal',
-  description: 'Classic layout. Bases at opposite corners, camps spiral inward.',
-  worldW: 3200,
-  worldH: 3200,
-  p1Base: { x: 250, y: 2950 },
-  p2Base: { x: 2950, y: 250 },
-  safeRadius: 500,
+  description: 'Classic 3-lane layout with jungle, towers, and bushes.',
+  worldW: 6400,
+  worldH: 6400,
+  p1Base: { x: 500, y: 5900 },
+  p2Base: { x: 5900, y: 500 },
+  safeRadius: 900,
   campSlots: [
-    // T1 — near bases
-    { tier: 1, bluePos: { x: 650, y: 2550 },  redPos: { x: 2550, y: 650 } },
-    { tier: 1, bluePos: { x: 700, y: 2700 },  redPos: { x: 2500, y: 500 } },
-    // T2 — mid range
-    { tier: 2, bluePos: { x: 1050, y: 2150 }, redPos: { x: 2150, y: 1050 } },
-    { tier: 2, bluePos: { x: 1100, y: 2350 }, redPos: { x: 2100, y: 850 } },
-    { tier: 2, bluePos: { x: 850, y: 1950 },  redPos: { x: 2350, y: 1250 } },
-    // T3 — far mid
-    { tier: 3, bluePos: { x: 1350, y: 1700 }, redPos: { x: 1850, y: 1500 } },
-    { tier: 3, bluePos: { x: 1400, y: 1850 }, redPos: { x: 1800, y: 1350 } },
-    // T4 — contested center
-    { tier: 4, bluePos: { x: 1500, y: 1450 }, redPos: { x: 1700, y: 1750 } },
-    { tier: 4, bluePos: { x: 1650, y: 1500 }, redPos: { x: 1550, y: 1700 } },
+    // T1 — jungle entrance, near base (safe first clears)
+    { tier: 1, bluePos: { x: 1400, y: 5000 },  redPos: { x: 5000, y: 1400 } },
+    { tier: 2, bluePos: { x: 800, y: 4600 },   redPos: { x: 5600, y: 1800 } },
+    { tier: 1, bluePos: { x: 1600, y: 5500 },  redPos: { x: 4800, y: 900 } },
+    // T2 — mid jungle, lane intersections
+    { tier: 2, bluePos: { x: 2000, y: 4200 },  redPos: { x: 4400, y: 2200 } },
+    { tier: 2, bluePos: { x: 1200, y: 3800 },  redPos: { x: 5200, y: 2600 } },
+    { tier: 2, bluePos: { x: 2400, y: 4800 },  redPos: { x: 4000, y: 1600 } },
+    // T3 — deep jungle, near river (risky clears)
+    { tier: 3, bluePos: { x: 2600, y: 3600 },  redPos: { x: 3800, y: 2800 } },
+    { tier: 3, bluePos: { x: 1800, y: 3200 },  redPos: { x: 4600, y: 3200 } },
+    // T4 — contested river objectives
+    { tier: 4, bluePos: { x: 2800, y: 2600 },  redPos: { x: 3600, y: 3800 } },
+    { tier: 4, bluePos: { x: 3400, y: 2800 },  redPos: { x: 3000, y: 3600 } },
   ],
-  trollSlot: { x: 1600, y: 1600 },
+  trollSlot: { x: 3200, y: 3200 },
   carrotZones: [
-    // Blue half — lower-left
-    { x: 100, y: 1600, w: 1500, h: 1500 },
-    // Red half — upper-right
-    { x: 1600, y: 100, w: 1500, h: 1500 },
+    { x: 200, y: 3400, w: 2800, h: 2800 },   // blue jungle
+    { x: 3400, y: 200, w: 2800, h: 2800 },   // red jungle
   ],
   wildZones: [
-    // Outskirts and mid-zones, avoiding bases
-    { x: 100, y: 100, w: 800, h: 800 },       // top-left corner
-    { x: 2300, y: 100, w: 800, h: 800 },       // top-right corner
-    { x: 100, y: 2300, w: 800, h: 800 },       // bottom-left corner
-    { x: 2300, y: 2300, w: 800, h: 800 },      // bottom-right corner
-    { x: 800, y: 800, w: 1600, h: 1600 },      // center band
+    { x: 200, y: 200, w: 2000, h: 2000 },     // NW wilderness
+    { x: 4200, y: 4200, w: 2000, h: 2000 },   // SE wilderness
+    { x: 1800, y: 1800, w: 2800, h: 2800 },   // center contested
   ],
   wildExclusions: [
-    { x: 250, y: 2950, radius: 500 },   // P1 base
-    { x: 2950, y: 250, radius: 500 },   // P2 base
+    { x: 500, y: 5900, radius: 1000 },
+    { x: 5900, y: 500, radius: 1000 },
   ],
   mineSlots: [
-    { bluePos: { x: 354, y: 2359 }, redPos: { x: 2846, y: 841 } },
-    { bluePos: { x: 889, y: 2831 }, redPos: { x: 2311, y: 369 } },
+    { bluePos: { x: 700, y: 4700 },   redPos: { x: 5700, y: 1700 } },
+    { bluePos: { x: 1700, y: 5600 },  redPos: { x: 4700, y: 800 } },
+    { bluePos: { x: 2200, y: 3400 },  redPos: { x: 4200, y: 3000 } },
   ],
   armorySlots: [
-    { bluePos: { x: 550, y: 2650 }, redPos: { x: 2650, y: 550 } },
+    { bluePos: { x: 1100, y: 5200 },  redPos: { x: 5300, y: 1200 }, equipmentType: 'sword' },
+    { bluePos: { x: 600, y: 4200 },   redPos: { x: 5800, y: 2200 }, equipmentType: 'shield' },
+    { bluePos: { x: 1500, y: 5600 },  redPos: { x: 4900, y: 800 },  equipmentType: 'pickaxe' },
+    { bluePos: { x: 400, y: 5000 },   redPos: { x: 6000, y: 1400 }, equipmentType: 'boots' },
+    { bluePos: { x: 1800, y: 4600 },  redPos: { x: 4600, y: 1800 }, equipmentType: 'banner' },
+  ],
+  towerSlots: [
+    // Outer towers — lane defense
+    { bluePos: { x: 1600, y: 5800 },  redPos: { x: 4800, y: 600 } },   // bot/top lane outer
+    { bluePos: { x: 500, y: 4400 },   redPos: { x: 5900, y: 2000 } },  // side lane outer
+    { bluePos: { x: 2000, y: 4600 },  redPos: { x: 4400, y: 1800 } },  // mid lane outer
+    // Inner towers — base defense
+    { bluePos: { x: 1000, y: 5400 },  redPos: { x: 5400, y: 1000 } },  // base inner
+  ],
+  bushZones: [
+    // Lane bushes — ambush points along routes
+    { blueZone: { x: 1800, y: 5600, w: 250, h: 120 }, redZone: { x: 4350, y: 680, w: 250, h: 120 } },
+    { blueZone: { x: 400, y: 4000, w: 120, h: 280 },  redZone: { x: 5880, y: 2120, w: 120, h: 280 } },
+    // Jungle bushes — near camps
+    { blueZone: { x: 1200, y: 4400, w: 200, h: 150 }, redZone: { x: 5000, y: 1850, w: 200, h: 150 } },
+    { blueZone: { x: 2200, y: 3800, w: 180, h: 200 }, redZone: { x: 4020, y: 2400, w: 180, h: 200 } },
+    // River bushes — key vision control
+    { blueZone: { x: 2400, y: 2800, w: 250, h: 140 }, redZone: { x: 3750, y: 3460, w: 250, h: 140 } },
+    { blueZone: { x: 3000, y: 2400, w: 140, h: 250 }, redZone: { x: 3260, y: 3750, w: 140, h: 250 } },
+  ],
+  rockPositions: [
+    // Jungle terrain obstacles
+    { bluePos: { x: 1600, y: 4400 }, redPos: { x: 4800, y: 2000 }, variant: 1 },
+    { bluePos: { x: 2400, y: 5200 }, redPos: { x: 4000, y: 1200 }, variant: 2 },
+    { bluePos: { x: 1000, y: 3600 }, redPos: { x: 5400, y: 2800 }, variant: 3 },
+    { bluePos: { x: 2800, y: 3200 }, redPos: { x: 3600, y: 3200 }, variant: 1 },
+    // Lane decorations
+    { bluePos: { x: 600, y: 5200 },  redPos: { x: 5800, y: 1200 }, variant: 2 },
+    { bluePos: { x: 2000, y: 5800 }, redPos: { x: 4400, y: 600 },  variant: 3 },
   ],
 };
 
 // ═══════════════════════════════════════════════════════════════
-// MAP A: THE CROSSROADS — 4 horizontal lanes with ladder connections
+// MAP A: THE CROSSROADS — 4 lanes with bridge chokepoints
 // ═══════════════════════════════════════════════════════════════
 //
-//  Bases at bottom-left / top-right.
-//  4 horizontal lanes run across the map.
-//  2 vertical corridors connect them (like a ladder).
-//  Horizontal river through center, crossed by 2 bridges at corridors.
-//  12 camp slots (6 per side) placed at lane intersections.
-//  Chokepoints at bridges create key fight zones.
+//  4 horizontal lanes crossed by 2 vertical corridors.
+//  River through center, crossed at 2 bridge chokepoints.
+//  Towers at lane entrances. Bushes at every intersection.
 
 const CROSSROADS_MAP: MapDef = {
   id: 'crossroads',
   name: 'The Crossroads',
-  description: '4 lanes, 2 bridges. Pick your battles at the intersections.',
-  worldW: 3200,
-  worldH: 3200,
-  p1Base: { x: 250, y: 2950 },
-  p2Base: { x: 2950, y: 250 },
-  safeRadius: 500,
+  description: '4 lanes, 2 bridges. Bushes at every intersection.',
+  worldW: 6400,
+  worldH: 6400,
+  p1Base: { x: 500, y: 5900 },
+  p2Base: { x: 5900, y: 500 },
+  safeRadius: 900,
   campSlots: [
-    // T1 — closest to base, easy first captures
-    { tier: 1, bluePos: { x: 600, y: 2600 },   redPos: { x: 2600, y: 600 } },
-    { tier: 1, bluePos: { x: 500, y: 2300 },   redPos: { x: 2700, y: 900 } },
-    // T2 — lane intersections, mid-outer
-    { tier: 2, bluePos: { x: 1000, y: 2200 },  redPos: { x: 2200, y: 1000 } },
-    { tier: 2, bluePos: { x: 800, y: 1900 },   redPos: { x: 2400, y: 1300 } },
-    { tier: 2, bluePos: { x: 1200, y: 2500 },  redPos: { x: 2000, y: 700 } },
-    // T3 — inner lane crossings, near river
-    { tier: 3, bluePos: { x: 1300, y: 1800 },  redPos: { x: 1900, y: 1400 } },
-    { tier: 3, bluePos: { x: 1100, y: 1650 },  redPos: { x: 2100, y: 1550 } },
-    // T4 — bridge chokepoints, most contested
-    { tier: 4, bluePos: { x: 1400, y: 1500 },  redPos: { x: 1800, y: 1700 } },
-    { tier: 4, bluePos: { x: 1600, y: 1400 },  redPos: { x: 1600, y: 1800 } },
+    // T1 — safe jungle near base
+    { tier: 1, bluePos: { x: 1200, y: 5200 },  redPos: { x: 5200, y: 1200 } },
+    { tier: 2, bluePos: { x: 1000, y: 4600 },  redPos: { x: 5400, y: 1800 } },
+    { tier: 1, bluePos: { x: 1800, y: 5600 },  redPos: { x: 4600, y: 800 } },
+    // T2 — lane intersections
+    { tier: 2, bluePos: { x: 2000, y: 4400 },  redPos: { x: 4400, y: 2000 } },
+    { tier: 2, bluePos: { x: 1400, y: 3800 },  redPos: { x: 5000, y: 2600 } },
+    { tier: 2, bluePos: { x: 2600, y: 5000 },  redPos: { x: 3800, y: 1400 } },
+    // T3 — river approaches
+    { tier: 3, bluePos: { x: 2400, y: 3600 },  redPos: { x: 4000, y: 2800 } },
+    { tier: 3, bluePos: { x: 2000, y: 3200 },  redPos: { x: 4400, y: 3200 } },
+    // T4 — bridge fights
+    { tier: 4, bluePos: { x: 2600, y: 2800 },  redPos: { x: 3800, y: 3600 } },
+    { tier: 4, bluePos: { x: 3200, y: 2600 },  redPos: { x: 3200, y: 3800 } },
   ],
-  trollSlot: { x: 1600, y: 1600 },
+  trollSlot: { x: 3200, y: 3200 },
   carrotZones: [
-    // Blue safe half — lower portion below river
-    { x: 100, y: 1700, w: 1400, h: 1400 },
-    // Red safe half — upper portion above river
-    { x: 1700, y: 100, w: 1400, h: 1400 },
-    // Small carrot patches along outer lanes
-    { x: 100, y: 1200, w: 600, h: 400 },
-    { x: 2500, y: 1600, w: 600, h: 400 },
+    { x: 200, y: 3400, w: 2600, h: 2800 },
+    { x: 3600, y: 200, w: 2600, h: 2800 },
   ],
   wildZones: [
-    // Wild animals roam the lane corridors and outskirts
-    { x: 800, y: 400, w: 1600, h: 600 },       // top lane
-    { x: 800, y: 2200, w: 1600, h: 600 },      // bottom lane
-    { x: 200, y: 600, w: 500, h: 1200 },       // left corridor
-    { x: 2500, y: 1400, w: 500, h: 1200 },     // right corridor
-    { x: 1200, y: 1100, w: 800, h: 1000 },     // central contested zone
+    { x: 1600, y: 600, w: 3200, h: 1400 },
+    { x: 1600, y: 4400, w: 3200, h: 1400 },
+    { x: 2200, y: 2200, w: 2000, h: 2000 },
   ],
   wildExclusions: [
-    { x: 250, y: 2950, radius: 600 },
-    { x: 2950, y: 250, radius: 600 },
+    { x: 500, y: 5900, radius: 1000 },
+    { x: 5900, y: 500, radius: 1000 },
   ],
   mineSlots: [
-    { bluePos: { x: 354, y: 2359 }, redPos: { x: 2846, y: 841 } },
-    { bluePos: { x: 889, y: 2831 }, redPos: { x: 2311, y: 369 } },
+    { bluePos: { x: 700, y: 4700 },   redPos: { x: 5700, y: 1700 } },
+    { bluePos: { x: 1700, y: 5600 },  redPos: { x: 4700, y: 800 } },
   ],
   armorySlots: [
-    { bluePos: { x: 550, y: 2650 }, redPos: { x: 2650, y: 550 } },
+    { bluePos: { x: 1100, y: 5200 },  redPos: { x: 5300, y: 1200 }, equipmentType: 'sword' },
+    { bluePos: { x: 800, y: 4000 },   redPos: { x: 5600, y: 2400 }, equipmentType: 'boots' },
+    { bluePos: { x: 1400, y: 5600 },  redPos: { x: 5000, y: 800 },  equipmentType: 'pickaxe' },
+    { bluePos: { x: 500, y: 4800 },   redPos: { x: 5900, y: 1600 }, equipmentType: 'shield' },
+    { bluePos: { x: 1700, y: 4400 },  redPos: { x: 4700, y: 2000 }, equipmentType: 'banner' },
+  ],
+  towerSlots: [
+    { bluePos: { x: 1400, y: 5600 },  redPos: { x: 5000, y: 800 } },
+    { bluePos: { x: 600, y: 4400 },   redPos: { x: 5800, y: 2000 } },
+    { bluePos: { x: 1800, y: 4600 },  redPos: { x: 4600, y: 1800 } },
+    { bluePos: { x: 900, y: 5200 },   redPos: { x: 5500, y: 1200 } },
+  ],
+  bushZones: [
+    // Intersection bushes — one at each lane crossing
+    { blueZone: { x: 1600, y: 4200, w: 200, h: 160 }, redZone: { x: 4600, y: 2040, w: 200, h: 160 } },
+    { blueZone: { x: 2200, y: 3600, w: 200, h: 160 }, redZone: { x: 4000, y: 2640, w: 200, h: 160 } },
+    { blueZone: { x: 1200, y: 3400, w: 160, h: 240 }, redZone: { x: 5040, y: 2760, w: 160, h: 240 } },
+    // Bridge bushes
+    { blueZone: { x: 2600, y: 2600, w: 240, h: 140 }, redZone: { x: 3560, y: 3660, w: 240, h: 140 } },
+    { blueZone: { x: 3000, y: 2200, w: 140, h: 240 }, redZone: { x: 3260, y: 3960, w: 140, h: 240 } },
+  ],
+  rockPositions: [
+    { bluePos: { x: 1400, y: 4800 }, redPos: { x: 5000, y: 1600 }, variant: 1 },
+    { bluePos: { x: 2200, y: 5200 }, redPos: { x: 4200, y: 1200 }, variant: 2 },
+    { bluePos: { x: 800, y: 3600 },  redPos: { x: 5600, y: 2800 }, variant: 3 },
+    { bluePos: { x: 2800, y: 3000 }, redPos: { x: 3600, y: 3400 }, variant: 1 },
   ],
 };
 
@@ -239,135 +324,193 @@ const CROSSROADS_MAP: MapDef = {
 // MAP B: THE RING — Central lake with ring path
 // ═══════════════════════════════════════════════════════════════
 //
-//  Large impassable lake in the center.
-//  A ring path circles the lake — main contested route.
-//  T1 camps near bases, T2 at ring entrances, T3 on far flanks.
-//  T4 camps on tiny islands inside the lake (2 bridge crossings).
-//  Forests fill corners between ring and shore.
-//  Forces fights around the ring. T4 is king-of-the-hill in center.
+//  Large lake in center. Ring path around it.
+//  Towers guard ring entrances. Bushes along ring path.
+//  T4 camps on center island accessible via 2 bridges.
 
 const RING_MAP: MapDef = {
   id: 'ring',
   name: 'The Ring',
-  description: 'Circle the lake. The center island holds the strongest camps.',
-  worldW: 3200,
-  worldH: 3200,
-  p1Base: { x: 300, y: 2900 },
-  p2Base: { x: 2900, y: 300 },
-  safeRadius: 500,
+  description: 'Circle the lake. Center island holds the best camps.',
+  worldW: 6400,
+  worldH: 6400,
+  p1Base: { x: 600, y: 5800 },
+  p2Base: { x: 5800, y: 600 },
+  safeRadius: 900,
   campSlots: [
-    // T1 — right outside base
-    { tier: 1, bluePos: { x: 650, y: 2500 },   redPos: { x: 2550, y: 700 } },
-    { tier: 1, bluePos: { x: 450, y: 2400 },   redPos: { x: 2750, y: 800 } },
-    // T2 — ring entrances (4 cardinal points)
-    { tier: 2, bluePos: { x: 900, y: 2100 },   redPos: { x: 2300, y: 1100 } },
-    { tier: 2, bluePos: { x: 1100, y: 2400 },  redPos: { x: 2100, y: 800 } },
-    { tier: 2, bluePos: { x: 700, y: 1800 },   redPos: { x: 2500, y: 1400 } },
-    // T3 — far side of ring (flanks)
-    { tier: 3, bluePos: { x: 1400, y: 2100 },  redPos: { x: 1800, y: 1100 } },
-    { tier: 3, bluePos: { x: 900, y: 1400 },   redPos: { x: 2300, y: 1800 } },
-    // T4 — center island (most contested, must cross bridges)
-    { tier: 4, bluePos: { x: 1450, y: 1700 },  redPos: { x: 1750, y: 1500 } },
-    { tier: 4, bluePos: { x: 1500, y: 1500 },  redPos: { x: 1700, y: 1700 } },
+    // T1 — near base
+    { tier: 1, bluePos: { x: 1300, y: 5000 },  redPos: { x: 5100, y: 1400 } },
+    { tier: 2, bluePos: { x: 900, y: 4600 },   redPos: { x: 5500, y: 1800 } },
+    { tier: 1, bluePos: { x: 1600, y: 5500 },  redPos: { x: 4800, y: 900 } },
+    // T2 — ring entrances
+    { tier: 2, bluePos: { x: 1800, y: 4200 },  redPos: { x: 4600, y: 2200 } },
+    { tier: 2, bluePos: { x: 2200, y: 4800 },  redPos: { x: 4200, y: 1600 } },
+    { tier: 2, bluePos: { x: 1200, y: 3600 },  redPos: { x: 5200, y: 2800 } },
+    // T3 — far side of ring
+    { tier: 3, bluePos: { x: 2800, y: 4400 },  redPos: { x: 3600, y: 2000 } },
+    { tier: 3, bluePos: { x: 1600, y: 2800 },  redPos: { x: 4800, y: 3600 } },
+    // T4 — center island
+    { tier: 4, bluePos: { x: 2900, y: 3400 },  redPos: { x: 3500, y: 3000 } },
+    { tier: 4, bluePos: { x: 3000, y: 2900 },  redPos: { x: 3400, y: 3500 } },
   ],
-  trollSlot: { x: 1600, y: 1600 },
+  trollSlot: { x: 3200, y: 3200 },
   carrotZones: [
-    // Blue quadrant (south-west, outside the ring)
-    { x: 100, y: 2000, w: 1000, h: 1100 },
-    // Red quadrant (north-east, outside the ring)
-    { x: 2100, y: 100, w: 1000, h: 1100 },
-    // Small patches on the flanks
-    { x: 100, y: 1200, w: 500, h: 700 },
-    { x: 2600, y: 1300, w: 500, h: 700 },
+    { x: 200, y: 4000, w: 2200, h: 2200 },
+    { x: 4000, y: 200, w: 2200, h: 2200 },
+    { x: 200, y: 2200, w: 1000, h: 1600 },
+    { x: 5200, y: 2600, w: 1000, h: 1600 },
   ],
   wildZones: [
-    // Wild animals roam the outer ring and far flanks
-    { x: 1200, y: 300, w: 800, h: 600 },      // north flank
-    { x: 1200, y: 2300, w: 800, h: 600 },     // south flank
-    { x: 200, y: 800, w: 600, h: 1000 },      // west edge
-    { x: 2400, y: 1400, w: 600, h: 1000 },    // east edge
-    { x: 1000, y: 1000, w: 1200, h: 1200 },   // ring area (not inner lake)
+    { x: 2200, y: 600, w: 2000, h: 1400 },
+    { x: 2200, y: 4400, w: 2000, h: 1400 },
+    { x: 400, y: 1400, w: 1400, h: 2200 },
+    { x: 4600, y: 2800, w: 1400, h: 2200 },
   ],
   wildExclusions: [
-    { x: 300, y: 2900, radius: 600 },
-    { x: 2900, y: 300, radius: 600 },
-    // Inner lake — no wilds inside the water
-    { x: 1600, y: 1600, radius: 350 },
+    { x: 600, y: 5800, radius: 1000 },
+    { x: 5800, y: 600, radius: 1000 },
+    { x: 3200, y: 3200, radius: 800 },
   ],
   mineSlots: [
-    { bluePos: { x: 400, y: 2310 }, redPos: { x: 2800, y: 890 } },
-    { bluePos: { x: 930, y: 2780 }, redPos: { x: 2270, y: 420 } },
+    { bluePos: { x: 800, y: 4600 },   redPos: { x: 5600, y: 1800 } },
+    { bluePos: { x: 1800, y: 5500 },  redPos: { x: 4600, y: 900 } },
+    { bluePos: { x: 2400, y: 3200 },  redPos: { x: 4000, y: 3200 }, },
   ],
   armorySlots: [
-    { bluePos: { x: 600, y: 2600 }, redPos: { x: 2600, y: 600 } },
+    { bluePos: { x: 1200, y: 5200 },  redPos: { x: 5200, y: 1200 }, equipmentType: 'sword' },
+    { bluePos: { x: 1600, y: 3400 },  redPos: { x: 4800, y: 3000 }, equipmentType: 'shield' },
+    { bluePos: { x: 1500, y: 5600 },  redPos: { x: 4900, y: 800 },  equipmentType: 'pickaxe' },
+    { bluePos: { x: 600, y: 4400 },   redPos: { x: 5800, y: 2000 }, equipmentType: 'boots' },
+    { bluePos: { x: 1900, y: 4400 },  redPos: { x: 4500, y: 2000 }, equipmentType: 'banner' },
+  ],
+  towerSlots: [
+    // Base defense
+    { bluePos: { x: 1200, y: 5600 },  redPos: { x: 5200, y: 800 } },
+    { bluePos: { x: 600, y: 4800 },   redPos: { x: 5800, y: 1600 } },
+    // Ring entrance towers
+    { bluePos: { x: 1800, y: 4600 },  redPos: { x: 4600, y: 1800 } },
+    { bluePos: { x: 1200, y: 3400 },  redPos: { x: 5200, y: 3000 } },
+  ],
+  bushZones: [
+    // Ring path bushes
+    { blueZone: { x: 2000, y: 4000, w: 200, h: 200 }, redZone: { x: 4200, y: 2200, w: 200, h: 200 } },
+    { blueZone: { x: 2600, y: 4400, w: 250, h: 140 }, redZone: { x: 3550, y: 1860, w: 250, h: 140 } },
+    { blueZone: { x: 1400, y: 3200, w: 140, h: 250 }, redZone: { x: 4860, y: 2950, w: 140, h: 250 } },
+    // Bridge approach bushes
+    { blueZone: { x: 2600, y: 3000, w: 200, h: 160 }, redZone: { x: 3600, y: 3240, w: 200, h: 160 } },
+    { blueZone: { x: 3000, y: 2600, w: 160, h: 200 }, redZone: { x: 3240, y: 3600, w: 160, h: 200 } },
+  ],
+  rockPositions: [
+    // Ring path obstacles
+    { bluePos: { x: 2400, y: 4200 }, redPos: { x: 4000, y: 2200 }, variant: 1 },
+    { bluePos: { x: 1600, y: 3000 }, redPos: { x: 4800, y: 3400 }, variant: 2 },
+    { bluePos: { x: 2800, y: 4600 }, redPos: { x: 3600, y: 1800 }, variant: 3 },
+    // Base area rocks
+    { bluePos: { x: 800, y: 5400 },  redPos: { x: 5600, y: 1000 }, variant: 1 },
+    { bluePos: { x: 1400, y: 4400 }, redPos: { x: 5000, y: 2000 }, variant: 2 },
   ],
 };
 
 // ═══════════════════════════════════════════════════════════════
-// MAP C: THREE KINGDOMS — Single bridge, 3 triangular zones
+// MAP C: THREE KINGDOMS — Single bridge, 3 zones
 // ═══════════════════════════════════════════════════════════════
 //
-//  Diagonal river with only 1 bridge at the center.
-//  Dense forests split each side into 2 zones (left flank, right flank).
-//  3 strategic zones total: left flank, right flank, central corridor.
-//  14 camp slots (7 per side) — most camps of any map.
-//  The single bridge T4 is THE key fight of the game.
-//  Flanking requires going wide — commit to a side or fight center.
+//  Diagonal river, single bridge at center.
+//  3 zones: left flank, right flank, central bridge.
+//  Most camp-dense map. Heavy bush coverage for flanking.
+//  Towers at bridge and flank entrances.
 
 const THREE_KINGDOMS_MAP: MapDef = {
   id: 'three_kingdoms',
   name: 'Three Kingdoms',
-  description: 'One bridge. Three zones. Commit to a side or fight for the center.',
-  worldW: 3200,
-  worldH: 3200,
-  p1Base: { x: 300, y: 2900 },
-  p2Base: { x: 2900, y: 300 },
-  safeRadius: 550,
+  description: 'One bridge. Three zones. Heavy bush coverage for ambushes.',
+  worldW: 6400,
+  worldH: 6400,
+  p1Base: { x: 600, y: 5800 },
+  p2Base: { x: 5800, y: 600 },
+  safeRadius: 1000,
   campSlots: [
-    // T1 — near base (2 per side, one left flank, one right flank)
-    { tier: 1, bluePos: { x: 550, y: 2550 },   redPos: { x: 2650, y: 650 } },
-    { tier: 1, bluePos: { x: 750, y: 2700 },   redPos: { x: 2450, y: 500 } },
-    // T2 — mid, spread across flanks (3 per side)
-    { tier: 2, bluePos: { x: 500, y: 2100 },   redPos: { x: 2700, y: 1100 } },  // left flank
-    { tier: 2, bluePos: { x: 1100, y: 2400 },  redPos: { x: 2100, y: 800 } },   // right flank
-    { tier: 2, bluePos: { x: 900, y: 2000 },   redPos: { x: 2300, y: 1200 } },  // central approach
-    // T3 — contested mid (closer to river)
-    { tier: 3, bluePos: { x: 700, y: 1700 },   redPos: { x: 2500, y: 1500 } },  // left flank deep
-    { tier: 3, bluePos: { x: 1300, y: 2000 },  redPos: { x: 1900, y: 1200 } },  // right flank deep
-    { tier: 3, bluePos: { x: 1100, y: 1750 },  redPos: { x: 2100, y: 1450 } },  // central push
-    // T4 — bridge zone (most contested, very center)
-    { tier: 4, bluePos: { x: 1400, y: 1500 },  redPos: { x: 1800, y: 1700 } },
-    { tier: 4, bluePos: { x: 1500, y: 1650 },  redPos: { x: 1700, y: 1550 } },
+    // T1 — near base
+    { tier: 1, bluePos: { x: 1100, y: 5100 },  redPos: { x: 5300, y: 1300 } },
+    { tier: 2, bluePos: { x: 1500, y: 5500 },  redPos: { x: 4900, y: 900 } },
+    { tier: 1, bluePos: { x: 800, y: 4600 },   redPos: { x: 5600, y: 1800 } },
+    // T2 — flanks (3 per side)
+    { tier: 2, bluePos: { x: 1000, y: 4000 },  redPos: { x: 5400, y: 2400 } },
+    { tier: 2, bluePos: { x: 2200, y: 4800 },  redPos: { x: 4200, y: 1600 } },
+    { tier: 2, bluePos: { x: 1800, y: 4200 },  redPos: { x: 4600, y: 2200 } },
+    // T3 — river approach (3 per side)
+    { tier: 3, bluePos: { x: 1400, y: 3400 },  redPos: { x: 5000, y: 3000 } },
+    { tier: 3, bluePos: { x: 2600, y: 4000 },  redPos: { x: 3800, y: 2400 } },
+    { tier: 3, bluePos: { x: 2200, y: 3600 },  redPos: { x: 4200, y: 2800 } },
+    // T4 — bridge zone (2 per side)
+    { tier: 4, bluePos: { x: 2800, y: 3000 },  redPos: { x: 3600, y: 3400 } },
+    { tier: 4, bluePos: { x: 3000, y: 3300 },  redPos: { x: 3400, y: 3100 } },
   ],
-  trollSlot: { x: 1600, y: 1600 },
+  trollSlot: { x: 3200, y: 3200 },
   carrotZones: [
-    // Blue side — wide area, split between flanks
-    { x: 100, y: 1800, w: 800, h: 1300 },     // left flank
-    { x: 900, y: 2100, w: 700, h: 1000 },     // right flank
-    // Red side — mirrored
-    { x: 2300, y: 100, w: 800, h: 1300 },
-    { x: 1500, y: 100, w: 700, h: 1000 },
-    // Small patch near bridge for risk/reward gathering
-    { x: 1300, y: 1300, w: 600, h: 600 },
+    { x: 200, y: 3600, w: 1800, h: 2600 },
+    { x: 4400, y: 200, w: 1800, h: 2600 },
+    { x: 2000, y: 4400, w: 1400, h: 1800 },
+    { x: 3000, y: 200, w: 1400, h: 1800 },
+    { x: 2600, y: 2600, w: 1200, h: 1200 },
   ],
   wildZones: [
-    // Wild animals roam the flanks and the corridor approaches
-    { x: 200, y: 500, w: 800, h: 1000 },       // far left
-    { x: 2200, y: 1700, w: 800, h: 1000 },     // far right (mirrored)
-    { x: 1000, y: 700, w: 1200, h: 500 },      // top band
-    { x: 800, y: 2000, w: 1200, h: 500 },      // bottom band
-    { x: 1200, y: 1200, w: 800, h: 800 },      // central contested
+    { x: 400, y: 1000, w: 1800, h: 2200 },
+    { x: 4200, y: 3200, w: 1800, h: 2200 },
+    { x: 2000, y: 1200, w: 2400, h: 1200 },
+    { x: 1600, y: 4000, w: 2400, h: 1200 },
+    { x: 2400, y: 2400, w: 1600, h: 1600 },
   ],
   wildExclusions: [
-    { x: 300, y: 2900, radius: 650 },
-    { x: 2900, y: 300, radius: 650 },
+    { x: 600, y: 5800, radius: 1200 },
+    { x: 5800, y: 600, radius: 1200 },
   ],
   mineSlots: [
-    { bluePos: { x: 400, y: 2310 }, redPos: { x: 2800, y: 890 } },
-    { bluePos: { x: 930, y: 2780 }, redPos: { x: 2270, y: 420 } },
+    { bluePos: { x: 800, y: 4600 },   redPos: { x: 5600, y: 1800 } },
+    { bluePos: { x: 1800, y: 5500 },  redPos: { x: 4600, y: 900 } },
+    { bluePos: { x: 2400, y: 3200 },  redPos: { x: 4000, y: 3200 } },
   ],
   armorySlots: [
-    { bluePos: { x: 600, y: 2600 }, redPos: { x: 2600, y: 600 } },
+    { bluePos: { x: 1200, y: 5200 },  redPos: { x: 5200, y: 1200 }, equipmentType: 'sword' },
+    { bluePos: { x: 1600, y: 4400 },  redPos: { x: 4800, y: 2000 }, equipmentType: 'shield' },
+    { bluePos: { x: 800, y: 3800 },   redPos: { x: 5600, y: 2600 }, equipmentType: 'boots' },
+    { bluePos: { x: 1400, y: 5600 },  redPos: { x: 5000, y: 800 },  equipmentType: 'pickaxe' },
+    { bluePos: { x: 2000, y: 4800 },  redPos: { x: 4400, y: 1600 }, equipmentType: 'banner' },
+  ],
+  towerSlots: [
+    // Base defense
+    { bluePos: { x: 1200, y: 5600 },  redPos: { x: 5200, y: 800 } },
+    { bluePos: { x: 600, y: 5000 },   redPos: { x: 5800, y: 1400 } },
+    // Flank defense
+    { bluePos: { x: 1600, y: 4400 },  redPos: { x: 4800, y: 2000 } },
+    { bluePos: { x: 1000, y: 3600 },  redPos: { x: 5400, y: 2800 } },
+    // Bridge approach
+    { bluePos: { x: 2400, y: 3400 },  redPos: { x: 4000, y: 3000 } },
+  ],
+  bushZones: [
+    // Left flank bushes (heavy coverage for flanking)
+    { blueZone: { x: 800, y: 3800, w: 200, h: 300 },  redZone: { x: 5400, y: 2300, w: 200, h: 300 } },
+    { blueZone: { x: 1200, y: 3200, w: 260, h: 160 }, redZone: { x: 4940, y: 3040, w: 260, h: 160 } },
+    // Right flank bushes
+    { blueZone: { x: 2400, y: 4600, w: 200, h: 200 }, redZone: { x: 3800, y: 1600, w: 200, h: 200 } },
+    { blueZone: { x: 2000, y: 4000, w: 260, h: 140 }, redZone: { x: 4140, y: 2260, w: 260, h: 140 } },
+    // Central corridor bushes (bridge approach)
+    { blueZone: { x: 2600, y: 3200, w: 200, h: 200 }, redZone: { x: 3600, y: 3000, w: 200, h: 200 } },
+    { blueZone: { x: 2200, y: 2800, w: 240, h: 140 }, redZone: { x: 3960, y: 3460, w: 240, h: 140 } },
+    // Deep flanking bushes (risky but rewarding)
+    { blueZone: { x: 1400, y: 2600, w: 180, h: 280 }, redZone: { x: 4820, y: 3520, w: 180, h: 280 } },
+  ],
+  rockPositions: [
+    // Flank obstacles
+    { bluePos: { x: 1000, y: 4200 }, redPos: { x: 5400, y: 2200 }, variant: 1 },
+    { bluePos: { x: 2000, y: 4600 }, redPos: { x: 4400, y: 1800 }, variant: 2 },
+    { bluePos: { x: 1600, y: 3000 }, redPos: { x: 4800, y: 3400 }, variant: 3 },
+    // Bridge area rocks
+    { bluePos: { x: 2600, y: 2800 }, redPos: { x: 3800, y: 3600 }, variant: 1 },
+    { bluePos: { x: 3200, y: 2600 }, redPos: { x: 3200, y: 3800 }, variant: 2 },
+    // Base decoration
+    { bluePos: { x: 800, y: 5400 },  redPos: { x: 5600, y: 1000 }, variant: 3 },
+    { bluePos: { x: 1400, y: 5600 }, redPos: { x: 5000, y: 800 },  variant: 1 },
   ],
 };
 
