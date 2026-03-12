@@ -1022,6 +1022,34 @@ const HARD_COUNTERS: Record<string, string[]> = {
   rogue:     ['gnome', 'shaman'],     // backstab bursts down fragile targets
 };
 
+const UNIT_STRENGTHS: Record<string, string[]> = {
+  gnome:    ['Fastest unit — outruns everything', 'Best economy builder', 'Cheap and expendable scouts'],
+  turtle:   ['Incredible hauler — 10x carry capacity', 'Taunts enemies off your fragile units', 'Very tanky for T1 when stationary'],
+  skull:    ['Guaranteed second life buys time', 'Debuffs enemy attack speed', 'Good speed for a combat unit'],
+  spider:   ['Shreds tanks — % HP damage scales', 'Web opener cripples fast units', 'Great vs Panda, Turtle, Troll'],
+  hyena:    ['Outranges every other unit', 'Pack bonus makes hyena balls deadly', 'Fast — good for hit-and-run raids'],
+  rogue:    ['Massive burst on first hit', 'Fastest combat unit — great assassin', 'Sneaks past defenders for captures'],
+  panda:    ['Insane regen — wins wars of attrition', 'Huge HP pool soaks damage', 'Shields backline from ranged attacks'],
+  lizard:   ['Execute damage deletes wounded units', 'Cleave hits clustered enemies', 'Strong balanced stats for T3'],
+  minotaur: ['Massive team-wide damage buff', 'Charge obliterates backlines', 'Tanky enough to lead from the front'],
+  shaman:   ['AoE damage melts groups', 'Splash reduction protects your army', 'Highest DPS in the game per hit'],
+  troll:    ['Unkillable wall of HP + regen', 'Splash slam wipes entire armies', 'Slow effect prevents escape'],
+};
+
+const UNIT_WEAKNESSES: Record<string, string[]> = {
+  gnome:    ['Lowest HP and attack in the game', 'Useless in a real fight', 'Dies to splash damage quickly'],
+  turtle:   ['Slowest unit in the game', 'Nearly zero damage output', 'Easy to kite and ignore'],
+  skull:    ['Low HP — dies fast after rebirth', 'Mediocre damage for T2', 'Only one rebirth per life'],
+  spider:   ['Slow movement — easy to avoid', 'Fragile for a "tank killer"', 'Bad vs swarms of small units'],
+  hyena:    ['Glass cannon — lowest T2 HP', 'Useless alone without pack bonus', 'Gets destroyed by splash damage'],
+  rogue:    ['Paper thin HP — dies instantly', 'Backstab only works once per target', 'Terrible in prolonged fights'],
+  panda:    ['Very slow — easy to run from', 'Low DPS for its cost', 'Gets shredded by Spider venom'],
+  lizard:   ['Needs targets softened first', 'Expensive — 8 carrots', 'Countered by spread formations'],
+  minotaur: ['Very expensive — 12 crystals', 'Charge can pull it out of position', 'Gets executed by Lizard Cold Blood'],
+  shaman:   ['Expensive and slow to build', 'Splash hits your own pushes too close', 'Gets one-shot by Rogue backstab'],
+  troll:    ['Slowest combat unit by far', 'Costs 20 crystals — huge investment', 'Gets kited and whittled by ranged'],
+};
+
 // Procedural map: competitive symmetric layout.
 // Distribution: ~50% T1, ~25% T2, ~12% T3, ~8% T4, ~5% T5
 // Mirror-symmetric across the diagonal (P1↔P2 fair) with camps in all quadrants.
@@ -4625,7 +4653,28 @@ export class HordeScene extends Phaser.Scene {
               </div>
             </div>
             ${statusChips ? `<div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;">${statusChips}</div>` : ''}
-            <div style="margin-top:6px;font-size:11px;color:#7B2FBE;font-weight:600;">${def.ability}: <span style="color:#4a3520;font-weight:400;font-style:italic;">${def.desc}</span></div>
+            <div style="background:rgba(120,60,180,0.12);border:1px solid rgba(120,60,180,0.25);border-radius:8px;padding:5px 7px;margin-top:6px;">
+              <div style="font-size:12px;color:#7B2FBE;font-weight:700;">${def.ability}</div>
+              <div style="font-size:11px;color:#2a1a0a;font-style:italic;">${def.desc}</div>
+            </div>
+            <div style="background:rgba(40,100,200,0.12);border:1px solid rgba(40,100,200,0.25);border-radius:8px;padding:5px 7px;margin-top:4px;">
+              <div style="font-size:12px;color:#1a60CC;font-weight:700;">${def.ability2}</div>
+              <div style="font-size:11px;color:#2a1a0a;font-style:italic;">${def.desc2}</div>
+            </div>
+            <div style="display:flex;gap:6px;align-items:center;font-size:11px;margin-top:5px;">
+              <span style="color:#3a2a1a;font-weight:600;">Counters:</span>
+              <span style="display:flex;gap:3px;align-items:center;">${(HARD_COUNTERS[type] || []).map(c => avatarImg(c, 24) || `<span style="font-size:16px;">${ANIMALS[c]?.emoji || c}</span>`).join(' ') || '<span style="color:#555;">none</span>'}</span>
+            </div>
+            <div style="display:flex;gap:6px;margin-top:5px;">
+              <div style="flex:1;">
+                <div style="font-size:10px;font-weight:700;color:#1a5a1a;margin-bottom:2px;">STRENGTHS</div>
+                ${(UNIT_STRENGTHS[type] || []).map(s => `<div style="font-size:10px;color:#1a5a1a;padding:1px 0;">\u2705 ${s}</div>`).join('')}
+              </div>
+              <div style="flex:1;">
+                <div style="font-size:10px;font-weight:700;color:#882222;margin-bottom:2px;">WEAKNESSES</div>
+                ${(UNIT_WEAKNESSES[type] || []).map(w => `<div style="font-size:10px;color:#882222;padding:1px 0;">\u274C ${w}</div>`).join('')}
+              </div>
+            </div>
           </div>`;
         }
         if (hHTML !== this._prevHordeTabHTML) { hordeWrap.innerHTML = hHTML; this._prevHordeTabHTML = hHTML; }
@@ -4934,6 +4983,9 @@ export class HordeScene extends Phaser.Scene {
 
   update(_time: number, delta: number) {
     if (this.gameOver) return;
+    // Clamp delta to prevent huge simulation spikes when tab is backgrounded
+    // Browsers throttle rAF to ~1fps in background, causing delta of 1000ms+
+    if (delta > 100) delta = 100;
     const dt = delta / 1000;
     this.updateCamera(dt);
 
