@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { FirebaseSync } from '../network/FirebaseSync';
 import { HORDE_SPRITE_CONFIGS } from '../sprites/SpriteConfig';
-import { MapDef, MapCampSlot, MapZoneDef, MapTowerSlot, MapBushZone, MapRockDef, assignAnimalsToSlots, getMapById, ALL_MAPS, TILE_SIZE, EquipmentType as SharedEquipmentType } from '@prompt-battle/shared';
+import { MapDef, MapCampSlot, MapZoneDef, MapTowerSlot, MapBushZone, MapRockDef, MapBoundaryBlock, assignAnimalsToSlots, getMapById, ALL_MAPS, TILE_SIZE, EquipmentType as SharedEquipmentType } from '@prompt-battle/shared';
 import { resolveGrid, ResolvedTile } from '../map/AutoTileResolver';
 import { getTileSourceRect, getCliffSourceRect, WATER_COLOR_HEX, getTilesetFilename } from '../map/TilesetAtlas';
 import { SoundManager } from '../audio/SoundManager';
@@ -29,7 +29,8 @@ interface GameContext {
   selectedHoard: string;
   hoardCenter: { x: number; y: number };
   carrotZones: { x: number; y: number; w: number; h: number }[];
-  activeEvents?: { type: string; emoji: string; x: number; y: number; timeLeft: number; info: string }[];
+  activeEvents?: { type: string; emoji: string; name: string; x: number; y: number; timeLeft: number; info: string; howToWin: string }[];
+  activeBuffs?: { stat: string; amount: number; remaining: number }[];
 }
 
 // ─── Behavior Modifiers ──────────────────────────────────────
@@ -44,7 +45,7 @@ interface BehaviorMods {
 const DEFAULT_MODS: BehaviorMods = { formation: 'normal', caution: 'normal', pacing: 'normal' };
 
 interface HordeCommand {
-  targetType: 'camp' | 'nearest_camp' | 'sweep_camps' | 'nexus' | 'base' | 'position' | 'defend' | 'retreat' | 'workflow' | 'query';
+  targetType: 'camp' | 'nearest_camp' | 'sweep_camps' | 'nexus' | 'base' | 'position' | 'defend' | 'retreat' | 'workflow' | 'query' | 'advanced_plan';
   targetAnimal?: string;
   campIndex?: number;
   qualifier?: 'nearest' | 'furthest' | 'weakest' | 'strongest' | 'uncaptured' | 'enemy';
@@ -58,6 +59,8 @@ interface HordeCommand {
   modifierOnly?: boolean; // true = only change modifiers, keep existing workflow
   responseType?: 'action' | 'unrecognized' | 'status_query' | 'acknowledgment';
   statusReport?: string;
+  // Advanced plan goal — resolved client-side into multi-phase plan
+  planGoal?: { type: string; equipment?: string; resource?: string; amount?: number; thenAction?: string };
 }
 
 async function parseWithGemini(
@@ -122,7 +125,7 @@ MY BASE STOCKPILE: 🥕${ctx.resources.carrot} 🍖${ctx.resources.meat} 💎${c
 CAMPS (sorted by distance):
 ${campList}
 
-NEXUS HP: mine=${ctx.nexusHp.mine}/50000, enemy=${ctx.nexusHp.enemy >= 0 ? ctx.nexusHp.enemy + '/50000' : 'unknown (not in vision)'}
+CASTLE HP: mine=${ctx.nexusHp.mine}/50000, enemy=${ctx.nexusHp.enemy >= 0 ? ctx.nexusHp.enemy + '/50000' : 'unknown (not in vision)'}
 
 Ground items nearby: 🥕${ctx.groundCarrots} carrots, 🍖${ctx.groundMeat} meat, 💎${ctx.groundCrystals} crystals on the map
 
@@ -130,7 +133,10 @@ CARROT SPAWN ZONES (carrots appear in these areas every 5s):
 ${ctx.carrotZones.length > 0 ? ctx.carrotZones.map((z, i) => `  Zone ${i + 1}: (${z.x},${z.y}) to (${z.x + z.w},${z.y + z.h}) — center (${Math.round(z.x + z.w / 2)},${Math.round(z.y + z.h / 2)})`).join('\n') : '  (scattered across map)'}
 
 ACTIVE MAP EVENTS:
-${ctx.activeEvents && ctx.activeEvents.length > 0 ? ctx.activeEvents.map(e => `  ${e.emoji} ${e.type} at (${e.x},${e.y}) — ${e.info} — ${e.timeLeft}s left`).join('\n') : '  (none)'}
+${ctx.activeEvents && ctx.activeEvents.length > 0 ? ctx.activeEvents.map(e => `  ${e.emoji} ${e.name} (${e.type}) at (${e.x},${e.y}) — ${e.info} — ${e.timeLeft}s left\n    HOW TO WIN: ${e.howToWin}`).join('\n') : '  (none)'}
+
+ACTIVE BUFFS:
+${ctx.activeBuffs && ctx.activeBuffs.length > 0 ? ctx.activeBuffs.map(b => `  +${Math.round(b.amount * 100)}% ${b.stat} (${b.remaining}s left)`).join('\n') : '  (none)'}
 
 HOARD POSITION: Your selected units are centered at (${ctx.hoardCenter.x}, ${ctx.hoardCenter.y})
 Map is 6400x6400. My base is at (250, 6150). Enemy base is at (6150, 250).
@@ -173,7 +179,7 @@ MODIFIER RULES:
 - Modifiers can appear WITH a workflow command: "aggressively attack with swords" → caution:"aggressive" + equip sword + attack_enemies
 - Modifier-only commands (no action change): "be more careful" / "spread out" → modifierOnly=true
 - "back to normal" / "reset" → clear all to null, modifierOnly=true
-- "rush the base" → attack nexus (NOT rush modifier). "rush economy" → rush modifier.
+- "rush the base" → attack enemy castle (NOT rush modifier). "rush economy" → rush modifier.
 - ALWAYS include modifiers if the tone/adjectives imply them, even alongside workflows.
 
 ═══ ACTIONS ═══
@@ -181,7 +187,7 @@ Simple movement commands (no workflow needed):
 - "camp": Go to a specific camp. Set campIndex.
 - "nearest_camp": Go to nearest camp matching filters (targetAnimal, qualifier).
 - "sweep_camps": Chain-capture multiple camps of a type.
-- "nexus": Attack enemy nexus.
+- "nexus": Attack enemy castle.
 - "base"/"defend"/"retreat": Fall back / hold / go home.
 
 QUALIFIERS: nearest, furthest, weakest, uncaptured, enemy
@@ -256,9 +262,28 @@ STEP 1: Detect modifiers from tone/adjectives (can combine with any action below
 
 STEP 2: Classify the PRIMARY intent:
 
-A) UNLOCK EQUIPMENT: "unlock/buy/research [equipment name]"
+A) ADVANCED PLAN (UNLOCK/UPGRADE EQUIPMENT): "get me shields", "unlock pickaxe", "upgrade swords", "I want banners", "work on getting boots"
+   When player wants to UNLOCK or UPGRADE equipment (whether or not they have the resources):
+   → targetType="advanced_plan"
+   → planGoal: { "type": "unlock_equipment", "equipment": "[id]" }
+   The game will automatically resolve the full prerequisite chain (gather resources, unlock prerequisites, etc).
+
+   With follow-up action: "get shields and defend", "unlock swords and attack"
+   → planGoal: { "type": "unlock_equipment", "equipment": "shield", "thenAction": "defend" }
+
+   Resource stockpiling: "stockpile metal", "I need metal", "gather metal for me"
+   → planGoal: { "type": "stockpile_resource", "resource": "metal", "amount": 20 }
+
+   DISAMBIGUATION:
+   - "equip swords" (already unlocked, just pick up) → regular workflow with equip step (B below)
+   - "unlock/upgrade/get swords" (unlock new or upgrade) → advanced_plan
+   - "get [animal]" (e.g. "get skulls") → bootstrap (C below), NOT advanced_plan
+   - Equipment names: pickaxe, sword, shield, boots, banner
+
+AA) UNLOCK EQUIPMENT (text command fallback): "unlock/buy/research [equipment name]"
    → This is NOT a workflow. Return targetType="base" with narration about unlocking.
    → The game handles unlock logic separately from this JSON.
+   → Prefer advanced_plan (A) over this for voice commands.
 
 B) EQUIP + ACTION: "get/grab/equip [equipment] and/then [action]"
    → targetType="workflow", start with {"action":"equip","equipmentType":"..."}, then action steps
@@ -458,7 +483,7 @@ PLAYER SAYS: "${rawText}"
 
 JSON ONLY (no markdown):
 {
-  "targetType": "<camp|nearest_camp|sweep_camps|nexus|base|defend|retreat|workflow|query>",
+  "targetType": "<camp|nearest_camp|sweep_camps|nexus|base|defend|retreat|workflow|query|advanced_plan>",
   "responseType": "<action|unrecognized|status_query|acknowledgment>",
   "statusReport": "<1-2 sentence tactical answer, only if responseType=status_query>",
   "targetAnimal": "<animal type or omit>",
@@ -469,6 +494,7 @@ JSON ONLY (no markdown):
   "narration": "<Max 5 words, terse military tone>",
   "unitReaction": "<2-5 word in-character grunt reaction from the units, funny/cute personality. Examples: 'Aye aye!', 'SMASH TIME!', 'ooh shiny rocks!', 'hisssss yesss', '*rattles excitedly*', 'me hungry...', 'FOR GLORY!'>",
   "modifiers": {"formation": "spread|tight|null", "caution": "safe|aggressive|null", "pacing": "rush|efficient|null"},
+  "planGoal": {"type": "unlock_equipment|stockpile_resource", "equipment": "<equipment id, only if type=unlock_equipment>", "resource": "<resource type, only if type=stockpile_resource>", "amount": "<number, only if stockpile_resource>", "thenAction": "<optional follow-up: defend, attack, etc>"},
   "modifierOnly": false
 }`;
 
@@ -650,7 +676,7 @@ interface HUnit {
   prevSpriteX: number;
   prevSpriteY: number;
   // Special mechanic flags
-  gnomeShield: number;   // gnome: survives this many lethal hits (starts at 2)
+  gnomeShield: number;   // gnome: survives this many lethal hits (starts at 1)
   hasRebirth: boolean;   // skull: cheats death once (survives at 1 HP)
   diveReady: boolean;    // (unused, kept for interface compat)
   diveTimer: number;     // (unused, kept for interface compat)
@@ -726,6 +752,7 @@ interface HNexus {
   container: Phaser.GameObjects.Container | null;
   hpBar: Phaser.GameObjects.Graphics | null;
   hpText: Phaser.GameObjects.Text | null;
+  label: Phaser.GameObjects.Text | null;
   _lastHitFx?: number;
   attackTimer: number;
 }
@@ -789,11 +816,16 @@ interface HordeSyncUnit {
   hp: number; maxHp: number; attack: number; speed: number;
   x: number; y: number; targetX: number; targetY: number;
   dead: boolean; campId: string | null;
+  carrying?: string | null;
+  equipment?: string | null;
+  equipLevel?: number;
+  animState?: string;
+  loop?: { steps: { action: string }[]; currentStep: number } | null;
 }
 
 interface HordeSyncState {
   units: HordeSyncUnit[];
-  camps: { id: string; owner: number; spawnTimer: number }[];
+  camps: { id: string; owner: number; spawnTimer: number; storedFood: number }[];
   nexuses: { team: number; hp: number }[];
   rallyPoints: Record<string, { x: number; y: number }>;
   baseSpawnTimers: { 1: number; 2: number };
@@ -802,6 +834,16 @@ interface HordeSyncState {
   gameOver: boolean;
   winner: number | null;
   mapEvents?: { id: number; type: string; x: number; y: number; timer: number; duration: number; state: string; progress: { 1: number; 2: number }; claimedBy: number | null; data: Record<string, any> }[];
+  baseStockpile?: { 1: Record<string, number>; 2: Record<string, number> };
+  currentEra?: number;
+  groundItems?: { id: number; type: string; x: number; y: number }[];
+  teamBuffs?: { team: number; stat: string; amount: number; remaining: number }[];
+  unlockedEquipment?: { 1: Record<string, number>; 2: Record<string, number> };
+  matchStats?: any;
+  topKiller?: Record<string, { type: string; kills: number }>;
+  groupWorkflows?: Record<string, any>;
+  groupModifiers?: Record<string, any>;
+  freeGnomeTimer?: number;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -823,7 +865,7 @@ const MAP_EVENT_DEFS: Record<MapEventType, { emoji: string; name: string; durati
 // NOTIFICATION SYSTEM TYPES & DATA
 // ═══════════════════════════════════════════════════════════════
 
-type NotifType = 'era_banner' | 'event_spawn' | 'event_resolve' | 'game_start';
+type NotifType = 'era_banner' | 'event_spawn' | 'event_resolve' | 'game_start' | 'game_start_controls';
 
 interface EraBannerData { eraNumber: number; eraName: string; tierMax: number; description: string }
 interface EventSpawnData { eventType: MapEventType; emoji: string; name: string; description: string; color: string }
@@ -951,7 +993,7 @@ function avatarImg(type: string, size = 24): string {
 }
 
 const ANIMALS: Record<string, AnimalDef> = {
-  gnome:     { type: 'gnome',     emoji: '🧝', hp: 15,    attack: 3,    speed: 210, tier: 1, ability: 'Nimble Hands', desc: '2x pickup range, fastest gatherer', ability2: 'Plucky', desc2: 'Survives 2 lethal hits no matter the damage', mineSpeed: 2.0 },
+  gnome:     { type: 'gnome',     emoji: '🧝', hp: 15,    attack: 3,    speed: 210, tier: 1, ability: 'Nimble Hands', desc: '2x pickup range, fastest gatherer', ability2: 'Plucky', desc2: 'Survives 1 lethal hit no matter the damage', mineSpeed: 2.0 },
   turtle:    { type: 'turtle',    emoji: '🐢', hp: 65,    attack: 3,    speed: 55,  tier: 1, ability: 'Shell Stance', desc: '60% DR when stationary + taunts nearby foes', ability2: 'Beast of Burden', desc2: 'Carries 10x resources per trip', mineSpeed: 1.5 },
   skull:     { type: 'skull',     emoji: '💀', hp: 80,    attack: 14,   speed: 155, tier: 2, ability: 'Undying',      desc: 'Cheats death once (survives at 1 HP)', ability2: 'Dread Aura', desc2: 'Enemies nearby attack 15% slower', mineSpeed: 0.8 },
   spider:    { type: 'spider',    emoji: '🕷️', hp: 120,   attack: 18,   speed: 140, tier: 2, ability: 'Venom Bite',   desc: '+5% target max HP per hit', ability2: 'Web Trap', desc2: 'First attack slows target 40% for 3s', mineSpeed: 0.6 },
@@ -1210,7 +1252,7 @@ const COMBAT_RANGE = 80;
 const TURTLE_TAUNT_RANGE = 100; // turtles force nearby foes to attack them
 const PROJECTILE_SPEED = 450;
 const TOWER_HP = 3000;
-const TOWER_DAMAGE = 120;
+const TOWER_DAMAGE = 900;
 const TOWER_RANGE = 450;
 const TOWER_SPLASH = 100;
 const TOWER_COOLDOWN = 2500; // ms between shots
@@ -1267,6 +1309,44 @@ const EQUIPMENT: EquipmentDef[] = [
   { id: 'banner',  name: 'Banner',  emoji: '🚩', cost: { meat: 20, metal: 8 }, effect: 'Aura: nearby allies +20% atk, +15% speed' },
 ];
 
+// ─── ADVANCED PLANS: prerequisite resolution ──────────────
+const EQUIPMENT_PREREQS: Record<EquipmentType, EquipmentType[]> = {
+  pickaxe: [],
+  sword:   ['pickaxe'],
+  shield:  ['pickaxe'],
+  boots:   ['pickaxe'],
+  banner:  ['pickaxe'],
+};
+
+const RESOURCE_GATHER_NEEDS: Record<ResourceType, { needsEquipment?: EquipmentType }> = {
+  carrot:  {},
+  meat:    {},
+  crystal: {},
+  metal:   { needsEquipment: 'pickaxe' },
+};
+
+interface PlanPhase {
+  id: string;
+  workflow: HWorkflow | null;        // null = instant phase (just fires onComplete)
+  completionCheck: 'resource_threshold' | 'equipment_unlocked' | 'final';
+  resourceTarget?: Partial<Record<ResourceType, number>>;
+  equipTarget?: { type: EquipmentType; level: number };
+  onComplete?: { unlock?: EquipmentType };
+  label: string;
+}
+
+interface AdvancedPlan {
+  id: string;
+  phases: PlanPhase[];
+  currentPhase: number;
+  team: 1 | 2;
+  subject: string;
+  goalLabel: string;
+  originalCommand: string;
+  completed: boolean;
+  finalWorkflow?: HWorkflow;
+}
+
 const ARMORY_RANGE = 110; // how close to armory to pick up equipment
 
 interface HArmory {
@@ -1296,11 +1376,16 @@ const ELITE_PREY_COUNT = 3;         // golden elite prey (T4 stats, drop crystal
 const WILD_RESPAWN_MS = 20000;      // respawn wild animals every 20s
 const MINE_COUNT = 4; // 2 per side, mirrored
 const MINE_TICK_MS = 2000; // mine produces metal every 2s while a unit stands on it
-const MINE_RANGE = 100; // how close to be "mining"
+const MINE_RANGE = 180; // how close to be "mining" — big mine area
 
 function pdist(a: { x: number; y: number }, b: { x: number; y: number }): number {
   const dx = a.x - b.x, dy = a.y - b.y;
   return Math.sqrt(dx * dx + dy * dy);
+}
+
+function pdist2(a: { x: number; y: number }, b: { x: number; y: number }): number {
+  const dx = a.x - b.x, dy = a.y - b.y;
+  return dx * dx + dy * dy;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1343,15 +1428,16 @@ export class HordeScene extends Phaser.Scene {
   private hudTexts: Record<string, Phaser.GameObjects.Text> = {};
   private textInput: HTMLInputElement | null = null;
   private voiceStatusEl: HTMLDivElement | null = null;
-  private transcriptEl: HTMLSpanElement | null = null;
 
   // Command history tracking
   private commandHistory: { command: string; outcome: string; color: string; time: number }[] = [];
   private cmdHistoryEl: HTMLDivElement | null = null;
   private pendingCommandText: string | null = null;
+  private pendingRemoteCommands: { text: string; team: 1 | 2; selectedHoard: string }[] = [];
   private isProcessingCommand = false;
   // Last voice command per hoard type (shown on hoard bar cards)
   private lastHoardCommand: Record<string, string> = {};
+  private lastHoardReaction: Record<string, string> = {};
 
   // Fog of war
   private fogRT: Phaser.GameObjects.RenderTexture | null = null;
@@ -1363,9 +1449,16 @@ export class HordeScene extends Phaser.Scene {
   private stuckCheckCounter = 0;
 
   // Rock collision points — centers of rock clusters for pathfinding/collision
-  private static readonly ROCK_RADIUS = 55; // collision radius around each rock cluster center (hard wall)
+  private static readonly ROCK_RADIUS = 80; // collision radius — unified with ROCK_PATH_RADIUS so all systems agree
   private static readonly ROCK_PATH_RADIUS = 80; // wider radius for A* grid to give units clearance
   private rockCollisionPoints: { x: number; y: number }[] = [];
+  private _staticBlockedGrid: Uint8Array | null = null;
+  private _frameAvoidPenalty: Map<string, Float32Array> = new Map();
+  private _avoidPenaltyPool: Float32Array[] = [];
+  private _staticClearancePenalty: Float32Array | null = null;
+
+  // Boundary blocks — invisible walls from map editor
+  private boundaryBlocks: MapBoundaryBlock[] = [];
 
   // Bush zones (LoL-style brush) — flattened list of all bush rects for visibility checks
   private bushRects: { x: number; y: number; w: number; h: number }[] = [];
@@ -1397,6 +1490,8 @@ export class HordeScene extends Phaser.Scene {
   // Active workflow per group — new spawns inherit this automatically
   private groupWorkflows: Record<string, HWorkflow> = {};
   private groupModifiers: Record<string, BehaviorMods> = {};
+  // Advanced plans — multi-phase prerequisite chains resolved client-side
+  private activePlans: AdvancedPlan[] = [];
   private activeSweeps: Record<string, {
     team: 1 | 2; subject: string;
     targets: { x: number; y: number; id: string }[]; currentIdx: number;
@@ -1424,6 +1519,8 @@ export class HordeScene extends Phaser.Scene {
   private activeNotifs: ActiveNotif[] = [];
   private eraBannerActive = false;
   private gameStartBannerShown = false;
+  private introComplete = false;
+  private introVeilEl: HTMLElement | null = null;
 
   // ─── SOUND ──────────────────────────────────────────────────
   private sfx!: SoundManager;
@@ -1440,6 +1537,28 @@ export class HordeScene extends Phaser.Scene {
 
   // ─── THOUGHT BUBBLES ──────────────────────────────────────
   private thoughtBubbles: { container: Phaser.GameObjects.Container; unitId: number; timer: number }[] = [];
+
+  // ─── CAMP LOOT DROPS ──────────────────────────────────────
+  private teamBuffs: { team: 1 | 2; stat: 'speed' | 'attack'; amount: number; remaining: number }[] = [];
+
+  // ─── MATCH STATS ──────────────────────────────────────────
+  private matchStats = {
+    unitsSpawned: { 1: 0, 2: 0 } as Record<1|2, number>,
+    unitsLost: { 1: 0, 2: 0 } as Record<1|2, number>,
+    totalKills: { 1: 0, 2: 0 } as Record<1|2, number>,
+    totalDamage: { 1: 0, 2: 0 } as Record<1|2, number>,
+    campsCaptured: { 1: 0, 2: 0 } as Record<1|2, number>,
+    campsLost: { 1: 0, 2: 0 } as Record<1|2, number>,
+    resourcesDelivered: {
+      1: { carrot: 0, meat: 0, crystal: 0, metal: 0 },
+      2: { carrot: 0, meat: 0, crystal: 0, metal: 0 },
+    } as Record<1|2, Record<ResourceType, number>>,
+    peakArmySize: { 1: 0, 2: 0 } as Record<1|2, number>,
+  };
+  private unitKillCounts = new Map<number, number>(); // unitId → kill count
+  private topKiller: Record<1|2, { type: string; kills: number }> = {
+    1: { type: '', kills: 0 }, 2: { type: '', kills: 0 },
+  };
 
   // ─── MAP CONFIG ──────────────────────────────────────────────
   private mapDef: MapDef | null = null;
@@ -1466,14 +1585,57 @@ export class HordeScene extends Phaser.Scene {
   private debugNeutralsEnabled = true;
   private debugModePanelEl: HTMLDivElement | null = null;
   private debugEventsSpawned = false;
+  private debugHitboxes = false;
+  private debugHitboxGfx: Phaser.GameObjects.Graphics | null = null;
+  private debugBoundaryGfx: Phaser.GameObjects.Graphics | null = null;
 
   // ─── PERFORMANCE: spatial grid & path budget ───────────────
   private spatialGrid: Map<string, any[]> = new Map();
   private spatialCellSize = 200;
+  // Walkability grid: O(1) tile lookup replacing per-rock distance checks
+  private _walkableGrid: Uint8Array | null = null;
+  private _walkGridCols = 0;
+  private _walkGridRows = 0;
+  // HUD dirty-flag caching (avoid innerHTML reflows every frame)
+  private _prevResHTML = '';
+  private _prevHoardHTML = '';
+  private _prevProdHTML = '';
+  private _prevEquipHTML = '';
+  private _prevHordeTabHTML = '';
+  private _prevCmdHTML = '';
+  private _prevCampsHTML = '';
+  private _prevModsHTML = '';
+  private _prevBuffsHTML = '';
+  private _hudTimerEl: HTMLElement | null = null;
+  private _hudEraEl: HTMLElement | null = null;
+  private _hudNexusMineEl: HTMLElement | null = null;
+  private _hudNexusMineBarEl: HTMLElement | null = null;
+  private _hudNexusEnemyEl: HTMLElement | null = null;
+  private _hudNexusEnemyBarEl: HTMLElement | null = null;
+  private _hudResourcesEl: HTMLElement | null = null;
+  private _hudHoardTotalEl: HTMLElement | null = null;
+  private _hudHoardListEl: HTMLElement | null = null;
+  private _hudProductionEl: HTMLElement | null = null;
+  private _hudCampsEl: HTMLElement | null = null;
+  private _hudModifiersEl: HTMLElement | null = null;
+  private _hudBuffsEl: HTMLElement | null = null;
   private pathQueue: Array<{unit: any, targetX: number, targetY: number, callback: (path: any) => void}> = [];
   private frameTimes: number[] = [];
   private _frameCount = 0;
+  private _unitById = new Map<number, HUnit>();
+  private _groundItemById = new Map<number, HGroundItem>();
   private _pathsThisFrame = 0;
+  private _spatialGrid: Map<string, HUnit[]> | null = null;
+  private static readonly MAX_PATHS_PER_FRAME = 10;
+  private _framePathCache = new Map<string, {x:number,y:number}[]|null>();
+  private _astarBlocked = new Uint8Array(10000);
+  private _astarGScore = new Float32Array(10000);
+  private _astarFScore = new Float32Array(10000);
+  private _astarCameFrom = new Int32Array(10000);
+  private _astarClosed = new Uint8Array(10000);
+  private _astarInOpen = new Uint8Array(10000);
+  private _astarOccupied = new Uint8Array(10000);
+  private _frameOccupiedReady = false;
 
   // ─── MULTIPLAYER ──────────────────────────────────────────────
   private isOnline = false;
@@ -1626,6 +1788,13 @@ export class HordeScene extends Phaser.Scene {
     this.currentEra = 1;
     this.eliteKillCount = 0;
     this.gameStartBannerShown = false;
+    this.introComplete = false;
+    // Create persistent dark veil that stays until intro is done
+    const veil = document.createElement('div');
+    veil.id = 'horde-intro-veil';
+    veil.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:9998;background:rgba(0,0,0,0.88);pointer-events:none;';
+    (document.getElementById('game-container') ?? document.body).appendChild(veil);
+    this.introVeilEl = veil;
     this.baseStockpile = {
       1: { carrot: 0, meat: 0, crystal: 0, metal: 0 },
       2: { carrot: 0, meat: 0, crystal: 0, metal: 0 },
@@ -1658,8 +1827,8 @@ export class HordeScene extends Phaser.Scene {
     if (!this.isOnline || this.isHost) {
       for (const animalType of ['gnome', 'turtle']) {
         const campsOfType = this.camps.filter(c => c.animalType === animalType);
-        const p1Camp = campsOfType.slice().sort((a, b) => pdist(a, P1_BASE) - pdist(b, P1_BASE))[0];
-        const p2Camp = campsOfType.filter(c => c !== p1Camp).sort((a, b) => pdist(a, P2_BASE) - pdist(b, P2_BASE))[0];
+        const p1Camp = campsOfType.slice().sort((a, b) => pdist2(a, P1_BASE) - pdist2(b, P1_BASE))[0];
+        const p2Camp = campsOfType.filter(c => c !== p1Camp).sort((a, b) => pdist2(a, P2_BASE) - pdist2(b, P2_BASE))[0];
         if (p1Camp) {
           p1Camp.owner = 1;
           this.units = this.units.filter(u => u.campId !== p1Camp.id);
@@ -1688,14 +1857,16 @@ export class HordeScene extends Phaser.Scene {
         this.firebase.onRemoteOrders(this.gameId, (data) => {
           if (data.orders) {
             for (const entry of data.orders) {
-              // entry is { heroId, order: { text, team } }
               const cmd = (entry as any).order || entry;
               if (cmd.text && cmd.team) {
-                this.handleCommand(cmd.text, cmd.team as 1 | 2);
+                this.pendingRemoteCommands.push({
+                  text: cmd.text,
+                  team: cmd.team as 1 | 2,
+                  selectedHoard: cmd.selectedHoard || 'all',
+                });
               }
             }
           }
-          // Clean up processed order
           if (this.gameId) this.firebase!.removeRemoteOrder(this.gameId, data.key);
         });
       } else {
@@ -1746,6 +1917,9 @@ export class HordeScene extends Phaser.Scene {
 
     // ─── RENDER BUSHES (LoL-style brush zones) ─────────
     this.renderMapBushes();
+
+    // ─── LOAD BOUNDARY BLOCKS ────────────────────────────
+    this.boundaryBlocks = this.mapDef?.boundaryBlocks || [];
 
     // ─── RENDER MAP TOWERS (from towerSlots) ───────────
     this.renderMapTowers();
@@ -1975,20 +2149,22 @@ export class HordeScene extends Phaser.Scene {
 
   /** Check if a tile is walkable (not water, not inside a rock cluster) */
   private isTileWalkable(worldX: number, worldY: number): boolean {
+    // Fast path: O(1) grid lookup when walkability grid is built
+    if (this._walkableGrid) {
+      const col = Math.floor(worldX / TILE_SIZE);
+      const row = Math.floor(worldY / TILE_SIZE);
+      if (row < 0 || row >= this._walkGridRows || col < 0 || col >= this._walkGridCols) return true;
+      return this._walkableGrid[row * this._walkGridCols + col] === 0;
+    }
+    // Fallback: original logic before grid is built
     const tiles = this.mapDef?.tiles;
     if (tiles) {
       const col = Math.floor(worldX / TILE_SIZE);
       const row = Math.floor(worldY / TILE_SIZE);
       if (row >= 0 && row < tiles.length && col >= 0 && col < tiles[0].length) {
         const v = tiles[row][col];
-        if (v === 2 || v === 3) return false; // 2 = water, 3 = rock tile = impassable
+        if (v === 2) return false;
       }
-    }
-    // Check decorative rock clusters
-    const rr = HordeScene.ROCK_RADIUS * HordeScene.ROCK_RADIUS;
-    for (const rp of this.rockCollisionPoints) {
-      const dx = worldX - rp.x, dy = worldY - rp.y;
-      if (dx * dx + dy * dy < rr) return false;
     }
     return true;
   }
@@ -2081,6 +2257,81 @@ export class HordeScene extends Phaser.Scene {
         this.add.image(rock.redPos.x + off.dx, rock.redPos.y + off.dy, key)
           .setDepth(6).setDisplaySize(off.s, off.s).setAlpha(0.95);
       }
+    }
+
+    // Pre-compute static blocked grid (water + rocks) for A* — never changes after this point
+    const CELL = HordeScene.PATH_CELL;
+    const G = HordeScene.PATH_GRID;
+    const staticBlocked = new Uint8Array(G * G);
+    const tiles = this.mapDef?.tiles;
+    if (tiles) {
+      for (let gy = 0; gy < G && gy < tiles.length; gy++) {
+        for (let gx = 0; gx < G && gx < tiles[0].length; gx++) {
+          if (tiles[gy][gx] === 2) staticBlocked[gy * G + gx] = 1;
+        }
+      }
+    }
+    // Stamp boundary blocks onto static A* grid
+    const boundaries = this.mapDef?.boundaryBlocks || [];
+    for (const b of boundaries) {
+      const minGX = Math.floor(b.x / CELL);
+      const maxGX = Math.ceil((b.x + b.w) / CELL);
+      const minGY = Math.floor(b.y / CELL);
+      const maxGY = Math.ceil((b.y + b.h) / CELL);
+      for (let gy = minGY; gy < maxGY; gy++) {
+        for (let gx = minGX; gx < maxGX; gx++) {
+          if (gx >= 0 && gx < G && gy >= 0 && gy < G) staticBlocked[gy * G + gx] = 1;
+        }
+      }
+    }
+    this._staticBlockedGrid = staticBlocked;
+
+    // Precompute clearance penalty (distance-to-wall cost) — only depends on static grid
+    const staticClearance = new Float32Array(G * G);
+    for (let cy2 = 0; cy2 < G; cy2++) {
+      for (let cx2 = 0; cx2 < G; cx2++) {
+        const idx = cy2 * G + cx2;
+        if (staticBlocked[idx]) continue;
+        let pen = 0;
+        for (let pdy = -1; pdy <= 1; pdy++) {
+          for (let pdx = -1; pdx <= 1; pdx++) {
+            if (pdx === 0 && pdy === 0) continue;
+            const px = cx2 + pdx, py = cy2 + pdy;
+            if (px >= 0 && px < G && py >= 0 && py < G && staticBlocked[py * G + px]) pen += 0.5;
+          }
+        }
+        staticClearance[idx] = pen;
+      }
+    }
+    this._staticClearancePenalty = staticClearance;
+
+    // Build walkability grid for O(1) isTileWalkable() lookups
+    if (tiles && tiles.length > 0) {
+      const rows = tiles.length;
+      const cols = tiles[0].length;
+      const grid = new Uint8Array(rows * cols); // 0 = walkable, 1 = blocked
+      // Mark water/rock tiles
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const v = tiles[r][c];
+          if (v === 2) grid[r * cols + c] = 1;
+        }
+      }
+      // Stamp boundary blocks onto walkability grid
+      for (const b of boundaries) {
+        const minC = Math.floor(b.x / TILE_SIZE);
+        const maxC = Math.ceil((b.x + b.w) / TILE_SIZE);
+        const minR = Math.floor(b.y / TILE_SIZE);
+        const maxR = Math.ceil((b.y + b.h) / TILE_SIZE);
+        for (let r = minR; r < maxR; r++) {
+          for (let c = minC; c < maxC; c++) {
+            if (r >= 0 && r < rows && c >= 0 && c < cols) grid[r * cols + c] = 1;
+          }
+        }
+      }
+      this._walkableGrid = grid;
+      this._walkGridCols = cols;
+      this._walkGridRows = rows;
     }
   }
 
@@ -2295,9 +2546,10 @@ export class HordeScene extends Phaser.Scene {
       item.sprite.setVisible(this.fogDisabled || this.isInVision(item.x, item.y));
     }
 
-    // Camp visuals: always show outline, but use last-known info if not in vision
+    // Camp visuals: building sprite always visible, hide label/area/captureBar when out of vision
     for (const c of this.camps) {
       const visible = this.isInVision(c.x, c.y);
+      const bldg = (c as any).buildingSprite as Phaser.GameObjects.Image | undefined;
       // Own camps are always fully visible
       if (c.owner === this.myTeam) {
         c.scouted = true;
@@ -2305,48 +2557,67 @@ export class HordeScene extends Phaser.Scene {
         if (c.label) { c.lastSeenLabel = c.label.text; c.lastSeenColor = c.label.style.color as string; }
         continue;
       }
+      // Building asset always shown
+      if (bldg) bldg.setVisible(true);
       if (visible) {
         // Mark as scouted, snapshot current info
         c.scouted = true;
         c.lastSeenOwner = c.owner;
         if (c.label) { c.lastSeenLabel = c.label.text; c.lastSeenColor = c.label.style.color as string; }
-        // updateCampVisuals() already set the correct live info
+        // Show full info when in vision
+        if (c.label) c.label.setVisible(true);
+        if (c.area) c.area.setVisible(true);
       } else {
-        // Out of vision
+        // Out of vision — hide label, area circle, capture bar
         if (c.captureBar) c.captureBar.clear();
-        if (c.scouted) {
-          // Show last-known info (frozen state)
-          const lastColor = c.lastSeenOwner === 0 ? 0xFFD93D
-            : c.lastSeenOwner === this.myTeam ? 0x4499FF : 0xFF5555;
-          c.area?.setFillStyle(lastColor, 0.05);
-          c.area?.setStrokeStyle(2, lastColor, 0.2);
-          if (c.label) {
-            c.label.setText(c.lastSeenLabel);
-            c.label.setColor(c.lastSeenColor);
-          }
-        } else {
-          // Never scouted — yellow unknown, just show outline
-          c.area?.setFillStyle(0xFFD93D, 0.04);
-          c.area?.setStrokeStyle(2, 0xFFD93D, 0.15);
-          if (c.label) {
-            c.label.setText('???');
-            c.label.setColor('#FFD93D');
-          }
-        }
+        if (c.label) c.label.setVisible(false);
+        if (c.area) c.area.setVisible(false);
       }
     }
 
-    // Show/hide enemy tower range circles based on fog vision
+    // Enemy towers: sprite always visible, hide labels/range/hp when out of vision
     for (const t of this.towers) {
-      if (!t.alive || !t.rangeCircle) continue;
-      if (t.team === this.myTeam) continue; // always show own tower ranges
-      t.rangeCircle.setVisible(this.fogDisabled || this.isInVision(t.x, t.y));
+      if (!t.alive) continue;
+      if (t.team === this.myTeam) continue; // always show own tower visuals
+      const vis = this.fogDisabled || this.isInVision(t.x, t.y);
+      if (t.rangeCircle) t.rangeCircle.setVisible(vis);
+      if ((t as any).sprite) (t as any).sprite.setVisible(true); // asset always shown
+      if ((t as any).label) (t as any).label.setVisible(vis);
+      if (t.hpBar) t.hpBar.setVisible(vis);
+      if (t.hpText) t.hpText.setVisible(vis);
     }
 
-    // Show/hide map event containers based on fog vision
+    // Mines: sprite always visible, hide label when out of vision
+    for (const mine of this.mineNodes) {
+      const vis = this.fogDisabled || this.isInVision(mine.x, mine.y);
+      if (mine.sprite) mine.sprite.setVisible(true); // asset always shown
+      if (mine.label) mine.label.setVisible(vis);
+    }
+
+    // Enemy armories: sprite always visible, hide label when out of vision
+    for (const arm of this.armories) {
+      if (arm.team === this.myTeam) continue; // always show own armories
+      const vis = this.fogDisabled || this.isInVision(arm.x, arm.y);
+      if (arm.sprite) arm.sprite.setVisible(true); // asset always shown
+      if (arm.label) arm.label.setVisible(vis);
+    }
+
+    // Enemy nexus: sprite always visible, hide hp/status/stock when out of vision
+    for (const n of this.nexuses) {
+      if (n.team === this.myTeam) continue; // always show own nexus
+      const vis = this.fogDisabled || this.isInVision(n.x, n.y);
+      if (n.hpBar) n.hpBar.setVisible(vis);
+      if (n.hpText) n.hpText.setVisible(vis);
+      if ((n as any).sprite) (n as any).sprite.setVisible(true); // asset always shown
+      if (n.label) n.label.setVisible(vis);
+      const stockLabel = this.hudTexts[`stock_${n.team}`];
+      if (stockLabel) stockLabel.setVisible(vis);
+    }
+
+    // Map events are always visible regardless of fog
     for (const ev of this.mapEvents) {
       if (!ev.container || ev.state !== 'active') continue;
-      ev.container.setVisible(this.fogDisabled || this.isInVision(ev.x, ev.y));
+      ev.container.setVisible(true);
     }
   }
 
@@ -2490,7 +2761,7 @@ export class HordeScene extends Phaser.Scene {
         targetY: camp.y + Math.sin(wanderAngle) * wanderR,
         attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
         campId: camp.id, lungeX: 0, lungeY: 0,
-        gnomeShield: camp.animalType === 'gnome' ? 2 : 0,
+        gnomeShield: camp.animalType === 'gnome' ? 1 : 0,
         hasRebirth: camp.animalType === 'skull',
         diveReady: false,
         diveTimer: 0,
@@ -2686,17 +2957,19 @@ export class HordeScene extends Phaser.Scene {
       const castle = this.add.image(0, 0, castleKey).setScale(1.5).setOrigin(0.5, 1.0);
       c.add(castle);
       const isMyNexus = team === this.myTeam;
-      c.add(this.add.text(0, 55, isMyNexus ? 'YOUR NEXUS' : 'ENEMY NEXUS', {
+      const nexLabel = this.add.text(0, 90, isMyNexus ? 'YOUR CASTLE' : 'ENEMY CASTLE', {
         fontSize: '18px', color: isMyNexus ? '#4499FF' : '#FF5555',
         fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
         stroke: '#000', strokeThickness: 3,
-      }).setOrigin(0.5));
+      }).setOrigin(0.5);
+      c.add(nexLabel);
 
       this.nexuses.push({
         team, x: base.x, y: base.y,
         hp: NEXUS_MAX_HP, maxHp: NEXUS_MAX_HP,
         attackTimer: 0,
         container: c,
+        label: nexLabel,
         hpBar: this.add.graphics().setDepth(55),
         hpText: this.add.text(base.x, base.y + 50, `${NEXUS_MAX_HP}/${NEXUS_MAX_HP}`, {
           fontSize: '12px', color: '#f0e8ff', fontFamily: '"Nunito", sans-serif',
@@ -2781,6 +3054,17 @@ export class HordeScene extends Phaser.Scene {
   private drawTowerBars() {
     for (const t of this.towers) {
       if (!t.alive || !t.hpBar) continue;
+      // Skip redraw if HP hasn't changed
+      const curHp = Math.ceil(t.hp);
+      if ((t as any)._prevHp === curHp) {
+        // Still update zoom-dependent scale
+        const zoom = this.cameras.main.zoom;
+        const labelScale = Math.max(0.8, 1.0 / zoom);
+        if (t.label) t.label.setScale(labelScale);
+        if (t.hpText) t.hpText.setScale(labelScale);
+        continue;
+      }
+      (t as any)._prevHp = curHp;
       const g = t.hpBar;
       g.clear();
       const pct = Math.max(0, t.hp / t.maxHp);
@@ -2815,14 +3099,15 @@ export class HordeScene extends Phaser.Scene {
       n.attackTimer -= delta;
       if (n.attackTimer > 0) continue;
 
-      // Find nearest enemy unit in range
+      // Find nearest enemy unit in range (spatial grid lookup)
       let bestTarget: HUnit | null = null;
       let bestDist = Infinity;
-      for (const u of this.units) {
+      const nexusNearby = this.getNearbyUnits(n.x, n.y, NEXUS_RANGE);
+      for (const u of nexusNearby) {
         if (u.dead || u.team === n.team || u.team === 0) continue;
         const dx = u.x - n.x, dy = u.y - n.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < NEXUS_RANGE && dist < bestDist) {
+        if (dist < bestDist) {
           bestDist = dist;
           bestTarget = u;
         }
@@ -2839,9 +3124,10 @@ export class HordeScene extends Phaser.Scene {
       // Tint projectile to match team color
       proj.setTint(n.team === 1 ? 0x88BBFF : 0xFF8888);
 
-      // Splash targets
+      // Splash targets (spatial grid lookup)
       const splashList: { id: number; dmg: number }[] = [];
-      for (const o of this.units) {
+      const nexusSplashNearby = this.getNearbyUnits(bestTarget.x, bestTarget.y, NEXUS_SPLASH);
+      for (const o of nexusSplashNearby) {
         if (o.dead || o.id === bestTarget.id || o.team === n.team || o.team === 0) continue;
         const sd = Math.sqrt((o.x - bestTarget.x) ** 2 + (o.y - bestTarget.y) ** 2);
         if (sd <= NEXUS_SPLASH) {
@@ -2900,14 +3186,15 @@ export class HordeScene extends Phaser.Scene {
       t.attackTimer -= delta;
       if (t.attackTimer > 0) continue;
 
-      // Find nearest enemy unit in range
+      // Find nearest enemy unit in range (spatial grid lookup)
       let bestTarget: HUnit | null = null;
       let bestDist = Infinity;
-      for (const u of this.units) {
+      const towerNearby = this.getNearbyUnits(t.x, t.y, t.range);
+      for (const u of towerNearby) {
         if (u.dead || u.team === t.team || u.team === 0) continue;
         const dx = u.x - t.x, dy = u.y - t.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < t.range && dist < bestDist) {
+        if (dist < bestDist) {
           bestDist = dist;
           bestTarget = u;
         }
@@ -2925,9 +3212,10 @@ export class HordeScene extends Phaser.Scene {
         .setOrigin(0.5);
       proj.play('tower_proj_anim');
 
-      // Calculate splash targets at time of fire
+      // Calculate splash targets at time of fire (spatial grid lookup)
       const splashList: { id: number; dmg: number }[] = [];
-      for (const o of this.units) {
+      const towerSplashNearby = this.getNearbyUnits(bestTarget.x, bestTarget.y, t.splashRange);
+      for (const o of towerSplashNearby) {
         if (o.dead || o.id === bestTarget.id || o.team === t.team || o.team === 0) continue;
         const sd = Math.sqrt((o.x - bestTarget.x) ** 2 + (o.y - bestTarget.y) ** 2);
         if (sd <= t.splashRange) {
@@ -2969,15 +3257,20 @@ export class HordeScene extends Phaser.Scene {
 
   private drawNexusBars() {
     for (const n of this.nexuses) {
+      const curHp = Math.ceil(n.hp);
       const g = n.hpBar!;
-      g.clear();
-      const pct = Math.max(0, n.hp / n.maxHp);
-      const w = 80, h = 8;
-      g.fillStyle(0x000000, 0.6);
-      g.fillRoundedRect(n.x - w / 2, n.y + 38, w, h, 4);
-      g.fillStyle(pct > 0.5 ? 0x45E6B0 : pct > 0.25 ? 0xFFD93D : 0xFF5555);
-      g.fillRoundedRect(n.x - w / 2, n.y + 38, w * pct, h, 4);
-      n.hpText!.setText(`${Math.max(0, Math.ceil(n.hp))}/${n.maxHp}`);
+      // Skip bar redraw if HP unchanged
+      if ((n as any)._prevHp !== curHp) {
+        (n as any)._prevHp = curHp;
+        g.clear();
+        const pct = Math.max(0, n.hp / n.maxHp);
+        const w = 80, h = 8;
+        g.fillStyle(0x000000, 0.6);
+        g.fillRoundedRect(n.x - w / 2, n.y + 38, w, h, 4);
+        g.fillStyle(pct > 0.5 ? 0x45E6B0 : pct > 0.25 ? 0xFFD93D : 0xFF5555);
+        g.fillRoundedRect(n.x - w / 2, n.y + 38, w * pct, h, 4);
+        n.hpText!.setText(`${Math.max(0, Math.ceil(n.hp))}/${n.maxHp}`);
+      }
 
       // Show stockpile near nexus (world-space, scales with zoom)
       const stock = this.baseStockpile[n.team as 1 | 2];
@@ -2993,7 +3286,9 @@ export class HordeScene extends Phaser.Scene {
       }
       // Scale inversely with zoom
       const zoom = this.cameras.main.zoom;
-      this.hudTexts[`stock_${n.team}`].setScale(Math.max(0.8, 1.0 / zoom));
+      const invScale = Math.max(0.8, 1.0 / zoom);
+      this.hudTexts[`stock_${n.team}`].setScale(invScale);
+      if (n.label) n.label.setScale(invScale);
     }
   }
 
@@ -3004,15 +3299,14 @@ export class HordeScene extends Phaser.Scene {
     const container = document.getElementById('game-container');
     if (!container) return;
     const vw = window.innerWidth;
+    const vh = window.innerHeight;
     const sidebarW = Math.round(Math.min(300, Math.max(200, vw * 0.17)));
     const rpanelW  = Math.round(Math.min(400, Math.max(260, vw * 0.23)));
     container.style.setProperty('--horde-sidebar-w', sidebarW + 'px');
     container.style.setProperty('--horde-rpanel-w', rpanelW + 'px');
 
-    const gameW = this.scale.width;
-    const gameH = this.scale.height;
     const cam = this.cameras.main;
-    cam.setViewport(sidebarW, 0, gameW - sidebarW - rpanelW, gameH);
+    cam.setViewport(sidebarW, 0, vw - sidebarW - rpanelW, vh);
   }
 
   private setupCamera() {
@@ -3041,13 +3335,12 @@ export class HordeScene extends Phaser.Scene {
       if (newZoom === oldZoom) return;
 
       // Zoom toward cursor: keep the world point under the mouse fixed
-      const worldX = ptr.worldX;
-      const worldY = ptr.worldY;
+      const worldBefore = cam.getWorldPoint(ptr.x, ptr.y);
       cam.zoom = newZoom;
-      // After zoom, the same screen point now maps to a different world point.
-      // Scroll so the original world point stays under the cursor.
-      cam.scrollX += (worldX - ptr.worldX);
-      cam.scrollY += (worldY - ptr.worldY);
+      cam.preRender();
+      const worldAfter = cam.getWorldPoint(ptr.x, ptr.y);
+      cam.scrollX -= worldAfter.x - worldBefore.x;
+      cam.scrollY -= worldAfter.y - worldBefore.y;
     });
 
     // Drag to pan (or editor drag)
@@ -3145,7 +3438,7 @@ export class HordeScene extends Phaser.Scene {
     const cmdWrap = document.createElement('div');
     cmdWrap.id = 'horde-cmd-wrap';
     cmdWrap.style.cssText = `
-      position:absolute;top:10px;
+      position:absolute;bottom:10px;
       left:var(--horde-sidebar-w, 280px);right:var(--horde-rpanel-w, 380px);
       margin:0 auto;
       width:min(660px, calc(100% - var(--horde-sidebar-w, 280px) - var(--horde-rpanel-w, 380px) - 40px));
@@ -3194,7 +3487,7 @@ export class HordeScene extends Phaser.Scene {
     const voiceDiv = document.createElement('div');
     voiceDiv.id = 'horde-voice-status';
     voiceDiv.style.cssText = `
-      position:absolute;top:72px;left:var(--horde-sidebar-w, 280px);right:var(--horde-rpanel-w, 380px);margin:0 auto;width:fit-content;
+      position:absolute;bottom:72px;left:var(--horde-sidebar-w, 280px);right:var(--horde-rpanel-w, 380px);margin:0 auto;width:fit-content;
       padding:6px 14px;background:linear-gradient(180deg, #d4c4a0 0%, #c8b890 100%);border:2px solid #8B7355;
       border-radius:8px;z-index:100;font-family:'Nunito',sans-serif;
       font-size:12px;color:#5a4a3a;font-weight:600;display:flex;align-items:center;gap:8px;
@@ -3202,13 +3495,9 @@ export class HordeScene extends Phaser.Scene {
     `;
     const voiceLabel = document.createElement('span');
     voiceLabel.textContent = '🎤 Hold SPACE to speak';
-    const transcript = document.createElement('span');
-    transcript.style.cssText = 'color:#FFD93D;max-width:300px;';
     voiceDiv.appendChild(voiceLabel);
-    voiceDiv.appendChild(transcript);
     document.getElementById('game-container')!.appendChild(voiceDiv);
     this.voiceStatusEl = voiceDiv;
-    this.transcriptEl = transcript;
 
     this.setupVoice(voiceLabel);
     this.spaceKey.on('down', () => this.startListening());
@@ -3343,7 +3632,7 @@ export class HordeScene extends Phaser.Scene {
     rec.onresult = (e: any) => {
       let text = '';
       for (let i = 0; i < e.results.length; i++) text += e.results[i][0].transcript;
-      if (this.transcriptEl) this.transcriptEl.textContent = text;
+      if (this.textInput) this.textInput.value = text;
       if (e.results[e.results.length - 1].isFinal && text.trim()) {
         this.issueCommand(text.trim());
         this.stopListening();
@@ -3358,7 +3647,7 @@ export class HordeScene extends Phaser.Scene {
     if (this.isListening || !this.recognition || document.activeElement === this.textInput) return;
     this.isListening = true;
     if (this.voiceStatusEl) this.voiceStatusEl.style.borderColor = '#FF6B6B';
-    if (this.transcriptEl) this.transcriptEl.textContent = '';
+    if (this.textInput) this.textInput.value = '';
     try { this.recognition.start(); } catch (_e) { /* */ }
   }
 
@@ -3367,7 +3656,7 @@ export class HordeScene extends Phaser.Scene {
     this.isListening = false;
     if (this.voiceStatusEl) this.voiceStatusEl.style.borderColor = '#8B7355';
     try { this.recognition?.stop(); } catch (_e) { /* */ }
-    setTimeout(() => { if (!this.isListening && this.transcriptEl) this.transcriptEl.textContent = ''; }, 3000);
+    setTimeout(() => { if (!this.isListening && this.textInput) this.textInput.value = ''; }, 3000);
   }
 
   // ─── HUD ─────────────────────────────────────────────────────
@@ -3455,8 +3744,8 @@ export class HordeScene extends Phaser.Scene {
       this.sidebarEl = sidebar;
     }
 
-    // Feedback (top center, below voice)
-    this.hudTexts['feedback'] = this.add.text(cam.width / 2, 95, '', {
+    // Feedback (bottom center, above voice/command input)
+    this.hudTexts['feedback'] = this.add.text(cam.width / 2, cam.height - 105, '', {
       fontSize: '16px', color: '#45E6B0', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
     }).setOrigin(0.5).setScrollFactor(0).setDepth(100).setAlpha(0);
 
@@ -3469,7 +3758,7 @@ export class HordeScene extends Phaser.Scene {
     const hoardBar = document.createElement('div');
     hoardBar.id = 'horde-hoard-bar';
     hoardBar.style.cssText = `
-      position:absolute;bottom:10px;left:var(--horde-sidebar-w, 280px);right:var(--horde-rpanel-w, 380px);margin:0 auto;width:fit-content;
+      position:absolute;top:10px;left:var(--horde-sidebar-w, 280px);right:var(--horde-rpanel-w, 380px);margin:0 auto;width:fit-content;
       display:flex;gap:4px;z-index:101;pointer-events:none;
       font-family:'Nunito',sans-serif;
     `;
@@ -3480,11 +3769,10 @@ export class HordeScene extends Phaser.Scene {
     // Command History is now inside the left sidebar (cmd-history-entries div)
     this.cmdHistoryEl = null;
 
-    // Help hint (bottom center)
-    this.hudTexts['help'] = this.add.text(cam.width / 2, cam.height - 95,
-      'Drag: Pan | Scroll: Zoom | Arrows: Pan | SPACE: Voice | Q/E: Cycle hoard | 1-0: Direct pick | A/D: Cycle panel', {
-      fontSize: '9px', color: '#8B7355', fontFamily: '"Nunito", sans-serif', align: 'center',
-    }).setOrigin(0.5, 1).setScrollFactor(0).setDepth(100).setAlpha(0.7);
+    // Help hint (hidden — controls shown in intro popups and hoard bar Q/E arrows)
+    this.hudTexts['help'] = this.add.text(0, 0, '', {
+      fontSize: '9px', color: '#8B7355', fontFamily: '"Nunito", sans-serif',
+    }).setScrollFactor(0).setDepth(0).setAlpha(0);
 
     // Armory panel (hidden, used internally)
     const equipPanel = document.createElement('div');
@@ -3580,7 +3868,7 @@ export class HordeScene extends Phaser.Scene {
     const unitData = [
       { key: 'gnome',    emoji: '\u{1F9DD}',       name: 'Gnome',    hp: 15,    atk: 3,   spd: 210, tier: 1, cost: '2\u{1F955}',
         ability1: 'Nimble Hands', desc1: '2x pickup range, fastest gatherer',
-        ability2: 'Plucky', desc2: 'Survives 2 lethal hits no matter the damage',
+        ability2: 'Plucky', desc2: 'Survives 1 lethal hit no matter the damage',
         strengths: ['Fastest unit — outruns everything', 'Best economy builder', 'Cheap and expendable scouts'],
         weaknesses: ['Lowest HP and attack in the game', 'Useless in a real fight', 'Dies to splash damage quickly'] },
       { key: 'turtle',   emoji: '\u{1F422}',       name: 'Turtle',   hp: 65,    atk: 3,   spd: 55,  tier: 1, cost: '5\u{1F955}',
@@ -3777,6 +4065,10 @@ export class HordeScene extends Phaser.Scene {
           0%, 100% { text-shadow: 0 0 6px rgba(255,215,0,0.3); }
           50% { text-shadow: 0 0 18px rgba(255,215,0,0.7); }
         }
+        @keyframes eventPulse {
+          0%, 100% { opacity: 1; border-color: rgba(139,115,85,0.5); }
+          50% { opacity: 0.85; border-color: rgba(204,51,51,0.8); }
+        }
       `;
       document.head.appendChild(style);
     }
@@ -3823,34 +4115,96 @@ export class HordeScene extends Phaser.Scene {
   }
 
   private renderGameStart(): HTMLElement {
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:9999;display:flex;align-items:center;justify-content:center;cursor:pointer;';
     const el = document.createElement('div');
-    el.style.cssText = `position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:520px;padding:32px 40px;background:linear-gradient(135deg,rgba(212,196,160,0.95),rgba(196,180,148,0.97) 50%,rgba(212,196,160,0.93));backdrop-filter:blur(12px);border-radius:12px;border:3px solid rgba(120,90,50,0.35);box-shadow:0 8px 40px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.3),inset 0 -1px 0 rgba(0,0,0,0.1);animation:notif-start-in 700ms cubic-bezier(0.22,1,0.36,1) forwards;text-align:center;`;
+    el.style.cssText = 'width:700px;padding:52px 60px;background:linear-gradient(135deg,rgba(212,196,160,0.95),rgba(196,180,148,0.97) 50%,rgba(212,196,160,0.93));backdrop-filter:blur(14px);border-radius:14px;border:3px solid rgba(120,90,50,0.35);box-shadow:0 12px 60px rgba(0,0,0,0.6),inset 0 1px 0 rgba(255,255,255,0.3),inset 0 -1px 0 rgba(0,0,0,0.1);text-align:center;animation:notif-start-in 700ms cubic-bezier(0.22,1,0.36,1) forwards;';
     const goals = [
-      { icon: '\u2694\uFE0F', text: 'Amass your horde \u2014 capture camps to unlock new unit types' },
+      { icon: '\u2694\uFE0F', text: 'Spend food to spawn hordes at captured camps' },
       { icon: '\u{1F6E1}\uFE0F', text: 'Unlock armories \u2014 equip your units with powerful gear' },
       { icon: '\u26A1', text: 'Compete in map events \u2014 earn bonus resources & buffs' },
-      { icon: '\u{1F480}', text: 'Destroy the enemy Nexus to win!' },
+      { icon: '\u{1F480}', text: 'Destroy the enemy castle to win!' },
+    ];
+    el.innerHTML = '<div style="font-family:Fredoka,sans-serif;font-size:16px;letter-spacing:4px;color:rgba(100,70,30,0.6);margin-bottom:4px;opacity:0;animation:notif-era-child 400ms ease-out 200ms forwards;">PROMPT BATTLE</div>'
+      + '<div style="font-family:Fredoka,sans-serif;font-size:52px;font-weight:700;color:#5a3a1a;text-shadow:0 2px 4px rgba(0,0,0,0.1);margin-bottom:12px;opacity:0;animation:notif-era-child 400ms ease-out 400ms forwards,notif-start-pulse 2.5s ease-in-out 1s infinite;">MARCH MY HORDE</div>'
+      + '<div style="width:60%;height:2px;background:linear-gradient(90deg,transparent,rgba(120,90,50,0.4),transparent);margin:0 auto 22px;opacity:0;animation:notif-era-child 400ms ease-out 500ms forwards;"></div>'
+      + '<div style="display:flex;flex-direction:column;gap:16px;text-align:left;">'
+      + goals.map((r, i) => '<div style="display:flex;align-items:center;gap:16px;opacity:0;animation:notif-start-row 400ms ease-out ' + (600 + i * 150) + 'ms forwards;"><div style="width:46px;height:46px;border-radius:8px;background:rgba(120,90,50,0.1);border:1px solid rgba(120,90,50,0.25);display:flex;align-items:center;justify-content:center;font-size:23px;flex-shrink:0;">' + r.icon + '</div><span style="font-family:Nunito,sans-serif;font-size:19px;color:#3a2a1a;line-height:1.35;">' + r.text + '</span></div>').join('')
+      + '</div>'
+      + '<div style="font-family:Nunito,sans-serif;font-size:14px;color:rgba(90,58,26,0.5);margin-top:24px;opacity:0;animation:notif-era-child 400ms ease-out 1200ms forwards;">Click or press SPACE to continue</div>';
+    wrapper.appendChild(el);
+    // Click or space to dismiss
+    const dismiss = () => { this.dismissIntroNotif(); };
+    wrapper.addEventListener('click', dismiss);
+    const spaceHandler = (e: KeyboardEvent) => { if (e.code === 'Space') { e.preventDefault(); dismiss(); document.removeEventListener('keydown', spaceHandler); } };
+    document.addEventListener('keydown', spaceHandler);
+    (wrapper as any)._spaceHandler = spaceHandler;
+    return wrapper;
+  }
+
+  private renderGameStartControls(): HTMLElement {
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:9999;display:flex;align-items:center;justify-content:center;cursor:pointer;';
+    const el = document.createElement('div');
+    el.style.cssText = 'width:700px;padding:52px 60px;background:linear-gradient(135deg,rgba(212,196,160,0.95),rgba(196,180,148,0.97) 50%,rgba(212,196,160,0.93));backdrop-filter:blur(14px);border-radius:14px;border:3px solid rgba(120,90,50,0.35);box-shadow:0 12px 60px rgba(0,0,0,0.6),inset 0 1px 0 rgba(255,255,255,0.3),inset 0 -1px 0 rgba(0,0,0,0.1);text-align:center;animation:notif-start-in 700ms cubic-bezier(0.22,1,0.36,1) forwards;';
+    const phrases = [
+      { cmd: 'Create more gnomes but stay safe', desc: 'Spawn units with a cautious behavior modifier' },
+      { cmd: 'Get your pickaxe and go mining', desc: 'Equip gear then head to the mines' },
+      { cmd: 'Attack the enemy turret in the southeast', desc: 'Target specific structures by direction' },
     ];
     const controls = [
-      { key: 'Type / Speak', desc: 'Give commands' },
-      { key: 'TAB', desc: 'Cycle units' },
-      { key: 'Scroll / Drag', desc: 'Pan map' },
-      { key: '+  /  \u2013', desc: 'Zoom' },
+      { key: 'Q / E', desc: 'Cycle hoards' },
+      { key: 'A / D', desc: 'Menu tabs' },
+      { key: 'Arrows / Drag', desc: 'Pan map' },
+      { key: 'Scroll', desc: 'Zoom' },
     ];
-    el.innerHTML = `
-      <div style="font-family:'Fredoka',sans-serif;font-size:11px;letter-spacing:3px;color:rgba(100,70,30,0.6);margin-bottom:2px;opacity:0;animation:notif-era-child 400ms ease-out 200ms forwards;">PROMPT BATTLE</div>
-      <div style="font-family:'Fredoka',sans-serif;font-size:38px;font-weight:700;color:#5a3a1a;text-shadow:0 2px 4px rgba(0,0,0,0.1);margin-bottom:6px;opacity:0;animation:notif-era-child 400ms ease-out 400ms forwards,notif-start-pulse 2.5s ease-in-out 1s infinite;">MARCH MY HORDE</div>
-      <div style="width:60%;height:2px;background:linear-gradient(90deg,transparent,rgba(120,90,50,0.4),transparent);margin:0 auto 14px;opacity:0;animation:notif-era-child 400ms ease-out 500ms forwards;"></div>
-      <div style="display:flex;flex-direction:column;gap:10px;text-align:left;">
-        ${goals.map((r, i) => `<div style="display:flex;align-items:center;gap:12px;opacity:0;animation:notif-start-row 400ms ease-out ${600 + i * 150}ms forwards;"><div style="width:34px;height:34px;border-radius:8px;background:rgba(120,90,50,0.1);border:1px solid rgba(120,90,50,0.25);display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0;">${r.icon}</div><span style="font-family:'Nunito',sans-serif;font-size:14px;color:#3a2a1a;line-height:1.35;">${r.text}</span></div>`).join('')}
-      </div>
-      <div style="width:80%;height:1px;background:linear-gradient(90deg,transparent,rgba(120,90,50,0.3),transparent);margin:16px auto 12px;opacity:0;animation:notif-era-child 400ms ease-out 1200ms forwards;"></div>
-      <div style="font-family:'Fredoka',sans-serif;font-size:11px;letter-spacing:2px;color:rgba(90,58,26,0.6);margin-bottom:8px;opacity:0;animation:notif-era-child 400ms ease-out 1300ms forwards;">CONTROLS</div>
-      <div style="display:flex;flex-wrap:wrap;gap:6px 16px;justify-content:center;opacity:0;animation:notif-era-child 400ms ease-out 1400ms forwards;">
-        ${controls.map(c => `<div style="display:flex;align-items:center;gap:6px;"><span style="font-family:'Fredoka',sans-serif;font-size:11px;font-weight:600;color:#5a3a1a;background:rgba(120,90,50,0.12);border:1px solid rgba(120,90,50,0.2);border-radius:4px;padding:2px 7px;">${c.key}</span><span style="font-family:'Nunito',sans-serif;font-size:11px;color:#6a5a4a;">${c.desc}</span></div>`).join('')}
-      </div>
-    `;
-    return el;
+    el.innerHTML = '<div style="font-family:Fredoka,sans-serif;font-size:16px;letter-spacing:4px;color:rgba(100,70,30,0.6);margin-bottom:4px;opacity:0;animation:notif-era-child 400ms ease-out 200ms forwards;">HOLD SPACE AND SAY</div>'
+      + '<div style="font-family:Fredoka,sans-serif;font-size:46px;font-weight:700;color:#5a3a1a;text-shadow:0 2px 4px rgba(0,0,0,0.1);margin-bottom:12px;opacity:0;animation:notif-era-child 400ms ease-out 400ms forwards;">\u{1F399}\uFE0F VOICE COMMANDS</div>'
+      + '<div style="width:60%;height:2px;background:linear-gradient(90deg,transparent,rgba(120,90,50,0.4),transparent);margin:0 auto 22px;opacity:0;animation:notif-era-child 400ms ease-out 500ms forwards;"></div>'
+      + '<div style="display:flex;flex-direction:column;gap:18px;text-align:left;">'
+      + phrases.map((p, i) => '<div style="opacity:0;animation:notif-start-row 400ms ease-out ' + (600 + i * 180) + 'ms forwards;"><div style="font-family:Fredoka,sans-serif;font-size:19px;font-weight:600;color:#5a3a1a;background:rgba(120,90,50,0.08);border:1px solid rgba(120,90,50,0.2);border-radius:8px;padding:10px 16px;margin-bottom:4px;">\u201C' + p.cmd + '\u201D</div><div style="font-family:Nunito,sans-serif;font-size:15px;color:#7a6a5a;padding-left:16px;">' + p.desc + '</div></div>').join('')
+      + '</div>'
+      + '<div style="width:80%;height:1px;background:linear-gradient(90deg,transparent,rgba(120,90,50,0.3),transparent);margin:24px auto 14px;opacity:0;animation:notif-era-child 400ms ease-out 1200ms forwards;"></div>'
+      + '<div style="display:flex;flex-wrap:wrap;gap:10px 22px;justify-content:center;opacity:0;animation:notif-era-child 400ms ease-out 1300ms forwards;">'
+      + controls.map(c => '<div style="display:flex;align-items:center;gap:8px;"><span style="font-family:Fredoka,sans-serif;font-size:15px;font-weight:600;color:#5a3a1a;background:rgba(120,90,50,0.12);border:1px solid rgba(120,90,50,0.2);border-radius:4px;padding:3px 10px;">' + c.key + '</span><span style="font-family:Nunito,sans-serif;font-size:15px;color:#6a5a4a;">' + c.desc + '</span></div>').join('')
+      + '</div>'
+      + '<div style="font-family:Nunito,sans-serif;font-size:14px;color:rgba(90,58,26,0.5);margin-top:24px;opacity:0;animation:notif-era-child 400ms ease-out 1400ms forwards;">Click or press SPACE to start</div>';
+    wrapper.appendChild(el);
+    // Click or space to dismiss
+    const dismiss = () => { this.dismissIntroNotif(); };
+    wrapper.addEventListener('click', dismiss);
+    const spaceHandler = (e: KeyboardEvent) => { if (e.code === 'Space') { e.preventDefault(); dismiss(); document.removeEventListener('keydown', spaceHandler); } };
+    document.addEventListener('keydown', spaceHandler);
+    (wrapper as any)._spaceHandler = spaceHandler;
+    return wrapper;
+  }
+
+  private dismissIntroNotif() {
+    const n = this.activeNotifs.find(a => a.type === 'game_start' || a.type === 'game_start_controls');
+    if (!n || n.exiting) return;
+    n.exiting = true;
+    const isControls = n.type === 'game_start_controls';
+    const queueControls = n.type === 'game_start';
+    // Clean up space handler
+    if ((n.el as any)._spaceHandler) document.removeEventListener('keydown', (n.el as any)._spaceHandler);
+    n.el.style.animation = 'notif-start-out 500ms ease-in forwards';
+    setTimeout(() => {
+      n.el.remove();
+      this.eraBannerActive = false;
+      if (queueControls) {
+        this.notifQueue.push({ type: 'game_start_controls', priority: 4, data: {} });
+      }
+      if (isControls) {
+        this.introComplete = true;
+        // Fade out the persistent veil
+        if (this.introVeilEl) {
+          this.introVeilEl.style.transition = 'opacity 800ms ease';
+          this.introVeilEl.style.opacity = '0';
+          setTimeout(() => { this.introVeilEl?.remove(); this.introVeilEl = null; }, 800);
+        }
+      }
+    }, 500);
+    this.activeNotifs = this.activeNotifs.filter(a => a !== n);
   }
 
   private renderEventSpawn(data: EventSpawnData): HTMLElement {
@@ -3903,14 +4257,17 @@ export class HordeScene extends Phaser.Scene {
       const n = this.activeNotifs[i];
       if (!n.exiting && (now - n.spawnTime) >= n.duration) {
         n.exiting = true;
-        const exitAnim = (n.type === 'era_banner' || n.type === 'game_start') ? 'notif-start-out 700ms ease-in forwards'
+        const isBanner = n.type === 'era_banner' || n.type === 'game_start' || n.type === 'game_start_controls';
+        const exitAnim = isBanner ? 'notif-start-out 700ms ease-in forwards'
           : n.type === 'event_spawn' ? 'notif-event-out 300ms ease-in forwards'
           : 'notif-resolve-out 250ms ease-in forwards';
-        const exitDur = (n.type === 'era_banner' || n.type === 'game_start') ? 700 : n.type === 'event_spawn' ? 300 : 250;
+        const exitDur = isBanner ? 700 : n.type === 'event_spawn' ? 300 : 250;
         n.el.style.animation = exitAnim;
+        const queueControls = n.type === 'game_start';
         setTimeout(() => {
           n.el.remove();
-          if (n.type === 'era_banner' || n.type === 'game_start') this.eraBannerActive = false;
+          if (isBanner) this.eraBannerActive = false;
+          if (queueControls) this.notifQueue.push({ type: 'game_start_controls', priority: 4, data: {} });
         }, exitDur);
         this.activeNotifs.splice(i, 1);
       }
@@ -3919,17 +4276,18 @@ export class HordeScene extends Phaser.Scene {
     this.notifQueue.sort((a, b) => b.priority - a.priority);
     for (let i = 0; i < this.notifQueue.length; i++) {
       const item = this.notifQueue[i];
-      if (item.type === 'game_start') {
+      if (item.type === 'game_start' || item.type === 'game_start_controls') {
         if (this.eraBannerActive) continue;
         this.notifQueue.splice(i, 1); i--;
-        const el = this.renderGameStart();
-        this.notifContainerEl?.appendChild(el);
-        this.activeNotifs.push({ type: 'game_start', el, spawnTime: now, duration: 10000, exiting: false });
+        const el = item.type === 'game_start' ? this.renderGameStart() : this.renderGameStartControls();
+        const gameContainer = document.getElementById('game-container') ?? document.body;
+        gameContainer.appendChild(el);
+        this.activeNotifs.push({ type: item.type, el, spawnTime: now, duration: 999999999, exiting: false });
         this.eraBannerActive = true;
         return;
       }
       if (item.type === 'era_banner') {
-        if (this.eraBannerActive) continue;
+        if (this.eraBannerActive || !this.introComplete) continue;
         this.notifQueue.splice(i, 1); i--;
         const el = this.renderEraBanner(item.data as EraBannerData);
         this.notifContainerEl?.appendChild(el);
@@ -3962,22 +4320,12 @@ export class HordeScene extends Phaser.Scene {
     });
   }
 
-  private showEventSpawnNotif(eventType: MapEventType) {
-    const def = MAP_EVENT_DEFS[eventType];
-    if (!def) return;
-    this.notifQueue.push({
-      type: 'event_spawn', priority: 2,
-      data: { eventType, emoji: def.emoji, name: def.name, description: EVENT_SPAWN_DESCS[eventType] || '', color: EVENT_COLORS[eventType] || '#ffffff' },
-    });
+  private showEventSpawnNotif(_eventType: MapEventType) {
+    // Removed: dark event notifications from top
   }
 
-  private showEventResolveNotif(eventType: MapEventType, winner: 1 | 2 | null, rewardText: string) {
-    const def = MAP_EVENT_DEFS[eventType];
-    if (!def) return;
-    this.notifQueue.push({
-      type: 'event_resolve', priority: 1,
-      data: { eventType, emoji: def.emoji, winner, rewardText, color: EVENT_COLORS[eventType] || '#ffffff' },
-    });
+  private showEventResolveNotif(_eventType: MapEventType, _winner: 1 | 2 | null, _rewardText: string) {
+    // Removed: dark event resolve notifications from top
   }
 
   private cycleCharPanelTab(direction: 1 | -1) {
@@ -4078,9 +4426,9 @@ export class HordeScene extends Phaser.Scene {
     // Timer + Era
     const secs = Math.floor(this.gameTime / 1000);
     const eraName = HordeScene.ERA_NAMES[this.currentEra] || '';
-    const timerEl = document.getElementById('hud-timer');
+    const timerEl = this._hudTimerEl || (this._hudTimerEl = document.getElementById('hud-timer'));
     if (timerEl) timerEl.textContent = Math.floor(secs / 60) + ':' + (secs % 60).toString().padStart(2, '0');
-    const eraEl = document.getElementById('hud-era');
+    const eraEl = this._hudEraEl || (this._hudEraEl = document.getElementById('hud-era'));
     if (eraEl) eraEl.textContent = `Era ${this.currentEra}: ${eraName}`;
 
     // Nexus HP bars
@@ -4089,10 +4437,10 @@ export class HordeScene extends Phaser.Scene {
     const enemyNexus = this.nexuses.find(n => n.team === enemyT);
     const myHp = myNexus ? myNexus.hp : maxNexus;
     const enemyHp = enemyNexus ? enemyNexus.hp : maxNexus;
-    const mineHpEl = document.getElementById('hud-nexus-mine');
-    const mineBarEl = document.getElementById('hud-nexus-mine-bar');
-    const enemyHpEl = document.getElementById('hud-nexus-enemy');
-    const enemyBarEl = document.getElementById('hud-nexus-enemy-bar');
+    const mineHpEl = this._hudNexusMineEl || (this._hudNexusMineEl = document.getElementById('hud-nexus-mine'));
+    const mineBarEl = this._hudNexusMineBarEl || (this._hudNexusMineBarEl = document.getElementById('hud-nexus-mine-bar'));
+    const enemyHpEl = this._hudNexusEnemyEl || (this._hudNexusEnemyEl = document.getElementById('hud-nexus-enemy'));
+    const enemyBarEl = this._hudNexusEnemyBarEl || (this._hudNexusEnemyBarEl = document.getElementById('hud-nexus-enemy-bar'));
     if (mineHpEl) mineHpEl.textContent = String(Math.ceil(myHp));
     if (mineBarEl) mineBarEl.style.width = `${(myHp / maxNexus) * 100}%`;
     if (enemyHpEl) enemyHpEl.textContent = String(Math.ceil(enemyHp));
@@ -4100,7 +4448,7 @@ export class HordeScene extends Phaser.Scene {
 
     // Resources
     const stock = this.baseStockpile[myT as 1 | 2];
-    const resEl = document.getElementById('hud-resources');
+    const resEl = this._hudResourcesEl || (this._hudResourcesEl = document.getElementById('hud-resources'));
     if (resEl) {
       const maxRes = 50; // visual bar max
       const resources = [
@@ -4125,14 +4473,14 @@ export class HordeScene extends Phaser.Scene {
           </div>
         </div>`;
       }
-      resEl.innerHTML = html;
+      if (html !== this._prevResHTML) { resEl.innerHTML = html; this._prevResHTML = html; }
     }
 
     // Hoard
     const tierColors: Record<number, string> = { 1: '#2E8B2E', 2: '#2266BB', 3: '#CC6A00', 4: '#BB2222', 5: '#B8860B' };
-    const totalEl = document.getElementById('hud-hoard-total');
+    const totalEl = this._hudHoardTotalEl || (this._hudHoardTotalEl = document.getElementById('hud-hoard-total'));
     if (totalEl) totalEl.textContent = `${p1.length} units`;
-    const hoardEl = document.getElementById('hud-hoard-list');
+    const hoardEl = this._hudHoardListEl || (this._hudHoardListEl = document.getElementById('hud-hoard-list'));
     if (hoardEl) {
       let html = '';
       for (const [type, def] of Object.entries(ANIMALS)) {
@@ -4146,11 +4494,11 @@ export class HordeScene extends Phaser.Scene {
         </div>`;
       }
       if (!html) html = '<div style="font-size:13px;color:#555;padding:4px;">No units yet</div>';
-      hoardEl.innerHTML = html;
+      if (html !== this._prevHoardHTML) { hoardEl.innerHTML = html; this._prevHoardHTML = html; }
     }
 
     // Production
-    const prodEl = document.getElementById('hud-production');
+    const prodEl = this._hudProductionEl || (this._hudProductionEl = document.getElementById('hud-production'));
     if (prodEl) {
       let html = '';
       const gnomeCountdown = Math.max(0, Math.ceil((FREE_GNOME_MS - this.freeGnomeTimer) / 1000));
@@ -4171,7 +4519,7 @@ export class HordeScene extends Phaser.Scene {
         </div>`;
       }
       if (myCamps.length === 0) html += '<div style="font-size:10px;color:#555;padding:4px;">No camps owned</div>';
-      prodEl.innerHTML = html;
+      if (html !== this._prevProdHTML) { prodEl.innerHTML = html; this._prevProdHTML = html; }
     }
 
     // ─── EQUIPMENT PANEL (hidden, internal) ───
@@ -4199,7 +4547,89 @@ export class HordeScene extends Phaser.Scene {
             ${owned ? `<div style="font-size:9px;color:#6a5a4a;margin-top:2px;">Say: "get a ${eq.name.toLowerCase()} then go..."</div>` : ''}
           </div>`;
       }
-      this.equipPanelEl.innerHTML = eqHTML;
+      if (eqHTML !== this._prevEquipHTML) { this.equipPanelEl.innerHTML = eqHTML; this._prevEquipHTML = eqHTML; }
+    }
+
+    // ─── HORDE TAB (live bestiary with game state) ───
+    if (this.charPanelTab === 'horde') {
+      const hordeWrap = this.charPanelEl?.querySelector('#horde-content') as HTMLElement;
+      if (hordeWrap) {
+        const tierColors2: Record<number, string> = { 1: '#2E8B2E', 2: '#2266BB', 3: '#CC6A00', 4: '#BB2222', 5: '#B8860B' };
+        const roleMap2: Record<string, string> = {
+          gnome: 'Gatherer', turtle: 'Tank / Hauler', skull: 'Bruiser', spider: 'Assassin',
+          hyena: 'Ranged DPS', rogue: 'Assassin', panda: 'Tank', lizard: 'Executioner',
+          minotaur: 'Commander', shaman: 'Mage', troll: 'Juggernaut',
+        };
+        // Count units and activity per type for my team
+        const myUnits = this.units.filter(u => u.team === myT && !u.dead);
+        const typeCounts: Record<string, number> = {};
+        const typeCarrying: Record<string, number> = {};
+        const typeWorking: Record<string, number> = {};
+        const typeIdle: Record<string, number> = {};
+        for (const u of myUnits) {
+          typeCounts[u.type] = (typeCounts[u.type] || 0) + 1;
+          if (u.carrying) typeCarrying[u.type] = (typeCarrying[u.type] || 0) + 1;
+          else if (u.loop) typeWorking[u.type] = (typeWorking[u.type] || 0) + 1;
+          else typeIdle[u.type] = (typeIdle[u.type] || 0) + 1;
+        }
+        // Count owned camps per type
+        const myCamps2: Record<string, number> = {};
+        for (const c of this.camps) {
+          if (c.owner === myT) myCamps2[c.animalType] = (myCamps2[c.animalType] || 0) + 1;
+        }
+
+        let hHTML = `<div style="font-size:18px;color:#4a3520;font-weight:800;letter-spacing:2px;margin-bottom:8px;text-align:center;font-family:'Fredoka',sans-serif;">BESTIARY</div>`;
+        hHTML += `<div style="font-size:12px;color:#6a5a4a;text-align:center;margin-bottom:12px;">${myUnits.length} units alive</div>`;
+
+        const unitOrder = ['gnome','turtle','skull','spider','hyena','rogue','panda','lizard','minotaur','shaman','troll'];
+        for (const type of unitOrder) {
+          const def = ANIMALS[type];
+          if (!def) continue;
+          const count = typeCounts[type] || 0;
+          const camps = myCamps2[type] || 0;
+          const tc = tierColors2[def.tier] || '#aaa';
+          const carrying = typeCarrying[type] || 0;
+          const working = typeWorking[type] || 0;
+          const idle = typeIdle[type] || 0;
+
+          // Status chips
+          let statusChips = '';
+          if (count > 0) {
+            if (carrying > 0) statusChips += `<span style="font-size:10px;background:rgba(255,180,40,0.3);color:#8B6914;padding:1px 6px;border-radius:4px;font-weight:700;">${carrying} hauling</span> `;
+            if (working > 0) statusChips += `<span style="font-size:10px;background:rgba(80,160,80,0.3);color:#2a6a2a;padding:1px 6px;border-radius:4px;font-weight:700;">${working} working</span> `;
+            if (idle > 0) statusChips += `<span style="font-size:10px;background:rgba(120,120,120,0.3);color:#555;padding:1px 6px;border-radius:4px;font-weight:700;">${idle} idle</span> `;
+          }
+
+          const dimmed = count === 0 && camps === 0;
+          const opacity = dimmed ? '0.45' : '1';
+          const border = count > 0 ? tc : 'rgba(139,115,85,0.4)';
+
+          hHTML += `<div style="background:rgba(255,252,245,0.6);border:2px solid ${border};border-radius:12px;padding:10px;margin-bottom:8px;opacity:${opacity};">
+            <div style="display:flex;gap:10px;align-items:center;">
+              <div style="flex-shrink:0;width:48px;height:48px;background:rgba(0,0,0,0.1);border:2px solid ${tc};border-radius:10px;display:flex;align-items:center;justify-content:center;overflow:hidden;">
+                ${avatarImg(type, 44) || `<span style="font-size:28px;">${def.emoji}</span>`}
+              </div>
+              <div style="flex:1;min-width:0;">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">
+                  <span style="font-size:16px;font-weight:800;color:#1a0a00;font-family:'Fredoka',sans-serif;">${cap(type)}</span>
+                  <span style="font-size:11px;font-weight:700;color:#fff;background:${tc};padding:1px 6px;border-radius:4px;">T${def.tier}</span>
+                  <span style="font-size:12px;color:#6a5a4a;font-style:italic;margin-left:auto;">${roleMap2[type] || ''}</span>
+                </div>
+                <div style="display:flex;gap:8px;font-size:11px;color:#4a3520;font-weight:600;flex-wrap:wrap;">
+                  <span>\u2764\uFE0F${def.hp}</span> <span>\u2694\uFE0F${def.attack}</span> <span>\u{1F3C3}${def.speed}</span>
+                </div>
+              </div>
+              <div style="text-align:right;">
+                <div style="font-size:22px;font-weight:800;color:${count > 0 ? tc : '#999'};">${count}</div>
+                ${camps > 0 ? `<div style="font-size:10px;color:#6a5a4a;">${camps} camp${camps > 1 ? 's' : ''}</div>` : ''}
+              </div>
+            </div>
+            ${statusChips ? `<div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;">${statusChips}</div>` : ''}
+            <div style="margin-top:6px;font-size:11px;color:#7B2FBE;font-weight:600;">${def.ability}: <span style="color:#4a3520;font-weight:400;font-style:italic;">${def.desc}</span></div>
+          </div>`;
+        }
+        if (hHTML !== this._prevHordeTabHTML) { hordeWrap.innerHTML = hHTML; this._prevHordeTabHTML = hHTML; }
+      }
     }
 
     // ─── ARMORY TAB (interactive unlock buttons) ───
@@ -4356,28 +4786,28 @@ export class HordeScene extends Phaser.Scene {
             // Voice command — prefer workflow's stored command, fall back to lastHoardCommand
             const displayCmd = (wf && wf.voiceCommand) ? wf.voiceCommand : lastCmd;
             if (displayCmd) {
-              cHTML += `<div style="font-size:11px;color:#2a1a0a;font-style:italic;margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:rgba(0,0,0,0.08);padding:3px 8px;border-radius:6px;" title="${displayCmd.replace(/"/g, '&quot;')}">
+              cHTML += `<div style="font-size:11px;color:#2a1a0a;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:rgba(0,0,0,0.08);padding:3px 8px;border-radius:6px;" title="${displayCmd.replace(/"/g, '&quot;')}">
                 \u{1F3A4} "${displayCmd}"
               </div>`;
             }
+            // Unit reaction
+            const reaction = this.lastHoardReaction[hType] || '';
+            if (reaction) {
+              cHTML += `<div style="font-size:11px;color:#6B5335;font-style:italic;margin-top:2px;margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:3px 8px;border-radius:6px;background:rgba(139,115,85,0.1);">
+                \u{1F4AC} "${reaction}"
+              </div>`;
+            }
+            if (!displayCmd && !reaction) cHTML += '<div style="margin-bottom:6px;"></div>';
 
             // Workflow steps — numbered vertical list for clarity
             if (wf && wf.steps.length > 0) {
               cHTML += `<div style="display:flex;flex-direction:column;gap:3px;margin-bottom:6px;">`;
               for (let si = 0; si < wf.steps.length; si++) {
                 const step = wf.steps[si];
-                const isCurrent = si === wf.currentStep;
                 const isLoopStart = si === wf.loopFrom;
-                const isPast = si < wf.currentStep;
                 const label = this.formatWorkflowStep(step);
-                const bg = isCurrent ? 'rgba(255,217,61,0.35)' : isPast ? 'rgba(68,204,68,0.15)' : 'rgba(0,0,0,0.06)';
-                const border = isCurrent ? '1px solid #B8860B' : '1px solid rgba(139,115,85,0.25)';
-                const glow = isCurrent ? 'box-shadow:0 0 6px rgba(255,217,61,0.5);' : '';
-                const color = isCurrent ? '#1a0a00' : isPast ? '#2a6a2a' : '#3a2a1a';
-                const indicator = isCurrent ? '\u25B6' : isPast ? '\u2713' : '\u25CB';
-                const indicatorColor = isCurrent ? '#B8860B' : isPast ? '#1a6a1a' : '#6a5a4a';
-                cHTML += `<div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;padding:4px 8px;border-radius:8px;background:${bg};border:${border};color:${color};${glow}">`;
-                cHTML += `<span style="color:${indicatorColor};font-size:10px;flex-shrink:0;">${indicator}</span>`;
+                cHTML += `<div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;padding:4px 8px;border-radius:8px;background:rgba(0,0,0,0.06);border:1px solid rgba(139,115,85,0.25);color:#3a2a1a;">`;
+                cHTML += `<span style="color:#6a5a4a;font-size:10px;flex-shrink:0;">\u25CB</span>`;
                 if (isLoopStart && si > 0) cHTML += `<span style="font-size:9px;color:#7B2FBE;flex-shrink:0;" title="Loop restarts here">\u{1F504}</span>`;
                 cHTML += `<span style="flex:1;">${label}</span>`;
                 cHTML += `<span style="font-size:9px;color:#6a5a4a;flex-shrink:0;">${si + 1}/${wf.steps.length}</span>`;
@@ -4386,6 +4816,17 @@ export class HordeScene extends Phaser.Scene {
               cHTML += `</div>`;
             } else {
               cHTML += `<div style="font-size:12px;color:#5a4a3a;font-style:italic;margin-bottom:6px;text-align:center;padding:8px 0;">No orders \u2014 use voice or text to command</div>`;
+            }
+
+            // Active plan indicator
+            const activePlan = this.activePlans.find(p => p.team === myT && (p.subject === hType || p.subject === 'all'));
+            if (activePlan) {
+              const phase = activePlan.phases[activePlan.currentPhase];
+              const phaseLabel = phase ? phase.label : 'completing...';
+              cHTML += `<div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;padding:5px 8px;border-radius:8px;background:rgba(69,230,176,0.2);border:1px solid #45E6B0;color:#1a6a3a;margin-bottom:6px;">
+                <span style="font-size:12px;">📋</span>
+                <span style="flex:1;">Plan: ${activePlan.goalLabel} — Phase ${activePlan.currentPhase + 1}/${activePlan.phases.length}: ${phaseLabel}</span>
+              </div>`;
             }
 
             // Modifiers
@@ -4407,12 +4848,12 @@ export class HordeScene extends Phaser.Scene {
             cHTML += `</div>`;
           }
         }
-        cmdWrap.innerHTML = cHTML;
+        if (cHTML !== this._prevCmdHTML) { cmdWrap.innerHTML = cHTML; this._prevCmdHTML = cHTML; }
       }
     }
 
     // Camps
-    const campsEl = document.getElementById('hud-camps');
+    const campsEl = this._hudCampsEl || (this._hudCampsEl = document.getElementById('hud-camps'));
     if (campsEl) {
       const knownCamps = this.camps.filter(c =>
         c.owner === myT || c.scouted || this.isInVision(c.x, c.y)
@@ -4443,11 +4884,11 @@ export class HordeScene extends Phaser.Scene {
         html += `<div style="display:flex;align-items:center;gap:5px;font-size:12px;color:${color};padding:3px 0;${!inVision ? 'opacity:0.6;' : ''}">${dot} ${campIcon} ${c.name}${stale}</div>`;
       }
       if (knownCamps.length === 0) html += '<div style="font-size:10px;color:#555;padding:4px;">No camps discovered</div>';
-      campsEl.innerHTML = html;
+      if (html !== this._prevCampsHTML) { campsEl.innerHTML = html; this._prevCampsHTML = html; }
     }
 
     // Modifiers
-    const modsEl = document.getElementById('hud-modifiers');
+    const modsEl = this._hudModifiersEl || (this._hudModifiersEl = document.getElementById('hud-modifiers'));
     if (modsEl) {
       const modColors: Record<string, { bg: string; fg: string }> = {
         spread: { bg: 'rgba(69,153,255,0.2)', fg: '#4499FF' },
@@ -4471,18 +4912,18 @@ export class HordeScene extends Phaser.Scene {
         html += `<span style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:10px;background:${mc.bg};color:${mc.fg};text-transform:uppercase;">${mod}</span>`;
       }
       if (!html) html = '<span style="font-size:9px;color:#555;">None active</span>';
-      modsEl.innerHTML = html;
+      if (html !== this._prevModsHTML) { modsEl.innerHTML = html; this._prevModsHTML = html; }
     }
 
     // Buffs
-    const buffsEl = document.getElementById('hud-buffs');
+    const buffsEl = this._hudBuffsEl || (this._hudBuffsEl = document.getElementById('hud-buffs'));
     if (buffsEl) {
       const b = this.getBuffs(myT as 1 | 2);
       let html = '';
       if (b.speed > 0) html += `<div style="font-size:10px;color:#FFD93D;font-weight:700;">\u26A1 Speed +${Math.round(b.speed * 100)}%</div>`;
       if (b.attack > 0) html += `<div style="font-size:10px;color:#FF5555;font-weight:700;">\u2694\uFE0F Attack +${Math.round(b.attack * 100)}%</div>`;
       if (b.hp > 0) html += `<div style="font-size:10px;color:#4a3520;font-weight:700;">\u2764\uFE0F HP +${Math.round(b.hp * 100)}%</div>`;
-      buffsEl.innerHTML = html;
+      if (html !== this._prevBuffsHTML) { buffsEl.innerHTML = html; this._prevBuffsHTML = html; }
     }
 
     // Update hoard selector counts
@@ -4524,9 +4965,19 @@ export class HordeScene extends Phaser.Scene {
     this._frameCount++;
     this.rebuildSpatialGrid();
 
-    // Process queued A* pathfinding requests (max 3 per frame)
+    // Build ID lookup maps for O(1) access
+    this._unitById.clear();
+    for (const u of this.units) if (!u.dead) this._unitById.set(u.id, u);
+    this._groundItemById.clear();
+    for (const i of this.groundItems) if (!i.dead) this._groundItemById.set(i.id, i);
+
+    // Process queued A* pathfinding requests
     this._pathsThisFrame = 0;
-    while (this.pathQueue.length > 0 && this._pathsThisFrame < 3) {
+    this._framePathCache.clear();
+    for (const arr of this._frameAvoidPenalty.values()) this._avoidPenaltyPool.push(arr);
+    this._frameAvoidPenalty.clear();
+    this._frameOccupiedReady = false;
+    while (this.pathQueue.length > 0 && this._pathsThisFrame < HordeScene.MAX_PATHS_PER_FRAME) {
       const req = this.pathQueue.shift()!;
       const unit = req.unit as HUnit;
       if (!unit.dead) {
@@ -4549,10 +5000,24 @@ export class HordeScene extends Phaser.Scene {
     }
 
     this.gameTime += delta;
+
+    // Tick down camp loot buffs
+    for (let i = this.teamBuffs.length - 1; i >= 0; i--) {
+      this.teamBuffs[i].remaining -= delta;
+      if (this.teamBuffs[i].remaining <= 0) this.teamBuffs.splice(i, 1);
+    }
+
+    // Track peak army size
+    for (const t of [1, 2] as const) {
+      const alive = this.units.filter(u => u.team === t && !u.dead).length;
+      if (alive > this.matchStats.peakArmySize[t]) this.matchStats.peakArmySize[t] = alive;
+    }
+
     this.updateFreeGnomes(delta);
     this.updateCarrotSpawning(delta);
     this.updateWildAnimals(delta);
     this.updateWorkflows();
+    this.updateAdvancedPlans();
     this.updateResourcePickup();
     this.updateDeliveries();
     this.updateMovement(dt);
@@ -4571,16 +5036,27 @@ export class HordeScene extends Phaser.Scene {
     this.updateGroundItems(delta);
     this.updateUnitSprites();
     this.updateDebugOverlay();
+    if (this.debugHitboxes) this.drawDebugHitboxes();
+    if (this.isDebug) this.drawDebugBoundaries();
     this.updateCampVisuals();
     this.updateMineVisuals();
     this.updateArmoryVisuals();
     this.drawNexusBars();
     this.updateFog();
     this.updateFogVisibility();
-    this.updateHUD();
+    if (this._frameCount % 4 === 0) this.updateHUD();
     if (this.isDebug) this.updateDebugResourceDisplay();
     this.updateThoughtBubbles(delta);
     this.checkWin();
+
+    // Host: drain queued remote commands from guest
+    if (this.isOnline && this.isHost && !this.isProcessingCommand && this.pendingRemoteCommands.length > 0) {
+      const cmd = this.pendingRemoteCommands.shift()!;
+      const prevHoard = this.selectedHoard;
+      this.selectedHoard = cmd.selectedHoard;
+      this.handleCommand(cmd.text, cmd.team);
+      this.selectedHoard = prevHoard;
+    }
 
     // Host: push sync state to Firebase
     if (this.isOnline && this.isHost && this.firebase && this.gameId) {
@@ -4642,6 +5118,337 @@ export class HordeScene extends Phaser.Scene {
     return this.unlockedEquipment[team].get(eqType) || 0;
   }
 
+  // ─── ADVANCED PLANS ────────────────────────────────────────
+
+  /**
+   * Resolve a plan goal into a sequence of phases. Pure logic — no side effects.
+   * Returns null if the goal is invalid or already satisfied.
+   */
+  private resolvePlan(
+    goal: { type: string; equipment?: EquipmentType; resource?: ResourceType; amount?: number; thenAction?: string },
+    team: 1 | 2,
+    subject: string,
+    originalCommand: string,
+  ): AdvancedPlan | null {
+    const planId = `plan_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const stock = this.baseStockpile[team];
+    const projectedStock = { ...stock };
+    const phases: PlanPhase[] = [];
+    let phaseIdx = 0;
+
+    const makePhaseId = () => `${planId}_p${phaseIdx++}`;
+
+    // Helper: build gathering workflow for a resource type
+    const gatherWorkflow = (res: ResourceType, mods?: { caution?: string }): HWorkflow => {
+      let steps: WorkflowStep[];
+      const useSafe = mods?.caution === 'safe';
+      if (res === 'carrot') {
+        steps = useSafe
+          ? [{ action: 'collect', resourceType: 'carrot' as ResourceType }]
+          : [{ action: 'seek_resource', resourceType: 'carrot' as ResourceType }, { action: 'deliver', target: 'base' }];
+      } else if (res === 'meat') {
+        steps = useSafe
+          ? [{ action: 'hunt' }, { action: 'collect', resourceType: 'meat' as ResourceType }, { action: 'deliver', target: 'base' }]
+          : [{ action: 'hunt' }, { action: 'seek_resource', resourceType: 'meat' as ResourceType }, { action: 'deliver', target: 'base' }];
+      } else if (res === 'crystal') {
+        steps = useSafe
+          ? [{ action: 'hunt', targetType: 'minotaur' }, { action: 'collect', resourceType: 'crystal' as ResourceType }, { action: 'deliver', target: 'base' }]
+          : [{ action: 'hunt', targetType: 'minotaur' }, { action: 'seek_resource', resourceType: 'crystal' as ResourceType }, { action: 'deliver', target: 'base' }];
+      } else {
+        // metal — requires pickaxe equipped
+        steps = [{ action: 'equip', equipmentType: 'pickaxe' as EquipmentType }, { action: 'mine' }, { action: 'deliver', target: 'base' }];
+        return { steps, currentStep: 0, label: `Mine ⚙️ → base`, loopFrom: 1, playedOnce: false, voiceCommand: originalCommand };
+      }
+      const label = useSafe ? `Safe gather ${RESOURCE_EMOJI[res]}` : `Gather ${RESOURCE_EMOJI[res]} → base`;
+      return { steps, currentStep: 0, label, loopFrom: 0, playedOnce: false, voiceCommand: originalCommand };
+    };
+
+    // Helper: add phases to unlock a single equipment type at a target level,
+    // assuming all its prerequisites are already met.
+    const addUnlockPhases = (eqType: EquipmentType, targetLevel: number, mods?: { caution?: string }) => {
+      const def = EQUIPMENT.find(e => e.id === eqType)!;
+      const costMult = EQUIP_LEVEL_COST_MULT[targetLevel];
+
+      // Compute required resources and deficit (using projectedStock to account for earlier unlock costs)
+      for (const [res, baseAmt] of Object.entries(def.cost)) {
+        const needed = Math.ceil(baseAmt! * costMult);
+        const have = projectedStock[res as ResourceType] || 0;
+        const deficit = needed - have;
+        if (deficit > 0) {
+          phases.push({
+            id: makePhaseId(),
+            workflow: gatherWorkflow(res as ResourceType, mods),
+            completionCheck: 'resource_threshold',
+            resourceTarget: { [res]: needed },
+            label: `Gather ${deficit} ${RESOURCE_EMOJI[res as ResourceType]}`,
+          });
+        }
+      }
+
+      // Unlock phase (instant — resources are now sufficient)
+      const totalCost = Object.entries(def.cost).map(([r, a]) => `${Math.ceil(a! * costMult)}${RESOURCE_EMOJI[r as ResourceType]}`).join('+');
+      phases.push({
+        id: makePhaseId(),
+        workflow: null, // instant
+        completionCheck: 'equipment_unlocked',
+        equipTarget: { type: eqType, level: targetLevel },
+        onComplete: { unlock: eqType },
+        label: `Unlock ${def.emoji} ${def.name} (${totalCost})`,
+      });
+
+      // Deduct projected cost so subsequent phases see correct resource levels
+      for (const [res2, baseAmt2] of Object.entries(def.cost)) {
+        projectedStock[res2 as ResourceType] = Math.max(0, (projectedStock[res2 as ResourceType] || 0) - Math.ceil(baseAmt2! * costMult));
+      }
+    };
+
+    if (goal.type === 'unlock_equipment' && goal.equipment) {
+      const eqType = goal.equipment;
+      const def = EQUIPMENT.find(e => e.id === eqType);
+      if (!def) return null;
+
+      const currentLevel = this.getEquipLevel(team, eqType);
+      const targetLevel = currentLevel + 1;
+      if (targetLevel > MAX_EQUIP_LEVEL) return null; // already maxed
+
+      const costMult = EQUIP_LEVEL_COST_MULT[targetLevel];
+
+      // Check if we can afford it right now (instant plan)
+      let canAfford = true;
+      for (const [res, amt] of Object.entries(def.cost)) {
+        if ((projectedStock[res as ResourceType] || 0) < Math.ceil(amt! * costMult)) { canAfford = false; break; }
+      }
+
+      if (canAfford) {
+        // Instant unlock — just do it now
+        phases.push({
+          id: makePhaseId(),
+          workflow: null,
+          completionCheck: 'equipment_unlocked',
+          equipTarget: { type: eqType, level: targetLevel },
+          onComplete: { unlock: eqType },
+          label: `Unlock ${def.emoji} ${def.name}`,
+        });
+      } else {
+        // Resolve prerequisite chain
+        // Check if any resource in the cost needs equipment we don't have
+        for (const res of Object.keys(def.cost) as ResourceType[]) {
+          const gatherNeed = RESOURCE_GATHER_NEEDS[res];
+          if (gatherNeed.needsEquipment) {
+            const prereqEq = gatherNeed.needsEquipment;
+            if (this.getEquipLevel(team, prereqEq) === 0) {
+              // Need to unlock prerequisite equipment first
+              // Also check THAT equipment's prereqs (recursive, but only 1 level deep in practice)
+              for (const deepPrereq of EQUIPMENT_PREREQS[prereqEq]) {
+                if (this.getEquipLevel(team, deepPrereq) === 0) {
+                  addUnlockPhases(deepPrereq, 1);
+                }
+              }
+              addUnlockPhases(prereqEq, 1);
+            }
+          }
+        }
+        // Now add phases for the actual target equipment
+        addUnlockPhases(eqType, targetLevel);
+      }
+
+      // Add thenAction as final phase if specified
+      if (goal.thenAction) {
+        const finalWf = this.parseThenAction(goal.thenAction, eqType, originalCommand);
+        if (finalWf) {
+          phases.push({
+            id: makePhaseId(),
+            workflow: finalWf,
+            completionCheck: 'final',
+            label: `${goal.thenAction}`,
+          });
+        }
+      }
+
+      const levelLabel = currentLevel === 0 ? '' : ` Lvl ${targetLevel}`;
+      return {
+        id: planId,
+        phases,
+        currentPhase: 0,
+        team,
+        subject,
+        goalLabel: `${def.emoji} ${def.name}${levelLabel}`,
+        originalCommand,
+        completed: false,
+        finalWorkflow: undefined,
+      };
+
+    } else if (goal.type === 'stockpile_resource' && goal.resource) {
+      const res = goal.resource;
+      const gatherNeed = RESOURCE_GATHER_NEEDS[res];
+
+      // If resource needs equipment we don't have, prepend unlock phases
+      if (gatherNeed.needsEquipment) {
+        const prereqEq = gatherNeed.needsEquipment;
+        if (this.getEquipLevel(team, prereqEq) === 0) {
+          for (const deepPrereq of EQUIPMENT_PREREQS[prereqEq]) {
+            if (this.getEquipLevel(team, deepPrereq) === 0) {
+              addUnlockPhases(deepPrereq, 1);
+            }
+          }
+          addUnlockPhases(prereqEq, 1);
+        }
+      }
+
+      // Final looping gather phase
+      phases.push({
+        id: makePhaseId(),
+        workflow: gatherWorkflow(res),
+        completionCheck: 'final',
+        label: `Stockpile ${RESOURCE_EMOJI[res]}`,
+      });
+
+      return {
+        id: planId,
+        phases,
+        currentPhase: 0,
+        team,
+        subject,
+        goalLabel: `Stockpile ${RESOURCE_EMOJI[res]}`,
+        originalCommand,
+        completed: false,
+      };
+    }
+
+    return null;
+  }
+
+  /** Parse a "thenAction" string into a final workflow (e.g. "defend" → defend base) */
+  private parseThenAction(action: string, equippedType: EquipmentType, voiceCmd: string): HWorkflow | null {
+    const lo = action.toLowerCase().trim();
+    const steps: WorkflowStep[] = [{ action: 'equip', equipmentType: equippedType }];
+    if (/defend|guard|protect/.test(lo)) {
+      steps.push({ action: 'defend', target: 'base' });
+    } else if (/attack|fight|charge|assault/.test(lo)) {
+      steps.push({ action: 'attack_enemies' });
+    } else if (/nexus|throne|enemy.?base/.test(lo)) {
+      steps.push({ action: 'attack_enemies' });
+    } else if (/gather|farm|collect/.test(lo)) {
+      steps.push({ action: 'seek_resource', resourceType: 'carrot' as ResourceType }, { action: 'deliver', target: 'base' });
+    } else if (/mine/.test(lo)) {
+      steps.push({ action: 'mine' }, { action: 'deliver', target: 'base' });
+    } else {
+      return null;
+    }
+    return { steps, currentStep: 0, label: `${action}`, loopFrom: 1, playedOnce: false, voiceCommand: voiceCmd };
+  }
+
+  /** Assign a workflow to all units of a subject+team group, and store as group workflow */
+  private assignWorkflowToGroup(workflow: HWorkflow, subject: string, team: 1 | 2) {
+    const sel = this.units.filter(u => u.team === team && !u.dead && (subject === 'all' || u.type === subject));
+    for (const u of sel) {
+      u.loop = { ...workflow, currentStep: 0 };
+      const gm = this.groupModifiers[`${u.type}_${team}`];
+      if (gm) u.mods = { ...gm };
+    }
+    if (subject === 'all') {
+      const types = new Set(sel.map(u => u.type));
+      for (const t of types) this.groupWorkflows[`${t}_${team}`] = workflow;
+    } else {
+      this.groupWorkflows[`${subject}_${team}`] = workflow;
+    }
+  }
+
+  /** Cancel all active plans for a given subject+team */
+  private cancelPlansForGroup(subject: string, team: 1 | 2) {
+    this.activePlans = this.activePlans.filter(p => {
+      if (p.team !== team) return true;
+      if (subject === 'all' || p.subject === subject || p.subject === 'all') {
+        return false; // remove it
+      }
+      return true;
+    });
+  }
+
+  /** Called each frame — monitor plan phases and advance when conditions are met */
+  private updateAdvancedPlans() {
+    for (let i = this.activePlans.length - 1; i >= 0; i--) {
+      const plan = this.activePlans[i];
+      if (plan.completed) { this.activePlans.splice(i, 1); continue; }
+
+      const phase = plan.phases[plan.currentPhase];
+      if (!phase) { plan.completed = true; this.activePlans.splice(i, 1); continue; }
+
+      let phaseComplete = false;
+
+      if (phase.completionCheck === 'resource_threshold' && phase.resourceTarget) {
+        const stock = this.baseStockpile[plan.team];
+        phaseComplete = true;
+        for (const [res, target] of Object.entries(phase.resourceTarget)) {
+          if ((stock[res as ResourceType] || 0) < target!) { phaseComplete = false; break; }
+        }
+      } else if (phase.completionCheck === 'equipment_unlocked' && phase.equipTarget) {
+        const currentLevel = this.getEquipLevel(plan.team, phase.equipTarget.type);
+        if (phase.workflow === null) {
+          // Instant phase — try to unlock now
+          if (currentLevel >= phase.equipTarget.level) {
+            phaseComplete = true; // already at level
+          } else {
+            const success = this.unlockEquipment(plan.team, phase.equipTarget.type);
+            if (success) {
+              const def = EQUIPMENT.find(e => e.id === phase.equipTarget!.type);
+              const newLevel = this.getEquipLevel(plan.team, phase.equipTarget.type);
+              const msg = newLevel === 1
+                ? `${def?.emoji} ${def?.name} unlocked!`
+                : `${def?.emoji} ${def?.name} upgraded to Lvl ${newLevel}!`;
+              if (plan.team === this.myTeam) this.showFeedback(msg, '#FFD700');
+              phaseComplete = true;
+            }
+            // If unlock fails (shouldn't happen if resource phases ran), keep waiting
+          }
+        } else {
+          phaseComplete = currentLevel >= phase.equipTarget.level;
+        }
+      }
+      // 'final' never completes — loops forever
+
+      if (phaseComplete) {
+        // Fire onComplete actions
+        if (phase.onComplete?.unlock && phase.completionCheck !== 'equipment_unlocked') {
+          // Resource threshold phases that also unlock — try to unlock
+          const success = this.unlockEquipment(plan.team, phase.onComplete.unlock);
+          if (success) {
+            const def = EQUIPMENT.find(e => e.id === phase.onComplete!.unlock);
+            const newLevel = this.getEquipLevel(plan.team, phase.onComplete.unlock);
+            const msg = newLevel === 1
+              ? `${def?.emoji} ${def?.name} unlocked!`
+              : `${def?.emoji} ${def?.name} upgraded to Lvl ${newLevel}!`;
+            if (plan.team === this.myTeam) this.showFeedback(msg, '#FFD700');
+          }
+        }
+
+        // Advance to next phase
+        plan.currentPhase++;
+        if (plan.currentPhase >= plan.phases.length) {
+          // Plan complete
+          plan.completed = true;
+          if (plan.team === this.myTeam) {
+            this.showFeedback(`Plan complete: ${plan.goalLabel}`, '#45E6B0');
+          }
+          if (plan.finalWorkflow) {
+            this.assignWorkflowToGroup(plan.finalWorkflow, plan.subject, plan.team);
+          }
+          this.activePlans.splice(i, 1);
+        } else {
+          // Start next phase
+          const nextPhase = plan.phases[plan.currentPhase];
+          if (plan.team === this.myTeam) {
+            this.showFeedback(`Phase ${plan.currentPhase + 1}/${plan.phases.length}: ${nextPhase.label}`, '#FFD93D');
+          }
+          if (nextPhase.workflow) {
+            this.assignWorkflowToGroup(nextPhase.workflow, plan.subject, plan.team);
+          }
+          // If null workflow (instant phase), it'll be processed next frame
+        }
+      }
+    }
+  }
+
   private getUnitEquipBuffs(u: HUnit) {
     let speed = 0, attack = 0, hp = 0, damageTaken = 1, atkSpeedMult = 1, pickupRange = 1, gatherSpeed = 1;
     if (!u.equipment || u.equipLevel <= 0) return { speed, attack, hp, damageTaken, atkSpeedMult, pickupRange, gatherSpeed };
@@ -4688,10 +5495,13 @@ export class HordeScene extends Phaser.Scene {
       const unlocked = eqLevel > 0;
       if (arm.label) {
         const lvlTag = eqLevel > 0 ? ` ${'⭐'.repeat(eqLevel)}` : '';
-        arm.label.setText(unlocked ? `${name}${lvlTag}` : `${name} 🔒`);
-        arm.label.setColor(unlocked ? (arm.team === 1 ? '#4499FF' : '#FF5555') : '#888888');
+        const newText = unlocked ? `${name}${lvlTag}` : `${name} 🔒`;
+        const newColor = unlocked ? (arm.team === 1 ? '#4499FF' : '#FF5555') : '#888888';
+        if (arm.label.text !== newText) arm.label.setText(newText);
+        if ((arm as any)._prevColor !== newColor) { arm.label.setColor(newColor); (arm as any)._prevColor = newColor; }
         const zoom = this.cameras.main.zoom;
-        arm.label.setScale(Math.max(0.8, 1.0 / zoom));
+        const newScale = Math.max(0.8, 1.0 / zoom);
+        if (Math.abs(arm.label.scaleX - newScale) > 0.01) arm.label.setScale(newScale);
       }
     }
   }
@@ -4716,9 +5526,9 @@ export class HordeScene extends Phaser.Scene {
   // ─── MOVEMENT (horde flocking) ─────────────────────────────
 
   private updateMovement(dt: number) {
-    // ─── Stuck detection (every 30 frames) ───
+    // ─── Stuck detection (every 60 frames ≈ once per second at 60fps) ───
     this.stuckCheckCounter++;
-    if (this.stuckCheckCounter % 30 === 0) {
+    if (this.stuckCheckCounter % 60 === 0) {
       for (const u of this.units) {
         if (u.dead || u.team === 0) continue;
         if (u.stuckCooldown > 0) { u.stuckCooldown--; continue; }
@@ -4727,7 +5537,7 @@ export class HordeScene extends Phaser.Scene {
         const checkDist = Math.sqrt(checkDx * checkDx + checkDy * checkDy);
         if (checkDist < 5) {
           u.stuckFrames++;
-          if (u.stuckFrames >= 3) {
+          if (u.stuckFrames >= 2) {
             this.nudgeUnit(u);
             u.stuckFrames = 0;
           }
@@ -4737,6 +5547,18 @@ export class HordeScene extends Phaser.Scene {
         u.lastCheckX = u.x;
         u.lastCheckY = u.y;
       }
+    }
+
+    // Pre-compute set of camp IDs that have neutral defenders (for safe-move avoidance)
+    const defendedCamps = new Set<string>();
+    for (const u of this.units) { if (!u.dead && u.team === 0 && u.campId) defendedCamps.add(u.campId); }
+
+    // Pre-compute tight formation groups
+    const tightGroups = new Map<string, HUnit[]>();
+    for (const u of this.units) {
+      if (u.dead || u.mods.formation !== 'tight') continue;
+      const k = `${u.team}_${u.type}`;
+      const g = tightGroups.get(k); g ? g.push(u) : tightGroups.set(k, [u]);
     }
 
     for (const u of this.units) {
@@ -4755,25 +5577,33 @@ export class HordeScene extends Phaser.Scene {
         const isSafeMover = this.isNonCombatStep(u) && u.mods.caution !== 'aggressive';
 
         // Check if path needs recomputation
-        const targetMoved = Math.abs(u.pathTargetX - u.targetX) > 48 || Math.abs(u.pathTargetY - u.targetY) > 48;
-        const pathStale = u.pathAge > 1200;
-        const needsPath = u.pathWaypoints === null || targetMoved || pathStale;
+        const targetMoved = Math.abs(u.pathTargetX - u.targetX) > 128 || Math.abs(u.pathTargetY - u.targetY) > 128;
+        const pathStale = u.pathAge > 2000;
+        const needsPath = !u.pathWaypoints?.length || targetMoved || pathStale;
 
         if (needsPath) {
           const routeDx = u.targetX - u.x, routeDy = u.targetY - u.y;
           const routeLen = Math.sqrt(routeDx * routeDx + routeDy * routeDy);
-          const sampleCount = Math.min(12, Math.ceil(routeLen / 80)); // sample every ~80px for rock detection
+          const _CELL = HordeScene.PATH_CELL;
+          const _G = HordeScene.PATH_GRID;
+          const halfCell = _CELL * 0.5;
+          const sampleCount = Math.max(2, Math.ceil(routeLen / halfCell));
           let obstacleOnRoute = false;
 
-          // Check for rocks on route (all player units) — use wider path radius
-          const rr = HordeScene.ROCK_PATH_RADIUS * HordeScene.ROCK_PATH_RADIUS;
-          for (let si = 0; si <= sampleCount && !obstacleOnRoute; si++) {
-            const t = si / Math.max(sampleCount, 1);
-            const sx = u.x + routeDx * t, sy = u.y + routeDy * t;
-            for (const rp of this.rockCollisionPoints) {
-              if ((sx - rp.x) ** 2 + (sy - rp.y) ** 2 < rr) { obstacleOnRoute = true; break; }
+          // Grid cell-walk: sample at half-cell intervals using _staticBlockedGrid (same grid A* uses)
+          if (this._staticBlockedGrid) {
+            for (let si = 0; si <= sampleCount && !obstacleOnRoute; si++) {
+              const t = si / Math.max(sampleCount, 1);
+              const sx = u.x + routeDx * t, sy = u.y + routeDy * t;
+              const gx = Math.floor(sx / _CELL), gy = Math.floor(sy / _CELL);
+              if (gx >= 0 && gx < _G && gy >= 0 && gy < _G && this._staticBlockedGrid[gy * _G + gx] === 1) {
+                obstacleOnRoute = true;
+              }
             }
           }
+
+          // Skip A* for very close targets with no obstacle — direct movement handles it
+          if (routeLen < 192 && !obstacleOnRoute) { u.pathWaypoints = null; }
 
           // For safe non-combat units: also check threats on route
           let threatOnRoute = false;
@@ -4782,16 +5612,16 @@ export class HordeScene extends Phaser.Scene {
             for (let si = 0; si <= sampleCount && !threatOnRoute; si++) {
               const t = si / Math.max(sampleCount, 1);
               const sx = u.x + routeDx * t, sy = u.y + routeDy * t;
-              for (const o of this.units) {
+              const nearbyThreats = this.getNearbyUnits(sx, sy, astarAvoid);
+              for (const o of nearbyThreats) {
                 if (o.dead || o.team === astarTeam) continue;
                 if (o.team === 0 && o.campId === null) continue;
-                const dist2 = (sx - o.x) ** 2 + (sy - o.y) ** 2;
-                if (dist2 < astarAvoid * astarAvoid) { threatOnRoute = true; break; }
+                threatOnRoute = true; break;
               }
               if (!threatOnRoute) {
                 for (const c of this.camps) {
                   if (c.owner === astarTeam) continue;
-                  const hasD = this.units.some(g => g.campId === c.id && g.team === 0 && !g.dead);
+                  const hasD = defendedCamps.has(c.id);
                   if (!hasD && c.owner === 0) continue;
                   const dist2 = (sx - c.x) ** 2 + (sy - c.y) ** 2;
                   if (dist2 < (astarAvoid * 1.5) ** 2) { threatOnRoute = true; break; }
@@ -4801,9 +5631,20 @@ export class HordeScene extends Phaser.Scene {
           }
 
           if (obstacleOnRoute || threatOnRoute) {
-            // rockOnly=true for non-safe units (avoid rocks but not enemies)
-            if (this._pathsThisFrame < 3) {
+            // Path sharing: check cache by bucketed (start, target, team)
+            const cacheKey = `${Math.round(u.x/192)}_${Math.round(u.y/192)}_${Math.round(u.targetX/192)}_${Math.round(u.targetY/192)}_${u.team}`;
+            if (this._framePathCache.has(cacheKey)) {
+              const cached = this._framePathCache.get(cacheKey)!;
+              u.pathWaypoints = cached ? cached.map(p => ({...p})) : null;
+              u.pathAge = 0;
+              u.pathTargetX = u.targetX;
+              u.pathTargetY = u.targetY;
+            } else if (this._pathsThisFrame < HordeScene.MAX_PATHS_PER_FRAME) {
               u.pathWaypoints = this.computeSafePath(u, !isSafeMover);
+              if (!u.pathWaypoints && isSafeMover) {
+                u.pathWaypoints = this.computeSafePath(u, true);
+              }
+              this._framePathCache.set(cacheKey, u.pathWaypoints);
               u.pathAge = 0;
               u.pathTargetX = u.targetX;
               u.pathTargetY = u.targetY;
@@ -4823,6 +5664,7 @@ export class HordeScene extends Phaser.Scene {
         }
 
         // Follow A* waypoints if we have them
+        const prevWpX = u.x, prevWpY = u.y;
         if (u.pathWaypoints && u.pathWaypoints.length > 0) {
           const wp = u.pathWaypoints[0];
           const wpDx = wp.x - u.x, wpDy = wp.y - u.y;
@@ -4852,6 +5694,19 @@ export class HordeScene extends Phaser.Scene {
           }
           u.x = Math.max(0, Math.min(WORLD_W, u.x));
           u.y = Math.max(0, Math.min(WORLD_H, u.y));
+          if (!this.isTileWalkable(u.x, u.y)) {
+            // Axis-aligned sliding around corners instead of abandoning path
+            const xOk = this.isTileWalkable(u.x, prevWpY);
+            const yOk = this.isTileWalkable(prevWpX, u.y);
+            if (xOk) {
+              u.y = prevWpY;
+            } else if (yOk) {
+              u.x = prevWpX;
+            } else {
+              u.x = prevWpX;
+              u.y = prevWpY;
+            }
+          }
           continue;
         }
         // A* returned null (no path) — fall through to force-based avoidance below
@@ -4859,6 +5714,7 @@ export class HordeScene extends Phaser.Scene {
 
       // Avoidance: units carrying food on non-combat steps steer around threats
       // Caution modifiers: safe = wider avoidance (180), aggressive = no avoidance
+      const prevAvoidX = u.x, prevAvoidY = u.y;
       if (u.team !== 0 && this.isNonCombatStep(u) && u.mods.caution !== 'aggressive') {
         const AVOID_RANGE = u.mods.caution === 'safe' ? 180 : 100;
         let avoidX = 0, avoidY = 0;
@@ -4923,6 +5779,7 @@ export class HordeScene extends Phaser.Scene {
             }
             u.x = Math.max(0, Math.min(WORLD_W, u.x));
             u.y = Math.max(0, Math.min(WORLD_H, u.y));
+            if (!this.isTileWalkable(u.x, u.y)) { u.x = prevAvoidX; u.y = prevAvoidY; }
             continue;
           }
           // Normal non-collect: lateral dodge (squeeze between threats)
@@ -4953,6 +5810,7 @@ export class HordeScene extends Phaser.Scene {
             u.y += (finalY / fLen) * moveStep;
             u.x = Math.max(0, Math.min(WORLD_W, u.x));
             u.y = Math.max(0, Math.min(WORLD_H, u.y));
+            if (!this.isTileWalkable(u.x, u.y)) { u.x = prevAvoidX; u.y = prevAvoidY; }
             continue;
           }
         }
@@ -4972,14 +5830,22 @@ export class HordeScene extends Phaser.Scene {
       u.x = Math.max(0, Math.min(WORLD_W, u.x));
       u.y = Math.max(0, Math.min(WORLD_H, u.y));
 
-      // Block movement into water tiles and rock clusters
+      // Block movement into water tiles and rock clusters — try axis-independent sliding
       if (!this.isTileWalkable(u.x, u.y)) {
-        u.x = prevX;
-        u.y = prevY;
-        // If blocked and no A* path exists, reactively compute one to route around obstacle
-        if (u.team !== 0 && !u.pathWaypoints) {
+        const xOk = this.isTileWalkable(u.x, prevY);
+        const yOk = this.isTileWalkable(prevX, u.y);
+        if (xOk) {
+          u.y = prevY; // slide along X axis
+        } else if (yOk) {
+          u.x = prevX; // slide along Y axis
+        } else {
+          u.x = prevX;
+          u.y = prevY;
+        }
+        // Trigger reactive A* on ANY collision (not just full block), with 200ms debounce
+        if (u.team !== 0 && !u.pathWaypoints && u.pathAge > 200) {
           const isSafe = this.isNonCombatStep(u) && u.mods.caution !== 'aggressive';
-          if (this._pathsThisFrame < 3) {
+          if (this._pathsThisFrame < HordeScene.MAX_PATHS_PER_FRAME) {
             u.pathWaypoints = this.computeSafePath(u, !isSafe);
             u.pathAge = 0;
             u.pathTargetX = u.targetX;
@@ -5019,13 +5885,14 @@ export class HordeScene extends Phaser.Scene {
 
       // Formation: tight — leash to group centroid (max 150px)
       if (u.mods.formation === 'tight') {
-        const allies = this.units.filter(a => !a.dead && a.team === u.team && a.type === u.type && a.mods.formation === 'tight');
+        const allies = tightGroups.get(`${u.team}_${u.type}`) || [];
         if (allies.length > 1) {
           let cx = 0, cy = 0;
           for (const a of allies) { cx += a.x; cy += a.y; }
           cx /= allies.length; cy /= allies.length;
           const distToCentroid = Math.sqrt((u.x - cx) ** 2 + (u.y - cy) ** 2);
           if (distToCentroid > 150) {
+            const preTightX = u.x, preTightY = u.y;
             const pull = Math.min(1, (distToCentroid - 150) / 200) * u.speed * dt;
             const dx2 = cx - u.x, dy2 = cy - u.y;
             const d2 = Math.sqrt(dx2 * dx2 + dy2 * dy2) || 1;
@@ -5033,6 +5900,7 @@ export class HordeScene extends Phaser.Scene {
             u.y += (dy2 / d2) * pull;
             u.x = Math.max(0, Math.min(WORLD_W, u.x));
             u.y = Math.max(0, Math.min(WORLD_H, u.y));
+            if (!this.isTileWalkable(u.x, u.y)) { u.x = preTightX; u.y = preTightY; }
           }
         }
       }
@@ -5064,7 +5932,7 @@ export class HordeScene extends Phaser.Scene {
     }
   }
 
-  /** Nudge a stuck unit perpendicular to its heading to unstick it */
+  /** Nudge a stuck unit in multiple directions/distances to unstick it */
   private nudgeUnit(u: HUnit) {
     const hdx = u.targetX - u.x;
     const hdy = u.targetY - u.y;
@@ -5072,18 +5940,33 @@ export class HordeScene extends Phaser.Scene {
     if (hd < 1) return;
     const nx = hdx / hd, ny = hdy / hd;
 
-    // Try perpendicular directions: heading ± 90°
-    const perpDirs: [number, number][] = [[-ny, nx], [ny, -nx]];
-    for (const [px, py] of perpDirs) {
-      const testX = u.x + px * 20;
-      const testY = u.y + py * 20;
-      if (testX >= 0 && testX <= WORLD_W && testY >= 0 && testY <= WORLD_H && this.isTileWalkable(testX, testY)) {
-        u.x = testX;
-        u.y = testY;
-        u.pathWaypoints = null;
-        u.pathAge = 9999; // force recomputation
-        u.stuckCooldown = 60;
-        return;
+    // Try 8 directions: perp, forward-diag, back-diag, backward, forward
+    const dirs: [number, number][] = [
+      [-ny, nx], [ny, -nx],                           // perpendicular
+      [nx - ny, ny + nx], [nx + ny, ny - nx],         // forward-diagonal
+      [-nx - ny, -ny + nx], [-nx + ny, -ny - nx],     // back-diagonal
+      [-nx, -ny],                                      // backward
+      [nx, ny],                                        // forward
+    ];
+    // Normalize directions
+    const normDirs = dirs.map(([dx, dy]) => {
+      const m = Math.sqrt(dx * dx + dy * dy);
+      return m > 0.01 ? [dx / m, dy / m] as [number, number] : [dx, dy] as [number, number];
+    });
+
+    const distances = [40, 70, 100];
+    for (const dist of distances) {
+      for (const [px, py] of normDirs) {
+        const testX = u.x + px * dist;
+        const testY = u.y + py * dist;
+        if (testX >= 0 && testX <= WORLD_W && testY >= 0 && testY <= WORLD_H && this.isTileWalkable(testX, testY)) {
+          u.x = testX;
+          u.y = testY;
+          u.pathWaypoints = null;
+          u.pathAge = 9999; // force recomputation
+          u.stuckCooldown = 60;
+          return;
+        }
       }
     }
   }
@@ -5114,7 +5997,8 @@ export class HordeScene extends Phaser.Scene {
 
   // ─── SPATIAL GRID ──────────────────────────────────────────
   private rebuildSpatialGrid() {
-    this.spatialGrid = buildSpatialGrid(this.units, this.spatialCellSize);
+    this._spatialGrid = buildSpatialGrid(this.units, this.spatialCellSize, this._spatialGrid || undefined);
+    this.spatialGrid = this._spatialGrid;
   }
 
   private getNearbyUnits(x: number, y: number, radius: number): HUnit[] {
@@ -5154,79 +6038,78 @@ export class HordeScene extends Phaser.Scene {
     const team = u.team as 1 | 2;
     const avoidRange = u.mods.caution === 'safe' ? 250 : 180;
 
-    // 1. Build blocked grid
-    const blocked = new Uint8Array(G * G);
-
-    // Mark water tiles as blocked
-    const tiles = this.mapDef?.tiles;
-    if (tiles) {
-      for (let gy = 0; gy < G && gy < tiles.length; gy++) {
-        for (let gx = 0; gx < G && gx < tiles[0].length; gx++) {
-          if (tiles[gy][gx] === 2 || tiles[gy][gx] === 3) blocked[gy * G + gx] = 1;
-        }
-      }
-    }
-
-    // Mark cells occupied by decorative rock clusters (wider radius for smoother pathing)
-    const rockR = HordeScene.ROCK_PATH_RADIUS;
-    const rockCells = Math.ceil(rockR / CELL);
-    for (const rp of this.rockCollisionPoints) {
-      const rcx = Math.floor(rp.x / CELL);
-      const rcy = Math.floor(rp.y / CELL);
-      for (let dy = -rockCells; dy <= rockCells; dy++) {
-        for (let dx = -rockCells; dx <= rockCells; dx++) {
-          const gx = rcx + dx, gy = rcy + dy;
-          if (gx < 0 || gx >= G || gy < 0 || gy >= G) continue;
-          const cx = (gx + 0.5) * CELL, cy = (gy + 0.5) * CELL;
-          if ((cx - rp.x) ** 2 + (cy - rp.y) ** 2 < rockR * rockR) {
-            blocked[gy * G + gx] = 1;
+    // 1. Build blocked grid — reuse class buffer, copy from cached static grid
+    const blocked = this._astarBlocked;
+    if (this._staticBlockedGrid) {
+      blocked.set(this._staticBlockedGrid);
+    } else {
+      blocked.fill(0);
+      // Fallback if cache not built yet
+      const tiles = this.mapDef?.tiles;
+      if (tiles) {
+        for (let gy = 0; gy < G && gy < tiles.length; gy++) {
+          for (let gx = 0; gx < G && gx < tiles[0].length; gx++) {
+            if (tiles[gy][gx] === 2) blocked[gy * G + gx] = 1;
           }
         }
       }
     }
 
-    // Mark cells near enemy units (skip for rockOnly mode — combat units shouldn't avoid enemies)
-    if (!rockOnly) {
-    for (const o of this.units) {
-      if (o.dead || o.team === team || (o.team === 0 && o.campId === null)) continue;
-      const ocx = Math.floor(o.x / CELL);
-      const ocy = Math.floor(o.y / CELL);
-      const r = Math.ceil(avoidRange / CELL);
-      for (let dy = -r; dy <= r; dy++) {
-        for (let dx = -r; dx <= r; dx++) {
-          const gx = ocx + dx, gy = ocy + dy;
-          if (gx < 0 || gx >= G || gy < 0 || gy >= G) continue;
-          const cx = (gx + 0.5) * CELL, cy = (gy + 0.5) * CELL;
-          if ((cx - o.x) ** 2 + (cy - o.y) ** 2 < avoidRange * avoidRange) {
-            blocked[gy * G + gx] = 1;
+    // Soft avoidance penalty grid — cached per-frame by team + rockOnly
+    const avoidKey = `${team}_${rockOnly}_${avoidRange}`;
+    let avoidPenalty: Float32Array;
+    if (this._frameAvoidPenalty.has(avoidKey)) {
+      avoidPenalty = this._frameAvoidPenalty.get(avoidKey)!;
+    } else {
+      avoidPenalty = this._avoidPenaltyPool.pop() || new Float32Array(G * G);
+      avoidPenalty.fill(0);
+      if (!rockOnly) {
+        for (const o of this.units) {
+          if (o.dead || o.team === team || (o.team === 0 && o.campId === null)) continue;
+          const ocx = Math.floor(o.x / CELL);
+          const ocy = Math.floor(o.y / CELL);
+          const r = Math.ceil(avoidRange / CELL);
+          for (let dy = -r; dy <= r; dy++) {
+            for (let dx = -r; dx <= r; dx++) {
+              const gx = ocx + dx, gy = ocy + dy;
+              if (gx < 0 || gx >= G || gy < 0 || gy >= G) continue;
+              const cx = (gx + 0.5) * CELL, cy = (gy + 0.5) * CELL;
+              const dist2 = (cx - o.x) ** 2 + (cy - o.y) ** 2;
+              if (dist2 < avoidRange * avoidRange) {
+                const t = 1 - Math.sqrt(dist2) / avoidRange;
+                avoidPenalty[gy * G + gx] = Math.max(avoidPenalty[gy * G + gx], 2 + 6 * t);
+              }
+            }
           }
         }
-      }
-    }
 
-    // Mark cells near hostile camps
-    const targetAnimal = u.loop ? this.getBootstrapAnimal(u.loop) : undefined;
-    const campRange = avoidRange * 1.5;
-    for (const c of this.camps) {
-      if (c.owner === team) continue;
-      if (targetAnimal && c.animalType === targetAnimal) continue;
-      const hasDefenders = this.units.some(g => g.campId === c.id && g.team === 0 && !g.dead);
-      if (!hasDefenders && c.owner === 0) continue;
-      const ccx = Math.floor(c.x / CELL);
-      const ccy = Math.floor(c.y / CELL);
-      const r = Math.ceil(campRange / CELL);
-      for (let dy = -r; dy <= r; dy++) {
-        for (let dx = -r; dx <= r; dx++) {
-          const gx = ccx + dx, gy = ccy + dy;
-          if (gx < 0 || gx >= G || gy < 0 || gy >= G) continue;
-          const cx = (gx + 0.5) * CELL, cy = (gy + 0.5) * CELL;
-          if ((cx - c.x) ** 2 + (cy - c.y) ** 2 < campRange * campRange) {
-            blocked[gy * G + gx] = 1;
+        // Soft penalty near hostile camps
+        const targetAnimal = u.loop ? this.getBootstrapAnimal(u.loop) : undefined;
+        const campRange = avoidRange * 1.5;
+        for (const c of this.camps) {
+          if (c.owner === team) continue;
+          if (targetAnimal && c.animalType === targetAnimal) continue;
+          const hasDefenders = this.units.some(g => g.campId === c.id && g.team === 0 && !g.dead);
+          if (!hasDefenders && c.owner === 0) continue;
+          const ccx = Math.floor(c.x / CELL);
+          const ccy = Math.floor(c.y / CELL);
+          const r = Math.ceil(campRange / CELL);
+          for (let dy = -r; dy <= r; dy++) {
+            for (let dx = -r; dx <= r; dx++) {
+              const gx = ccx + dx, gy = ccy + dy;
+              if (gx < 0 || gx >= G || gy < 0 || gy >= G) continue;
+              const cx = (gx + 0.5) * CELL, cy = (gy + 0.5) * CELL;
+              const dist2 = (cx - c.x) ** 2 + (cy - c.y) ** 2;
+              if (dist2 < campRange * campRange) {
+                const t = 1 - Math.sqrt(dist2) / campRange;
+                avoidPenalty[gy * G + gx] = Math.max(avoidPenalty[gy * G + gx], 3 + 7 * t);
+              }
+            }
           }
         }
-      }
+      } // end if (!rockOnly)
+      this._frameAvoidPenalty.set(avoidKey, avoidPenalty);
     }
-    } // end if (!rockOnly)
 
     // 2. A* search (8-directional)
     const sx = Math.max(0, Math.min(G - 1, Math.floor(u.x / CELL)));
@@ -5240,36 +6123,81 @@ export class HordeScene extends Phaser.Scene {
 
     if (sx === ex && sy === ey) return [];
 
-    const gScore = new Float32Array(G * G).fill(Infinity);
-    const fScore = new Float32Array(G * G).fill(Infinity);
-    const cameFrom = new Int32Array(G * G).fill(-1);
-    const closed = new Uint8Array(G * G);
+    // Use precomputed static clearance penalty
+    const clearancePenalty = this._staticClearancePenalty!;
+
+    // Per-frame cached unit occupancy grid — reuse class buffer
+    if (!this._frameOccupiedReady) {
+      this._astarOccupied.fill(0);
+      for (const o of this.units) {
+        if (o.dead) continue;
+        const ox = Math.floor(o.x / CELL), oy = Math.floor(o.y / CELL);
+        if (ox >= 0 && ox < G && oy >= 0 && oy < G) this._astarOccupied[oy * G + ox] = 1;
+      }
+      this._frameOccupiedReady = true;
+    }
+    const occupied = this._astarOccupied;
+
+    // Reuse scratch typed arrays (fill instead of allocate)
+    const gScore = this._astarGScore; gScore.fill(Infinity);
+    const fScore = this._astarFScore; fScore.fill(Infinity);
+    const cameFrom = this._astarCameFrom; cameFrom.fill(-1);
+    const closed = this._astarClosed; closed.fill(0);
 
     const si = sy * G + sx;
     gScore[si] = 0;
     fScore[si] = Math.max(Math.abs(ex - sx), Math.abs(ey - sy)); // Chebyshev heuristic
 
-    // Simple binary heap on fScore
-    const open: number[] = [si];
-    const inOpen = new Uint8Array(G * G);
+    // Binary min-heap on fScore
+    const heap: number[] = [si];
+    const inOpen = this._astarInOpen; inOpen.fill(0);
     inOpen[si] = 1;
+
+    const heapPush = (node: number) => {
+      heap.push(node);
+      let i = heap.length - 1;
+      while (i > 0) {
+        const parent = (i - 1) >> 1;
+        if (fScore[heap[i]] < fScore[heap[parent]]) {
+          const tmp = heap[i]; heap[i] = heap[parent]; heap[parent] = tmp;
+          i = parent;
+        } else break;
+      }
+    };
+
+    const heapPop = (): number => {
+      const top = heap[0];
+      const last = heap.pop()!;
+      if (heap.length > 0) {
+        heap[0] = last;
+        let i = 0;
+        const len = heap.length;
+        while (true) {
+          let smallest = i;
+          const l = 2 * i + 1, r = 2 * i + 2;
+          if (l < len && fScore[heap[l]] < fScore[heap[smallest]]) smallest = l;
+          if (r < len && fScore[heap[r]] < fScore[heap[smallest]]) smallest = r;
+          if (smallest === i) break;
+          const tmp = heap[i]; heap[i] = heap[smallest]; heap[smallest] = tmp;
+          i = smallest;
+        }
+      }
+      return top;
+    };
 
     const dirs = [[-1,0,1],[1,0,1],[0,-1,1],[0,1,1],[-1,-1,1.414],[-1,1,1.414],[1,-1,1.414],[1,1,1.414]];
     let found = false;
     let iters = 0;
-    const MAX_ITERS = 800;
+    const manhattan = Math.abs(ex - sx) + Math.abs(ey - sy);
+    const MAX_ITERS = Math.min(10000, manhattan * 50 + 500);
 
-    while (open.length > 0 && iters < MAX_ITERS) {
+    while (heap.length > 0 && iters < MAX_ITERS) {
       iters++;
-      // Find lowest fScore in open (linear scan — fine for 50x50)
-      let bestIdx = 0;
-      for (let i = 1; i < open.length; i++) {
-        if (fScore[open[i]] < fScore[open[bestIdx]]) bestIdx = i;
-      }
-      const cur = open[bestIdx];
-      open[bestIdx] = open[open.length - 1];
-      open.pop();
+      const cur = heapPop();
       inOpen[cur] = 0;
+
+      // Skip stale duplicates
+      if (closed[cur]) continue;
 
       const cx = cur % G, cy = (cur - cx) / G;
       if (cx === ex && cy === ey) { found = true; break; }
@@ -5282,33 +6210,23 @@ export class HordeScene extends Phaser.Scene {
         const ni = ny * G + nx;
         if (closed[ni] || blocked[ni]) continue;
 
-        // Penalize cells adjacent to blocked cells (prefer paths with clearance)
-        let penalty = 0;
-        for (const [pdx, pdy] of dirs) {
-          const px = nx + pdx, py = ny + pdy;
-          if (px >= 0 && px < G && py >= 0 && py < G && blocked[py * G + px]) {
-            penalty += 0.5;
-          }
-        }
-
-        // Penalize cells occupied by other units (prefer empty paths)
-        const cellCX = (nx + 0.5) * CELL, cellCY = (ny + 0.5) * CELL;
-        const cellOccupants = this.getNearbyUnits(cellCX, cellCY, CELL * 0.5);
-        if (cellOccupants.length > 0) {
-          penalty += 2;
-        }
+        // Pre-computed clearance penalty + occupancy lookup
+        const penalty = clearancePenalty[ni] + avoidPenalty[ni] + (occupied[ni] ? 2 : 0);
 
         const tentG = gScore[cur] + cost + penalty;
         if (tentG < gScore[ni]) {
           cameFrom[ni] = cur;
           gScore[ni] = tentG;
           fScore[ni] = tentG + Math.max(Math.abs(ex - nx), Math.abs(ey - ny));
-          if (!inOpen[ni]) { open.push(ni); inOpen[ni] = 1; }
+          if (!inOpen[ni]) { heapPush(ni); inOpen[ni] = 1; }
         }
       }
     }
 
-    if (!found) return null;
+    if (!found) {
+      console.warn(`[A*] No path: unit ${u.id} (${u.type}) at (${Math.round(u.x)},${Math.round(u.y)}) → (${Math.round(u.targetX)},${Math.round(u.targetY)}), iters=${iters}`);
+      return null;
+    }
 
     // 3. Reconstruct path
     const rawPath: {x: number; y: number}[] = [];
@@ -5723,7 +6641,7 @@ export class HordeScene extends Phaser.Scene {
         // Find current target position (homing)
         let tx = hit.projX, ty = hit.projY;
         if (hit.targetId >= 0) {
-          const tgt = this.units.find(u => u.id === hit.targetId);
+          const tgt = this._unitById.get(hit.targetId);
           if (tgt && !tgt.dead) { tx = tgt.x; ty = tgt.y; }
         } else if (hit.nexusTeam !== 0) {
           const nex = this.nexuses.find(n => n.team === hit.nexusTeam);
@@ -5761,7 +6679,7 @@ export class HordeScene extends Phaser.Scene {
         const nex = this.nexuses.find(n => n.team === hit.nexusTeam);
         if (nex) {
           nex.hp -= hit.dmg;
-          const attacker = this.units.find(u => u.id === hit.attackerId);
+          const attacker = this._unitById.get(hit.attackerId);
           if (attacker) this.spawnDmgNumber(nex.x, nex.y - 20, hit.dmg, true, attacker);
           this.sfx.playAt(nex.hp < 5000 ? 'nexus_critical' : 'nexus_damage', nex.x, nex.y);
           // Nexus hit explosion (throttled to max 1 per second)
@@ -5780,15 +6698,17 @@ export class HordeScene extends Phaser.Scene {
       }
 
       // Unit hit
-      const target = this.units.find(u => u.id === hit.targetId);
+      const target = this._unitById.get(hit.targetId);
       const isTowerShot = hit.attackerId === -2;
-      const attacker = isTowerShot ? null : this.units.find(u => u.id === hit.attackerId);
+      const attacker = isTowerShot ? null : (this._unitById.get(hit.attackerId) ?? null);
       if (!target || target.dead || (!attacker && !isTowerShot)) {
         this.destroyProjectile(hit);
         continue;
       }
       if (target && !target.dead) {
         target.hp -= hit.dmg;
+        // Track total damage for match stats
+        if (attacker && attacker.team !== 0) this.matchStats.totalDamage[attacker.team as 1|2] += hit.dmg;
         if (attacker) {
           this.spawnDmgNumber(target.x, target.y - 10, hit.dmg, true, attacker);
         } else {
@@ -5866,6 +6786,17 @@ export class HordeScene extends Phaser.Scene {
         } else if (target.hp <= 0) {
           target.dead = true;
           target.claimItemId = -1;
+          // Track kills, deaths, and top killer
+          if (target.team !== 0) this.matchStats.unitsLost[target.team as 1|2]++;
+          if (attacker && attacker.team !== 0) {
+            const atkTeam = attacker.team as 1 | 2;
+            this.matchStats.totalKills[atkTeam]++;
+            const kc = (this.unitKillCounts.get(attacker.id) || 0) + 1;
+            this.unitKillCounts.set(attacker.id, kc);
+            if (kc > this.topKiller[atkTeam].kills) {
+              this.topKiller[atkTeam] = { type: attacker.type, kills: kc };
+            }
+          }
           const deathKey = ('death_' + target.type) as import('../audio/SoundManager').SfxKey;
           if (this.sfx.hasSound(deathKey)) {
             this.sfx.playAt(deathKey, target.x, target.y);
@@ -5922,6 +6853,17 @@ export class HordeScene extends Phaser.Scene {
         } else if (sTarget.hp <= 0) {
           sTarget.dead = true;
           sTarget.claimItemId = -1;
+          // Track splash kills/deaths
+          if (sTarget.team !== 0) this.matchStats.unitsLost[sTarget.team as 1|2]++;
+          if (attacker && attacker.team !== 0) {
+            const atkTeam = attacker.team as 1 | 2;
+            this.matchStats.totalKills[atkTeam]++;
+            const kc = (this.unitKillCounts.get(attacker.id) || 0) + 1;
+            this.unitKillCounts.set(attacker.id, kc);
+            if (kc > this.topKiller[atkTeam].kills) {
+              this.topKiller[atkTeam] = { type: attacker.type, kills: kc };
+            }
+          }
           this.spawnGroundItem('meat', sTarget.x + (Math.random() - 0.5) * 20, sTarget.y + (Math.random() - 0.5) * 20);
           if (sTarget.isElite) {
             this.eliteKillCount++;
@@ -5993,6 +6935,8 @@ export class HordeScene extends Phaser.Scene {
               `Captured ${camp.name}!`,
               winner === 1 ? '#45E6B0' : '#FF6B6B',
             );
+            this.matchStats.campsCaptured[winner]++;
+            this.spawnCampLoot(camp, winner);
             // Camp capture explosion
             if (this.textures.exists('ts_explosion02')) {
               const boom = this.add.sprite(camp.x, camp.y, 'ts_explosion02').setScale(1.0).setDepth(15).setOrigin(0.5);
@@ -6007,12 +6951,51 @@ export class HordeScene extends Phaser.Scene {
         const en = this.units.filter(u => u.team === enemy && !u.dead && pdist(u, camp) <= CAMP_RANGE);
         const al = this.units.filter(u => u.team === camp.owner && !u.dead && pdist(u, camp) <= CAMP_RANGE);
         if (en.length > 0 && al.length === 0) {
+          const prevOwner = camp.owner as 1 | 2;
           camp.owner = 0;
           camp.spawnTimer = 0;
           this.spawnCampDefenders(camp);
           this.sfx.playAt('camp_lost', camp.x, camp.y);
           this.showFeedback('Contested!', '#FFD93D');
+          this.matchStats.campsLost[prevOwner]++;
         }
+      }
+    }
+  }
+
+  // ─── CAMP LOOT DROPS ──────────────────────────────────────
+
+  private spawnCampLoot(camp: HCamp, team: 1 | 2) {
+    const tier = ANIMALS[camp.animalType]?.tier ?? 1;
+    const rolls = tier >= 3 ? 2 : 1;
+    for (let r = 0; r < rolls; r++) {
+      const roll = Math.random();
+      if (roll < 0.4) {
+        // Resource Burst: scatter 3-5 of the camp's resource type
+        const cost = SPAWN_COSTS[camp.animalType];
+        const resType = cost?.type || 'carrot';
+        const count = 3 + Math.floor(Math.random() * 3); // 3-5
+        for (let i = 0; i < count; i++) {
+          const ox = (Math.random() - 0.5) * 80;
+          const oy = (Math.random() - 0.5) * 80;
+          this.spawnGroundItem(resType, camp.x + ox, camp.y + oy);
+        }
+        this.showFeedback(`💰 Resource Burst! +${count} ${RESOURCE_EMOJI[resType]}`, '#FFD93D');
+      } else if (roll < 0.6) {
+        // Speed Surge: +15% speed for 20s
+        this.teamBuffs.push({ team, stat: 'speed', amount: 0.15, remaining: 20000 });
+        this.showFeedback('⚡ Speed Surge! +15% for 20s', '#FFD93D');
+      } else if (roll < 0.8) {
+        // Attack Surge: +15% attack for 20s
+        this.teamBuffs.push({ team, stat: 'attack', amount: 0.15, remaining: 20000 });
+        this.showFeedback('⚔️ Attack Surge! +15% for 20s', '#FFD93D');
+      } else {
+        // Heal Burst: heal all friendly units within 200px for 30% max HP
+        const nearby = this.units.filter(u => u.team === team && !u.dead && pdist(u, camp) <= 200);
+        for (const u of nearby) {
+          u.hp = Math.min(u.maxHp, u.hp + Math.round(u.maxHp * 0.3));
+        }
+        this.showFeedback(`💚 Heal Burst! ${nearby.length} units healed`, '#FFD93D');
       }
     }
   }
@@ -6080,7 +7063,7 @@ export class HordeScene extends Phaser.Scene {
       let deliverTo = 'base';
       if (resType === 'meat') {
         const mc = this.camps.filter(c => c.owner === 2 && SPAWN_COSTS[c.animalType]?.type === 'meat')
-          .sort((a, b) => pdist(a, P2_BASE) - pdist(b, P2_BASE));
+          .sort((a, b) => pdist2(a, P2_BASE) - pdist2(b, P2_BASE));
         if (mc.length > 0) deliverTo = mc[0].id;
       }
       for (const u of toAssign) {
@@ -6094,7 +7077,7 @@ export class HordeScene extends Phaser.Scene {
     // Find best target camp
     const uncaptured = this.camps
       .filter(c => c.owner !== 2)
-      .sort((a, b) => a.tier - b.tier || pdist(a, P2_BASE) - pdist(b, P2_BASE));
+      .sort((a, b) => a.tier - b.tier || pdist2(a, P2_BASE) - pdist2(b, P2_BASE));
 
     const power = idle.reduce((s, u) => s + u.attack * u.hp, 0);
     let target: { x: number; y: number } | null = null;
@@ -6159,7 +7142,9 @@ export class HordeScene extends Phaser.Scene {
           const scale = u.isElite ? spriteConf.displayScale * 1.3 : spriteConf.displayScale;
           u.sprite.setScale(scale);
           u.sprite.setOrigin(0.5, spriteConf.originY);
-          u.sprite.setDepth(10 + Math.round(u.y * 0.01));
+          const initDepth = 10 + Math.round(u.y * 0.01);
+          u.sprite.setDepth(initDepth);
+          (u as any)._lastDepth = initDepth;
           // Start with correct animation based on whether unit is already moving
           const initDist = Math.sqrt((u.targetX - u.x) ** 2 + (u.targetY - u.y) ** 2);
           if (initDist > 8) {
@@ -6214,8 +7199,12 @@ export class HordeScene extends Phaser.Scene {
       const sx = prev.x + (dispX - prev.x) * lerpFactor;
       const sy = prev.y + (dispY - prev.y) * lerpFactor;
       u.sprite.setPosition(sx, sy);
-      // Y-based depth sorting: units further down the screen render on top
-      u.sprite.setDepth(10 + Math.round(sy * 0.01));
+      // Y-based depth sorting: only call setDepth when computed depth actually changes
+      const newDepth = 10 + Math.round(sy * 0.01);
+      if ((u as any)._lastDepth !== newDepth) {
+        u.sprite.setDepth(newDepth);
+        (u as any)._lastDepth = newDepth;
+      }
 
       // Animation state: flip based on movement, switch idle/walk
       // Use actual unit-to-target distance (not lerped sprite delta) for reliable walk detection
@@ -6483,23 +7472,72 @@ export class HordeScene extends Phaser.Scene {
   private updateMineVisuals() {
     for (const mine of this.mineNodes) {
       if (!mine.sprite) {
-        const variant = ((this.mineNodes.indexOf(mine) % 6) + 1);
-        mine.sprite = this.add.image(mine.x, mine.y, `ts_gold_stone${variant}`)
-          .setScale(0.75).setTint(0x889999).setOrigin(0.5).setDepth(10 + Math.round(mine.y * 0.01));
-        mine.label = this.add.text(mine.x, mine.y + 50, 'Mine', {
-          fontSize: '16px', color: '#FFD700',
+        const idx = this.mineNodes.indexOf(mine);
+        const baseDepth = 10 + Math.round(mine.y * 0.01);
+        // Massive pile of gold stones scattered across the mine area
+        const pileOffsets = [
+          // Center cluster (big)
+          { dx: 0, dy: 0, s: 1.1, v: 1 },
+          { dx: -28, dy: -18, s: 0.9, v: 2 },
+          { dx: 30, dy: -14, s: 0.95, v: 3 },
+          { dx: -22, dy: 20, s: 0.85, v: 4 },
+          { dx: 26, dy: 22, s: 0.9, v: 5 },
+          // Mid ring
+          { dx: -55, dy: -40, s: 0.75, v: 6 },
+          { dx: 50, dy: -45, s: 0.8, v: 1 },
+          { dx: -60, dy: 10, s: 0.7, v: 3 },
+          { dx: 58, dy: 5, s: 0.75, v: 2 },
+          { dx: -10, dy: -55, s: 0.7, v: 5 },
+          { dx: 15, dy: 50, s: 0.72, v: 4 },
+          { dx: -45, dy: 45, s: 0.68, v: 6 },
+          { dx: 48, dy: 42, s: 0.7, v: 1 },
+          // Outer scatter
+          { dx: -85, dy: -30, s: 0.6, v: 2 },
+          { dx: 80, dy: -35, s: 0.55, v: 4 },
+          { dx: -75, dy: 40, s: 0.58, v: 5 },
+          { dx: 82, dy: 38, s: 0.6, v: 3 },
+          { dx: -30, dy: -80, s: 0.55, v: 6 },
+          { dx: 35, dy: -75, s: 0.5, v: 1 },
+          { dx: -35, dy: 75, s: 0.52, v: 2 },
+          { dx: 30, dy: 78, s: 0.55, v: 5 },
+          // Extra far scatter
+          { dx: -100, dy: -60, s: 0.45, v: 3 },
+          { dx: 95, dy: -55, s: 0.48, v: 6 },
+          { dx: -95, dy: 55, s: 0.42, v: 4 },
+          { dx: 100, dy: 60, s: 0.45, v: 1 },
+          { dx: 0, dy: -90, s: 0.48, v: 2 },
+          { dx: 0, dy: 88, s: 0.45, v: 5 },
+          { dx: -110, dy: 0, s: 0.4, v: 3 },
+          { dx: 108, dy: 0, s: 0.42, v: 6 },
+        ];
+        for (const off of pileOffsets) {
+          const variant = ((off.v + idx) % 6) + 1;
+          this.add.image(mine.x + off.dx, mine.y + off.dy, `ts_gold_stone${variant}`)
+            .setScale(off.s).setTint(0x889999).setOrigin(0.5)
+            .setDepth(baseDepth + (off.dy > 0 ? 1 : 0));
+        }
+        // Keep the main sprite reference for fog visibility (just use a central one)
+        const mainVariant = ((idx % 6) + 1);
+        mine.sprite = this.add.image(mine.x, mine.y, `ts_gold_stone${mainVariant}`)
+          .setScale(1.1).setTint(0x889999).setOrigin(0.5).setDepth(baseDepth);
+        mine.label = this.add.text(mine.x, mine.y + 90, 'Mine', {
+          fontSize: '20px', color: '#FFD700',
           fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
-          stroke: '#000', strokeThickness: 3,
+          stroke: '#000', strokeThickness: 4,
         }).setOrigin(0.5).setDepth(55);
       }
-      // Show how many units are mining here
-      const miners = this.units.filter(u => !u.dead && u.team !== 0
-        && u.loop?.steps[u.loop.currentStep]?.action === 'mine'
-        && pdist(u, mine) < MINE_RANGE);
+      // Show how many units are mining here (spatial grid lookup)
+      const mineNearby = this.getNearbyUnits(mine.x, mine.y, MINE_RANGE);
+      let minerCount = 0;
+      for (const u of mineNearby) {
+        if (!u.dead && u.team !== 0 && u.loop?.steps[u.loop.currentStep]?.action === 'mine') minerCount++;
+      }
       if (mine.label) {
-        mine.label.setText(miners.length > 0 ? `Mine (${miners.length} mining)` : 'Mine');
+        const newText = minerCount > 0 ? `Mine (${minerCount} mining)` : 'Mine';
+        if (mine.label.text !== newText) mine.label.setText(newText);
         const zoom = this.cameras.main.zoom;
-        mine.label.setScale(Math.max(0.8, 1.0 / zoom));
+        const newScale = Math.max(0.8, 1.0 / zoom);
+        if (Math.abs(mine.label.scaleX - newScale) > 0.01) mine.label.setScale(newScale);
       }
     }
   }
@@ -6519,32 +7557,8 @@ export class HordeScene extends Phaser.Scene {
         else bldg.setTint(0xFF8888);
       }
 
-      // Idle guard sprite at captured camps
-      if (c.owner !== 0 && c.idleGuardOwner !== c.owner) {
-        // Remove old guard if ownership changed
-        if (c.idleGuard) { c.idleGuard.destroy(); c.idleGuard = null; }
-        // Create idle guard sprite — small unit to the left of the camp label
-        const spriteConf = HORDE_SPRITE_CONFIGS[c.animalType];
-        if (spriteConf) {
-          const gx = c.x + 60, gy = c.y + 35;
-          const guard = this.add.sprite(gx, gy, spriteConf.idle.key);
-          guard.setScale(spriteConf.displayScale * 0.5);
-          guard.setOrigin(0.5, spriteConf.originY);
-          guard.setDepth(55); // same depth as label (above fog)
-          guard.setAlpha(0.85);
-          // Team tint
-          if (c.owner === 1) guard.setTint(0x88bbff);
-          else guard.setTint(0xff8888);
-          // Play idle animation
-          const animKey = `h_${c.animalType}_idle`;
-          if (this.anims.exists(animKey)) {
-            guard.play(animKey);
-          }
-          c.idleGuard = guard;
-          c.idleGuardOwner = c.owner;
-        }
-      } else if (c.owner === 0 && c.idleGuard) {
-        // Camp lost — remove guard
+      // Clean up any existing idle guard sprites (no longer used)
+      if (c.idleGuard) {
         c.idleGuard.destroy();
         c.idleGuard = null;
         c.idleGuardOwner = 0;
@@ -6553,47 +7567,53 @@ export class HordeScene extends Phaser.Scene {
       const defenders = this.units.filter(u => u.campId === c.id && u.team === 0 && !u.dead);
       const g = c.captureBar;
       if (g) {
-        g.clear();
-        if (c.owner === 0 && c.guardCount > 0) {
-          // Show capture progress bar: how much HP remains
-          const totalMaxHp = c.guardCount * (ANIMALS[c.animalType]?.hp ?? 25) * 1.5;
-          const currentHp = defenders.reduce((s, u) => s + Math.max(0, u.hp), 0);
-          const pct = Math.max(0, currentHp / totalMaxHp);
-          const w = 120, h = 10;
-          const bx = c.x - w / 2, by = c.y + 45;
-          g.fillStyle(0x000000, 0.6);
-          g.fillRoundedRect(bx, by, w, h, 3);
-          const barColor = pct > 0.5 ? 0xFFD93D : pct > 0.25 ? 0xFF9F43 : 0xFF5555;
-          g.fillStyle(barColor, 0.9);
-          g.fillRoundedRect(bx, by, w * pct, h, 3);
+        // Dirty check: only redraw capture bar when defender HP changes
+        const currentHpSum = defenders.reduce((s, u) => s + Math.max(0, Math.ceil(u.hp)), 0);
+        if ((c as any)._prevDefHp !== currentHpSum) {
+          (c as any)._prevDefHp = currentHpSum;
+          g.clear();
+          if (c.owner === 0 && c.guardCount > 0) {
+            const totalMaxHp = c.guardCount * (ANIMALS[c.animalType]?.hp ?? 25) * 1.5;
+            const pct = Math.max(0, currentHpSum / totalMaxHp);
+            const w = 120, h = 10;
+            const bx = c.x - w / 2, by = c.y + 45;
+            g.fillStyle(0x000000, 0.6);
+            g.fillRoundedRect(bx, by, w, h, 3);
+            const barColor = pct > 0.5 ? 0xFFD93D : pct > 0.25 ? 0xFF9F43 : 0xFF5555;
+            g.fillStyle(barColor, 0.9);
+            g.fillRoundedRect(bx, by, w * pct, h, 3);
+          }
         }
       }
 
       // Label — scale inversely with zoom so text stays readable at any zoom level
       if (c.label) {
         const zoom = this.cameras.main.zoom;
-        const baseScale = 1.0 / zoom; // counter the zoom
-        const minScale = 0.8;  // don't get too tiny when zoomed in a lot
+        const baseScale = 1.0 / zoom;
+        const minScale = 0.8;
         const scale = Math.max(minScale, baseScale);
-        c.label.setScale(scale);
+        if (Math.abs(c.label.scaleX - scale) > 0.01) c.label.setScale(scale);
 
-        const displayName = cap(c.animalType);
-        if (c.owner === 0 && defenders.length > 0) {
-          c.label.setText(displayName);
-          c.label.setColor('#FFD93D');
+        // Skip label text for camps not yet discovered (fog will show '???')
+        const inVision = this.fogDisabled || c.owner === this.myTeam || this.isInVision(c.x, c.y);
+        let newText: string;
+        let newColor: string;
+        if (!inVision && !c.scouted) {
+          newText = '???';
+          newColor = '#FFD93D';
         } else {
-          const tag = c.owner === 0 ? ' (cleared!)' : '';
-          c.label.setText(displayName + tag);
-          c.label.setColor(c.owner === 0 ? '#45E6B0' : c.owner === 1 ? '#4499FF' : '#FF5555');
+          const displayName = cap(c.animalType);
+          if (c.owner === 0 && defenders.length > 0) {
+            newText = displayName;
+            newColor = '#FFD93D';
+          } else {
+            const tag = c.owner === 0 ? ' (cleared!)' : '';
+            newText = displayName + tag;
+            newColor = c.owner === 0 ? '#45E6B0' : c.owner === 1 ? '#4499FF' : '#FF5555';
+          }
         }
-
-        // Position idle guard to the left of the label text
-        if (c.idleGuard) {
-          const halfTextW = (c.label.width * scale) / 2;
-          const guardW = c.idleGuard.displayWidth / 2;
-          c.idleGuard.setPosition(c.label.x - halfTextW - guardW - 4, c.label.y);
-          c.idleGuard.setScale(HORDE_SPRITE_CONFIGS[c.animalType]?.displayScale * 0.7 * scale || scale * 0.5);
-        }
+        if (c.label.text !== newText) c.label.setText(newText);
+        if ((c as any)._prevLabelColor !== newColor) { c.label.setColor(newColor); (c as any)._prevLabelColor = newColor; }
       }
     }
   }
@@ -6601,7 +7621,14 @@ export class HordeScene extends Phaser.Scene {
   // ─── CLEANUP / WIN ──────────────────────────────────────────
 
   private cleanupDead() {
-    this.units = this.units.filter(u => {
+    // Quick check: skip if no units died this frame
+    let hasDead = false;
+    for (const u of this.units) { if (u.dead) { hasDead = true; break; } }
+    if (!hasDead) return;
+    // Destroy sprites for dead units, then compact array in-place
+    let write = 0;
+    for (let read = 0; read < this.units.length; read++) {
+      const u = this.units[read];
       if (u.dead) {
         if (u.sprite) {
           this.playDeathEffect(u);
@@ -6609,9 +7636,11 @@ export class HordeScene extends Phaser.Scene {
         }
         if (u.equipSprite) { u.equipSprite.destroy(); u.equipSprite = null; }
         if (u.carrySprite) { u.carrySprite.destroy(); u.carrySprite = null; }
+      } else {
+        this.units[write++] = u;
       }
-      return !u.dead;
-    });
+    }
+    this.units.length = write;
   }
 
   private playDeathEffect(u: HUnit) {
@@ -6742,8 +7771,8 @@ export class HordeScene extends Phaser.Scene {
           if (item.sprite) { item.sprite.destroy(); item.sprite = null; }
           const pickupKey = ('pickup_' + item.type) as import('../audio/SoundManager').SfxKey;
           this.sfx.playAt(this.sfx.hasSound(pickupKey) ? pickupKey : 'resource_pickup', u.x, u.y);
-          // Picked up a resource — advance workflow past seek_resource step
-          if (curStep.action === 'seek_resource') this.advanceWorkflow(u);
+          // Picked up a resource — advance workflow past seek/collect step
+          if (curStep.action === 'seek_resource' || curStep.action === 'collect') this.advanceWorkflow(u);
           break;
         }
       }
@@ -6777,6 +7806,7 @@ export class HordeScene extends Phaser.Scene {
         }
         if (wantsBaseDelivery) {
           const depositRes = u.carrying;
+          this.matchStats.resourcesDelivered[team][u.carrying] += carryAmount;
           this.baseStockpile[team][u.carrying] += carryAmount;
           this.clearCarrying(u);
           const depositKey = ('deposit_' + depositRes) as import('../audio/SoundManager').SfxKey;
@@ -6807,6 +7837,7 @@ export class HordeScene extends Phaser.Scene {
           const cost = SPAWN_COSTS[camp.animalType];
           if (cost && cost.type === u.carrying) {
             const depositRes = u.carrying;
+            this.matchStats.resourcesDelivered[team][u.carrying] += carryAmount;
             camp.storedFood += carryAmount;
             this.clearCarrying(u);
             const depositKey = ('deposit_' + depositRes) as import('../audio/SoundManager').SfxKey;
@@ -6850,7 +7881,7 @@ export class HordeScene extends Phaser.Scene {
     for (const u of this.units) {
       if (!u.dead && u.claimItemId >= 0) {
         // Validate claim: item must still exist and not be dead
-        const item = this.groundItems.find(i => i.id === u.claimItemId);
+        const item = this._groundItemById.get(u.claimItemId);
         if (item && !item.dead) {
           claimedItems.add(u.claimItemId);
         } else {
@@ -6899,14 +7930,14 @@ export class HordeScene extends Phaser.Scene {
           }
           // Invalidate claim if item is gone or no longer visible
           if (u.claimItemId >= 0) {
-            const claimed = this.groundItems.find(i => i.id === u.claimItemId);
+            const claimed = this._groundItemById.get(u.claimItemId);
             if (!claimed || claimed.dead || (!this.fogDisabled && !this.isInVision(claimed.x, claimed.y))) u.claimItemId = -1;
           }
           // Home zone bias for carrots: prefer items in team's own carrot zone
           const homeZone = this.getHomeCarrotZone(team);
           const inZone = (ix: number, iy: number) =>
-            homeZone && ix >= homeZone.x && ix <= homeZone.x + homeZone.w
-                     && iy >= homeZone.y && iy <= homeZone.y + homeZone.h;
+            homeZone && ix >= homeZone.x && ix < homeZone.x + homeZone.w
+                     && iy >= homeZone.y && iy < homeZone.y + homeZone.h;
           // Scan for nearest unclaimed resource — only target items in vision
           let bestItem: HGroundItem | null = null, bestItemD = Infinity;
           for (const item of this.groundItems) {
@@ -6929,7 +7960,7 @@ export class HordeScene extends Phaser.Scene {
             u.targetX = bestItem.x; u.targetY = bestItem.y;
           } else if (u.claimItemId >= 0) {
             // Keep pathing to current claim (nothing closer exists)
-            const claimed = this.groundItems.find(i => i.id === u.claimItemId)!;
+            const claimed = this._groundItemById.get(u.claimItemId)!;
             u.targetX = claimed.x; u.targetY = claimed.y;
           } else {
             // Nothing unclaimed on the map — spread out to cover ground
@@ -6978,16 +8009,19 @@ export class HordeScene extends Phaser.Scene {
 
           // Look on the ground first — if matching unclaimed resource exists in vision, go pick it up
           if (huntResType) {
-            const groundRes = this.groundItems
-              .filter(i => !i.dead && i.type === huntResType
-                && (this.fogDisabled || this.isInVision(i.x, i.y))
-                && (!claimedItems.has(i.id) || i.id === u.claimItemId))
-              .sort((a, b) => pdist(u, a) - pdist(u, b));
-            if (groundRes.length > 0) {
+            let nearestRes: HGroundItem | null = null, nearestResD = Infinity;
+            for (const i of this.groundItems) {
+              if (i.dead || i.type !== huntResType) continue;
+              if (!this.fogDisabled && !this.isInVision(i.x, i.y)) continue;
+              if (claimedItems.has(i.id) && i.id !== u.claimItemId) continue;
+              const d = pdist2(u, i);
+              if (d < nearestResD) { nearestResD = d; nearestRes = i; }
+            }
+            if (nearestRes) {
               if (u.claimItemId >= 0) claimedItems.delete(u.claimItemId);
-              u.claimItemId = groundRes[0].id;
-              claimedItems.add(groundRes[0].id);
-              u.targetX = groundRes[0].x; u.targetY = groundRes[0].y;
+              u.claimItemId = nearestRes.id;
+              claimedItems.add(nearestRes.id);
+              u.targetX = nearestRes.x; u.targetY = nearestRes.y;
               break;
             }
           }
@@ -6995,19 +8029,20 @@ export class HordeScene extends Phaser.Scene {
           // No resource on ground — hunt the lowest tier wild animal in vision (weakest first)
           // Caution: safe — only hunt prey at or below own tier (not 2+ below, that was too restrictive)
           const myTier = ANIMALS[u.type]?.tier || 1;
-          const prey = this.units
-            .filter(w => w.team === 0 && !w.dead && !w.campId
-              && (this.fogDisabled || this.isInVision(w.x, w.y))
-              && (!step.targetType || w.type === step.targetType)
-              && (u.mods.caution !== 'safe' || (ANIMALS[w.type]?.tier || 1) <= myTier))
-            .sort((a, b) => {
-              const tierA = ANIMALS[a.type]?.tier || 1;
-              const tierB = ANIMALS[b.type]?.tier || 1;
-              if (tierA !== tierB) return tierA - tierB; // lowest tier first
-              return pdist(u, a) - pdist(u, b); // then nearest
-            });
-          if (prey.length > 0) {
-            u.targetX = prey[0].x; u.targetY = prey[0].y;
+          let bestPrey: HUnit | null = null, bestPreyTier = Infinity, bestPreyD = Infinity;
+          for (const w of this.units) {
+            if (w.team !== 0 || w.dead || w.campId) continue;
+            if (!this.fogDisabled && !this.isInVision(w.x, w.y)) continue;
+            if (step.targetType && w.type !== step.targetType) continue;
+            if (u.mods.caution === 'safe' && (ANIMALS[w.type]?.tier || 1) > myTier) continue;
+            const wTier = ANIMALS[w.type]?.tier || 1;
+            const wD = pdist2(u, w);
+            if (wTier < bestPreyTier || (wTier === bestPreyTier && wD < bestPreyD)) {
+              bestPreyTier = wTier; bestPreyD = wD; bestPrey = w;
+            }
+          }
+          if (bestPrey) {
+            u.targetX = bestPrey.x; u.targetY = bestPrey.y;
           } else {
             // No prey and no ground resource — spread out to find something
             this.spreadOut(u);
@@ -7036,7 +8071,7 @@ export class HordeScene extends Phaser.Scene {
             const filtered = this.camps.filter(c =>
               c.animalType === step.targetAnimal && c.owner !== team
               && (this.fogDisabled || c.scouted || this.isInVision(c.x, c.y)));
-            if (qualifier === 'nearest') filtered.sort((a, b) => pdist(a, base) - pdist(b, base));
+            if (qualifier === 'nearest') filtered.sort((a, b) => pdist2(a, base) - pdist2(b, base));
             targetCamp = filtered[0];
           }
           if (targetCamp) {
@@ -7088,12 +8123,15 @@ export class HordeScene extends Phaser.Scene {
             u.targetX = guardPos.x; u.targetY = guardPos.y;
           } else {
             // At guard point — look for nearby visible enemies to chase
-            const nearby = this.units
-              .filter(e => !e.dead && e.team !== 0 && e.team !== team && pdist(e, guardPos) < defendDetect
-                && (this.fogDisabled || this.isInVision(e.x, e.y)))
-              .sort((a, b) => pdist(u, a) - pdist(u, b));
-            if (nearby.length > 0) {
-              u.targetX = nearby[0].x; u.targetY = nearby[0].y;
+            let nearestDefEnemy: HUnit | null = null, nearestDefD = Infinity;
+            for (const e of this.units) {
+              if (e.dead || e.team === 0 || e.team === team) continue;
+              if (pdist(e, guardPos) >= defendDetect) continue;
+              const d = pdist2(u, e);
+              if (d < nearestDefD) { nearestDefD = d; nearestDefEnemy = e; }
+            }
+            if (nearestDefEnemy) {
+              u.targetX = nearestDefEnemy.x; u.targetY = nearestDefEnemy.y;
             } else {
               // Patrol near guard point
               if (pdist(u, { x: u.targetX, y: u.targetY }) < 12) {
@@ -7111,12 +8149,14 @@ export class HordeScene extends Phaser.Scene {
         case 'attack_enemies': {
           // Seek and fight nearest visible enemy player units (not neutrals)
           const enemyTeam = team === 1 ? 2 : 1;
-          const enemies = this.units
-            .filter(e => !e.dead && e.team === enemyTeam
-              && (this.fogDisabled || this.isInVision(e.x, e.y)))
-            .sort((a, b) => pdist(u, a) - pdist(u, b));
-          if (enemies.length > 0) {
-            u.targetX = enemies[0].x; u.targetY = enemies[0].y;
+          let nearestEnemy: HUnit | null = null, nearestEnemyD = Infinity;
+          for (const e of this.units) {
+            if (e.dead || e.team !== enemyTeam) continue;
+            const d = pdist2(u, e);
+            if (d < nearestEnemyD) { nearestEnemyD = d; nearestEnemy = e; }
+          }
+          if (nearestEnemy) {
+            u.targetX = nearestEnemy.x; u.targetY = nearestEnemy.y;
           } else {
             // No enemies — push toward enemy base
             const enemyBase = team === 1 ? P2_BASE : P1_BASE;
@@ -7151,7 +8191,7 @@ export class HordeScene extends Phaser.Scene {
               // Default: pick a random far camp or wander
               const scoutTarget = this.camps
                 .filter(c => pdist(u, c) > 200)
-                .sort((a, b) => pdist(u, b) - pdist(u, a));
+                .sort((a, b) => pdist2(u, b) - pdist2(u, a));
               if (scoutTarget.length > 0) {
                 const pick = scoutTarget[Math.floor(Math.random() * Math.min(3, scoutTarget.length))];
                 u.targetX = pick.x; u.targetY = pick.y;
@@ -7173,7 +8213,7 @@ export class HordeScene extends Phaser.Scene {
           }
           // Check if current claim is still valid and visible
           if (u.claimItemId >= 0) {
-            const claimed = this.groundItems.find(i => i.id === u.claimItemId);
+            const claimed = this._groundItemById.get(u.claimItemId);
             if (claimed && !claimed.dead && (this.fogDisabled || this.isInVision(claimed.x, claimed.y))) {
               u.targetX = claimed.x; u.targetY = claimed.y;
               break;
@@ -7192,8 +8232,8 @@ export class HordeScene extends Phaser.Scene {
             if (claimedItems.has(item.id)) continue;
             // Skip items near enemy units (unless aggressive)
             if (collectProxAvoid > 0) {
-              const enemyNearItem = this.units.some(e =>
-                !e.dead && e.team !== 0 && e.team !== team && pdist(e, item) < collectProxAvoid);
+              const enemyNearItem = this.getNearbyUnits(item.x, item.y, collectProxAvoid).some(e =>
+                e.team !== 0 && e.team !== team);
               if (enemyNearItem) continue;
             }
             // Skip items if enemy is between us and the item (unless aggressive)
@@ -7230,14 +8270,17 @@ export class HordeScene extends Phaser.Scene {
         case 'kill_only': {
           // Hunt and kill visible wild animals but do NOT pick up drops
           const myKillTier = ANIMALS[u.type]?.tier || 1;
-          const killPrey = this.units
-            .filter(w => w.team === 0 && !w.dead && !w.campId
-              && (this.fogDisabled || this.isInVision(w.x, w.y))
-              && (!step.targetType || w.type === step.targetType)
-              && (u.mods.caution !== 'safe' || (ANIMALS[w.type]?.tier || 1) <= myKillTier))
-            .sort((a, b) => pdist(u, a) - pdist(u, b));
-          if (killPrey.length > 0) {
-            u.targetX = killPrey[0].x; u.targetY = killPrey[0].y;
+          let bestKill: HUnit | null = null, bestKillD = Infinity;
+          for (const w of this.units) {
+            if (w.team !== 0 || w.dead || w.campId) continue;
+            if (!this.fogDisabled && !this.isInVision(w.x, w.y)) continue;
+            if (step.targetType && w.type !== step.targetType) continue;
+            if (u.mods.caution === 'safe' && (ANIMALS[w.type]?.tier || 1) > myKillTier) continue;
+            const d = pdist2(u, w);
+            if (d < bestKillD) { bestKillD = d; bestKill = w; }
+          }
+          if (bestKill) {
+            u.targetX = bestKill.x; u.targetY = bestKill.y;
           }
           // Kill_only never advances — loops forever
           break;
@@ -7249,9 +8292,12 @@ export class HordeScene extends Phaser.Scene {
           // Requires pickaxe equipment
           if (u.equipment !== 'pickaxe') { this.advanceWorkflow(u); break; }
           // Find nearest visible mine node
-          const nearestMine = this.mineNodes
-            .filter(m => this.fogDisabled || this.isInVision(m.x, m.y))
-            .sort((a, b) => pdist(u, a) - pdist(u, b))[0];
+          let nearestMine: HMineNode | null = null, nearestMineD = Infinity;
+          for (const m of this.mineNodes) {
+            if (!this.fogDisabled && !this.isInVision(m.x, m.y)) continue;
+            const d = pdist2(u, m);
+            if (d < nearestMineD) { nearestMineD = d; nearestMine = m; }
+          }
           if (nearestMine) {
             u.targetX = nearestMine.x; u.targetY = nearestMine.y;
             // If at the mine, extract metal
@@ -7309,9 +8355,12 @@ export class HordeScene extends Phaser.Scene {
 
         case 'contest_event': {
           // Find nearest active map event in vision
-          const nearestEv = this.mapEvents
-            .filter(e => e.state === 'active' && (this.fogDisabled || this.isInVision(e.x, e.y)))
-            .sort((a, b) => pdist(u, a) - pdist(u, b))[0];
+          let nearestEv: MapEvent | null = null, nearestEvD = Infinity;
+          for (const e of this.mapEvents) {
+            if (e.state !== 'active') continue;
+            const d = pdist2(u, e);
+            if (d < nearestEvD) { nearestEvD = d; nearestEv = e; }
+          }
           if (!nearestEv) { this.advanceWorkflow(u); break; }
           u.targetX = nearestEv.x; u.targetY = nearestEv.y;
           // Advance when event resolves (unit stays near event while it's active — tick handles interaction)
@@ -7364,10 +8413,13 @@ export class HordeScene extends Phaser.Scene {
     if (nearestMatch) {
       const animalType = nearestMatch[1];
       const base = team === 1 ? P1_BASE : P2_BASE;
-      const camp = this.camps
-        .filter(c => c.owner === team && c.animalType === animalType)
-        .sort((a, b) => pdist(a, base) - pdist(b, base))[0];
-      return camp || null;
+      let camp: HCamp | null = null, campD = Infinity;
+      for (const c of this.camps) {
+        if (c.owner !== team || c.animalType !== animalType) continue;
+        const d = pdist2(c, base);
+        if (d < campD) { campD = d; camp = c; }
+      }
+      return camp;
     }
     // Direct camp ID
     const camp = this.camps.find(c => c.id === target && c.owner === team);
@@ -7566,12 +8618,19 @@ export class HordeScene extends Phaser.Scene {
         continue;
       }
 
-      if (pdist(u, { x: u.targetX, y: u.targetY }) < 15) {
-        // Phase 3A: Pick a new wander target — retry up to 5 times for zone validity
+      // Every 10s or when arrived, pick a new wander target in the opposite direction
+      u.idleTimer += delta;
+      const arrived = pdist(u, { x: u.targetX, y: u.targetY }) < 15;
+      if (arrived || u.idleTimer >= 10000) {
+        u.idleTimer = 0;
+        // Reverse: go opposite to current heading
+        const dx = u.x - u.targetX, dy = u.y - u.targetY;
+        const baseAngle = Math.atan2(dy, dx); // opposite direction
+        const spread = 0.4; // slight randomness
         let nx = 0, ny = 0, found = false;
         for (let attempt = 0; attempt < 5; attempt++) {
-          const a = Math.random() * Math.PI * 2;
-          const r = 80 + Math.random() * 150;
+          const a = baseAngle + (Math.random() - 0.5) * spread;
+          const r = 120 + Math.random() * 200;
           nx = u.x + Math.cos(a) * r;
           ny = u.y + Math.sin(a) * r;
           nx = Math.max(100, Math.min(WORLD_W - 100, nx));
@@ -7584,7 +8643,6 @@ export class HordeScene extends Phaser.Scene {
             break;
           }
         }
-        // All retries failed — fall back to guaranteed valid zone point
         if (!found) {
           const pos = this.randomOutskirtsPos();
           nx = pos.x; ny = pos.y;
@@ -7610,25 +8668,122 @@ export class HordeScene extends Phaser.Scene {
   private showGameOver() {
     const cam = this.cameras.main;
     const win = this.winner === this.myTeam;
-    this.add.rectangle(cam.width / 2, cam.height / 2, cam.width, cam.height, 0x000000, 0.7)
+    const myT = this.myTeam;
+    const enemyT: 1 | 2 = myT === 1 ? 2 : 1;
+    const cx = cam.width / 2;
+    const s = Math.floor(this.gameTime / 1000);
+    const timeStr = `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
+    const stats = this.matchStats;
+
+    // Phase 1: Dark overlay + VICTORY/DEFEAT
+    const overlay = this.add.rectangle(cx, cam.height / 2, cam.width, cam.height, 0x000000, 0)
       .setScrollFactor(0).setDepth(200);
-    const t = this.add.text(cam.width / 2, cam.height / 2 - 40, win ? 'VICTORY!' : 'DEFEAT', {
+    this.tweens.add({ targets: overlay, fillAlpha: 0.8, duration: 800 });
+
+    const titleText = this.add.text(cx, 80, win ? 'VICTORY!' : 'DEFEAT', {
       fontSize: '52px', color: win ? '#45E6B0' : '#FF6B6B',
       fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(201);
-    const s = Math.floor(this.gameTime / 1000);
-    this.add.text(cam.width / 2, cam.height / 2 + 20,
-      `Time: ${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`, {
-        fontSize: '18px', color: '#cbb8ee', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
-      }).setOrigin(0.5).setScrollFactor(0).setDepth(201);
-    const btn = this.add.text(cam.width / 2, cam.height / 2 + 70, 'BACK TO MENU', {
-      fontSize: '20px', color: '#45E6B0', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
-      backgroundColor: '#0d1a0d', padding: { x: 20, y: 10 },
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(201).setInteractive({ useHandCursor: true });
-    btn.on('pointerdown', () => { this.cleanupHTML(); this.scene.start('MenuScene'); });
-    btn.on('pointerover', () => btn.setColor('#FFD93D'));
-    btn.on('pointerout', () => btn.setColor('#45E6B0'));
-    this.tweens.add({ targets: t, scaleX: { from: 0.5, to: 1 }, scaleY: { from: 0.5, to: 1 }, duration: 600, ease: 'Back.easeOut' });
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(201).setAlpha(0);
+
+    const timeText = this.add.text(cx, 125, `Time: ${timeStr}`, {
+      fontSize: '16px', color: '#cbb8ee', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(201).setAlpha(0);
+
+    this.tweens.add({ targets: titleText, alpha: 1, scaleX: { from: 0.5, to: 1 }, scaleY: { from: 0.5, to: 1 }, duration: 600, ease: 'Back.easeOut', delay: 400 });
+    this.tweens.add({ targets: timeText, alpha: 1, duration: 400, delay: 800 });
+
+    // Phase 2: Stat cards (delay 1500ms)
+    const headerStyle = { fontSize: '13px', color: '#FFD93D', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold' };
+    const labelStyle = { fontSize: '12px', color: '#a89bba', fontFamily: '"Nunito", sans-serif' };
+    const valueMyStyle = { fontSize: '14px', color: '#45E6B0', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold' };
+    const valueEnStyle = { fontSize: '14px', color: '#FF6B6B', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold' };
+
+    const leftCol = cx - 120;
+    const rightCol = cx + 120;
+    const labelCol = cx;
+    let row = 160;
+    const rowH = 22;
+    const phase2Objects: Phaser.GameObjects.Text[] = [];
+
+    const addHeader = (y: number, text: string) => {
+      phase2Objects.push(this.add.text(labelCol, y, text, headerStyle).setOrigin(0.5).setScrollFactor(0).setDepth(201).setAlpha(0));
+    };
+
+    const addStatRow = (y: number, label: string, myVal: string | number, enVal: string | number) => {
+      phase2Objects.push(this.add.text(leftCol, y, String(myVal), valueMyStyle).setOrigin(0.5).setScrollFactor(0).setDepth(201).setAlpha(0));
+      phase2Objects.push(this.add.text(labelCol, y, label, labelStyle).setOrigin(0.5).setScrollFactor(0).setDepth(201).setAlpha(0));
+      phase2Objects.push(this.add.text(rightCol, y, String(enVal), valueEnStyle).setOrigin(0.5).setScrollFactor(0).setDepth(201).setAlpha(0));
+    };
+
+    // Column headers
+    addStatRow(row, '', 'Your Team', 'Enemy'); row += rowH + 4;
+
+    // Units section
+    addHeader(row, '--- UNITS ---'); row += rowH;
+    addStatRow(row, 'Spawned', stats.unitsSpawned[myT], stats.unitsSpawned[enemyT]); row += rowH;
+    addStatRow(row, 'Lost', stats.unitsLost[myT], stats.unitsLost[enemyT]); row += rowH;
+    addStatRow(row, 'Peak Army', stats.peakArmySize[myT], stats.peakArmySize[enemyT]); row += rowH + 4;
+
+    // Combat section
+    addHeader(row, '--- COMBAT ---'); row += rowH;
+    addStatRow(row, 'Kills', stats.totalKills[myT], stats.totalKills[enemyT]); row += rowH;
+    const fmtDmg = (d: number) => d >= 1000 ? `${(d / 1000).toFixed(1)}k` : String(d);
+    addStatRow(row, 'Damage', fmtDmg(stats.totalDamage[myT]), fmtDmg(stats.totalDamage[enemyT])); row += rowH;
+    addStatRow(row, 'Camps Won', stats.campsCaptured[myT], stats.campsCaptured[enemyT]); row += rowH;
+    addStatRow(row, 'Camps Lost', stats.campsLost[myT], stats.campsLost[enemyT]); row += rowH + 4;
+
+    // Economy section
+    addHeader(row, '--- ECONOMY ---'); row += rowH;
+    const myRes = stats.resourcesDelivered[myT];
+    const enRes = stats.resourcesDelivered[enemyT];
+    addStatRow(row, '🥕 Carrots', myRes.carrot, enRes.carrot); row += rowH;
+    addStatRow(row, '🍖 Meat', myRes.meat, enRes.meat); row += rowH;
+    addStatRow(row, '💎 Crystals', myRes.crystal, enRes.crystal); row += rowH;
+    addStatRow(row, '⚙️ Metal', myRes.metal, enRes.metal); row += rowH + 8;
+
+    // Animate stat cards in
+    phase2Objects.forEach((obj, i) => {
+      this.tweens.add({ targets: obj, alpha: 1, y: obj.y, duration: 300, delay: 1500 + i * 40, ease: 'Power2' });
+    });
+
+    // Phase 3: Top Killer card (delay ~4000ms)
+    const tkRow = row;
+    const tk = this.topKiller[myT];
+    const tkEmoji = tk.type ? (ANIMALS[tk.type]?.emoji || '') : '';
+    const tkLabel = tk.kills > 0 ? `${tkEmoji} ${tk.type.charAt(0).toUpperCase() + tk.type.slice(1)} — ${tk.kills} kills` : 'No kills recorded';
+    const tkHeader = this.add.text(cx, tkRow, '⭐ TOP KILLER', {
+      fontSize: '14px', color: '#FFD93D', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(201).setAlpha(0);
+    const tkText = this.add.text(cx, tkRow + 22, tkLabel, {
+      fontSize: '16px', color: '#ffffff', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(201).setAlpha(0);
+
+    const phase3Delay = 1500 + phase2Objects.length * 40 + 500;
+    this.tweens.add({ targets: tkHeader, alpha: 1, scaleX: { from: 0.8, to: 1 }, scaleY: { from: 0.8, to: 1 }, duration: 400, delay: phase3Delay, ease: 'Back.easeOut' });
+    this.tweens.add({ targets: tkText, alpha: 1, duration: 400, delay: phase3Delay + 200 });
+
+    // Phase 4: Buttons (delay ~6000ms)
+    const btnDelay = phase3Delay + 800;
+    const btnY = tkRow + 60;
+
+    const playAgainBtn = this.add.text(cx - 90, btnY, 'PLAY AGAIN', {
+      fontSize: '18px', color: '#45E6B0', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
+      backgroundColor: '#0d1a0d', padding: { x: 16, y: 8 },
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(201).setAlpha(0).setInteractive({ useHandCursor: true });
+    playAgainBtn.on('pointerdown', () => { this.cleanupHTML(); this.scene.restart(); });
+    playAgainBtn.on('pointerover', () => playAgainBtn.setColor('#FFD93D'));
+    playAgainBtn.on('pointerout', () => playAgainBtn.setColor('#45E6B0'));
+
+    const menuBtn = this.add.text(cx + 90, btnY, 'BACK TO MENU', {
+      fontSize: '18px', color: '#45E6B0', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
+      backgroundColor: '#0d1a0d', padding: { x: 16, y: 8 },
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(201).setAlpha(0).setInteractive({ useHandCursor: true });
+    menuBtn.on('pointerdown', () => { this.cleanupHTML(); this.scene.start('MenuScene'); });
+    menuBtn.on('pointerover', () => menuBtn.setColor('#FFD93D'));
+    menuBtn.on('pointerout', () => menuBtn.setColor('#45E6B0'));
+
+    this.tweens.add({ targets: playAgainBtn, alpha: 1, duration: 400, delay: btnDelay });
+    this.tweens.add({ targets: menuBtn, alpha: 1, duration: 400, delay: btnDelay + 100 });
   }
 
   // ─── UNIT MANAGEMENT ────────────────────────────────────────
@@ -7676,7 +8831,7 @@ export class HordeScene extends Phaser.Scene {
       x, y, targetX, targetY,
       attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
       campId: null, lungeX: 0, lungeY: 0,
-      gnomeShield: type === 'gnome' ? 2 : 0,
+      gnomeShield: type === 'gnome' ? 1 : 0,
       hasRebirth: type === 'skull',
       diveReady: false,
       diveTimer: 0,
@@ -7699,6 +8854,7 @@ export class HordeScene extends Phaser.Scene {
         ? { ...this.groupModifiers[`${type}_${team}`] }
         : { ...DEFAULT_MODS },
     });
+    this.matchStats.unitsSpawned[team]++;
     // Spawn SFX — per-unit voice grunt with generic fallbacks
     const spawnKey = ('spawn_' + type) as import('../audio/SoundManager').SfxKey;
     if (type === 'troll') {
@@ -7813,9 +8969,12 @@ export class HordeScene extends Phaser.Scene {
       hp: u.hp, maxHp: u.maxHp, attack: u.attack, speed: u.speed,
       x: u.x, y: u.y, targetX: u.targetX, targetY: u.targetY,
       dead: false, campId: u.campId,
+      carrying: u.carrying, equipment: u.equipment, equipLevel: u.equipLevel,
+      animState: u.animState,
+      loop: u.loop ? { steps: u.loop.steps.map(s => ({ ...(s as any) })), currentStep: u.loop.currentStep } : null,
     }));
     const syncCamps = this.camps.map(c => ({
-      id: c.id, owner: c.owner, spawnTimer: c.spawnTimer,
+      id: c.id, owner: c.owner, spawnTimer: c.spawnTimer, storedFood: c.storedFood,
     }));
     const syncNexuses = this.nexuses.map(n => ({
       team: n.team, hp: n.hp,
@@ -7830,6 +8989,19 @@ export class HordeScene extends Phaser.Scene {
       gameTime: this.gameTime,
       gameOver: this.gameOver,
       winner: this.winner,
+      baseStockpile: this.baseStockpile,
+      currentEra: this.currentEra,
+      groundItems: this.groundItems.filter(i => !i.dead).map(i => ({ id: i.id, type: i.type, x: i.x, y: i.y })),
+      teamBuffs: this.teamBuffs.map(b => ({ team: b.team, stat: b.stat, amount: b.amount, remaining: b.remaining })),
+      groupWorkflows: this.groupWorkflows,
+      groupModifiers: this.groupModifiers,
+      freeGnomeTimer: this.freeGnomeTimer,
+      unlockedEquipment: {
+        1: Object.fromEntries(this.unlockedEquipment[1]),
+        2: Object.fromEntries(this.unlockedEquipment[2]),
+      },
+      matchStats: this.matchStats,
+      topKiller: this.topKiller,
       mapEvents: this.mapEvents.map(e => ({
         id: e.id, type: e.type, x: e.x, y: e.y,
         timer: e.timer, duration: e.duration, state: e.state,
@@ -7847,8 +9019,8 @@ export class HordeScene extends Phaser.Scene {
     // Firebase RTDB converts arrays to objects with numeric keys — normalize
     const toArray = <T>(val: T[] | Record<string, T> | undefined): T[] => {
       if (!val) return [];
-      if (Array.isArray(val)) return val;
-      return Object.values(val);
+      if (Array.isArray(val)) return val.filter(v => v != null);
+      return Object.values(val).filter(v => v != null);
     };
 
     const syncUnits = toArray(state.units);
@@ -7859,6 +9031,58 @@ export class HordeScene extends Phaser.Scene {
     this.nextId = state.nextId || 0;
     this.rallyPoints = state.rallyPoints || {};
     this.baseSpawnTimers = state.baseSpawnTimers || { 1: 0, 2: 0 };
+
+    // Sync resources, era, buffs
+    if (state.baseStockpile) this.baseStockpile = state.baseStockpile as any;
+    if (state.currentEra !== undefined) this.currentEra = state.currentEra;
+    if (state.teamBuffs) {
+      this.teamBuffs = (Array.isArray(state.teamBuffs) ? state.teamBuffs : Object.values(state.teamBuffs)).map((b: any) => ({
+        team: b.team as 1 | 2, stat: b.stat as 'speed' | 'attack', amount: b.amount, remaining: b.remaining,
+      }));
+    }
+    if (state.unlockedEquipment) {
+      for (const team of [1, 2] as const) {
+        const data = state.unlockedEquipment[team];
+        if (data) {
+          this.unlockedEquipment[team] = new Map(
+            Object.entries(data).map(([k, v]) => [k as EquipmentType, v as number])
+          );
+        }
+      }
+    }
+    if (state.matchStats) this.matchStats = state.matchStats;
+    if (state.topKiller) this.topKiller = state.topKiller as any;
+
+    // Sync ground items
+    if (state.groundItems) {
+      const syncItems = Array.isArray(state.groundItems) ? state.groundItems : Object.values(state.groundItems);
+      const incomingItemIds = new Set(syncItems.map((i: any) => i.id));
+      // Remove items no longer present
+      for (const gi of this.groundItems) {
+        if (!incomingItemIds.has(gi.id)) {
+          gi.dead = true;
+          if (gi.sprite) { gi.sprite.destroy(); gi.sprite = null; }
+        }
+      }
+      this.groundItems = this.groundItems.filter(i => !i.dead);
+      // Update or create items
+      const existingItems = new Map(this.groundItems.map(i => [i.id, i]));
+      for (const si of syncItems as { id: number; type: string; x: number; y: number }[]) {
+        const existing = existingItems.get(si.id);
+        if (existing) {
+          existing.x = si.x; existing.y = si.y;
+        } else {
+          this.groundItems.push({
+            id: si.id, type: si.type as ResourceType, x: si.x, y: si.y,
+            sprite: null, dead: false, age: 0,
+          });
+        }
+      }
+    }
+
+    if (state.groupWorkflows) this.groupWorkflows = state.groupWorkflows as any;
+    if (state.groupModifiers) this.groupModifiers = state.groupModifiers as any;
+    if (state.freeGnomeTimer !== undefined) this.freeGnomeTimer = state.freeGnomeTimer;
 
     // Sync nexuses
     for (const sn of syncNexuses) {
@@ -7872,6 +9096,7 @@ export class HordeScene extends Phaser.Scene {
       if (c) {
         c.owner = sc.owner as 0 | 1 | 2;
         c.spawnTimer = sc.spawnTimer;
+        if (sc.storedFood !== undefined) c.storedFood = sc.storedFood;
       }
     }
 
@@ -7885,6 +9110,8 @@ export class HordeScene extends Phaser.Scene {
         u.dead = true;
         if (u.sprite) { u.sprite.destroy(); u.sprite = null; }
         if (u.equipSprite) { u.equipSprite.destroy(); u.equipSprite = null; }
+        if (u.carrySprite) { u.carrySprite.destroy(); u.carrySprite = null; }
+        if (u.equipDragSprite) { u.equipDragSprite.destroy(); u.equipDragSprite = null; }
       }
     }
     this.units = this.units.filter(u => !u.dead);
@@ -7901,6 +9128,17 @@ export class HordeScene extends Phaser.Scene {
         existing.targetY = su.targetY;
         existing.team = su.team as 0 | 1 | 2;
         existing.type = su.type;
+        existing.carrying = (su.carrying || null) as ResourceType | null;
+        existing.equipment = (su.equipment || null) as any;
+        existing.equipLevel = su.equipLevel || 0;
+        existing.animState = (su.animState || 'idle') as any;
+        if (su.loop) {
+          if (existing.loop) {
+            existing.loop.currentStep = su.loop.currentStep;
+          }
+        } else {
+          existing.loop = null;
+        }
         // Lerp actual position toward synced position
         existing.x += (su.x - existing.x) * 0.3;
         existing.y += (su.y - existing.y) * 0.3;
@@ -7912,13 +9150,13 @@ export class HordeScene extends Phaser.Scene {
           x: su.x, y: su.y, targetX: su.targetX, targetY: su.targetY,
           attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
           campId: su.campId, lungeX: 0, lungeY: 0,
-          gnomeShield: su.type === 'gnome' ? 2 : 0,
+          gnomeShield: su.type === 'gnome' ? 1 : 0,
           hasRebirth: su.type === 'skull',
           diveReady: false,
           diveTimer: 0,
           lastAttackTarget: -1, attackFaceX: null, pathWaypoints: null, pathAge: 0, pathTargetX: 0, pathTargetY: 0, lastCheckX: 0, lastCheckY: 0, stuckFrames: 0, stuckCooldown: 0, mods: { ...DEFAULT_MODS },
-          carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
-          equipment: null, equipLevel: 0, equipSprite: null, equipDragSprite: null, equipVisualApplied: null,
+          carrying: (su.carrying || null) as ResourceType | null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
+          equipment: (su.equipment || null) as any, equipLevel: su.equipLevel || 0, equipSprite: null, equipDragSprite: null, equipVisualApplied: null,
         });
       }
     }
@@ -8038,16 +9276,17 @@ export class HordeScene extends Phaser.Scene {
     const groundMeat = alive.filter(g => g.type === 'meat').length;
     const groundCrystals = alive.filter(g => g.type === 'crystal').length;
 
-    const activeEvents = this.mapEvents.filter(e => e.state === 'active' && (this.fogDisabled || this.isInVision(e.x, e.y))).map(e => {
+    const activeEvents = this.mapEvents.filter(e => e.state === 'active').map(e => {
       const def = MAP_EVENT_DEFS[e.type];
       let info = '';
-      if (e.type === 'mercenary_outpost') info = `deliver ${e.data.cost?.amount} ${e.data.cost?.type}`;
-      else if (e.type === 'kill_bounty') info = `kill ${e.data.targetType}s`;
-      else if (e.type === 'bottomless_pit') info = `sacrifice ${e.data.sacrificesNeeded} units`;
-      else if (e.type === 'hungry_bear') info = `feed carrots/meat`;
-      else if (e.type === 'warchest') info = `attack to break`;
-      else if (e.type === 'fungal_bloom') info = `gather resources in zone`;
-      return { type: e.type, emoji: def.emoji, x: Math.round(e.x), y: Math.round(e.y), timeLeft: Math.round(e.timer / 1000), info };
+      let howToWin = '';
+      if (e.type === 'mercenary_outpost') { info = `deliver ${e.data.cost?.amount} ${e.data.cost?.type}`; howToWin = 'Send units carrying the required resource to the outpost to deliver it. First team to deliver enough wins mercenary units.'; }
+      else if (e.type === 'kill_bounty') { info = `kill ${e.data.targetType}s`; howToWin = 'Hunt and kill the marked target animals near the event. The team that gets the most kills wins bonus resources.'; }
+      else if (e.type === 'bottomless_pit') { info = `sacrifice ${e.data.sacrificesNeeded} units`; howToWin = 'Send units to the pit — they will be sacrificed. First team to sacrifice enough units wins a powerful reward.'; }
+      else if (e.type === 'hungry_bear') { info = `feed carrots/meat`; howToWin = 'Deliver food (carrots or meat) to the bear. First team to feed it enough tames it as a powerful siege unit.'; }
+      else if (e.type === 'warchest') { info = `attack to break`; howToWin = 'Send combat units to attack the chest. First team to deal enough damage breaks it open and claims loot.'; }
+      else if (e.type === 'fungal_bloom') { info = `gather resources in zone`; howToWin = 'Send gatherers into the bloom zone to pick up mushroom resources that spawn there. Collect as many as you can before time runs out.'; }
+      return { type: e.type, emoji: def.emoji, name: def.name, x: Math.round(e.x), y: Math.round(e.y), timeLeft: Math.round(e.timer / 1000), info, howToWin };
     });
 
     // Compute hoard centroid for spatial awareness
@@ -8065,6 +9304,9 @@ export class HordeScene extends Phaser.Scene {
       hoardCenter: { x: hcx, y: hcy },
       carrotZones: this.mapDef?.carrotZones || [],
       activeEvents,
+      activeBuffs: this.teamBuffs.filter(b => b.team === team).map(b => ({
+        stat: b.stat, amount: b.amount, remaining: Math.round(b.remaining / 1000),
+      })),
     };
 
     // Try Gemini first, with error protection so local fallback always runs
@@ -8097,6 +9339,14 @@ export class HordeScene extends Phaser.Scene {
           if (gCmd.unitReaction) {
             const sel = this.units.filter(u => u.team === team && !u.dead && (this.selectedHoard === 'all' || u.type === this.selectedHoard));
             this.showThoughtBubbles(sel, gCmd.unitReaction);
+            // Store reaction per hoard for sidebar display
+            if (this.selectedHoard === 'all') {
+              for (const h of this.getAvailableHoards()) {
+                if (h !== 'all') this.lastHoardReaction[h] = gCmd.unitReaction;
+              }
+            } else {
+              this.lastHoardReaction[this.selectedHoard] = gCmd.unitReaction;
+            }
           }
           geminiHandled = true;
         }
@@ -8108,6 +9358,15 @@ export class HordeScene extends Phaser.Scene {
     // Fallback to local regex parsing
     if (!geminiHandled) {
       this.executeLocalCommand(text, team);
+      // Store a canned reaction for local commands
+      const localReaction = this.getCannedReaction('yes', this.selectedHoard === 'all' ? 'gnome' : this.selectedHoard);
+      if (this.selectedHoard === 'all') {
+        for (const h of this.getAvailableHoards()) {
+          if (h !== 'all') this.lastHoardReaction[h] = localReaction;
+        }
+      } else {
+        this.lastHoardReaction[this.selectedHoard] = localReaction;
+      }
     }
 
     } finally {
@@ -8144,6 +9403,11 @@ export class HordeScene extends Phaser.Scene {
   private executeGeminiCommand(cmd: HordeCommand, team: 1 | 2): boolean {
     const subject = this.selectedHoard; // hoard is selected via Q/E keys, not parsed from voice
     const base = team === 1 ? P1_BASE : P2_BASE;
+
+    // Cancel active plans when a non-plan command is issued for the same group
+    if (cmd.targetType !== 'advanced_plan' && !cmd.modifierOnly) {
+      this.cancelPlansForGroup(subject, team);
+    }
     let tx = 0, ty = 0, found = false;
 
     // Apply behavior modifiers (sticky — only update axes that are explicitly set)
@@ -8177,7 +9441,7 @@ export class HordeScene extends Phaser.Scene {
       // By animal type — nearest not owned by me
       if (!found && cmd.targetAnimal) {
         const cs = this.camps.filter(c => c.animalType === cmd.targetAnimal && c.owner !== team)
-          .sort((a, b) => pdist(a, base) - pdist(b, base));
+          .sort((a, b) => pdist2(a, base) - pdist2(b, base));
         if (cs.length > 0) { tx = cs[0].x; ty = cs[0].y; found = true; }
       }
 
@@ -8202,9 +9466,9 @@ export class HordeScene extends Phaser.Scene {
 
       // Sort by qualifier
       if (q === 'nearest' || q === 'uncaptured' || q === 'enemy') {
-        candidates.sort((a, b) => pdist(a, base) - pdist(b, base));
+        candidates.sort((a, b) => pdist2(a, base) - pdist2(b, base));
       } else if (q === 'furthest') {
-        candidates.sort((a, b) => pdist(b, base) - pdist(a, base));
+        candidates.sort((a, b) => pdist2(b, base) - pdist2(a, base));
       } else if (q === 'weakest') {
         candidates.sort((a, b) => {
           const da = this.units.filter(u => u.campId === a.id && u.team === 0 && !u.dead).length;
@@ -8219,7 +9483,7 @@ export class HordeScene extends Phaser.Scene {
       // Chain-capture: find all matching uncaptured camps, sorted nearest-first
       let targets = this.camps.filter(c => c.owner !== team);
       if (cmd.targetAnimal) targets = targets.filter(c => c.animalType === cmd.targetAnimal);
-      targets.sort((a, b) => pdist(a, base) - pdist(b, base));
+      targets.sort((a, b) => pdist2(a, base) - pdist2(b, base));
 
       if (targets.length > 0) {
         // Send to first target, set up auto-chain via rally
@@ -8317,6 +9581,44 @@ export class HordeScene extends Phaser.Scene {
       const hasAttackStep = steps.some(s => s.action === 'attack_camp' || s.action === 'attack_enemies' || s.action === 'kill_only');
       this.unitReact(hasAttackStep ? 'charge' : 'yes', sel);
       this.showFeedback(cmd.narration || 'Roger!', '#45E6B0');
+      return true;
+
+    } else if (cmd.targetType === 'advanced_plan' && cmd.planGoal) {
+      // Cancel existing plan for this subject+team
+      this.cancelPlansForGroup(subject, team);
+
+      const plan = this.resolvePlan(
+        {
+          type: cmd.planGoal.type,
+          equipment: cmd.planGoal.equipment as EquipmentType | undefined,
+          resource: cmd.planGoal.resource as ResourceType | undefined,
+          amount: cmd.planGoal.amount,
+          thenAction: cmd.planGoal.thenAction,
+        },
+        team,
+        subject,
+        this.pendingCommandText || '',
+      );
+
+      if (!plan) {
+        // Could not resolve (already maxed, invalid goal, etc.)
+        this.showFeedback(cmd.narration || 'Already done!', '#FFD93D');
+        return true;
+      }
+
+      this.activePlans.push(plan);
+
+      // Assign first phase workflow
+      const firstPhase = plan.phases[0];
+      if (firstPhase?.workflow) {
+        this.assignWorkflowToGroup(firstPhase.workflow, subject, team);
+      }
+
+      // Show plan feedback
+      const sel = this.units.filter(u => u.team === team && !u.dead && (subject === 'all' || u.type === subject));
+      this.unitReact('yes', sel);
+      this.showFeedback(`Plan: ${plan.goalLabel} (${plan.phases.length} phases)`, '#45E6B0');
+      console.log('[AdvancedPlan] Created:', plan.id, plan.phases.map(p => p.label));
       return true;
 
     } else if (cmd.targetType === 'position') {
@@ -8465,6 +9767,9 @@ export class HordeScene extends Phaser.Scene {
     const lo = text.toLowerCase();
     const subject = this.selectedHoard; // always use selected hoard
     const base = team === 1 ? P1_BASE : P2_BASE;
+
+    // Cancel active plans when a new local command is issued
+    this.cancelPlansForGroup(subject, team);
 
     // Local modifier parsing fallback
     const localMods: { formation?: string | null; caution?: string | null; pacing?: string | null } = {};
@@ -8804,10 +10109,26 @@ export class HordeScene extends Phaser.Scene {
         } else if (curLevel >= MAX_EQUIP_LEVEL) {
           this.showFeedback(`${match.name} already max level!`, '#FF6B6B');
         } else {
-          const nextMult = EQUIP_LEVEL_COST_MULT[curLevel + 1];
-          const needed = Object.entries(match.cost).map(([r, a]) => `${Math.ceil(a! * nextMult)}${RESOURCE_EMOJI[r as ResourceType]}`).join(' ');
-          this.sfx.playGlobal('no_resources');
-          this.showFeedback(`Need ${needed}!`, '#FF6B6B');
+          // Insufficient resources — auto-create an advanced plan to gather and unlock
+          this.cancelPlansForGroup(subject, team);
+          const plan = this.resolvePlan(
+            { type: 'unlock_equipment', equipment: match.id },
+            team, subject, text,
+          );
+          if (plan) {
+            this.activePlans.push(plan);
+            const firstPhase = plan.phases[0];
+            if (firstPhase?.workflow) {
+              this.assignWorkflowToGroup(firstPhase.workflow, subject, team);
+            }
+            this.showFeedback(`Plan: ${plan.goalLabel} (${plan.phases.length} phases)`, '#45E6B0');
+            console.log('[AdvancedPlan] Auto-created from local unlock:', plan.id, plan.phases.map(p => p.label));
+          } else {
+            const nextMult = EQUIP_LEVEL_COST_MULT[curLevel + 1];
+            const needed = Object.entries(match.cost).map(([r, a]) => `${Math.ceil(a! * nextMult)}${RESOURCE_EMOJI[r as ResourceType]}`).join(' ');
+            this.sfx.playGlobal('no_resources');
+            this.showFeedback(`Need ${needed}!`, '#FF6B6B');
+          }
         }
         return;
       }
@@ -8877,7 +10198,7 @@ export class HordeScene extends Phaser.Scene {
       for (const [pat, name] of animalPatterns) {
         if (pat.test(lo)) {
           const cs = this.camps.filter(c => c.animalType === name && c.owner !== team)
-            .sort((a, b) => pdist(a, base) - pdist(b, base));
+            .sort((a, b) => pdist2(a, base) - pdist2(b, base));
           if (cs.length > 0) { tx = cs[0].x; ty = cs[0].y; found = true; break; }
         }
       }
@@ -8885,7 +10206,7 @@ export class HordeScene extends Phaser.Scene {
 
     // Fallback: nearest unowned camp
     if (!found && /nearest|closest|camp/i.test(lo)) {
-      const cs = this.camps.filter(c => c.owner !== team).sort((a, b) => pdist(a, base) - pdist(b, base));
+      const cs = this.camps.filter(c => c.owner !== team).sort((a, b) => pdist2(a, base) - pdist2(b, base));
       if (cs.length > 0) { tx = cs[0].x; ty = cs[0].y; found = true; }
     }
 
@@ -9199,38 +10520,30 @@ export class HordeScene extends Phaser.Scene {
     if (!this.hoardBarEl) return;
     const available = this.getAvailableHoards();
 
-    let html = '';
+    const _qeStyle = 'background:rgba(212,196,160,0.85);border:1px solid #8B7355;border-radius:8px;padding:6px 10px;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:36px;';
+    let html = '<div style="' + _qeStyle + '"><div style="font-size:18px;color:#5a3a1a;line-height:1;">◀</div><div style="font-family:Fredoka,sans-serif;font-size:11px;font-weight:700;color:#5a3a1a;margin-top:2px;">Q</div></div>';
     for (const h of available) {
       const isActive = h === this.selectedHoard;
-      const iconHtml = h === 'all' ? '<span style="font-size:48px;line-height:1;">⚔️</span>' : (avatarImg(h, 52) || `<span style="font-size:40px;">${ANIMALS[h]?.emoji || '?'}</span>`);
+      const iconHtml = h === 'all' ? '<span style="font-size:52px;">\u2694\uFE0F</span>' : (avatarImg(h, 72) || '<span style="font-size:52px;">' + (ANIMALS[h]?.emoji || '?') + '</span>');
       const name = h === 'all' ? 'ALL' : cap(h).toUpperCase();
       const count = h === 'all'
         ? this.units.filter(u => u.team === this.myTeam && !u.dead).length
         : this.units.filter(u => u.team === this.myTeam && !u.dead && u.type === h).length;
-      const tier = h === 'all' ? '' : `T${ANIMALS[h]?.tier || '?'}`;
-      const lastCmd = this.lastHoardCommand[h] || '';
-      // Truncate command to fit card
-      const cmdDisplay = lastCmd.length > 20 ? lastCmd.slice(0, 18) + '…' : lastCmd;
 
       const bg = isActive ? 'rgba(188,168,120,0.6)' : 'rgba(212,196,160,0.85)';
       const border = isActive ? '#6B5335' : '#8B7355';
       const borderW = isActive ? '3px' : '1px';
-      const glow = isActive ? 'box-shadow:0 0 12px rgba(139,115,85,0.5);' : '';
-      const scale = isActive ? 'transform:scale(1.1);' : '';
+      const glow = isActive ? 'box-shadow:0 0 10px rgba(139,115,85,0.5);' : '';
+      const scale = isActive ? 'transform:scale(1.08);' : '';
 
-      html += `<div style="
-        background:${bg};border:${borderW} solid ${border};border-radius:12px;
-        padding:10px 16px;text-align:center;min-width:80px;
-        ${glow}${scale}transition:all 0.15s ease;
-      ">
-        <div style="display:flex;align-items:center;justify-content:center;min-height:52px;">${iconHtml}</div>
-        <div style="font-size:14px;color:${isActive ? '#4a3520' : '#6a5a4a'};font-weight:800;letter-spacing:0.5px;">${name}</div>
-        <div style="font-size:18px;color:#2a1a0a;font-weight:700;">${count}</div>
-        ${tier ? `<div style="font-size:12px;color:#666;font-weight:600;">${tier}</div>` : ''}
-        ${h !== 'all' && ANIMALS[h] ? `<div style="font-size:11px;color:#C98FFF;font-weight:600;white-space:nowrap;">${ANIMALS[h].ability}</div>` : ''}
-        ${cmdDisplay ? `<div style="font-size:10px;color:#FFD93D;font-style:italic;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100px;" title="${lastCmd.replace(/"/g, '&quot;')}">"${cmdDisplay}"</div>` : ''}
-      </div>`;
+      html += '<div style="background:' + bg + ';border:' + borderW + ' solid ' + border + ';border-radius:10px;padding:6px 8px;text-align:center;min-width:88px;' + glow + scale + 'transition:all 0.15s ease;">'
+        + '<div style="display:flex;align-items:center;justify-content:center;min-height:72px;">' + iconHtml + '</div>'
+        + '<div style="display:flex;align-items:center;justify-content:center;gap:6px;margin-top:2px;">'
+        + '<span style="font-size:12px;color:' + (isActive ? '#4a3520' : '#6a5a4a') + ';font-weight:800;letter-spacing:0.5px;">' + name + '</span>'
+        + '<span style="font-size:15px;color:#2a1a0a;font-weight:700;">' + count + '</span>'
+        + '</div></div>';
     }
+    html += '<div style="' + _qeStyle + '"><div style="font-size:18px;color:#5a3a1a;line-height:1;">▶</div><div style="font-family:Fredoka,sans-serif;font-size:11px;font-weight:700;color:#5a3a1a;margin-top:2px;">E</div></div>';
     this.hoardBarEl.innerHTML = html;
   }
 
@@ -9250,6 +10563,12 @@ export class HordeScene extends Phaser.Scene {
     const eb = this.getEventBuffs(team);
     attack += eb.attack;
     speed += eb.speed;
+    // Add camp loot buffs
+    for (const b of this.teamBuffs) {
+      if (b.team !== team) continue;
+      if (b.stat === 'speed') speed += b.amount;
+      else if (b.stat === 'attack') attack += b.amount;
+    }
     return { speed, attack, hp };
   }
 
@@ -9421,6 +10740,7 @@ export class HordeScene extends Phaser.Scene {
     this.renderMapRocks();
     this.renderMapBushes();
     this.renderMapTowers();
+    this.boundaryBlocks = this.mapDef?.boundaryBlocks || [];
   }
 
   private handleEditorCommand(cmd: string, mapDef?: MapDef) {
@@ -10599,7 +11919,7 @@ export class HordeScene extends Phaser.Scene {
           const enemyTeam = winner === 1 ? 2 : 1;
           const enemyCamp = this.camps
             .filter(c => c.owner === enemyTeam)
-            .sort((a, b) => pdist(a, ev) - pdist(b, ev))[0];
+            .sort((a, b) => pdist2(a, ev) - pdist2(b, ev))[0];
           const tX = enemyCamp ? enemyCamp.x : (winner === 1 ? P2_BASE.x : P1_BASE.x);
           const tY = enemyCamp ? enemyCamp.y : (winner === 1 ? P2_BASE.y : P1_BASE.y);
           for (let i = 0; i < mercCount; i++) {
@@ -10735,9 +12055,51 @@ export class HordeScene extends Phaser.Scene {
     }
   }
 
-  // ─── EVENT HUD PANEL (screen overlay) ───────────────────────
+  // ─── EVENT TAB (top-left, right of sidebar) ─────────────────
 
   private eventHudEl: HTMLDivElement | null = null;
+
+  private panCameraToEvent(ev: MapEvent) {
+    const cam = this.cameras.main;
+    const duration = 400;
+    const startX = cam.scrollX + cam.width / 2;
+    const startY = cam.scrollY + cam.height / 2;
+    const dx = ev.x - startX;
+    const dy = ev.y - startY;
+    let elapsed = 0;
+    const step = (dt: number) => {
+      elapsed += dt;
+      const t = Math.min(1, elapsed / duration);
+      const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+      cam.centerOn(startX + dx * ease, startY + dy * ease);
+      if (t < 1) this.time.delayedCall(16, () => step(16));
+    };
+    step(0);
+  }
+
+  private getEventHowTo(ev: MapEvent): string {
+    switch (ev.type) {
+      case 'fungal_bloom': return 'Send gatherers into the zone to collect mushroom pickups';
+      case 'warchest': return 'Attack the chest with combat units to break it open';
+      case 'kill_bounty': return `Hunt and kill the marked ${ev.data.targetType || 'target'}s nearby`;
+      case 'mercenary_outpost': return `Deliver ${ev.data.cost?.amount || '?'} ${ev.data.cost?.type || 'resources'} to the outpost`;
+      case 'bottomless_pit': return `Sacrifice ${ev.data.sacrificesNeeded || '?'} units into the pit`;
+      case 'hungry_bear': return 'Deliver food (carrots or meat) to tame the bear';
+      default: return 'Contest the event zone!';
+    }
+  }
+
+  private getEventReward(ev: MapEvent): string {
+    switch (ev.type) {
+      case 'fungal_bloom': return 'Resources for your team';
+      case 'warchest': return 'Loot drop + both teams get +15% ATK (60s)';
+      case 'kill_bounty': return 'Most kills wins +10% SPD (30s) + bonus resources';
+      case 'mercenary_outpost': return 'Winner recruits 3-5 mercenary units';
+      case 'bottomless_pit': return '+20% ATK buff (45s) + resources';
+      case 'hungry_bear': return 'Tame the bear as a powerful siege unit';
+      default: return 'Rewards!';
+    }
+  }
 
   private updateEventHUD() {
     const active = this.mapEvents.filter(e => e.state === 'active');
@@ -10751,10 +12113,12 @@ export class HordeScene extends Phaser.Scene {
       const el = document.createElement('div');
       el.id = 'event-hud-panel';
       el.style.cssText = `
-        position:absolute;top:6px;
-        left:var(--horde-sidebar-w, 280px);right:var(--horde-rpanel-w, 380px);
-        margin:0 auto;width:fit-content;
-        z-index:150;display:flex;gap:6px;pointer-events:none;font-family:'Nunito',sans-serif;
+        position:absolute;top:8px;
+        left:calc(var(--horde-sidebar-w, 280px) + 8px);
+        width:220px;max-height:calc(100vh - 20px);overflow-y:auto;
+        z-index:150;display:flex;flex-direction:column;gap:6px;
+        font-family:'Nunito',sans-serif;
+        scrollbar-width:thin;scrollbar-color:rgba(139,115,85,0.5) transparent;
       `;
       c.appendChild(el);
       this.eventHudEl = el;
@@ -10772,14 +12136,16 @@ export class HordeScene extends Phaser.Scene {
       const secs = Math.max(0, Math.ceil(ev.timer / 1000));
       const pctTime = Math.max(0, ev.timer / ev.duration);
       const color = glowColors[ev.type] || '#FF9933';
+      const howTo = this.getEventHowTo(ev);
+      const reward = this.getEventReward(ev);
 
       let progressStr = '';
       const p1 = ev.progress[1] || 0;
       const p2 = ev.progress[2] || 0;
       if (ev.type === 'warchest') {
-        progressStr = `<span style="color:#ff6666">❤️ ${Math.max(0, Math.round(ev.data.hp))}/${ev.data.maxHp}</span>`;
+        progressStr = `<span style="color:#ff6666">\u2764\uFE0F ${Math.max(0, Math.round(ev.data.hp))}/${ev.data.maxHp}</span>`;
       } else if (ev.type === 'kill_bounty') {
-        const bountyIcon = avatarImg(ev.data.targetType, 16) || (ANIMALS[ev.data.targetType]?.emoji || '');
+        const bountyIcon = avatarImg(ev.data.targetType, 14) || (ANIMALS[ev.data.targetType]?.emoji || '');
         progressStr = `${bountyIcon} <span style="color:#6af">${p1}</span> vs <span style="color:#f66">${p2}</span> / ${ev.data.targetCount}`;
       } else if (ev.type === 'mercenary_outpost') {
         progressStr = `<span style="color:#6af">${p1}</span> vs <span style="color:#f66">${p2}</span> / ${ev.data.cost.amount} ${ev.data.cost.type}`;
@@ -10791,23 +12157,37 @@ export class HordeScene extends Phaser.Scene {
         progressStr = `<span style="color:#6af">${p1}</span> vs <span style="color:#f66">${p2}</span>`;
       }
 
-      const timerColor = pctTime > 0.5 ? color : pctTime > 0.2 ? '#FFD93D' : '#FF4444';
+      const timerColor = pctTime > 0.5 ? '#5a9e3a' : pctTime > 0.2 ? '#C98F00' : '#CC3333';
+      const urgentPulse = pctTime <= 0.2 ? 'animation:eventPulse 1s ease-in-out infinite;' : '';
 
-      html += `<div style="
-        background:rgba(8,12,20,0.9);border:1px solid ${color}44;border-radius:8px;
-        padding:5px 10px;min-width:135px;backdrop-filter:blur(6px);
-        box-shadow:0 2px 8px rgba(0,0,0,0.5),inset 0 0 10px ${color}08;
-        pointer-events:auto;
+      html += `<div data-event-id="${ev.id}" style="
+        background:linear-gradient(180deg, rgba(255,248,230,0.95) 0%, rgba(240,228,200,0.95) 100%);
+        border:2px solid rgba(139,115,85,0.5);border-radius:10px;
+        padding:8px 10px;cursor:pointer;pointer-events:auto;
+        box-shadow:0 2px 8px rgba(0,0,0,0.15), inset 0 0 8px ${color}15;
+        border-left:4px solid ${color};
+        transition:all 0.15s ease;${urgentPulse}
       ">
-        <div style="display:flex;align-items:center;gap:4px;margin-bottom:2px;">
-          <span style="font-size:16px;">${def.emoji}</span>
-          <span style="font-size:10px;font-weight:800;color:${color};font-family:Fredoka;letter-spacing:0.5px;">${def.name.toUpperCase()}</span>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+          <div style="display:flex;align-items:center;gap:5px;">
+            <span style="font-size:18px;">${def.emoji}</span>
+            <span style="font-size:12px;font-weight:800;color:#4a3520;font-family:'Fredoka',sans-serif;letter-spacing:0.5px;">${def.name.toUpperCase()}</span>
+          </div>
+          <span style="font-size:11px;font-weight:700;color:${timerColor};font-family:'Fredoka',sans-serif;">${secs}s</span>
         </div>
-        <div style="font-size:9px;color:#ccc;margin-bottom:2px;">${progressStr}</div>
-        <div style="background:rgba(255,255,255,0.06);border-radius:3px;height:3px;overflow:hidden;">
-          <div style="background:${timerColor};height:100%;width:${(pctTime * 100).toFixed(1)}%;border-radius:3px;transition:width 0.5s;"></div>
+
+        <div style="background:rgba(139,115,85,0.15);border-radius:4px;height:4px;overflow:hidden;margin-bottom:5px;">
+          <div style="background:${timerColor};height:100%;width:${(pctTime * 100).toFixed(1)}%;border-radius:4px;transition:width 0.5s;"></div>
         </div>
-        <div style="font-size:8px;color:#666;text-align:right;margin-top:1px;">⏱ ${secs}s</div>
+
+        <div style="font-size:10px;color:#5a4a3a;margin-bottom:3px;line-height:1.3;">\u2694\uFE0F ${howTo}</div>
+        <div style="font-size:9px;color:#8B7355;margin-bottom:4px;line-height:1.3;">\uD83C\uDFC6 ${reward}</div>
+
+        <div style="font-size:10px;color:#4a3520;font-weight:600;">${progressStr}</div>
+
+        <div style="display:flex;align-items:center;gap:3px;margin-top:4px;opacity:0.6;">
+          <span style="font-size:8px;color:#8B7355;">\uD83D\uDCCD Click to view</span>
+        </div>
       </div>`;
     }
 
@@ -10815,12 +12195,30 @@ export class HordeScene extends Phaser.Scene {
     const nextIn = Math.max(0, Math.ceil((120000 - this.eventCycleTimer) / 1000));
     if (nextIn <= 30) {
       html += `<div style="
-        background:rgba(8,12,20,0.6);border:1px solid #fff1;border-radius:8px;
-        padding:5px 8px;display:flex;align-items:center;
-      "><span style="font-size:8px;color:#666;">⚡ Next: ${nextIn}s</span></div>`;
+        background:rgba(255,248,230,0.8);border:1px solid rgba(139,115,85,0.3);border-radius:8px;
+        padding:6px 10px;text-align:center;
+      "><span style="font-size:10px;color:#8B7355;font-weight:700;font-family:'Fredoka',sans-serif;">\u26A1 Next event in ${nextIn}s</span></div>`;
+    }
+
+    // No-events placeholder
+    if (active.length === 0 && nextIn > 30) {
+      html += `<div style="
+        background:rgba(255,248,230,0.7);border:1px solid rgba(139,115,85,0.2);border-radius:8px;
+        padding:8px 10px;text-align:center;
+      "><span style="font-size:10px;color:#a89870;font-style:italic;">No active events</span></div>`;
     }
 
     this.eventHudEl.innerHTML = html;
+
+    // Attach click handlers to pan camera
+    const cards = this.eventHudEl.querySelectorAll('[data-event-id]');
+    cards.forEach((card) => {
+      card.addEventListener('click', () => {
+        const id = parseInt((card as HTMLElement).dataset.eventId || '0', 10);
+        const ev = this.mapEvents.find(e => e.id === id && e.state === 'active');
+        if (ev) this.panCameraToEvent(ev);
+      });
+    });
   }
 
   private getEventBuffs(team: 1 | 2) {
@@ -10844,6 +12242,7 @@ export class HordeScene extends Phaser.Scene {
     this.cmdAvatarEl = null;
     this.textInput = null;
     this.voiceStatusEl?.remove(); this.voiceStatusEl = null;
+    this.introVeilEl?.remove(); this.introVeilEl = null;
     this.selectionLabel = null;
     this.sidebarEl?.remove(); this.sidebarEl = null;
     this.hoardBarEl?.remove(); this.hoardBarEl = null;
@@ -10996,11 +12395,193 @@ export class HordeScene extends Phaser.Scene {
     neutralSection.appendChild(killAllBtn);
     panel.appendChild(neutralSection);
 
+    // === HITBOX / BOUNDARY VISUALIZATION ===
+    const hitboxSection = document.createElement('div');
+    hitboxSection.style.cssText = sectionStyle;
+    hitboxSection.innerHTML = `<div style="${headerStyle}">📐 HITBOXES</div>`;
+    const hitboxToggle = document.createElement('button');
+    hitboxToggle.id = 'debug-hitbox-toggle';
+    hitboxToggle.style.cssText = btnStyle + 'width:100%;padding:4px 8px;font-size:11px;margin-bottom:4px;';
+    hitboxToggle.textContent = 'Show Hitboxes: OFF';
+    hitboxToggle.addEventListener('click', () => {
+      this.debugHitboxes = !this.debugHitboxes;
+      hitboxToggle.textContent = `Show Hitboxes: ${this.debugHitboxes ? 'ON' : 'OFF'}`;
+      hitboxToggle.style.borderColor = this.debugHitboxes ? '#00FF88' : '#FFD93D';
+      if (!this.debugHitboxes && this.debugHitboxGfx) {
+        this.debugHitboxGfx.clear();
+      }
+    });
+    hitboxSection.appendChild(hitboxToggle);
+    panel.appendChild(hitboxSection);
+
     container.appendChild(panel);
     this.debugModePanelEl = panel;
 
     // Initial resource display
     this.updateDebugResourceDisplay();
+  }
+
+  private drawDebugBoundaries() {
+    if (this.boundaryBlocks.length === 0) {
+      if (this.debugBoundaryGfx) this.debugBoundaryGfx.clear();
+      return;
+    }
+    if (!this.debugBoundaryGfx) {
+      this.debugBoundaryGfx = this.add.graphics().setDepth(998);
+    }
+    const bg = this.debugBoundaryGfx;
+    bg.clear();
+    const cam = this.cameras.main;
+    const cL = cam.scrollX - 50, cR = cam.scrollX + cam.width / cam.zoom + 50;
+    const cT = cam.scrollY - 50, cB = cam.scrollY + cam.height / cam.zoom + 50;
+    for (const b of this.boundaryBlocks) {
+      if (b.x + b.w < cL || b.x > cR || b.y + b.h < cT || b.y > cB) continue;
+      bg.fillStyle(0xFF2222, 0.15);
+      bg.fillRect(b.x, b.y, b.w, b.h);
+      bg.lineStyle(3, 0xFF4422, 0.8);
+      bg.strokeRect(b.x, b.y, b.w, b.h);
+      bg.lineStyle(1, 0xFF4422, 0.3);
+      const step = 20;
+      for (let d = 0; d < b.w + b.h; d += step) {
+        const x1 = b.x + Math.max(0, d - b.h), y1 = b.y + Math.min(b.h, d);
+        const x2 = b.x + Math.min(b.w, d), y2 = b.y + Math.max(0, d - b.w);
+        bg.lineBetween(x1, y1, x2, y2);
+      }
+    }
+  }
+
+  private drawDebugHitboxes() {
+    if (!this.debugHitboxGfx) {
+      this.debugHitboxGfx = this.add.graphics().setDepth(999);
+    }
+    const g = this.debugHitboxGfx;
+    g.clear();
+
+    const cam = this.cameras.main;
+    const pad = 200;
+    const camL = cam.scrollX - pad;
+    const camR = cam.scrollX + cam.width / cam.zoom + pad;
+    const camT = cam.scrollY - pad;
+    const camB = cam.scrollY + cam.height / cam.zoom + pad;
+    const inView = (x: number, y: number, r: number) =>
+      x + r > camL && x - r < camR && y + r > camT && y - r < camB;
+
+    // ── Blocked tiles (water + rock tiles) — red overlay ──
+    const tiles = this.mapDef?.tiles;
+    if (tiles) {
+      g.fillStyle(0xFF0000, 0.18);
+      for (let r = 0; r < tiles.length; r++) {
+        for (let c = 0; c < tiles[0].length; c++) {
+          const v = tiles[r][c];
+          if (v === 2) {
+            const wx = c * TILE_SIZE, wy = r * TILE_SIZE;
+            if (wx + TILE_SIZE > camL && wx < camR && wy + TILE_SIZE > camT && wy < camB) {
+              g.fillRect(wx, wy, TILE_SIZE, TILE_SIZE);
+            }
+          }
+        }
+      }
+    }
+
+    // ── A* blocked grid — cyan overlay (shows what A* pathfinding sees) ──
+    if (this._staticBlockedGrid) {
+      const CELL = HordeScene.PATH_CELL;
+      const G = HordeScene.PATH_GRID;
+      g.fillStyle(0x00FFFF, 0.15);
+      g.lineStyle(1, 0x00FFFF, 0.4);
+      for (let gy = 0; gy < G; gy++) {
+        for (let gx = 0; gx < G; gx++) {
+          if (this._staticBlockedGrid[gy * G + gx] === 1) {
+            const wx = gx * CELL, wy = gy * CELL;
+            if (wx + CELL > camL && wx < camR && wy + CELL > camT && wy < camB) {
+              g.fillRect(wx, wy, CELL, CELL);
+              g.strokeRect(wx, wy, CELL, CELL);
+            }
+          }
+        }
+      }
+    }
+
+    // ── Unit A* paths — green(p1)/red(p2) connected lines ──
+    for (const u of this.units) {
+      if (u.dead || !u.pathWaypoints || u.pathWaypoints.length === 0) continue;
+      const color = u.team === 1 ? 0x44FF44 : u.team === 2 ? 0xFF4444 : 0xFFFFFF;
+      g.lineStyle(2, color, 0.8);
+      g.beginPath();
+      g.moveTo(u.x, u.y);
+      for (const wp of u.pathWaypoints) {
+        g.lineTo(wp.x, wp.y);
+      }
+      g.strokePath();
+      // Draw waypoint dots
+      g.fillStyle(color, 0.9);
+      for (const wp of u.pathWaypoints) {
+        g.fillCircle(wp.x, wp.y, 4);
+      }
+    }
+
+
+    // ── Bush zones — green outlines ──
+    g.lineStyle(2, 0x00FF44, 0.6);
+    for (const rect of this.bushRects) {
+      if (rect.x + rect.w > camL && rect.x < camR && rect.y + rect.h > camT && rect.y < camB) {
+        g.strokeRect(rect.x, rect.y, rect.w, rect.h);
+      }
+    }
+
+    // ── Camp boundaries — yellow ellipses ──
+    g.lineStyle(2, 0xFFDD00, 0.5);
+    for (const c of this.camps) {
+      if (inView(c.x, c.y, CAMP_RANGE * 1.3)) {
+        g.strokeEllipse(c.x, c.y, CAMP_RANGE * 2.6, CAMP_RANGE * 1.5);
+      }
+    }
+
+    // ── Tower attack ranges — cyan circles ──
+    g.lineStyle(2, 0x00DDFF, 0.5);
+    for (const t of this.towers) {
+      if (!t.alive) continue;
+      if (inView(t.x, t.y, t.range)) {
+        g.strokeCircle(t.x, t.y, t.range);
+      }
+    }
+
+    // ── Nexus attack ranges — magenta circles ──
+    g.lineStyle(2, 0xFF44FF, 0.5);
+    for (const n of this.nexuses) {
+      if (inView(n.x, n.y, NEXUS_RANGE)) {
+        g.strokeCircle(n.x, n.y, NEXUS_RANGE);
+      }
+    }
+
+    // ── Mine ranges — gold circles ──
+    g.lineStyle(2, 0xFFD700, 0.5);
+    for (const m of this.mineNodes) {
+      if (inView(m.x, m.y, MINE_RANGE)) {
+        g.strokeCircle(m.x, m.y, MINE_RANGE);
+      }
+    }
+
+    // ── Boundary blocks — white dashed rectangles (invisible walls) ──
+    g.lineStyle(2, 0xFFFFFF, 0.6);
+    for (const b of this.boundaryBlocks) {
+      if (b.x + b.w > camL && b.x < camR && b.y + b.h > camT && b.y < camB) {
+        g.strokeRect(b.x, b.y, b.w, b.h);
+      }
+    }
+
+    // ── Unit hitboxes — green (friendly), red (enemy), white (neutral) ──
+    for (const u of this.units) {
+      if (u.dead || !inView(u.x, u.y, 30)) continue;
+      // Separation/collision radius (20px)
+      const color = u.team === 0 ? 0xAAAAAA : u.team === 1 ? 0x4499FF : 0xFF5555;
+      g.lineStyle(1, color, 0.6);
+      g.strokeCircle(u.x, u.y, 20);
+      // Attack range
+      g.lineStyle(1, 0xFF3333, 0.25);
+      const atkRange = u.type === 'hyena' ? 120 : u.type === 'shaman' ? 100 : COMBAT_RANGE;
+      g.strokeCircle(u.x, u.y, atkRange);
+    }
   }
 
   private updateDebugResourceDisplay() {
