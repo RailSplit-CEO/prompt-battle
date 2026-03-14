@@ -2,18 +2,22 @@
 const TTS_BASE = 'https://api.elevenlabs.io/v1/text-to-speech';
 const MODEL_ID = 'eleven_flash_v2_5';
 
-const VOICES = [
-  { id: 'JBFqnCBsd6RMkjVDRZzb', name: 'George' },
-  { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel' },
-  { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Bella' },
-  { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni' },
-  { id: 'MF3mGyEYCl7XYWbV9V6O', name: 'Elli' },
-  { id: 'TxGEqnHWrfWFTfGW9XjX', name: 'Josh' },
-  { id: 'VR6AewLTigWG4xSOukaG', name: 'Arnold' },
-  { id: 'pNInz6obpgDQGcFmaJgB', name: 'Adam' },
-  { id: 'yoZ06aMxZJJ28mfd3POQ', name: 'Sam' },
-  { id: 'onwK4e9ZLuTAKqWW03F9', name: 'Daniel' },
-];
+// Fixed voice per hoard type — each unit type has a thematically matched voice
+const HOARD_VOICES: Record<string, { id: string; name: string }> = {
+  gnome:    { id: 'MF3mGyEYCl7XYWbV9V6O', name: 'Elli' },       // light, small
+  turtle:   { id: 'onwK4e9ZLuTAKqWW03F9', name: 'Daniel' },     // calm, steady
+  skull:    { id: 'VR6AewLTigWG4xSOukaG', name: 'Arnold' },     // deep, menacing
+  spider:   { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Bella' },     // sly, whispery
+  hyena:    { id: 'TxGEqnHWrfWFTfGW9XjX', name: 'Josh' },      // wild, energetic
+  panda:    { id: 'JBFqnCBsd6RMkjVDRZzb', name: 'George' },     // warm, big
+  lizard:   { id: 'yoZ06aMxZJJ28mfd3POQ', name: 'Sam' },        // cold, precise
+  minotaur: { id: 'pNInz6obpgDQGcFmaJgB', name: 'Adam' },       // powerful, gruff
+  shaman:   { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel' },     // mystical
+  troll:    { id: 'VR6AewLTigWG4xSOukaG', name: 'Arnold' },     // deep, slow
+  rogue:    { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni' },     // smooth, sneaky
+  all:      { id: 'onwK4e9ZLuTAKqWW03F9', name: 'Daniel' },     // narrator default
+  test:     { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni' },     // test voice
+};
 
 interface QueueEntry {
   text: string;
@@ -27,7 +31,7 @@ export class TtsService {
   private playing = false;
   private currentAudio: HTMLAudioElement | null = null;
   private enabled = true;
-  private volume = 0.7;
+  private volume = 1.0;
 
   onPlayStart?: () => void;
   onPlayEnd?: () => void;
@@ -45,12 +49,8 @@ export class TtsService {
 
   assignVoice(charId: string): string {
     if (this.charVoices.has(charId)) return this.charVoices.get(charId)!;
-    let hash = 0;
-    for (let i = 0; i < charId.length; i++) {
-      hash = ((hash << 5) - hash + charId.charCodeAt(i)) | 0;
-    }
-    const voice = VOICES[Math.abs(hash) % VOICES.length];
-    console.log(`[TTS] Assigned voice "${voice.name}" (${voice.id.slice(0, 8)}...) to "${charId}"`);
+    const voice = HOARD_VOICES[charId] || HOARD_VOICES['all'];
+    console.log(`[TTS] Assigned voice "${voice.name}" to "${charId}"`);
     this.charVoices.set(charId, voice.id);
     return voice.id;
   }
@@ -70,7 +70,7 @@ export class TtsService {
   /** Fire a test TTS to verify the API works */
   test() {
     console.log('[TTS] === TEST CALL ===');
-    this.speak('test', 'Ready for battle, commander.');
+    this.speak('skull', 'Ready for battle, commander.');
   }
 
   setEnabled(enabled: boolean) { this.enabled = enabled; }
@@ -81,7 +81,7 @@ export class TtsService {
     this.playing = true;
 
     const entry = this.queue.shift()!;
-    const voiceName = VOICES.find(v => v.id === entry.voiceId)?.name || '?';
+    const voiceName = Object.values(HOARD_VOICES).find(v => v.id === entry.voiceId)?.name || '?';
     console.log(`[TTS] Processing: "${entry.text}" voice=${voiceName}`);
 
     try {
@@ -116,34 +116,51 @@ export class TtsService {
 
       const arrayBuf = await response.arrayBuffer();
       console.log(`[TTS] Got audio: ${arrayBuf.byteLength} bytes`);
-      const blob = new Blob([arrayBuf], { type: 'audio/mpeg' });
-      const audioSrc = URL.createObjectURL(blob);
 
-      const audio = new Audio(audioSrc);
+      // Play via HTML Audio element (most reliable for audible output)
+      const mp3Blob = new Blob([arrayBuf], { type: 'audio/mpeg' });
+      const blobUrl = URL.createObjectURL(mp3Blob);
+      const audio = new Audio(blobUrl);
       audio.volume = this.volume;
+
+      // Force append to DOM — some browsers need this
+      audio.style.display = 'none';
+      document.body.appendChild(audio);
+
       this.currentAudio = audio;
+      console.log(`[TTS] ▶ Playing MP3 via <audio> element... vol=${audio.volume} muted=${audio.muted} readyState=${audio.readyState}`);
+      this.onPlayStart?.();
 
       audio.onended = () => {
         console.log('[TTS] ✓ Playback ended');
-        URL.revokeObjectURL(audioSrc);
+        URL.revokeObjectURL(blobUrl);
+        audio.remove();
         this.currentAudio = null;
         this.playing = false;
         this.onPlayEnd?.();
         this.processQueue();
       };
       audio.onerror = (e) => {
-        console.error('[TTS] ✗ Audio playback error:', e);
-        URL.revokeObjectURL(audioSrc);
+        console.error('[TTS] ✗ Audio error:', e);
+        URL.revokeObjectURL(blobUrl);
+        audio.remove();
         this.currentAudio = null;
         this.playing = false;
         this.onPlayEnd?.();
         this.processQueue();
       };
 
-      console.log('[TTS] ▶ Playing audio...');
-      this.onPlayStart?.();
-      await audio.play();
-      console.log('[TTS] ✓ audio.play() resolved');
+      try {
+        await audio.play();
+        console.log(`[TTS] ✓ play() resolved — duration=${audio.duration.toFixed(1)}s paused=${audio.paused} volume=${audio.volume}`);
+      } catch (playErr) {
+        console.error('[TTS] ✗ play() REJECTED:', playErr);
+        URL.revokeObjectURL(blobUrl);
+        audio.remove();
+        this.playing = false;
+        this.onPlayEnd?.();
+        this.processQueue();
+      }
     } catch (err) {
       console.error('[TTS] ✗ Failed:', err);
       this.playing = false;
@@ -156,6 +173,7 @@ export class TtsService {
     this.queue = [];
     if (this.currentAudio) {
       this.currentAudio.pause();
+      this.currentAudio.remove();
       this.currentAudio = null;
     }
     this.playing = false;
