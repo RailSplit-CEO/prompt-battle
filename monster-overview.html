@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prompt Battle - Monster Overview</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --card: #1a1d28;
+    --border: #2a2d3a;
+    --text: #e0e0e0;
+    --muted: #8a8fa0;
+    --accent: #7c6bf0;
+    --tier1: #6bc96b;
+    --tier2: #4ea8de;
+    --tier3: #e07b39;
+    --tier4: #e04545;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 2rem;
+    min-height: 100vh;
+  }
+  h1 {
+    text-align: center;
+    font-size: 2.4rem;
+    margin-bottom: 0.3rem;
+    background: linear-gradient(135deg, var(--accent), #de6bf0);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .subtitle {
+    text-align: center;
+    color: var(--muted);
+    margin-bottom: 2rem;
+    font-size: 1rem;
+  }
+
+  /* Counter table */
+  .counter-section {
+    max-width: 700px;
+    margin: 0 auto 2.5rem;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.5rem;
+  }
+  .counter-section h2 { font-size: 1.2rem; margin-bottom: 1rem; color: var(--accent); }
+  .counter-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.6rem;
+  }
+  .counter-item {
+    background: #12141d;
+    border-radius: 8px;
+    padding: 0.6rem 1rem;
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .counter-item .arrow { color: var(--accent); font-weight: bold; }
+  .counter-item .mult { color: #f0c040; font-weight: bold; margin-left: auto; }
+
+  /* Tier sections */
+  .tier-section { margin-bottom: 2.5rem; }
+  .tier-header {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 1rem;
+    padding-left: 0.5rem;
+    border-left: 4px solid;
+  }
+  .tier-1 .tier-header { border-color: var(--tier1); color: var(--tier1); }
+  .tier-2 .tier-header { border-color: var(--tier2); color: var(--tier2); }
+  .tier-3 .tier-header { border-color: var(--tier3); color: var(--tier3); }
+  .tier-4 .tier-header { border-color: var(--tier4); color: var(--tier4); }
+
+  .tier-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 1.2rem;
+  }
+
+  /* Monster cards */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    transition: transform 0.15s, box-shadow 0.15s;
+  }
+  .card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  .card-top {
+    display: flex;
+    align-items: center;
+    padding: 1.2rem 1.4rem 0.8rem;
+    gap: 1rem;
+  }
+  .emoji-portrait {
+    font-size: 3.5rem;
+    line-height: 1;
+    filter: drop-shadow(0 2px 6px rgba(0,0,0,0.5));
+  }
+  .card-info { flex: 1; }
+  .card-name {
+    font-size: 1.3rem;
+    font-weight: 700;
+  }
+  .card-role {
+    color: var(--muted);
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .tier-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 20px;
+    color: #fff;
+    margin-left: 0.5rem;
+  }
+  .tier-badge-1 { background: var(--tier1); }
+  .tier-badge-2 { background: var(--tier2); }
+  .tier-badge-3 { background: var(--tier3); }
+  .tier-badge-4 { background: var(--tier4); }
+
+  .tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 4px;
+  }
+  .tag {
+    font-size: 0.7rem;
+    background: #2a2d3a;
+    color: #aab;
+    padding: 2px 8px;
+    border-radius: 12px;
+  }
+
+  /* Stats */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0;
+    padding: 0.6rem 1.4rem;
+  }
+  .stat {
+    text-align: center;
+    padding: 0.4rem 0;
+  }
+  .stat-label {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+  }
+  .stat-value {
+    font-size: 1.15rem;
+    font-weight: 700;
+  }
+  .stat-hp .stat-value { color: #5fdd5f; }
+  .stat-atk .stat-value { color: #e06060; }
+  .stat-def .stat-value { color: #60a0e0; }
+  .stat-spd .stat-value { color: #e0c040; }
+  .stat-rng .stat-value { color: #c090e0; }
+  .stat-atkspd .stat-value { color: #e09060; }
+
+  /* Special & camp info */
+  .card-bottom {
+    padding: 0.6rem 1.4rem 1.2rem;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .special-box {
+    background: linear-gradient(135deg, #1e1535, #15202e);
+    border: 1px solid #3a2d5a;
+    border-radius: 8px;
+    padding: 0.5rem 0.8rem;
+    font-size: 0.82rem;
+  }
+  .special-box .label { color: #b08ee0; font-weight: 600; }
+  .camp-box {
+    background: #12141d;
+    border-radius: 8px;
+    padding: 0.5rem 0.8rem;
+    font-size: 0.82rem;
+  }
+  .camp-box .label { color: #60c0c0; font-weight: 600; }
+
+  .capture-note {
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.85rem;
+    padding: 0.6rem;
+    margin-bottom: 1.5rem;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    max-width: 700px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .sprite-img {
+    width: 64px;
+    height: 64px;
+    image-rendering: pixelated;
+    object-fit: contain;
+  }
+</style>
+</head>
+<body>
+
+<h1>Prompt Battle - Monster Bestiary</h1>
+<p class="subtitle">All 10 animals across 4 tiers - stats, abilities, camps & capture details</p>
+
+<div class="capture-note">
+  <strong>How to recruit:</strong> Animals are captured by defeating their camp guards in combat. Send your hero + army to attack a camp. Once all guards are defeated, the camp is captured and begins spawning units for your team. <em>There is no food/feeding mechanic.</em>
+</div>
+
+<div class="counter-section">
+  <h2>Counter System</h2>
+  <div class="counter-grid">
+    <div class="counter-item">Swift <span class="arrow">&#9654;</span> Ranged <span class="mult">x1.25</span></div>
+    <div class="counter-item">Ranged <span class="arrow">&#9654;</span> Tank <span class="mult">x1.25</span></div>
+    <div class="counter-item">Tank <span class="arrow">&#9654;</span> Melee DPS <span class="mult">x1.25</span></div>
+    <div class="counter-item">AoE <span class="arrow">&#9654;</span> Swarm <span class="mult">x1.40</span></div>
+  </div>
+</div>
+
+<!-- TIER 1 -->
+<div class="tier-section tier-1">
+  <div class="tier-header">Tier 1 - Near Base (Easy)</div>
+  <div class="tier-grid">
+
+    <!-- Rabbit -->
+    <div class="card">
+      <div class="card-top">
+        <div class="emoji-portrait">&#x1F407;</div>
+        <div class="card-info">
+          <div class="card-name">Rabbit <span class="tier-badge tier-badge-1">T1</span></div>
+          <div class="card-role">Swift Melee</div>
+          <div class="tags"><span class="tag">swift</span><span class="tag">melee</span><span class="tag">swarm</span></div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat stat-hp"><div class="stat-label">HP</div><div class="stat-value">25</div></div>
+        <div class="stat stat-atk"><div class="stat-label">ATK</div><div class="stat-value">8</div></div>
+        <div class="stat stat-def"><div class="stat-label">DEF</div><div class="stat-value">2</div></div>
+        <div class="stat stat-spd"><div class="stat-label">SPD</div><div class="stat-value">5</div></div>
+        <div class="stat stat-rng"><div class="stat-label">RNG</div><div class="stat-value">1</div></div>
+        <div class="stat stat-atkspd"><div class="stat-label">ATK SPD</div><div class="stat-value">1.2s</div></div>
+      </div>
+      <div class="card-bottom">
+        <div class="camp-box">
+          <span class="label">Camp:</span> Rowdy Rabbit Run<br>
+          Guards: 2 (30 HP, 6 ATK) | Spawn: every 8s | Vision: 5
+        </div>
+      </div>
+    </div>
+
+    <!-- Parrot -->
+    <div class="card">
+      <div class="card-top">
+        <div class="emoji-portrait">&#x1F99C;</div>
+        <div class="card-info">
+          <div class="card-name">Parrot <span class="tier-badge tier-badge-1">T1</span></div>
+          <div class="card-role">Ranged</div>
+          <div class="tags"><span class="tag">ranged</span></div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat stat-hp"><div class="stat-label">HP</div><div class="stat-value">20</div></div>
+        <div class="stat stat-atk"><div class="stat-label">ATK</div><div class="stat-value">6</div></div>
+        <div class="stat stat-def"><div class="stat-label">DEF</div><div class="stat-value">2</div></div>
+        <div class="stat stat-spd"><div class="stat-label">SPD</div><div class="stat-value">3</div></div>
+        <div class="stat stat-rng"><div class="stat-label">RNG</div><div class="stat-value">4</div></div>
+        <div class="stat stat-atkspd"><div class="stat-label">ATK SPD</div><div class="stat-value">1.8s</div></div>
+      </div>
+      <div class="card-bottom">
+        <div class="camp-box">
+          <span class="label">Camp:</span> Pecking Parrot Perch<br>
+          Guards: 2 (25 HP, 5 ATK) | Spawn: every 10s | Vision: 6
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- TIER 2 -->
+<div class="tier-section tier-2">
+  <div class="tier-header">Tier 2 - Mid-Outer</div>
+  <div class="tier-grid">
+
+    <!-- Wolf -->
+    <div class="card">
+      <div class="card-top">
+        <div class="emoji-portrait">&#x1F43A;</div>
+        <div class="card-info">
+          <div class="card-name">Wolf <span class="tier-badge tier-badge-2">T2</span></div>
+          <div class="card-role">Melee DPS</div>
+          <div class="tags"><span class="tag">melee</span><span class="tag">swarm</span></div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat stat-hp"><div class="stat-label">HP</div><div class="stat-value">40</div></div>
+        <div class="stat stat-atk"><div class="stat-label">ATK</div><div class="stat-value">14</div></div>
+        <div class="stat stat-def"><div class="stat-label">DEF</div><div class="stat-value">5</div></div>
+        <div class="stat stat-spd"><div class="stat-label">SPD</div><div class="stat-value">4</div></div>
+        <div class="stat stat-rng"><div class="stat-label">RNG</div><div class="stat-value">1</div></div>
+        <div class="stat stat-atkspd"><div class="stat-label">ATK SPD</div><div class="stat-value">1.5s</div></div>
+      </div>
+      <div class="card-bottom">
+        <div class="special-box">
+          <span class="label">Special: Pack Bonus</span><br>
+          +15% damage when 3+ wolves together
+        </div>
+        <div class="camp-box">
+          <span class="label">Camp:</span> Wily Wolf Warren<br>
+          Guards: 3 (45 HP, 10 ATK) | Spawn: every 12s | Vision: 5
+        </div>
+      </div>
+    </div>
+
+    <!-- Falcon -->
+    <div class="card">
+      <div class="card-top">
+        <div class="emoji-portrait">&#x1F985;</div>
+        <div class="card-info">
+          <div class="card-name">Falcon <span class="tier-badge tier-badge-2">T2</span></div>
+          <div class="card-role">Ranged DPS</div>
+          <div class="tags"><span class="tag">swift</span><span class="tag">ranged</span></div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat stat-hp"><div class="stat-label">HP</div><div class="stat-value">30</div></div>
+        <div class="stat stat-atk"><div class="stat-label">ATK</div><div class="stat-value">12</div></div>
+        <div class="stat stat-def"><div class="stat-label">DEF</div><div class="stat-value">3</div></div>
+        <div class="stat stat-spd"><div class="stat-label">SPD</div><div class="stat-value">5</div></div>
+        <div class="stat stat-rng"><div class="stat-label">RNG</div><div class="stat-value">5</div></div>
+        <div class="stat stat-atkspd"><div class="stat-label">ATK SPD</div><div class="stat-value">1.6s</div></div>
+      </div>
+      <div class="card-bottom">
+        <div class="camp-box">
+          <span class="label">Camp:</span> Fierce Falcon Fort<br>
+          Guards: 3 (35 HP, 9 ATK) | Spawn: every 12s | Vision: 7
+        </div>
+      </div>
+    </div>
+
+    <!-- Goat -->
+    <div class="card">
+      <div class="card-top">
+        <div class="emoji-portrait">&#x1F410;</div>
+        <div class="card-info">
+          <div class="card-name">Goat <span class="tier-badge tier-badge-2">T2</span></div>
+          <div class="card-role">Healer</div>
+          <div class="tags"><span class="tag">healer</span><span class="tag">support</span></div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat stat-hp"><div class="stat-label">HP</div><div class="stat-value">35</div></div>
+        <div class="stat stat-atk"><div class="stat-label">ATK</div><div class="stat-value">5</div></div>
+        <div class="stat stat-def"><div class="stat-label">DEF</div><div class="stat-value">6</div></div>
+        <div class="stat stat-spd"><div class="stat-label">SPD</div><div class="stat-value">3</div></div>
+        <div class="stat stat-rng"><div class="stat-label">RNG</div><div class="stat-value">3</div></div>
+        <div class="stat stat-atkspd"><div class="stat-label">ATK SPD</div><div class="stat-value">2.0s</div></div>
+      </div>
+      <div class="card-bottom">
+        <div class="special-box">
+          <span class="label">Special: Heal Aura</span><br>
+          Heals nearby allies for 4 HP every 2s (radius: 3)
+        </div>
+        <div class="camp-box">
+          <span class="label">Camp:</span> Gentle Goat Grove<br>
+          Guards: 3 (50 HP, 7 ATK) | Spawn: every 14s | Vision: 5
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- TIER 3 -->
+<div class="tier-section tier-3">
+  <div class="tier-header">Tier 3 - Mid-Inner (Contested)</div>
+  <div class="tier-grid">
+
+    <!-- Bear -->
+    <div class="card">
+      <div class="card-top">
+        <div class="emoji-portrait">&#x1F43B;</div>
+        <div class="card-info">
+          <div class="card-name">Bear <span class="tier-badge tier-badge-3">T3</span></div>
+          <div class="card-role">Tank</div>
+          <div class="tags"><span class="tag">tank</span><span class="tag">melee</span></div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat stat-hp"><div class="stat-label">HP</div><div class="stat-value">80</div></div>
+        <div class="stat stat-atk"><div class="stat-label">ATK</div><div class="stat-value">12</div></div>
+        <div class="stat stat-def"><div class="stat-label">DEF</div><div class="stat-value">12</div></div>
+        <div class="stat stat-spd"><div class="stat-label">SPD</div><div class="stat-value">2</div></div>
+        <div class="stat stat-rng"><div class="stat-label">RNG</div><div class="stat-value">1</div></div>
+        <div class="stat stat-atkspd"><div class="stat-label">ATK SPD</div><div class="stat-value">2.0s</div></div>
+      </div>
+      <div class="card-bottom">
+        <div class="camp-box">
+          <span class="label">Camp:</span> Brutal Bear Bastion<br>
+          Guards: 3 (80 HP, 14 ATK) | Spawn: every 16s | Vision: 5
+        </div>
+      </div>
+    </div>
+
+    <!-- Viper -->
+    <div class="card">
+      <div class="card-top">
+        <div class="emoji-portrait">&#x1F40D;</div>
+        <div class="card-info">
+          <div class="card-name">Viper <span class="tier-badge tier-badge-3">T3</span></div>
+          <div class="card-role">Ranged DOT</div>
+          <div class="tags"><span class="tag">ranged</span><span class="tag">dot</span></div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat stat-hp"><div class="stat-label">HP</div><div class="stat-value">30</div></div>
+        <div class="stat stat-atk"><div class="stat-label">ATK</div><div class="stat-value">10</div></div>
+        <div class="stat stat-def"><div class="stat-label">DEF</div><div class="stat-value">4</div></div>
+        <div class="stat stat-spd"><div class="stat-label">SPD</div><div class="stat-value">3</div></div>
+        <div class="stat stat-rng"><div class="stat-label">RNG</div><div class="stat-value">4</div></div>
+        <div class="stat stat-atkspd"><div class="stat-label">ATK SPD</div><div class="stat-value">1.8s</div></div>
+      </div>
+      <div class="card-bottom">
+        <div class="special-box">
+          <span class="label">Special: Poison DOT</span><br>
+          Applies 3 dmg/tick poison for 4 seconds
+        </div>
+        <div class="camp-box">
+          <span class="label">Camp:</span> Venomous Viper Vault<br>
+          Guards: 4 (40 HP, 12 ATK) | Spawn: every 14s | Vision: 6
+        </div>
+      </div>
+    </div>
+
+    <!-- Deer -->
+    <div class="card">
+      <div class="card-top">
+        <div class="emoji-portrait">&#x1F98C;</div>
+        <div class="card-info">
+          <div class="card-name">Deer <span class="tier-badge tier-badge-3">T3</span></div>
+          <div class="card-role">Support</div>
+          <div class="tags"><span class="tag">swift</span><span class="tag">support</span></div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat stat-hp"><div class="stat-label">HP</div><div class="stat-value">35</div></div>
+        <div class="stat stat-atk"><div class="stat-label">ATK</div><div class="stat-value">6</div></div>
+        <div class="stat stat-def"><div class="stat-label">DEF</div><div class="stat-value">5</div></div>
+        <div class="stat stat-spd"><div class="stat-label">SPD</div><div class="stat-value">4</div></div>
+        <div class="stat stat-rng"><div class="stat-label">RNG</div><div class="stat-value">1</div></div>
+        <div class="stat stat-atkspd"><div class="stat-label">ATK SPD</div><div class="stat-value">2.0s</div></div>
+      </div>
+      <div class="card-bottom">
+        <div class="special-box">
+          <span class="label">Special: Buff Aura</span><br>
+          +15% attack to nearby allies (radius: 3)
+        </div>
+        <div class="camp-box">
+          <span class="label">Camp:</span> Deft Deer Dell<br>
+          Guards: 3 (50 HP, 10 ATK) | Spawn: every 14s | Vision: 5
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- TIER 4 -->
+<div class="tier-section tier-4">
+  <div class="tier-header">Tier 4 - Center (Hardest)</div>
+  <div class="tier-grid">
+
+    <!-- Elephant -->
+    <div class="card">
+      <div class="card-top">
+        <div class="emoji-portrait">&#x1F418;</div>
+        <div class="card-info">
+          <div class="card-name">Elephant <span class="tier-badge tier-badge-4">T4</span></div>
+          <div class="card-role">Elite Tank</div>
+          <div class="tags"><span class="tag">tank</span><span class="tag">aoe</span></div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat stat-hp"><div class="stat-label">HP</div><div class="stat-value">120</div></div>
+        <div class="stat stat-atk"><div class="stat-label">ATK</div><div class="stat-value">18</div></div>
+        <div class="stat stat-def"><div class="stat-label">DEF</div><div class="stat-value">15</div></div>
+        <div class="stat stat-spd"><div class="stat-label">SPD</div><div class="stat-value">1</div></div>
+        <div class="stat stat-rng"><div class="stat-label">RNG</div><div class="stat-value">1</div></div>
+        <div class="stat stat-atkspd"><div class="stat-label">ATK SPD</div><div class="stat-value">2.5s</div></div>
+      </div>
+      <div class="card-bottom">
+        <div class="special-box">
+          <span class="label">Special: Splash Damage</span><br>
+          Deals 50% damage to enemies in radius 2
+        </div>
+        <div class="camp-box">
+          <span class="label">Camp:</span> Enormous Elephant Estate<br>
+          Guards: 3 (120 HP, 18 ATK) | Spawn: every 20s | Vision: 5
+        </div>
+      </div>
+    </div>
+
+    <!-- Lion -->
+    <div class="card">
+      <div class="card-top">
+        <div class="emoji-portrait">&#x1F981;</div>
+        <div class="card-info">
+          <div class="card-name">Lion <span class="tier-badge tier-badge-4">T4</span></div>
+          <div class="card-role">Elite Melee</div>
+          <div class="tags"><span class="tag">melee</span><span class="tag">aoe</span></div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat stat-hp"><div class="stat-label">HP</div><div class="stat-value">70</div></div>
+        <div class="stat stat-atk"><div class="stat-label">ATK</div><div class="stat-value">22</div></div>
+        <div class="stat stat-def"><div class="stat-label">DEF</div><div class="stat-value">8</div></div>
+        <div class="stat stat-spd"><div class="stat-label">SPD</div><div class="stat-value">4</div></div>
+        <div class="stat stat-rng"><div class="stat-label">RNG</div><div class="stat-value">1</div></div>
+        <div class="stat stat-atkspd"><div class="stat-label">ATK SPD</div><div class="stat-value">1.4s</div></div>
+      </div>
+      <div class="card-bottom">
+        <div class="special-box">
+          <span class="label">Special: Roar Stun</span><br>
+          Stuns enemies in radius 2 for 1.5s (8s cooldown)
+        </div>
+        <div class="camp-box">
+          <span class="label">Camp:</span> Lethal Lion Lair<br>
+          Guards: 4 (70 HP, 20 ATK) | Spawn: every 18s | Vision: 6
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</body>
+</html>

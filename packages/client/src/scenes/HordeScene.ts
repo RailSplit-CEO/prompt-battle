@@ -6,6 +6,9 @@ import { resolveGrid, ResolvedTile } from '../map/AutoTileResolver';
 import { getTileSourceRect, getCliffSourceRect, WATER_COLOR_HEX, getTilesetFilename } from '../map/TilesetAtlas';
 import { SoundManager } from '../audio/SoundManager';
 import { buildSpatialGrid, getNearbyFromGrid } from './horde-utils';
+import { MemoryOverlay } from '../profiling/MemoryOverlay';
+import type { ProfilingData } from '../profiling/MemoryOverlay';
+import bundledHordeMaps from '../map/maps/horde-maps.json';
 
 // ═══════════════════════════════════════════════════════════════
 // GEMINI INTEGRATION
@@ -63,11 +66,17 @@ interface HordeCommand {
   planGoal?: { type: string; equipment?: string; resource?: string; amount?: number; thenAction?: string };
 }
 
+let _lastGeminiCall = 0;
+const GEMINI_COOLDOWN_MS = 2000; // min 2s between Gemini calls
+
 async function parseWithGemini(
   rawText: string,
   ctx: GameContext,
 ): Promise<HordeCommand[] | null> {
   if (!getGeminiKey()) return null;
+  const now = Date.now();
+  if (now - _lastGeminiCall < GEMINI_COOLDOWN_MS) return null;
+  _lastGeminiCall = now;
 
   const campList = ctx.camps.map(c =>
     `  [${c.index}] ${c.name} (${c.animalType}, T${c.tier}) - ${c.owner}${c.storedFood > 0 ? ` - food:${c.storedFood}/${c.spawnCost}` : ''} - dist:${c.dist} - defenders:${c.defenders}`
@@ -183,14 +192,12 @@ MODIFIER RULES:
 - ALWAYS include modifiers if the tone/adjectives imply them, even alongside workflows.
 
 ═══ ACTIONS ═══
-Simple movement commands (no workflow needed):
-- "camp": Go to a specific camp. Set campIndex.
-- "nearest_camp": Go to nearest camp matching filters (targetAnimal, qualifier).
-- "sweep_camps": Chain-capture multiple camps of a type.
-- "nexus": Attack enemy castle.
-- "base"/"defend"/"retreat": Fall back / hold / go home.
+ALL commands use targetType="workflow" with a workflow array. Even simple commands:
+- "go to camp" → workflow: [attack_camp with targetAnimal and qualifier]
+- "attack nexus/castle" → workflow: [attack_enemies] (units fight their way to the enemy)
+- "defend"/"retreat"/"go home" → workflow: [defend base] or [move to base coords]
 
-QUALIFIERS: nearest, furthest, weakest, uncaptured, enemy
+QUALIFIERS for attack_camp steps: nearest, furthest, weakest, uncaptured, enemy
 
 ═══ WORKFLOWS ═══
 For economy/production commands, you design a WORKFLOW — a repeating loop of steps the units execute automatically. Use targetType="workflow" and provide a "workflow" array.
@@ -326,6 +333,10 @@ PRODUCTION (bootstrap — capture camp + gather + deliver, loopFrom: 0 = all ste
 "get skulls" → [attack_camp skull nearest, hunt, seek_resource meat, deliver nearest_skull_camp], loopFrom: 0
 "take pandas" → [attack_camp panda nearest, hunt, seek_resource meat, deliver nearest_panda_camp], loopFrom: 0
 "gnomes make skulls" → [attack_camp skull nearest, seek_resource meat, deliver nearest_skull_camp], loopFrom: 0
+"go get some gnomes" → [attack_camp gnome nearest, seek_resource carrot, deliver nearest_gnome_camp], loopFrom: 0
+"I want more turtles" → [attack_camp turtle nearest, seek_resource carrot, deliver nearest_turtle_camp], loopFrom: 0
+"let's get some spiders" → [attack_camp spider nearest, hunt, seek_resource meat, deliver nearest_spider_camp], loopFrom: 0
+"I need skulls" → [attack_camp skull nearest, hunt, seek_resource meat, deliver nearest_skull_camp], loopFrom: 0
 
 SAFE PRODUCTION (collect instead of seek_resource, avoids enemies):
 "safely get gnomes" → [attack_camp gnome nearest, collect carrot, deliver nearest_gnome_camp], loopFrom: 0, caution: "safe"
@@ -387,10 +398,11 @@ REDISTRIBUTE BASE RESOURCES:
 "redistribute carrots to gnome camp" → [withdraw_base carrot, deliver nearest_gnome_camp], loopFrom: 0
 "spread out and defend" → [defend base], loopFrom: 0, formation: "spread"
 
-SIMPLE MOVEMENT (no workflow, no loopFrom):
-"attack nearest camp" → targetType: "nearest_camp", qualifier: "nearest"
-"attack nexus" → targetType: "nexus"
-"retreat" → targetType: "retreat"
+SIMPLE MOVEMENT (still uses workflow):
+"attack nearest camp" → [attack_camp, qualifier: "nearest"], loopFrom: 0
+"attack nexus" → [attack_enemies], loopFrom: 0
+"retreat" → [defend base], loopFrom: 0
+"go to the skull camp" → [attack_camp skull nearest], loopFrom: 0
 
 STRATEGIC:
 "get started" → [attack_camp gnome nearest, seek_resource carrot, deliver nearest_gnome_camp], loopFrom: 0
@@ -433,11 +445,16 @@ Before choosing, think step by step:
 
 ═══ YOUR JOB ═══
 Interpret the player's voice command using your deep understanding of the economy and unit traits.
-- "get X" / "make X" / "take X" / "produce X" / "create X" / "train X" / "spawn X" → ALWAYS bootstrap X (attack_camp + resource gathering + deliver)
+Focus on the INTENT behind the words, not the literal phrasing. Players speak casually and imprecisely.
+
+CRITICAL INTENT RULES:
+- "get X" / "make X" / "take X" / "produce X" / "create X" / "train X" / "spawn X" / "go get X" / "go make X" / "let's get some X" / "I want X" / "I need X" / "more X" → ALWAYS bootstrap X (targetType="workflow" with attack_camp + resource gathering + deliver)
 - "bootstrap X" → same as above
-- "get started" → bootstrap gnomes (cheapest start)
+- "get started" / "start" / "let's go" / "begin" → bootstrap gnomes (cheapest start)
+- ANY command mentioning an animal name with production intent → FULL bootstrap workflow, NEVER just a simple move
 - Be creative — combine steps based on what makes strategic sense
 - If you can tell which unit type is selected, tailor the workflow to their strengths
+- When in doubt, prefer returning a WORKFLOW (targetType="workflow") over simple movement commands. Workflows are more useful to the player.
 
 GENRE TRANSLATION — Players may use words from other game genres. Translate the INTENT:
 - shoot/fire/blast → attack_enemies or attack_camp
@@ -478,13 +495,17 @@ RULES:
 - Output exactly ONE command (hoard selection is handled separately by hotkeys).
 - Pick the BEST game interpretation if one exists. If there is genuinely NO game action (e.g. "pause", "save game", "open menu", "what's the weather"), return responseType "unrecognized".
 - Match camp names by partial word.
+- You MUST return targetType="workflow" with a "workflow" array for EVERY actionable command. There are no other action targetTypes — workflow is the ONLY way to give units orders. Even "attack", "defend", "retreat" must be workflows.
+- EVERY voice command = a NEW workflow. The player is giving a new order — always create full workflow steps.
+- NEVER return responseType="acknowledgment". Either it's an action (produce a workflow) or it's unrecognized/status_query.
+- If the player says ANYTHING that implies an action (attack, defend, gather, make, get, go, move, retreat, scout, mine, hunt, etc.), you MUST return a workflow.
 
 PLAYER SAYS: "${rawText}"
 
 JSON ONLY (no markdown):
 {
-  "targetType": "<camp|nearest_camp|sweep_camps|nexus|base|defend|retreat|workflow|query|advanced_plan>",
-  "responseType": "<action|unrecognized|status_query|acknowledgment>",
+  "targetType": "<workflow|query|advanced_plan>",
+  "responseType": "<action|unrecognized|status_query>",
   "statusReport": "<1-2 sentence tactical answer, only if responseType=status_query>",
   "targetAnimal": "<animal type or omit>",
   "campIndex": <index or -1>,
@@ -502,8 +523,6 @@ JSON ONLY (no markdown):
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: {
       maxOutputTokens: 2048,
-      responseMimeType: 'application/json',
-      thinkingConfig: { thinkingBudget: 0 },
     },
   });
 
@@ -516,11 +535,9 @@ JSON ONLY (no markdown):
       });
 
       if (response.status === 429) {
-        // Rate limited — wait and retry with exponential backoff
-        const wait = 1000 * Math.pow(2, attempt); // 1s, 2s, 4s
-        console.warn(`[Gemini] 429 rate limited, retrying in ${wait}ms (attempt ${attempt + 1}/${GEMINI_MAX_RETRIES})`);
-        await new Promise(r => setTimeout(r, wait));
-        continue;
+        // Rate limited — fall back to local parser immediately (retrying just burns more quota)
+        console.warn('[Gemini] 429 rate limited, falling back to local parser');
+        return null;
       }
 
       if (!response.ok) {
@@ -529,10 +546,15 @@ JSON ONLY (no markdown):
       }
 
       const data = await response.json();
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      // With thinking enabled, parts[0] may be the thinking part — find the last text part
+      const parts = data.candidates?.[0]?.content?.parts;
+      if (!parts || parts.length === 0) return null;
+      const text = parts[parts.length - 1]?.text;
       if (!text) return null;
 
-      const parsed = JSON.parse(text);
+      // Strip markdown fencing if present (thinking mode can't use responseMimeType)
+      const cleaned = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+      const parsed = JSON.parse(cleaned);
       if (Array.isArray(parsed)) return parsed as HordeCommand[];
       return [parsed] as HordeCommand[];
     } catch (err) {
@@ -1462,6 +1484,7 @@ export class HordeScene extends Phaser.Scene {
   private cmdHistoryEl: HTMLDivElement | null = null;
   private pendingCommandText: string | null = null;
   private pendingRemoteCommands: { text: string; team: 1 | 2; selectedHoard: string }[] = [];
+  private pendingLocalCommands: { text: string; team: 1 | 2 }[] = [];
   private isProcessingCommand = false;
   // Last voice command per hoard type (shown on hoard bar cards)
   private lastHoardCommand: Record<string, string> = {};
@@ -1665,6 +1688,10 @@ export class HordeScene extends Phaser.Scene {
   private _astarOccupied = new Uint8Array(10000);
   private _frameOccupiedReady = false;
 
+  // ─── PROFILING ──────────────────────────────────────────────
+  private _perfTimings: Record<string, number> = {};
+  private memoryOverlay: MemoryOverlay | null = null;
+
   // ─── MULTIPLAYER ──────────────────────────────────────────────
   private isOnline = false;
   private isHost = true; // host = runs simulation; guest = renders sync state
@@ -1677,6 +1704,30 @@ export class HordeScene extends Phaser.Scene {
 
   constructor() {
     super({ key: 'HordeScene' });
+  }
+
+  /** Returns a snapshot of key metrics for the memory overlay / profiling tests. */
+  getProfilingData(): ProfilingData {
+    const aliveUnits = this.units.filter(u => !u.dead).length;
+    return {
+      unitCount: this.units.length,
+      aliveUnits,
+      units: this.units,
+      spatialGridSize: this._spatialGrid ? this._spatialGrid.size * 80 + 64 : 0,
+      nearbyCacheSize: this._nearbyCache.size * 80 + 64,
+      framePathCacheSize: this._framePathCache.size * 80 + 64,
+      avoidPenaltyCount: this._frameAvoidPenalty.size,
+      avoidPoolCount: this._avoidPenaltyPool.length,
+      groundItemCount: this.groundItems.filter(i => !i.dead).length,
+      pendingHitCount: this.pendingHits.length,
+      campCount: this.camps.length,
+      towerCount: this.towers.length,
+      fogEnabled: !this.fogDisabled,
+      perfTimings: { ...this._perfTimings },
+      frameTimes: [...this.frameTimes],
+      frameCount: this._frameCount,
+      pathQueueLength: this.pathQueue.length,
+    };
   }
 
   // Editor-saved maps loaded from server file
@@ -1731,6 +1782,19 @@ export class HordeScene extends Phaser.Scene {
       }
     } catch (e) {
       console.warn('[Horde] Server file load failed:', e);
+    }
+    // 3. Fallback: bundled horde-maps.json (baked into build)
+    if (bundledHordeMaps && Array.isArray(bundledHordeMaps) && bundledHordeMaps.length > 0) {
+      HordeScene.editorMaps = (bundledHordeMaps as any[]).map((m: any) => {
+        const clone = { ...m };
+        if (clone._tiles && !clone.tiles) clone.tiles = clone._tiles;
+        delete clone._tiles;
+        delete clone._terrain;
+        delete clone.terrain;
+        return clone;
+      });
+      console.log('[Horde] Loaded', bundledHordeMaps.length, 'maps from bundled JSON');
+      return;
     }
     HordeScene.editorMaps = null;
   }
@@ -1847,6 +1911,12 @@ export class HordeScene extends Phaser.Scene {
     this.setupHUD();
     this.events.on('shutdown', () => this.cleanupHTML());
     if (this.isDebug) this.setupDebugModePanel();
+
+    // Memory profiling overlay (Ctrl+M)
+    this.memoryOverlay = new MemoryOverlay(this);
+    this.input.keyboard!.on('keydown-M', (e: KeyboardEvent) => {
+      if (e.ctrlKey) this.memoryOverlay?.toggle();
+    });
 
     // Set custom pixel art cursor
     this.input.setDefaultCursor('url(assets/ui/cursors/Cursor_01.png) 0 0, auto');
@@ -2295,7 +2365,7 @@ export class HordeScene extends Phaser.Scene {
     if (tiles) {
       for (let gy = 0; gy < G && gy < tiles.length; gy++) {
         for (let gx = 0; gx < G && gx < tiles[0].length; gx++) {
-          if (tiles[gy][gx] === 2) staticBlocked[gy * G + gx] = 1;
+          if (tiles[gy][gx] === 2 || tiles[gy][gx] === 3) staticBlocked[gy * G + gx] = 1;
         }
       }
     }
@@ -2309,6 +2379,24 @@ export class HordeScene extends Phaser.Scene {
       for (let gy = minGY; gy < maxGY; gy++) {
         for (let gx = minGX; gx < maxGX; gx++) {
           if (gx >= 0 && gx < G && gy >= 0 && gy < G) staticBlocked[gy * G + gx] = 1;
+        }
+      }
+    }
+    // Stamp rock collision points onto static A* grid
+    const rockR = HordeScene.ROCK_PATH_RADIUS;
+    const rockCells = Math.ceil(rockR / CELL);
+    for (const rp of this.rockCollisionPoints) {
+      const rcx = Math.floor(rp.x / CELL);
+      const rcy = Math.floor(rp.y / CELL);
+      for (let ry = rcy - rockCells; ry <= rcy + rockCells; ry++) {
+        for (let rx = rcx - rockCells; rx <= rcx + rockCells; rx++) {
+          if (rx >= 0 && rx < G && ry >= 0 && ry < G) {
+            const dx = (rx + 0.5) * CELL - rp.x;
+            const dy = (ry + 0.5) * CELL - rp.y;
+            if (dx * dx + dy * dy <= rockR * rockR) {
+              staticBlocked[ry * G + rx] = 1;
+            }
+          }
         }
       }
     }
@@ -2523,8 +2611,8 @@ export class HordeScene extends Phaser.Scene {
       this.fogRT.setVisible(false);
       return;
     }
-    // Throttle fog updates to every 3rd frame for performance
-    if (this._frameCount % 3 !== 0) return;
+    // Throttle fog updates to every 8th frame for performance
+    if (this._frameCount % 8 !== 0) return;
     this.fogRT.setVisible(true);
 
     // Cache vision sources for this frame
@@ -2545,8 +2633,8 @@ export class HordeScene extends Phaser.Scene {
 
   /** Hide/show sprites based on fog of war vision */
   private updateFogVisibility() {
-    // Throttle visibility updates to every 3rd frame (synced with fog)
-    if (this._frameCount % 3 !== 0) return;
+    // Throttle visibility updates to every 8th frame (synced with fog)
+    if (this._frameCount % 8 !== 0) return;
     const enemyTeam = this.myTeam === 1 ? 2 : 1;
 
     // Hide/show enemy and neutral unit sprites (with bush visibility)
@@ -3300,23 +3388,32 @@ export class HordeScene extends Phaser.Scene {
         n.hpText!.setText(`${Math.max(0, Math.ceil(n.hp))}/${n.maxHp}`);
       }
 
-      // Show stockpile near nexus (world-space, scales with zoom)
+      // Show stockpile near nexus — only update text when values change
       const stock = this.baseStockpile[n.team as 1 | 2];
-      const stockText = `🥕${stock.carrot} 🍖${stock.meat} 💎${stock.crystal} ⚙️${stock.metal}`;
-      if (!this.hudTexts[`stock_${n.team}`]) {
-        this.hudTexts[`stock_${n.team}`] = this.add.text(n.x, n.y + 65, stockText, {
+      const stockKey = `stock_${n.team}`;
+      if (!this.hudTexts[stockKey]) {
+        const stockText = `🥕${stock.carrot} 🍖${stock.meat} 💎${stock.crystal} ⚙️${stock.metal}`;
+        this.hudTexts[stockKey] = this.add.text(n.x, n.y + 65, stockText, {
           fontSize: '13px', color: '#f0e8ff', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
           stroke: '#000', strokeThickness: 3, backgroundColor: 'rgba(0,0,0,0.5)',
           padding: { x: 6, y: 2 },
         }).setOrigin(0.5).setDepth(55);
-      } else {
-        this.hudTexts[`stock_${n.team}`].setText(stockText);
+        (n as any)._prevStock = stockText;
+      } else if (this._frameCount % 20 === 0) {
+        const stockText = `🥕${stock.carrot} 🍖${stock.meat} 💎${stock.crystal} ⚙️${stock.metal}`;
+        if ((n as any)._prevStock !== stockText) {
+          this.hudTexts[stockKey].setText(stockText);
+          (n as any)._prevStock = stockText;
+        }
       }
-      // Scale inversely with zoom
+      // Scale inversely with zoom — only recalc when zoom changes
       const zoom = this.cameras.main.zoom;
-      const invScale = Math.max(0.8, 1.0 / zoom);
-      this.hudTexts[`stock_${n.team}`].setScale(invScale);
-      if (n.label) n.label.setScale(invScale);
+      if ((n as any)._prevZoom !== zoom) {
+        (n as any)._prevZoom = zoom;
+        const invScale = Math.max(0.8, 1.0 / zoom);
+        this.hudTexts[stockKey].setScale(invScale);
+        if (n.label) n.label.setScale(invScale);
+      }
     }
   }
 
@@ -4991,39 +5088,54 @@ export class HordeScene extends Phaser.Scene {
 
     if (this.editorMode) {
       // Editor mode: render only, no simulation
+      this._frameCount++;
       this.updateUnitSprites();
-      this.updateCampVisuals();
-      this.updateMineVisuals();
-      this.updateArmoryVisuals();
-      this.drawNexusBars();
+      if (this._frameCount % 2 === 0) {
+        this.updateCampVisuals();
+        this.updateMineVisuals();
+        this.updateArmoryVisuals();
+      }
+      if (this._frameCount % 4 === 0) this.drawNexusBars();
       return;
     }
 
     if (this.isOnline && !this.isHost) {
       // Guest: only render, no simulation — state comes from host via sync
+      this._frameCount++;
       this.updateUnitSprites();
-      this.updateCampVisuals();
-      this.updateMineVisuals();
-      this.updateArmoryVisuals();
-      this.drawNexusBars();
+      if (this._frameCount % 2 === 0) {
+        this.updateCampVisuals();
+        this.updateMineVisuals();
+        this.updateArmoryVisuals();
+      }
+      if (this._frameCount % 4 === 0) this.drawNexusBars();
       this.updateFog();
       this.updateFogVisibility();
-      this.updateHUD();
+      if (this._frameCount % 20 === 0) this.updateHUD();
       this.updateThoughtBubbles(delta);
       return;
     }
 
     // Host (or solo): run full simulation
+    const _perfT0 = performance.now();
     this._frameCount++;
+
+    let _t0 = performance.now();
     this.rebuildSpatialGrid();
+    this._perfTimings.spatial = performance.now() - _t0;
 
     // Build ID lookup maps for O(1) access
+    _t0 = performance.now();
     this._unitById.clear();
     for (const u of this.units) if (!u.dead) this._unitById.set(u.id, u);
     this._groundItemById.clear();
     for (const i of this.groundItems) if (!i.dead) this._groundItemById.set(i.id, i);
+    this._perfTimings.idMaps = performance.now() - _t0;
 
+    // Fix C: clear spatial query cache each frame
+    this._nearbyCache.clear();
     // Process queued A* pathfinding requests
+    _t0 = performance.now();
     this._pathsThisFrame = 0;
     this._framePathCache.clear();
     for (const arr of this._frameAvoidPenalty.values()) this._avoidPenaltyPool.push(arr);
@@ -5041,6 +5153,7 @@ export class HordeScene extends Phaser.Scene {
       }
       this._pathsThisFrame++;
     }
+    this._perfTimings.pathfinding = performance.now() - _t0;
 
     // Performance tracking (rolling window of 60 frames)
     this.frameTimes.push(delta);
@@ -5059,47 +5172,84 @@ export class HordeScene extends Phaser.Scene {
       if (this.teamBuffs[i].remaining <= 0) this.teamBuffs.splice(i, 1);
     }
 
-    // Track peak army size
-    for (const t of [1, 2] as const) {
-      const alive = this.units.filter(u => u.team === t && !u.dead).length;
-      if (alive > this.matchStats.peakArmySize[t]) this.matchStats.peakArmySize[t] = alive;
+    // Track peak army size (every 30 frames — not critical)
+    if (this._frameCount % 30 === 0) {
+      for (const t of [1, 2] as const) {
+        let alive = 0;
+        for (const u of this.units) if (u.team === t && !u.dead) alive++;
+        if (alive > this.matchStats.peakArmySize[t]) this.matchStats.peakArmySize[t] = alive;
+      }
     }
 
     this.updateFreeGnomes(delta);
     this.updateCarrotSpawning(delta);
     this.updateWildAnimals(delta);
+
+    _t0 = performance.now();
     this.updateWorkflows();
-    this.updateAdvancedPlans();
+    this._perfTimings.workflows = performance.now() - _t0;
+
+    if (this._frameCount % 2 === 0) this.updateAdvancedPlans();
     this.updateResourcePickup();
     this.updateDeliveries();
+
+    _t0 = performance.now();
     this.updateMovement(dt);
-    this.updateCombat(delta);
-    this.processPendingHits(delta);
+    this._perfTimings.movement = performance.now() - _t0;
+
+    // Fix E: throttle combat + hits to every 2nd frame (heavy spatial queries)
+    _t0 = performance.now();
+    if (this._frameCount % 2 === 0) {
+      this.updateCombat(delta * 2);
+      this.processPendingHits(delta * 2);
+    }
+    this._perfTimings.combat = performance.now() - _t0;
+
     this.updateNexusCombat(delta);
     this.updateTowers(delta);
-    this.updateCampCapture();
-    this.updateEraProgression();
+    if (this._frameCount % 2 === 0) this.updateCampCapture();
+    if (this._frameCount % 4 === 0) this.updateEraProgression();
     this.updateNotifications();
-    this.updateMapEvents(delta);
-    this.updateSweeps();
+    if (this._frameCount % 3 === 0) this.updateMapEvents(delta * 3);
+    if (this._frameCount % 2 === 0) this.updateSweeps();
     // Only run AI when solo (not online PvP)
     if (!this.isOnline && !this.isDebug) this.updateAI(delta);
     this.cleanupDead();
     this.updateGroundItems(delta);
+
+    _t0 = performance.now();
     this.updateUnitSprites();
-    this.updateDebugOverlay();
-    if (this.debugHitboxes) this.drawDebugHitboxes();
-    if (this.isDebug) this.drawDebugBoundaries();
-    this.updateCampVisuals();
-    this.updateMineVisuals();
-    this.updateArmoryVisuals();
-    this.drawNexusBars();
+    this._perfTimings.sprites = performance.now() - _t0;
+
+    if (this._frameCount % 4 === 0) this.updateDebugOverlay();
+    if (this.debugHitboxes && this._frameCount % 3 === 0) this.drawDebugHitboxes();
+    if (this.isDebug && this._frameCount % 3 === 0) this.drawDebugBoundaries();
+    if (this._frameCount % 2 === 0) {
+      this.updateCampVisuals();
+      this.updateMineVisuals();
+      this.updateArmoryVisuals();
+    }
+    if (this._frameCount % 4 === 0) this.drawNexusBars();
+
+    _t0 = performance.now();
     this.updateFog();
     this.updateFogVisibility();
-    if (this._frameCount % 4 === 0) this.updateHUD();
-    if (this.isDebug) this.updateDebugResourceDisplay();
+    this._perfTimings.fog = performance.now() - _t0;
+
+    // Fix A: throttle HUD from every 4 frames to every 20 frames
+    if (this._frameCount % 20 === 0) this.updateHUD();
+    if (this.isDebug && this._frameCount % 20 === 0) this.updateDebugResourceDisplay();
     this.updateThoughtBubbles(delta);
     this.checkWin();
+
+    this._perfTimings.total = performance.now() - _perfT0;
+    this.memoryOverlay?.update(delta);
+
+    // Drain queued local commands (issued while previous was still processing)
+    if (!this.isProcessingCommand && this.pendingLocalCommands.length > 0) {
+      const cmd = this.pendingLocalCommands.shift()!;
+      this.handleCommand(cmd.text, cmd.team);
+    }
 
     // Host: drain queued remote commands from guest
     if (this.isOnline && this.isHost && !this.isProcessingCommand && this.pendingRemoteCommands.length > 0) {
@@ -6053,29 +6203,41 @@ export class HordeScene extends Phaser.Scene {
     this.spatialGrid = this._spatialGrid;
   }
 
+  // Fix C: per-frame spatial query cache to avoid redundant lookups
+  private _nearbyCache = new Map<string, HUnit[]>();
+
   private getNearbyUnits(x: number, y: number, radius: number): HUnit[] {
+    // Quantize position to 16px grid for cache hits on nearby queries
+    const qx = (x >> 4) << 4, qy = (y >> 4) << 4;
+    const cacheKey = `${qx}_${qy}_${radius}`;
+    const cached = this._nearbyCache.get(cacheKey);
+    if (cached) return cached;
+
+    let result: HUnit[];
     // For small radii (within one cell), use the optimized 3x3 lookup
     if (radius <= this.spatialCellSize) {
-      return getNearbyFromGrid(this.spatialGrid, x, y, radius, this.spatialCellSize) as HUnit[];
-    }
-    // For larger radii, scan the full cell range
-    const cs = this.spatialCellSize;
-    const r2 = radius * radius;
-    const minCX = Math.floor((x - radius) / cs);
-    const maxCX = Math.floor((x + radius) / cs);
-    const minCY = Math.floor((y - radius) / cs);
-    const maxCY = Math.floor((y + radius) / cs);
-    const result: HUnit[] = [];
-    for (let cx = minCX; cx <= maxCX; cx++) {
-      for (let cy = minCY; cy <= maxCY; cy++) {
-        const bucket = this.spatialGrid.get(`${cx}_${cy}`);
-        if (!bucket) continue;
-        for (const u of bucket) {
-          const ux = u.x - x, uy = u.y - y;
-          if (ux * ux + uy * uy <= r2) result.push(u as HUnit);
+      result = getNearbyFromGrid(this.spatialGrid, x, y, radius, this.spatialCellSize) as HUnit[];
+    } else {
+      // For larger radii, scan the full cell range
+      const cs = this.spatialCellSize;
+      const r2 = radius * radius;
+      const minCX = Math.floor((x - radius) / cs);
+      const maxCX = Math.floor((x + radius) / cs);
+      const minCY = Math.floor((y - radius) / cs);
+      const maxCY = Math.floor((y + radius) / cs);
+      result = [];
+      for (let cx = minCX; cx <= maxCX; cx++) {
+        for (let cy = minCY; cy <= maxCY; cy++) {
+          const bucket = this.spatialGrid.get(`${cx}_${cy}`);
+          if (!bucket) continue;
+          for (const u of bucket) {
+            const ux = u.x - x, uy = u.y - y;
+            if (ux * ux + uy * uy <= r2) result.push(u as HUnit);
+          }
         }
       }
     }
+    this._nearbyCache.set(cacheKey, result);
     return result;
   }
 
@@ -6101,7 +6263,7 @@ export class HordeScene extends Phaser.Scene {
       if (tiles) {
         for (let gy = 0; gy < G && gy < tiles.length; gy++) {
           for (let gx = 0; gx < G && gx < tiles[0].length; gx++) {
-            if (tiles[gy][gx] === 2) blocked[gy * G + gx] = 1;
+            if (tiles[gy][gx] === 2 || tiles[gy][gx] === 3) blocked[gy * G + gx] = 1;
           }
         }
       }
@@ -6654,23 +6816,27 @@ export class HordeScene extends Phaser.Scene {
     }
   }
 
-  // ─── PROJECTILE HELPERS ─────────────────────────────────────
+  // ─── PROJECTILE HELPERS (Fix G: object pooling) ────────────
+
+  private _projPool: Phaser.GameObjects.Container[] = [];
 
   private spawnProjectile(attacker: HUnit, tx: number, ty: number): Phaser.GameObjects.Container {
-    const container = this.add.container(attacker.x, attacker.y).setDepth(50);
-    const isShaman = attacker.type === 'shaman';
-    if (isShaman) {
-      // Purple arcane bolt
-      const glow = this.add.circle(0, 0, 8, 0xBB66FF, 0.6);
-      const core = this.add.circle(0, 0, 4, 0xEEAAFF, 1.0);
-      container.add([glow, core]);
+    let container = this._projPool.pop();
+    if (container) {
+      container.setPosition(attacker.x, attacker.y).setVisible(true).setActive(true);
     } else {
-      // Hyena bone toss — tan/brown elongated
-      const bone = this.add.circle(0, 0, 5, 0xDDCC88, 1.0);
-      const tip = this.add.circle(2, 0, 3, 0xFFEEAA, 0.9);
-      container.add([bone, tip]);
+      container = this.add.container(attacker.x, attacker.y).setDepth(50);
+      const isShaman = attacker.type === 'shaman';
+      if (isShaman) {
+        const glow = this.add.circle(0, 0, 8, 0xBB66FF, 0.6);
+        const core = this.add.circle(0, 0, 4, 0xEEAAFF, 1.0);
+        container.add([glow, core]);
+      } else {
+        const bone = this.add.circle(0, 0, 5, 0xDDCC88, 1.0);
+        const tip = this.add.circle(2, 0, 3, 0xFFEEAA, 0.9);
+        container.add([bone, tip]);
+      }
     }
-    // Rotate toward target
     const angle = Math.atan2(ty - attacker.y, tx - attacker.x);
     container.setRotation(angle);
     return container;
@@ -6678,7 +6844,12 @@ export class HordeScene extends Phaser.Scene {
 
   private destroyProjectile(hit: PendingHit) {
     if (hit.projectile) {
-      hit.projectile.destroy();
+      hit.projectile.setVisible(false).setActive(false);
+      if (this._projPool.length < 50) {
+        this._projPool.push(hit.projectile);
+      } else {
+        hit.projectile.destroy();
+      }
       hit.projectile = null;
     }
   }
@@ -7174,6 +7345,14 @@ export class HordeScene extends Phaser.Scene {
       groups.get(k)!.push(u);
     }
 
+    // Fix B: off-screen culling — compute camera bounds once
+    const cam = this.cameras.main;
+    const cullMargin = 150;
+    const camL = cam.scrollX - cullMargin;
+    const camR = cam.scrollX + cam.width / cam.zoom + cullMargin;
+    const camT = cam.scrollY - cullMargin;
+    const camB = cam.scrollY + cam.height / cam.zoom + cullMargin;
+
     for (const u of this.units) {
       if (u.dead) {
         if (u.sprite) {
@@ -7183,6 +7362,19 @@ export class HordeScene extends Phaser.Scene {
         if (u.equipSprite) { u.equipSprite.destroy(); u.equipSprite = null; }
         if (u.equipDragSprite) { u.equipDragSprite.destroy(); u.equipDragSprite = null; }
         continue;
+      }
+      // Off-screen culling: hide sprites but still update positions so they're correct when scrolling back
+      const offScreen = u.x < camL || u.x > camR || u.y < camT || u.y > camB;
+      if (offScreen) {
+        if (u.sprite) u.sprite.setVisible(false);
+        if (u.carrySprite) u.carrySprite.setVisible(false);
+        if (u.equipSprite) u.equipSprite.setVisible(false);
+        if (u.equipDragSprite) u.equipDragSprite.setVisible(false);
+      } else if (u.sprite) {
+        u.sprite.setVisible(true);
+        if (u.carrySprite) u.carrySprite.setVisible(true);
+        if (u.equipSprite) u.equipSprite.setVisible(true);
+        if (u.equipDragSprite) u.equipDragSprite.setVisible(true);
       }
       if (!u.sprite) {
         const spriteConf = HORDE_SPRITE_CONFIGS[u.type];
@@ -9272,9 +9464,10 @@ export class HordeScene extends Phaser.Scene {
       return;
     }
 
-    // Guard against concurrent command processing (Gemini is async)
+    // Guard against concurrent command processing (Gemini is async) — queue instead of dropping
     if (this.isProcessingCommand) {
-      this.showFeedback('Still processing...', '#FFD93D');
+      this.pendingLocalCommands.push({ text, team });
+      this.showFeedback('Queued — processing previous command...', '#FFD93D');
       return;
     }
     this.isProcessingCommand = true;
@@ -9371,7 +9564,7 @@ export class HordeScene extends Phaser.Scene {
         const gCmd = geminiResult[0];
 
         // Handle non-action responses from Gemini
-        if (gCmd.responseType === 'unrecognized') {
+        if (gCmd.responseType === 'unrecognized' && !gCmd.workflow?.length && gCmd.targetType !== 'workflow') {
           this.showFeedback(gCmd.narration || this.getContextualHint(team), '#FFD93D');
           const confSel = this.units.filter(u => u.team === team && !u.dead);
           this.unitReact('confused', confSel);
@@ -9379,10 +9572,6 @@ export class HordeScene extends Phaser.Scene {
         } else if (gCmd.responseType === 'status_query' || gCmd.targetType === 'query') {
           const report = gCmd.statusReport || gCmd.narration || 'All good, Commander!';
           this.showFeedback(report, '#6CC4FF');
-          this.sfx.playGlobal('voice_recognized');
-          geminiHandled = true;
-        } else if (gCmd.responseType === 'acknowledgment') {
-          if (gCmd.narration) this.showFeedback(gCmd.narration, '#45E6B0');
           this.sfx.playGlobal('voice_recognized');
           geminiHandled = true;
         } else if (this.executeGeminiCommand(gCmd, team)) {
@@ -9684,20 +9873,34 @@ export class HordeScene extends Phaser.Scene {
       this.showFeedback(`No ${subject}!`, '#FF6B6B');
       return true;
     }
-    // Clear workflows — new movement command overrides
-    for (const u of sel) { u.loop = null; }
-    // Clear group workflow so new spawns don't inherit old loop
-    if (subject === 'all') {
-      for (const key of Object.keys(this.groupWorkflows)) {
-        if (key.endsWith(`_${team}`)) delete this.groupWorkflows[key];
-      }
+
+    // Convert simple movement into a proper workflow so units always have an active plan
+    const isAttack = cmd.targetType === 'nexus' || cmd.targetType === 'camp' || cmd.targetType === 'nearest_camp';
+    let steps: WorkflowStep[];
+    if (cmd.targetType === 'nexus') {
+      steps = [{ action: 'attack_enemies' as const }];
+    } else if (cmd.targetType === 'camp' || cmd.targetType === 'nearest_camp') {
+      steps = [{ action: 'attack_camp' as const, targetAnimal: cmd.targetAnimal, qualifier: cmd.qualifier || 'nearest' }];
+    } else if (cmd.targetType === 'defend') {
+      steps = [{ action: 'defend' as const, target: 'base' }];
+    } else if (cmd.targetType === 'retreat' || cmd.targetType === 'base') {
+      steps = [{ action: 'move' as const, x: base.x, y: base.y }];
     } else {
-      delete this.groupWorkflows[`${subject}_${team}`];
+      steps = [{ action: 'move' as const, x: tx, y: ty }];
     }
+
+    const wf: HWorkflow = { steps, currentStep: 0, label: cmd.narration || (isAttack ? 'Attack!' : 'Moving out'), loopFrom: 0, playedOnce: false, voiceCommand: this.pendingCommandText || '' };
+    for (const u of sel) { u.loop = { ...wf, currentStep: 0 }; }
+    // Store as group workflow so new spawns inherit
+    if (subject === 'all') {
+      const types = new Set(sel.map(u => u.type));
+      for (const t of types) this.groupWorkflows[`${t}_${team}`] = wf;
+    } else {
+      this.groupWorkflows[`${subject}_${team}`] = wf;
+    }
+
     this.sendUnitsTo(sel, tx, ty, true);
     this.sfx.playGlobal('move_command');
-    // Charge cry for attack targets, affirmative for movement/defend
-    const isAttack = cmd.targetType === 'nexus' || cmd.targetType === 'camp' || cmd.targetType === 'nearest_camp';
     this.unitReact(isAttack ? 'charge' : 'yes', sel);
     this.showFeedback(cmd.narration || 'Moving out!', '#45E6B0');
     return true;
@@ -9982,7 +10185,7 @@ export class HordeScene extends Phaser.Scene {
     }
 
     // "get/make/take [animal]" commands — ALWAYS use full bootstrap workflow
-    const makeMatch = lo.match(/\b(?:get|make|take|produce|spawn|create|breed|train)\s+(?:more\s+)?(\w+)/i);
+    const makeMatch = lo.match(/\b(?:go\s+)?(?:get|make|take|produce|spawn|create|breed|train|need|want)\s+(?:me\s+)?(?:some\s+)?(?:more\s+)?(\w+)/i);
     if (makeMatch) {
       const animalPatterns: [RegExp, string][] = [
         [/gnome(s)?|nome(s)?/i, 'gnome'], [/turtle(s)?/i, 'turtle'],
@@ -12304,6 +12507,7 @@ export class HordeScene extends Phaser.Scene {
     this.equipPanelEl?.remove(); this.equipPanelEl = null;
     document.getElementById('horde-equip-toggle')?.remove();
     this.debugPanelEl?.remove(); this.debugPanelEl = null;
+    this.memoryOverlay?.destroy(); this.memoryOverlay = null;
     this.eventHudEl?.remove(); this.eventHudEl = null;
     this.notifContainerEl?.remove(); this.notifContainerEl = null;
     this.notifEventStackEl = null;

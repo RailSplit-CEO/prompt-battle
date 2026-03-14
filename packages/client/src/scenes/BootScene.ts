@@ -23,13 +23,15 @@ export class BootScene extends Phaser.Scene {
     SoundManager.preload(this);
 
     const { width, height } = this.cameras.main;
-    this.cameras.main.setBackgroundColor('#1B1040');
+    this.cameras.main.setBackgroundColor('#0f1a0a');
 
-    const titleText = this.add.text(width / 2, height / 2 - 80, 'ANIMAL ARMY', {
+    const titleText = this.add.text(width / 2, height / 2 - 80, 'MARK MY HORDES', {
       fontSize: '52px',
-      color: '#FF6B9D',
+      color: '#FFD93D',
       fontFamily: '"Fredoka", sans-serif',
       fontStyle: 'bold',
+      stroke: '#3a2a10',
+      strokeThickness: 5,
     }).setOrigin(0.5).setAlpha(0);
 
     this.tweens.add({
@@ -44,7 +46,7 @@ export class BootScene extends Phaser.Scene {
 
     const subtitle = this.add.text(width / 2, height / 2 - 40, 'LOADING...', {
       fontSize: '14px',
-      color: '#8B6DB0',
+      color: '#8B7355',
       fontFamily: '"Nunito", sans-serif',
       fontStyle: 'bold',
       letterSpacing: 6,
@@ -60,7 +62,7 @@ export class BootScene extends Phaser.Scene {
     const barOutline = this.add.graphics();
     barOutline.fillStyle(0x000000, 0.5);
     barOutline.fillRoundedRect(width / 2 - 164, height / 2 + 4, 328, 16, 8);
-    barOutline.fillStyle(0x2A1858, 1);
+    barOutline.fillStyle(0x1a2e10, 1);
     barOutline.fillRoundedRect(width / 2 - 162, height / 2 + 6, 324, 12, 6);
     barOutline.setAlpha(0);
     this.tweens.add({ targets: barOutline, alpha: 1, duration: 400, delay: 600 });
@@ -73,16 +75,16 @@ export class BootScene extends Phaser.Scene {
       fill.clear();
       const fillW = 320 * v;
       if (fillW > 0) {
-        fill.fillStyle(0xFF6B9D);
+        fill.fillStyle(0x6B9B5E);
         fill.fillRoundedRect(width / 2 - 160, height / 2 + 7, fillW, 10, 5);
         fill.fillStyle(0xffffff, 0.3);
         fill.fillRoundedRect(width / 2 - 160, height / 2 + 7, fillW, 4, 3);
       }
     });
 
-    this.add.text(width / 2, height - 30, 'v0.2.0 - Animal Army', {
+    this.add.text(width / 2, height - 30, 'v0.2.0 - Mark My Hordes', {
       fontSize: '11px',
-      color: '#4A2580',
+      color: '#4a5a3a',
       fontFamily: '"Nunito", sans-serif',
       fontStyle: 'bold',
     }).setOrigin(0.5);
@@ -94,7 +96,7 @@ export class BootScene extends Phaser.Scene {
 
     this.createTinySwordsAnimations();
 
-    this.cameras.main.fadeOut(400, 27, 16, 64);
+    this.cameras.main.fadeOut(400, 15, 26, 10);
     this.cameras.main.once('camerafadeoutcomplete', () => {
       this.scene.start('MenuScene');
     });
@@ -146,8 +148,13 @@ export class BootScene extends Phaser.Scene {
     this.load.spritesheet('ts_water_foam', 'assets/terrain/water_foam.png', { frameWidth: 192, frameHeight: 192 });
     this.load.image('ts_shadow', 'assets/terrain/shadow.png');
 
+    // Tileset color variants for horde tile grid (all 5 loaded, maps pick which to use)
+    for (let i = 1; i <= 5; i++) {
+      this.load.image(`ts_tileset_color${i}`, `assets/terrain/tilemap_color${i}.png`);
+    }
+
     // Buildings
-    for (const color of ['blue', 'red']) {
+    for (const color of ['blue', 'red', 'purple', 'yellow']) {
       this.load.image(`ts_castle_${color}`, `assets/buildings/castle_${color}.png`);
       this.load.image(`ts_barracks_${color}`, `assets/buildings/barracks_${color}.png`);
       this.load.image(`ts_tower_${color}`, `assets/buildings/tower_${color}.png`);
@@ -157,8 +164,13 @@ export class BootScene extends Phaser.Scene {
         this.load.image(`ts_house${i}_${color}`, `assets/buildings/house${i}_${color}.png`);
       }
     }
-    for (let i = 1; i <= 3; i++) {
-      this.load.image(`ts_house${i}_yellow`, `assets/buildings/house${i}_yellow.png`);
+
+    // Terrain decorations: rocks & bushes
+    for (let i = 1; i <= 4; i++) {
+      this.load.image(`ts_rock${i}`, `assets/terrain/Rock${i}.png`);
+    }
+    for (let i = 1; i <= 2; i++) {
+      this.load.image(`ts_bush${i}`, `assets/terrain/Bushe${i}.png`);
     }
 
     // Resources
@@ -443,6 +455,22 @@ export class BootScene extends Phaser.Scene {
     glowGfx.fillCircle(16, 16, 8);
     glowGfx.generateTexture('glow', 32, 32);
     glowGfx.destroy();
+
+    // Carrot resource icon
+    const carrotGfx = this.add.graphics();
+    // Orange carrot body (tapered)
+    carrotGfx.fillStyle(0xFF8C00);
+    carrotGfx.fillTriangle(16, 4, 10, 28, 22, 28);
+    carrotGfx.fillStyle(0xFF7700);
+    carrotGfx.fillTriangle(16, 6, 12, 26, 20, 26);
+    // Green top
+    carrotGfx.fillStyle(0x228B22);
+    carrotGfx.fillEllipse(16, 5, 10, 6);
+    carrotGfx.fillStyle(0x33AA33);
+    carrotGfx.fillEllipse(14, 4, 6, 4);
+    carrotGfx.fillEllipse(18, 4, 6, 4);
+    carrotGfx.generateTexture('ts_carrot', 32, 32);
+    carrotGfx.destroy();
   }
 
   // ─── Tile Textures ──────────────────────────────────────

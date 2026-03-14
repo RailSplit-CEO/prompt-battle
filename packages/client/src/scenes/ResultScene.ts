@@ -9,6 +9,7 @@ interface ResultData {
 
 export class ResultScene extends Phaser.Scene {
   private floatingShapes: { sprite: Phaser.GameObjects.Arc | Phaser.GameObjects.Star; vx: number; vy: number; rotSpeed: number }[] = [];
+  private muted: boolean = localStorage.getItem('pb_sound_muted') === 'true';
 
   constructor() {
     super({ key: 'ResultScene' });
@@ -21,6 +22,12 @@ export class ResultScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor(won ? '#0D2818' : '#2A0D18');
     this.cameras.main.fadeIn(300, 0, 0, 0);
     this.cameras.main.shake(500, won ? 0.015 : 0.025);
+
+    // Victory/defeat fanfare
+    if (!this.muted) {
+      const sfxKey = won ? 'victory' : 'defeat';
+      if (this.cache.audio.exists(sfxKey)) this.sound.play(sfxKey, { volume: 0.6 });
+    }
 
     const accentColor = won ? 0x45E6B0 : 0xFF6B6B;
     const accentHex = won ? '#45E6B0' : '#FF6B6B';
@@ -200,6 +207,7 @@ export class ResultScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true });
 
     zone.on('pointerover', () => {
+      if (!this.muted && this.cache.audio.exists('button_click')) this.sound.play('button_click', { volume: 0.15 });
       this.tweens.add({ targets: btnContainer, scaleX: 1.08, scaleY: 1.08, duration: 200, ease: 'Back.easeOut' });
       btnBg.clear();
       btnBg.fillStyle(0xFF6B9D, 0.5);
@@ -218,6 +226,7 @@ export class ResultScene extends Phaser.Scene {
     });
 
     zone.on('pointerdown', () => {
+      if (!this.muted && this.cache.audio.exists('button_click')) this.sound.play('button_click', { volume: 0.4 });
       this.tweens.add({
         targets: btnContainer,
         scaleX: 0.92, scaleY: 0.92,
@@ -241,6 +250,7 @@ export class ResultScene extends Phaser.Scene {
     this.tweens.add({ targets: backText, alpha: 0.7, duration: 600, delay: 1200 });
 
     const returnToMenu = () => {
+      if (!this.muted && this.cache.audio.exists('button_click')) this.sound.play('button_click', { volume: 0.4 });
       this.cameras.main.fadeOut(400, 27, 16, 64);
       this.cameras.main.once('camerafadeoutcomplete', () => {
         this.scene.start('MenuScene');

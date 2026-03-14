@@ -19,6 +19,7 @@ export class DraftScene extends Phaser.Scene {
   private gameId!: string;
   private playerId!: string;
   private isLocal!: boolean;
+  private muted: boolean = localStorage.getItem('pb_sound_muted') === 'true';
 
   private myHeroes: HeroCard[] = [];
   private enemyHeroes: HeroCard[] = [];
@@ -221,6 +222,7 @@ export class DraftScene extends Phaser.Scene {
     container.add(zone);
 
     zone.on('pointerover', () => {
+      if (!this.muted && this.cache.audio.exists('button_click')) this.sound.play('button_click', { volume: 0.15 });
       this.tweens.add({
         targets: container,
         scaleX: 1.05,
@@ -250,6 +252,7 @@ export class DraftScene extends Phaser.Scene {
     });
 
     zone.on('pointerdown', () => {
+      if (!this.muted && this.cache.audio.exists('button_click')) this.sound.play('button_click', { volume: 0.4 });
       this.startBattle();
     });
 
@@ -267,6 +270,7 @@ export class DraftScene extends Phaser.Scene {
   }
 
   private startBattle() {
+    if (!this.muted && this.cache.audio.exists('wave_start')) this.sound.play('wave_start', { volume: 0.4 });
     this.cameras.main.fadeOut(400, 27, 16, 64);
     this.cameras.main.once('camerafadeoutcomplete', () => {
       this.scene.start('BattleScene', {

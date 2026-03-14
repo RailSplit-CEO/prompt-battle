@@ -87,6 +87,27 @@
     .tool-btn:hover { border-color: #FFD700; }
     .tool-btn.active { border-color: #FFD700; background: #2a2040; box-shadow: 0 0 6px rgba(255,215,0,0.3); }
 
+    /* Mirror toggle */
+    .mirror-toggle {
+      display: flex; align-items: center; gap: 6px; padding: 4px 8px;
+      margin: 6px 0; border-radius: 4px; cursor: pointer; user-select: none;
+      font-size: 11px; color: #aaa; background: #111; border: 1px solid #333;
+      transition: all 0.15s;
+    }
+    .mirror-toggle:hover { border-color: #666; }
+    .mirror-toggle.active {
+      border-color: #4af; background: #0a1a2f; color: #4af;
+      box-shadow: 0 0 8px rgba(68,170,255,0.2);
+    }
+    .mirror-toggle .mirror-icon {
+      font-size: 14px; line-height: 1;
+    }
+    .mirror-toggle .mirror-key {
+      margin-left: auto; font-size: 9px; color: #555;
+      background: #1a1a1a; padding: 1px 4px; border-radius: 2px;
+    }
+    .mirror-toggle.active .mirror-key { color: #4af; background: #0a1a3f; }
+
     /* Camp list */
     .camp-list { font-size: 11px; }
     .camp-item {
@@ -190,6 +211,67 @@
     }
     .layer-toggle:hover { color: #FFD700; }
     .layer-toggle input { accent-color: #FFD700; cursor: pointer; }
+
+    /* ── TILE PALETTE ── */
+    .palette-wrap {
+      position: relative; border: 1px solid #333; border-radius: 6px;
+      overflow: hidden; background: #0d0a18;
+    }
+    .palette-canvas {
+      display: block; cursor: pointer; image-rendering: pixelated;
+    }
+    .palette-canvas:hover { outline: 1px solid rgba(255,215,0,0.3); }
+    .palette-selected-overlay {
+      position: absolute; pointer-events: none; border: 2px solid #FFD700;
+      box-shadow: 0 0 8px rgba(255,215,0,0.5); z-index: 2;
+    }
+    .palette-hover-overlay {
+      position: absolute; pointer-events: none; border: 1px solid rgba(255,255,255,0.4);
+      z-index: 1; display: none;
+    }
+
+    /* Layer tabs */
+    .layer-tabs {
+      display: flex; gap: 0; border-radius: 6px; overflow: hidden;
+      border: 1px solid #333; margin-bottom: 8px;
+    }
+    .layer-tab {
+      flex: 1; padding: 7px 4px; text-align: center; font-size: 11px; font-weight: 700;
+      cursor: pointer; border: none; background: #111; color: #888;
+      transition: all 0.15s; position: relative;
+    }
+    .layer-tab:hover { background: #1a1a3e; color: #ccc; }
+    .layer-tab.active { background: #2a2050; color: #FFD700; box-shadow: inset 0 -2px 0 #FFD700; }
+    .layer-tab .layer-vis {
+      position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+      font-size: 9px; opacity: 0.5; cursor: pointer;
+    }
+    .layer-tab .layer-vis:hover { opacity: 1; }
+    .layer-tab .layer-vis.hidden { opacity: 0.25; text-decoration: line-through; }
+
+    /* Eraser tool highlight */
+    .tool-btn.eraser-active { border-color: #FF5555; background: #2a1020; }
+
+    /* Palette tile info */
+    .palette-info {
+      font-size: 10px; color: #888; padding: 4px 0; text-align: center;
+      min-height: 18px; font-family: monospace;
+    }
+
+    /* Layer opacity slider */
+    .opacity-row {
+      display: flex; align-items: center; gap: 6px; font-size: 10px; color: #aaa;
+      padding: 2px 0;
+    }
+    .opacity-row input[type="range"] { flex: 1; accent-color: #FFD700; height: 14px; }
+    .opacity-row .val { width: 28px; text-align: right; color: #FFD700; font-family: monospace; }
+
+    /* Drag ghost */
+    #drag-ghost {
+      position: fixed; pointer-events: none; z-index: 1000; display: none;
+      image-rendering: pixelated; opacity: 0.8; border: 1px solid #FFD700;
+      box-shadow: 0 0 12px rgba(255,215,0,0.4);
+    }
   </style>
 </head>
 <body>
@@ -247,42 +329,116 @@
       <div class="tool-palette">
         <div class="tool-btn active" data-tool="select" title="[V] Select & move objects">&#x1F5D5; Select</div>
       </div>
+      <div class="mirror-toggle active" id="mirror-toggle" title="[R] Mirror edits with 180° rotation (LoL-style symmetry)">
+        <span class="mirror-icon">&#x1F501;</span>
+        <span>Mirror Mode</span>
+        <span class="mirror-key">R</span>
+      </div>
       <div style="font-size:9px;color:#666;margin:6px 0 2px">PLACE OBJECTS</div>
       <div class="tool-palette">
         <div class="tool-btn" data-tool="place_camp" title="[C] Click to place camp pair">&#x2694; Camp</div>
         <div class="tool-btn" data-tool="place_troll" title="Click to place troll boss">&#x1F451; Troll</div>
         <div class="tool-btn" data-tool="place_mine" title="[M] Click to place mine pair">&#x2699; Mine</div>
         <div class="tool-btn" data-tool="place_armory" title="[A] Click to place armory pair">&#x2692; Armory</div>
+        <div class="tool-btn" data-tool="place_tower" title="[O] Click to place tower pair">&#x1F3F0; Tower</div>
+        <div class="tool-btn" data-tool="add_bush" title="[B] Click to add bush zone pair">&#x1F33F; Bush</div>
+        <div class="tool-btn" data-tool="place_rock" title="[K] Click to place rock pair">&#x1FAA8; Rock</div>
+        <div class="tool-btn" data-tool="place_boundary" title="[I] Place invisible boundary wall">&#x1F6A7; Boundary</div>
+      </div>
+      <div style="font-size:9px;color:#666;margin:6px 0 2px">BRUSHES</div>
+      <div class="tool-palette">
+        <div class="tool-btn" data-tool="brush_rock" title="Paint scattered rocks (brush)" style="font-size:9px">&#x1FAA8; Rock Brush</div>
+        <div class="tool-btn" data-tool="brush_bush" title="Paint bush zones (brush)" style="font-size:9px">&#x1F33F; Bush Brush</div>
+      </div>
+      <div style="font-size:9px;color:#666;margin:6px 0 2px">TILES</div>
+      <div class="tool-palette">
+        <div class="tool-btn" data-tool="tile_paint" data-tile="0" title="[G] Paint grass">\u{1F33F} Grass</div>
+        <div class="tool-btn" data-tool="tile_paint" data-tile="1" title="[H] Paint high ground">\u26F0\uFE0F High</div>
+        <div class="tool-btn" data-tool="tile_paint" data-tile="2" title="[W] Paint water">\u{1F30A} Water</div>
+        <div class="tool-btn" data-tool="tile_paint" data-tile="3" title="[J] Paint impassable rocks">\u{1FAA8} Rocks</div>
+      </div>
+      <div style="font-size:9px;color:#666;margin:6px 0 2px">GRASS TINT (depth/color variation)</div>
+      <div class="tool-palette" id="grass-tint-palette">
+        <div class="tool-btn" data-tool="grass_tint" data-tint="0" title="Erase tint" style="background:#666;color:#fff;font-size:9px">Erase</div>
+        <div class="tool-btn" data-tool="grass_tint" data-tint="1" title="Light grass" style="background:#78b43c;color:#fff;font-size:9px">Light</div>
+        <div class="tool-btn" data-tool="grass_tint" data-tint="2" title="Dark grass" style="background:#143c0a;color:#fff;font-size:9px">Dark</div>
+        <div class="tool-btn" data-tool="grass_tint" data-tint="3" title="Yellow/dry" style="background:#a09628;color:#fff;font-size:9px">Yellow</div>
+        <div class="tool-btn" data-tool="grass_tint" data-tint="4" title="Brown/path" style="background:#78501e;color:#fff;font-size:9px">Brown</div>
+        <div class="tool-btn" data-tool="grass_tint" data-tint="5" title="Damp/blue-green" style="background:#286450;color:#fff;font-size:9px">Damp</div>
       </div>
       <div style="font-size:9px;color:#666;margin:6px 0 2px">ZONES</div>
       <div class="tool-palette">
         <div class="tool-btn" data-tool="add_carrot_zone" title="Click to add carrot zone">&#x1F955; Carrot</div>
         <div class="tool-btn" data-tool="add_wild_zone" title="Click to add wild zone">&#x1F43A; Wild</div>
-      </div>
-      <div style="font-size:9px;color:#666;margin:6px 0 2px">TERRAIN</div>
-      <div class="tool-palette">
-        <div class="tool-btn" data-tool="terrain_paint" title="[B] Paint terrain">&#x1F58C; Paint</div>
-        <div class="tool-btn" data-tool="terrain_erase" title="[E] Erase terrain">&#x1F6AB; Erase</div>
+        <div class="tool-btn" data-tool="add_event_circle" title="[X] Place event circle">\u2B55 Event</div>
       </div>
     </div>
   </div>
 
-  <!-- Terrain options (brush) -->
+  <!-- Tile painting controls -->
   <div class="section">
-    <div class="section-title" data-toggle="terrain">Terrain Brush <span class="arrow">&#x25BE;</span></div>
+    <div class="section-title" data-toggle="terrain">Tile Tools <span class="arrow">&#x25BE;</span></div>
     <div class="section-body" id="sec-terrain">
-      <div class="terrain-palette" id="terrain-palette"></div>
-      <div class="knob-row" style="margin-top:4px">
-        <label>Size</label>
-        <input type="range" id="brush-size" min="20" max="400" value="80" step="10">
-        <span class="val" id="val-brush">80</span>
+      <div style="font-size:9px;color:#666;margin-bottom:4px">AUTO-TILE (base terrain)</div>
+      <div class="tool-palette" id="tile-palette">
+        <div class="tool-btn" data-tile="0" style="background:#4a8b3a;color:#fff">\u{1F33F} Grass</div>
+        <div class="tool-btn" data-tile="1" style="background:#8B7355;color:#fff">\u26F0\uFE0F High</div>
+        <div class="tool-btn" data-tile="2" style="background:#2266CC;color:#fff">\u{1F30A} Water</div>
       </div>
-      <div class="knob-row">
-        <label>Shape</label>
-        <div class="tool-palette">
-          <div class="tool-btn active" data-shape="circle">Circle</div>
-          <div class="tool-btn" data-shape="rect">Rect</div>
+      <div class="knob-row" style="margin-top:6px">
+        <label>Color Variant</label>
+        <select id="tileset-color" class="map-select" style="width:55px;font-size:10px">
+          <option value="1">1</option><option value="2">2</option>
+          <option value="3">3</option><option value="4" selected>4</option>
+          <option value="5">5</option>
+        </select>
+      </div>
+      <div class="knob-row" style="margin-top:4px">
+        <label>Brush Radius <span id="brush-radius-val" style="color:#FFD700">1</span></label>
+        <input type="range" id="brush-radius" min="1" max="8" value="1" step="1" style="width:80px">
+      </div>
+    </div>
+  </div>
+
+  <!-- Tile Palette — individual tile placement -->
+  <div class="section">
+    <div class="section-title" data-toggle="palette">Tile Palette <span class="arrow">&#x25BE;</span></div>
+    <div class="section-body" id="sec-palette">
+      <!-- Layer tabs -->
+      <div class="layer-tabs">
+        <div class="layer-tab active" data-layer-tab="ground">
+          Ground
+          <span class="layer-vis" id="vis-ground" title="Toggle visibility">&#x1F441;</span>
         </div>
+        <div class="layer-tab" data-layer-tab="high">
+          High Ground
+          <span class="layer-vis" id="vis-high" title="Toggle visibility">&#x1F441;</span>
+        </div>
+      </div>
+      <!-- Layer opacity -->
+      <div class="opacity-row">
+        <label>Opacity</label>
+        <input type="range" id="layer-opacity" min="10" max="100" value="100" step="5">
+        <span class="val" id="layer-opacity-val">100</span>
+      </div>
+      <!-- Palette canvas -->
+      <div class="palette-wrap" id="palette-wrap">
+        <canvas id="palette-canvas" class="palette-canvas" width="252" height="168"></canvas>
+        <div class="palette-selected-overlay" id="palette-sel" style="display:none"></div>
+        <div class="palette-hover-overlay" id="palette-hover"></div>
+      </div>
+      <div class="palette-info" id="palette-info">Click a tile to select, then paint on map</div>
+      <!-- Tools for manual tile mode -->
+      <div class="tool-palette" style="margin-top:6px">
+        <div class="tool-btn" data-tool="tile_manual" title="[T] Paint selected tile">\u{1F58C}\uFE0F Paint</div>
+        <div class="tool-btn" data-tool="tile_erase" title="[E] Erase tiles from active layer">\u{1F9F9} Erase</div>
+        <div class="tool-btn" data-tool="tile_fill" title="Fill area with selected tile">\u{1F4A7} Fill</div>
+        <div class="tool-btn" data-tool="tile_eyedrop" title="[I] Pick tile from canvas">\u{1F4A1} Pick</div>
+      </div>
+      <div style="font-size:9px;color:#555;margin-top:6px;line-height:1.5">
+        <b>Drag</b> tile from palette to canvas<br>
+        <b>Left-click</b> to paint | <b>Shift</b> for line<br>
+        <b>1/2</b> switch layers | <b>E</b> eraser | <b>I</b> eyedrop
       </div>
     </div>
   </div>
@@ -294,7 +450,7 @@
       <div style="font-size:11px;color:#aaa;margin-bottom:4px;display:flex;align-items:center;justify-content:space-between">
         Camp Slots
         <select id="new-camp-tier" class="map-select" style="width:55px;font-size:10px">
-          <option value="1">T1</option><option value="2">T2</option>
+          <option value="0">T0</option><option value="1">T1</option><option value="2">T2</option>
           <option value="3">T3</option><option value="4">T4</option>
         </select>
       </div>
@@ -314,6 +470,10 @@
       <div id="carrot-zone-list"></div>
       <div style="font-size:11px;color:#aaa;margin:6px 0 4px">Wild Zones</div>
       <div id="wild-zone-list"></div>
+      <div style="font-size:11px;color:#aaa;margin:6px 0 4px">Event Circles</div>
+      <div id="event-circle-list"></div>
+      <div style="font-size:11px;color:#aaa;margin:6px 0 4px">Boundary Blocks</div>
+      <div id="boundary-list"></div>
     </div>
   </div>
 
@@ -324,9 +484,15 @@
       <label class="layer-toggle"><input type="checkbox" data-layer="camps" checked> &#x2694; Camps</label>
       <label class="layer-toggle"><input type="checkbox" data-layer="mines" checked> &#x2699; Mines</label>
       <label class="layer-toggle"><input type="checkbox" data-layer="armories" checked> &#x2692; Armories</label>
+      <label class="layer-toggle"><input type="checkbox" data-layer="towers" checked> &#x1F3F0; Towers</label>
+      <label class="layer-toggle"><input type="checkbox" data-layer="bushes" checked> &#x1F33F; Bushes</label>
+      <label class="layer-toggle"><input type="checkbox" data-layer="rocks" checked> &#x1FAA8; Rocks</label>
+      <label class="layer-toggle"><input type="checkbox" data-layer="boundaries" checked> &#x1F6A7; Boundaries</label>
       <label class="layer-toggle"><input type="checkbox" data-layer="carrot_zones" checked> &#x1F955; Carrot Zones</label>
       <label class="layer-toggle"><input type="checkbox" data-layer="wild_zones" checked> &#x1F43A; Wild Zones</label>
-      <label class="layer-toggle"><input type="checkbox" data-layer="terrain" checked> &#x1F332; Terrain</label>
+      <label class="layer-toggle"><input type="checkbox" data-layer="tiles" checked> \u{1F5FA}\uFE0F Auto Tiles</label>
+      <label class="layer-toggle"><input type="checkbox" data-layer="manual_ground" checked> \u{1F33F} Ground Layer</label>
+      <label class="layer-toggle"><input type="checkbox" data-layer="manual_high" checked> \u26F0\uFE0F High Layer</label>
       <label class="layer-toggle"><input type="checkbox" data-layer="safe_radius" checked> &#x1F6E1; Safe Radius</label>
       <label class="layer-toggle"><input type="checkbox" data-layer="grid" checked> &#x1F4CF; Grid</label>
       <label class="layer-toggle"><input type="checkbox" data-layer="game_overlay" checked> &#x1F3AE; Game Overlay</label>
@@ -338,8 +504,9 @@
     <div class="section-title" data-toggle="ref">Tier Reference <span class="arrow collapsed">&#x25BE;</span></div>
     <div class="section-body collapsed" id="sec-ref">
       <div style="font-size:10px;line-height:1.6;color:#aaa">
-        <span style="color:#2d7a3a">&#x25CF;</span> <b>T1</b>: gnome, turtle (1&#x1F955;)<br>
-        <span style="color:#2266aa">&#x25CF;</span> <b>T2</b>: skull, spider, gnoll, rogue (3&#x1F356;)<br>
+        <span style="color:#55aa55">&#x25CF;</span> <b>T0</b>: gnome (starter)<br>
+        <span style="color:#2d7a3a">&#x25CF;</span> <b>T1</b>: gnome, turtle<br>
+        <span style="color:#2266aa">&#x25CF;</span> <b>T2</b>: skull, spider, hyena, rogue, turtle<br>
         <span style="color:#9b59b6">&#x25CF;</span> <b>T3</b>: panda, lizard (5&#x1F356;)<br>
         <span style="color:#c0392b">&#x25CF;</span> <b>T4</b>: minotaur, shaman (8&#x1F48E;)<br>
         <span style="color:#FFD700">&#x25CF;</span> <b>T5</b>: troll (12&#x1F48E;)
@@ -358,15 +525,15 @@
       <button class="btn btn-green" id="btn-copy-json" style="flex:1">Copy JSON</button>
     </div>
     <div class="btn-row" style="margin-top:6px">
-      <button class="btn btn-red" id="btn-clear-terrain" style="flex:1">Clear Terrain</button>
+      <button class="btn btn-red" id="btn-clear-tiles" style="flex:1">Clear Tiles</button>
     </div>
     <div class="btn-row" style="margin-top:6px">
       <button class="btn btn-green" id="btn-sync-toggle" style="flex:1">&#x1F517; Sync</button>
       <button class="btn btn-purple" id="btn-sync-restart" style="flex:1">&#x21BB; Restart Game</button>
     </div>
     <div style="margin-top:8px; font-size:9px; color:#555; line-height:1.6">
-      <b>Keys:</b> V=Select B=Paint E=Erase C=Camp M=Mine<br>
-      A=Armory F=Fit [/]=Brush Ctrl+Z/Y Del Ctrl+D/C/V
+      <b>Keys:</b> V=Select G=Grass H=High W=Water C=Camp<br>
+      M=Mine A=Armory X=Event F=Fit Ctrl+Z/Y Del Ctrl+D/C/V
     </div>
   </div>
 </div>
@@ -401,6 +568,8 @@
   </div>
 </div>
 
+<img id="drag-ghost" src="" alt="">
+
 <script type="module">
 import { ALL_MAPS, TIER_POOLS } from '@prompt-battle/shared';
 
@@ -408,31 +577,46 @@ import { ALL_MAPS, TIER_POOLS } from '@prompt-battle/shared';
 // STATE
 // =================================================================
 
-const TIER_COLORS = { 1: '#2d7a3a', 2: '#2266aa', 3: '#9b59b6', 4: '#c0392b' };
-const TERRAIN_TYPES = [
-  { id: 'water',    label: 'Water',    color: '#2266CC', icon: '\u{1F30A}' },
-  { id: 'mountain', label: 'Mountain', color: '#8B8B8B', icon: '\u{26F0}\uFE0F' },
-  { id: 'bush',     label: 'Bush',     color: '#4A8B3A', icon: '\u{1F33F}' },
-  { id: 'forest',   label: 'Forest',   color: '#2E6B3E', icon: '\u{1F332}' },
-  { id: 'lava',     label: 'Lava',     color: '#CC3300', icon: '\u{1F525}' },
-  { id: 'sand',     label: 'Sand',     color: '#D4B866', icon: '\u{1F3D6}\uFE0F' },
-  { id: 'swamp',    label: 'Swamp',    color: '#4A6B3A', icon: '\u{1F438}' },
-  { id: 'ice',      label: 'Ice',      color: '#88CCEE', icon: '\u{2744}\uFE0F' },
-  { id: 'ruins',    label: 'Ruins',    color: '#7777AA', icon: '\u{1F3DA}\uFE0F' },
-  { id: 'bridge',   label: 'Bridge',   color: '#AA8844', icon: '\u{1F309}' },
+const TIER_COLORS = { 0: '#55aa55', 1: '#2d7a3a', 2: '#2266aa', 3: '#9b59b6', 4: '#c0392b' };
+const TILE_SIZE = 64;
+const GRID_COLS = 100; // 6400/64
+const GRID_ROWS = 100;
+const TILE_TYPES = [
+  { id: 0, label: 'Grass', color: '#4a8b3a', key: 'G' },
+  { id: 1, label: 'High Ground', color: '#8B7355', key: 'H' },
+  { id: 2, label: 'Water', color: '#2266CC', key: 'W' },
+];
+const EQUIPMENT_TYPES = [
+  { id: 'pickaxe', emoji: '\u26CF\uFE0F', desc: '+25% gather speed, mine metal' },
+  { id: 'sword', emoji: '\u2694\uFE0F', desc: '+50% atk, +25% atk speed' },
+  { id: 'shield', emoji: '\u{1F6E1}\uFE0F', desc: '+60% HP, -25% dmg taken' },
+  { id: 'boots', emoji: '\u{1F462}', desc: '+60% speed, +50% pickup range' },
+  { id: 'banner', emoji: '\u{1F6A9}', desc: 'Aura: allies +20% atk, +15% spd' },
+];
+const GRASS_TINTS = [
+  { id: 0, label: 'None', color: null },
+  { id: 1, label: 'Light', color: 'rgba(120,180,60,0.25)' },
+  { id: 2, label: 'Dark', color: 'rgba(20,60,10,0.3)' },
+  { id: 3, label: 'Yellow', color: 'rgba(160,150,40,0.2)' },
+  { id: 4, label: 'Brown', color: 'rgba(120,80,30,0.25)' },
+  { id: 5, label: 'Damp', color: 'rgba(40,100,80,0.2)' },
 ];
 
 let maps = [];
 let mapIdx = 0;
 let currentTool = 'select';
-let selectedTerrain = 'water';
-let brushShape = 'circle';
-let brushSize = 80;
+let currentTileType = 0; // 0=grass, 1=high_ground, 2=water
+let mirrorMode = true; // 180° rotational symmetry (like League of Legends)
+let tilesetImg = null; // HTMLImageElement for tileset
+let resolvedTiles = null; // from AutoTileResolver
+let tilesetColor = 4; // default color variant
+let currentGrassTint = 1; // current grass tint brush index (1-5)
+let brushRadius = 1; // brush radius in tiles (1=single tile, 2=3x3, 3=5x5, etc.)
 
 // Camera
 let camX = 0, camY = 0, zoom = 0.2;
 
-// Selection: { type: 'camp'|'troll'|'base'|'carrot_zone'|'wild_zone'|'terrain'|'mine'|'armory', idx?, side? }
+// Selection: { type: 'camp'|'troll'|'base'|'carrot_zone'|'wild_zone'|'mine'|'armory'|'event_circle', idx?, side? }
 let selection = null;
 
 // Clipboard for copy/paste
@@ -452,14 +636,426 @@ let resizing = null; // { type, idx, handle, origZone }
 
 // Layer visibility
 const layerVisible = {
-  camps: true, mines: true, armories: true,
-  carrot_zones: true, wild_zones: true, terrain: true,
+  camps: true, mines: true, armories: true, towers: true,
+  bushes: true, rocks: true, boundaries: true,
+  carrot_zones: true, wild_zones: true, tiles: true,
+  manual_ground: true, manual_high: true,
   safe_radius: true, grid: true, game_overlay: true,
 };
 
-// Terrain features stored per map as maps[i]._terrain
+// ── Manual tile layer state ──
+let activeLayer = 'ground'; // 'ground' | 'high'
+let selectedPaletteTile = null; // tileset index (0-53) or null
+let layerOpacity = { ground: 1.0, high: 1.0 };
+let paletteTileSize = 28; // display size of each tile in palette
+const TILESET_COLS = 9;
+const TILESET_ROWS = 6;
+let lastPaintedCell = null; // for continuous painting without repainting same cell
+
 function getMap() { return maps[mapIdx]; }
-function getTerrain() { return getMap()._terrain || (getMap()._terrain = []); }
+function getTiles() {
+  const m = getMap();
+  if (!m._tiles) {
+    m._tiles = [];
+    for (let r = 0; r < GRID_ROWS; r++) {
+      m._tiles.push(new Array(GRID_COLS).fill(0));
+    }
+  }
+  return m._tiles;
+}
+function getEventCircles() {
+  const m = getMap();
+  if (!m.eventCircles) m.eventCircles = [];
+  return m.eventCircles;
+}
+
+function getGroundLayer() {
+  const m = getMap();
+  if (!m._groundLayer) {
+    m._groundLayer = [];
+    for (let r = 0; r < GRID_ROWS; r++) m._groundLayer.push(new Array(GRID_COLS).fill(null));
+  }
+  return m._groundLayer;
+}
+
+function getHighLayer() {
+  const m = getMap();
+  if (!m._highLayer) {
+    m._highLayer = [];
+    for (let r = 0; r < GRID_ROWS; r++) m._highLayer.push(new Array(GRID_COLS).fill(null));
+  }
+  return m._highLayer;
+}
+
+function getActiveLayerData() {
+  return activeLayer === 'ground' ? getGroundLayer() : getHighLayer();
+}
+
+/** Resize a 2D grid to GRID_ROWS x GRID_COLS, preserving existing data and filling new cells */
+function ensureGridSize(grid, fillValue) {
+  if (!grid || grid.length === 0) return null;
+  const oldRows = grid.length;
+  const oldCols = grid[0].length;
+  if (oldRows === GRID_ROWS && oldCols === GRID_COLS) return grid;
+  const newGrid = [];
+  for (let r = 0; r < GRID_ROWS; r++) {
+    const row = new Array(GRID_COLS).fill(fillValue);
+    if (r < oldRows) {
+      for (let c = 0; c < Math.min(oldCols, GRID_COLS); c++) {
+        row[c] = grid[r][c];
+      }
+    }
+    newGrid.push(row);
+  }
+  return newGrid;
+}
+
+// Rock terrain images (4 variants)
+const rockImgs = [];
+let rocksLoaded = 0;
+for (let i = 1; i <= 4; i++) {
+  const img = new Image();
+  img.src = `assets/terrain/Rock${i}.png`;
+  img.onload = () => { rocksLoaded++; if (rocksLoaded === 4) render(); };
+  rockImgs.push(img);
+}
+
+/** Deterministic pseudo-random rock variant per cell (seeded by row,col) */
+function rockVariant(row, col) {
+  return ((row * 7 + col * 13 + row * col) & 0xFFFF) % 4;
+}
+
+function loadTileset() {
+  const colorNum = getMap().tilesetColor || 4;
+  tilesetImg = new Image();
+  tilesetImg.src = `assets/terrain/tilemap_color${colorNum}.png`;
+  tilesetImg.onload = () => { resolveTileGrid(); renderPalette(); render(); };
+}
+
+// =================================================================
+// AUTO-TILE RESOLVER (inline)
+// =================================================================
+
+function resolveTileGrid() {
+  const tiles = getTiles();
+  const rows = tiles.length;
+  const cols = rows > 0 ? tiles[0].length : 0;
+
+  const ROLE_MAP = [
+    'ISLAND', 'PENINSULA_S', 'PENINSULA_W', 'CORNER_SW',
+    'PENINSULA_N', 'STRAIT_V', 'CORNER_NW', 'EDGE_W',
+    'PENINSULA_E', 'CORNER_SE', 'STRAIT_H', 'EDGE_S',
+    'CORNER_NE', 'EDGE_E', 'EDGE_N', 'CENTER',
+  ];
+
+  // For auto-tiling, rock(3) behaves like grass(0)
+  const tileGroup = (v) => v === 3 ? 0 : v;
+
+  resolvedTiles = [];
+  for (let r = 0; r < rows; r++) {
+    const row = [];
+    for (let c = 0; c < cols; c++) {
+      const terrain = tiles[r][c];
+      const group = tileGroup(terrain);
+      const same = (dr, dc) => {
+        const nr = r + dr, nc = c + dc;
+        if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) return group !== 2;
+        return tileGroup(tiles[nr][nc]) === group;
+      };
+
+      let mask = 0;
+      if (same(-1, 0)) mask |= 1;
+      if (same(0, 1)) mask |= 2;
+      if (same(1, 0)) mask |= 4;
+      if (same(0, -1)) mask |= 8;
+
+      let role = ROLE_MAP[mask];
+      let innerCorners = 0;
+
+      if (mask === 15) {
+        if (!same(-1, -1)) innerCorners |= 1;
+        if (!same(-1, 1)) innerCorners |= 2;
+        if (!same(1, -1)) innerCorners |= 4;
+        if (!same(1, 1)) innerCorners |= 8;
+        const count = (innerCorners & 1) + ((innerCorners >> 1) & 1) + ((innerCorners >> 2) & 1) + ((innerCorners >> 3) & 1);
+        if (count === 1) {
+          if (innerCorners & 1) role = 'INNER_NW';
+          else if (innerCorners & 2) role = 'INNER_NE';
+          else if (innerCorners & 4) role = 'INNER_SW';
+          else role = 'INNER_SE';
+        }
+      }
+
+      row.push({ terrain, role, innerCorners });
+    }
+    resolvedTiles.push(row);
+  }
+}
+
+function resolveNeighborhood(cr, cc, radius) {
+  const tiles = getTiles();
+  const rows = tiles.length, cols = tiles[0].length;
+  const ROLE_MAP = [
+    'ISLAND', 'PENINSULA_S', 'PENINSULA_W', 'CORNER_SW',
+    'PENINSULA_N', 'STRAIT_V', 'CORNER_NW', 'EDGE_W',
+    'PENINSULA_E', 'CORNER_SE', 'STRAIT_H', 'EDGE_S',
+    'CORNER_NE', 'EDGE_E', 'EDGE_N', 'CENTER',
+  ];
+
+  if (!resolvedTiles) { resolveTileGrid(); return; }
+
+  const rMin = Math.max(0, cr - radius), rMax = Math.min(rows - 1, cr + radius);
+  const cMin = Math.max(0, cc - radius), cMax = Math.min(cols - 1, cc + radius);
+
+  const tileGroup = (v) => v === 3 ? 0 : v;
+  for (let r = rMin; r <= rMax; r++) {
+    for (let c = cMin; c <= cMax; c++) {
+      const terrain = tiles[r][c];
+      const group = tileGroup(terrain);
+      const same = (dr, dc) => {
+        const nr = r + dr, nc = c + dc;
+        if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) return group !== 2;
+        return tileGroup(tiles[nr][nc]) === group;
+      };
+      let mask = 0;
+      if (same(-1, 0)) mask |= 1;
+      if (same(0, 1)) mask |= 2;
+      if (same(1, 0)) mask |= 4;
+      if (same(0, -1)) mask |= 8;
+      let role = ROLE_MAP[mask];
+      let innerCorners = 0;
+      if (mask === 15) {
+        if (!same(-1, -1)) innerCorners |= 1;
+        if (!same(-1, 1)) innerCorners |= 2;
+        if (!same(1, -1)) innerCorners |= 4;
+        if (!same(1, 1)) innerCorners |= 8;
+        const cnt = (innerCorners & 1) + ((innerCorners >> 1) & 1) + ((innerCorners >> 2) & 1) + ((innerCorners >> 3) & 1);
+        if (cnt === 1) {
+          if (innerCorners & 1) role = 'INNER_NW';
+          else if (innerCorners & 2) role = 'INNER_NE';
+          else if (innerCorners & 4) role = 'INNER_SW';
+          else role = 'INNER_SE';
+        }
+      }
+      resolvedTiles[r][c] = { terrain, role, innerCorners };
+    }
+  }
+}
+
+// =================================================================
+// TILESET ATLAS (inline)
+// =================================================================
+
+const T = 64;
+const HG_X = T * 5;
+
+const GROUND_RECTS = {
+  CORNER_NW: { x: 0, y: 0 }, EDGE_N: { x: T, y: 0 }, CORNER_NE: { x: T*3, y: 0 },
+  EDGE_W: { x: 0, y: T }, CENTER: { x: T, y: T }, EDGE_E: { x: T*3, y: T },
+  CORNER_SW: { x: 0, y: T*3 }, EDGE_S: { x: T, y: T*3 }, CORNER_SE: { x: T*3, y: T*3 },
+  INNER_NW: { x: T*2, y: T*5 }, INNER_NE: { x: 0, y: T*5 },
+  INNER_SW: { x: T*2, y: T*4 }, INNER_SE: { x: 0, y: T*4 },
+  STRAIT_H: { x: T, y: T }, STRAIT_V: { x: T, y: T }, ISLAND: { x: T, y: T },
+  PENINSULA_N: { x: T, y: 0 }, PENINSULA_S: { x: T, y: T*3 },
+  PENINSULA_E: { x: T*3, y: T }, PENINSULA_W: { x: 0, y: T },
+};
+
+const HIGH_GROUND_RECTS = {};
+for (const [k, v] of Object.entries(GROUND_RECTS)) {
+  // Only offset tiles that exist in the elevated section (rows 0-1, y < 128).
+  // Rows 2-3 in the right half are cliff faces, not platform edges.
+  // South edges, inner corners stay as ground rects.
+  if (v.y < T * 2) {
+    HIGH_GROUND_RECTS[k] = { x: v.x + HG_X, y: v.y };
+  } else {
+    HIGH_GROUND_RECTS[k] = { x: v.x, y: v.y };
+  }
+}
+
+function getTileRect(terrain, role) {
+  const map = terrain === 1 ? HIGH_GROUND_RECTS : GROUND_RECTS;
+  return map[role] || map['CENTER'];
+}
+
+// =================================================================
+// TILE PALETTE RENDERING
+// =================================================================
+
+function renderPalette() {
+  const pc = document.getElementById('palette-canvas');
+  if (!pc || !tilesetImg || !tilesetImg.complete) return;
+  const pctx = pc.getContext('2d');
+  const s = paletteTileSize;
+  pc.width = TILESET_COLS * s;
+  pc.height = TILESET_ROWS * s;
+  pctx.imageSmoothingEnabled = false;
+  pctx.clearRect(0, 0, pc.width, pc.height);
+
+  // Draw each tile from the tileset
+  for (let r = 0; r < TILESET_ROWS; r++) {
+    for (let c = 0; c < TILESET_COLS; c++) {
+      pctx.drawImage(tilesetImg, c * 64, r * 64, 64, 64, c * s, r * s, s, s);
+    }
+  }
+
+  // Draw grid lines
+  pctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  pctx.lineWidth = 0.5;
+  for (let r = 0; r <= TILESET_ROWS; r++) {
+    pctx.beginPath(); pctx.moveTo(0, r * s); pctx.lineTo(TILESET_COLS * s, r * s); pctx.stroke();
+  }
+  for (let c = 0; c <= TILESET_COLS; c++) {
+    pctx.beginPath(); pctx.moveTo(c * s, 0); pctx.lineTo(c * s, TILESET_ROWS * s); pctx.stroke();
+  }
+
+  // Draw labels for ground vs elevated halves
+  pctx.fillStyle = 'rgba(255,255,255,0.4)';
+  pctx.font = '8px sans-serif';
+  pctx.textAlign = 'center';
+  pctx.fillText('GROUND', 2.5 * s, 8);
+  pctx.fillText('ELEVATED', 6.5 * s, 8);
+
+  // Divider line between ground and elevated
+  pctx.strokeStyle = 'rgba(255,215,0,0.4)';
+  pctx.lineWidth = 1;
+  pctx.setLineDash([3, 3]);
+  pctx.beginPath(); pctx.moveTo(5 * s, 0); pctx.lineTo(5 * s, TILESET_ROWS * s); pctx.stroke();
+  pctx.setLineDash([]);
+
+  updatePaletteSelection();
+}
+
+function updatePaletteSelection() {
+  const sel = document.getElementById('palette-sel');
+  const info = document.getElementById('palette-info');
+  if (selectedPaletteTile === null) {
+    sel.style.display = 'none';
+    if (info) info.textContent = 'Click a tile to select, then paint on map';
+    return;
+  }
+  const s = paletteTileSize;
+  const c = selectedPaletteTile % TILESET_COLS;
+  const r = Math.floor(selectedPaletteTile / TILESET_COLS);
+  sel.style.display = 'block';
+  sel.style.left = (c * s) + 'px';
+  sel.style.top = (r * s) + 'px';
+  sel.style.width = s + 'px';
+  sel.style.height = s + 'px';
+  if (info) {
+    const half = c < 5 ? 'Ground' : 'Elevated';
+    info.textContent = `Tile [${c},${r}] idx:${selectedPaletteTile} (${half})`;
+  }
+}
+
+// Palette mouse events — deferred setup (called from boot)
+function setupPalette() {
+  const pc = document.getElementById('palette-canvas');
+  const hover = document.getElementById('palette-hover');
+  const ghost = document.getElementById('drag-ghost');
+  if (!pc) return;
+
+  let draggingFromPalette = false;
+  let dragTileIdx = null;
+
+  pc.addEventListener('mousemove', e => {
+    const rect = pc.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const s = paletteTileSize;
+    const c = Math.floor(mx / s);
+    const r = Math.floor(my / s);
+    if (c >= 0 && c < TILESET_COLS && r >= 0 && r < TILESET_ROWS) {
+      hover.style.display = 'block';
+      hover.style.left = (c * s) + 'px';
+      hover.style.top = (r * s) + 'px';
+      hover.style.width = s + 'px';
+      hover.style.height = s + 'px';
+    } else {
+      hover.style.display = 'none';
+    }
+  });
+
+  pc.addEventListener('mouseleave', () => {
+    hover.style.display = 'none';
+  });
+
+  pc.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    const rect = pc.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const s = paletteTileSize;
+    const c = Math.floor(mx / s);
+    const r = Math.floor(my / s);
+    if (c < 0 || c >= TILESET_COLS || r < 0 || r >= TILESET_ROWS) return;
+
+    const idx = r * TILESET_COLS + c;
+    selectedPaletteTile = idx;
+    updatePaletteSelection();
+
+    // Start drag
+    draggingFromPalette = true;
+    dragTileIdx = idx;
+
+    // Create ghost image
+    if (tilesetImg && tilesetImg.complete) {
+      const ghostCanvas = document.createElement('canvas');
+      ghostCanvas.width = 48; ghostCanvas.height = 48;
+      const gctx = ghostCanvas.getContext('2d');
+      gctx.imageSmoothingEnabled = false;
+      gctx.drawImage(tilesetImg, c * 64, r * 64, 64, 64, 0, 0, 48, 48);
+      ghost.src = ghostCanvas.toDataURL();
+      ghost.style.width = '48px';
+      ghost.style.height = '48px';
+      ghost.style.display = 'block';
+      ghost.style.left = (e.clientX - 24) + 'px';
+      ghost.style.top = (e.clientY - 24) + 'px';
+    }
+
+    // Also activate manual paint tool
+    setTool('tile_manual');
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!draggingFromPalette) return;
+    ghost.style.left = (e.clientX - 24) + 'px';
+    ghost.style.top = (e.clientY - 24) + 'px';
+  });
+
+  document.addEventListener('mouseup', e => {
+    if (!draggingFromPalette) return;
+    draggingFromPalette = false;
+    ghost.style.display = 'none';
+
+    // Check if dropped on the map canvas
+    const mapCanvas = document.getElementById('map-canvas');
+    const rect = mapCanvas.getBoundingClientRect();
+    if (e.clientX >= rect.left && e.clientX <= rect.right &&
+        e.clientY >= rect.top && e.clientY <= rect.bottom) {
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      const wp = screenToWorld(sx, sy);
+      const col = Math.floor(wp.x / TILE_SIZE);
+      const row = Math.floor(wp.y / TILE_SIZE);
+      if (col >= 0 && col < GRID_COLS && row >= 0 && row < GRID_ROWS && dragTileIdx !== null) {
+        const snap = snapshotMap();
+        const layer = getActiveLayerData();
+        layer[row][col] = dragTileIdx;
+        if (mirrorMode) {
+          const mi = mirrorCell(row, col);
+          layer[mi.row][mi.col] = dragTileIdx;
+        }
+        undoStack.push(snap);
+        if (undoStack.length > MAX_UNDO) undoStack.shift();
+        redoStack = [];
+        syncUndoButtons();
+        render();
+      }
+    }
+    dragTileIdx = null;
+  });
+}
 
 // =================================================================
 // UNDO / REDO
@@ -491,6 +1087,7 @@ function undo() {
   maps[mapIdx] = snap.data;
   selection = null;
   populateMapSelect();
+  resolveTileGrid();
   syncUI(); render();
   syncUndoButtons();
 }
@@ -503,6 +1100,7 @@ function redo() {
   maps[mapIdx] = snap.data;
   selection = null;
   populateMapSelect();
+  resolveTileGrid();
   syncUI(); render();
   syncUndoButtons();
 }
@@ -517,18 +1115,33 @@ function syncUndoButtons() {
 // PERSISTENCE — auto-save to server file + localStorage fallback
 // =================================================================
 
-const STORAGE_KEY = 'horde-editor-maps';
-const STORAGE_IDX_KEY = 'horde-editor-mapIdx';
+const STORAGE_KEY = 'pb_horde-editor-maps';
+const STORAGE_IDX_KEY = 'pb_horde-editor-mapIdx';
 
 let saveTimer = null;
 
 function cleanMapForSave(m) {
-  // Strip _terrain from the saved version (it's editor-only visual data)
   const clone = deepClone(m);
-  if (clone._terrain && clone._terrain.length > 0) {
-    clone.terrain = clone._terrain;
+  if (clone._tiles) {
+    clone.tiles = clone._tiles;
   }
+  delete clone._tiles;
+  if (clone._groundLayer) {
+    clone.groundLayer = clone._groundLayer;
+  }
+  delete clone._groundLayer;
+  if (clone._highLayer) {
+    clone.highLayer = clone._highLayer;
+  }
+  delete clone._highLayer;
+  if (clone._grassTint) {
+    // Only save if there are non-zero tints
+    const hasTints = clone._grassTint.some(row => row.some(v => v !== 0));
+    if (hasTints) clone.grassTint = clone._grassTint;
+  }
+  delete clone._grassTint;
   delete clone._terrain;
+  delete clone.terrain;
   return clone;
 }
 
@@ -570,9 +1183,30 @@ async function loadFromServer() {
       if (Array.isArray(parsed) && parsed.length > 0) {
         maps = parsed.map(m => {
           const clone = deepClone(m);
-          // Restore _terrain from terrain field
-          if (clone.terrain) { clone._terrain = clone.terrain; delete clone.terrain; }
-          if (!clone._terrain) clone._terrain = [];
+          if (clone.tiles) { clone._tiles = clone.tiles; delete clone.tiles; }
+          if (!clone._tiles) {
+            clone._tiles = [];
+            for (let r = 0; r < GRID_ROWS; r++) clone._tiles.push(new Array(GRID_COLS).fill(0));
+          } else {
+            clone._tiles = ensureGridSize(clone._tiles, 0) || clone._tiles;
+          }
+          if (clone.groundLayer) { clone._groundLayer = clone.groundLayer; delete clone.groundLayer; }
+          if (clone._groundLayer) clone._groundLayer = ensureGridSize(clone._groundLayer, null) || clone._groundLayer;
+          if (clone.highLayer) { clone._highLayer = clone.highLayer; delete clone.highLayer; }
+          if (clone._highLayer) clone._highLayer = ensureGridSize(clone._highLayer, null) || clone._highLayer;
+          if (!clone.eventCircles) clone.eventCircles = [];
+          if (!clone.towerSlots) clone.towerSlots = [];
+          if (!clone.bushZones) clone.bushZones = [];
+          if (!clone.rockPositions) clone.rockPositions = [];
+          if (clone.grassTint) { clone._grassTint = clone.grassTint; delete clone.grassTint; }
+          if (!clone._grassTint) {
+            clone._grassTint = [];
+            for (let r = 0; r < GRID_ROWS; r++) clone._grassTint.push(new Array(GRID_COLS).fill(0));
+          } else {
+            clone._grassTint = ensureGridSize(clone._grassTint, 0) || clone._grassTint;
+          }
+          delete clone._terrain;
+          delete clone.terrain;
           return clone;
         });
         const idx = parseInt(localStorage.getItem(STORAGE_IDX_KEY) || '0');
@@ -588,7 +1222,32 @@ async function loadFromServer() {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
         maps = parsed;
-        for (const m of maps) { if (!m._terrain) m._terrain = []; }
+        for (const m of maps) {
+          if (m.tiles) { m._tiles = m.tiles; delete m.tiles; }
+          if (!m._tiles) {
+            m._tiles = [];
+            for (let r = 0; r < GRID_ROWS; r++) m._tiles.push(new Array(GRID_COLS).fill(0));
+          } else {
+            m._tiles = ensureGridSize(m._tiles, 0) || m._tiles;
+          }
+          if (m.groundLayer) { m._groundLayer = m.groundLayer; delete m.groundLayer; }
+          if (m._groundLayer) m._groundLayer = ensureGridSize(m._groundLayer, null) || m._groundLayer;
+          if (m.highLayer) { m._highLayer = m.highLayer; delete m.highLayer; }
+          if (m._highLayer) m._highLayer = ensureGridSize(m._highLayer, null) || m._highLayer;
+          if (!m.eventCircles) m.eventCircles = [];
+          if (!m.towerSlots) m.towerSlots = [];
+          if (!m.bushZones) m.bushZones = [];
+          if (!m.rockPositions) m.rockPositions = [];
+          if (m.grassTint) { m._grassTint = m.grassTint; delete m.grassTint; }
+          if (!m._grassTint) {
+            m._grassTint = [];
+            for (let r = 0; r < GRID_ROWS; r++) m._grassTint.push(new Array(GRID_COLS).fill(0));
+          } else {
+            m._grassTint = ensureGridSize(m._grassTint, 0) || m._grassTint;
+          }
+          delete m._terrain;
+          delete m.terrain;
+        }
         const idx = parseInt(localStorage.getItem(STORAGE_IDX_KEY) || '0');
         mapIdx = Math.min(idx, maps.length - 1);
         return true;
@@ -605,7 +1264,33 @@ async function loadFromServer() {
 function initMaps() {
   maps = ALL_MAPS.map(m => {
     const clone = deepClone(m);
-    clone._terrain = [];
+    if (clone.tiles) { clone._tiles = clone.tiles; delete clone.tiles; }
+    if (!clone._tiles) {
+      clone._tiles = [];
+      for (let r = 0; r < GRID_ROWS; r++) {
+        clone._tiles.push(new Array(GRID_COLS).fill(0));
+      }
+    } else {
+      clone._tiles = ensureGridSize(clone._tiles, 0) || clone._tiles;
+    }
+    if (clone.groundLayer) { clone._groundLayer = clone.groundLayer; delete clone.groundLayer; }
+    if (clone._groundLayer) clone._groundLayer = ensureGridSize(clone._groundLayer, null) || clone._groundLayer;
+    if (clone.highLayer) { clone._highLayer = clone.highLayer; delete clone.highLayer; }
+    if (clone._highLayer) clone._highLayer = ensureGridSize(clone._highLayer, null) || clone._highLayer;
+    if (!clone.eventCircles) clone.eventCircles = [];
+    if (!clone.towerSlots) clone.towerSlots = [];
+    if (!clone.bushZones) clone.bushZones = [];
+    if (!clone.rockPositions) clone.rockPositions = [];
+    clone.tilesetColor = clone.tilesetColor || 4;
+    if (clone.grassTint) { clone._grassTint = clone.grassTint; delete clone.grassTint; }
+    if (!clone._grassTint) {
+      clone._grassTint = [];
+      for (let r = 0; r < GRID_ROWS; r++) clone._grassTint.push(new Array(GRID_COLS).fill(0));
+    } else {
+      clone._grassTint = ensureGridSize(clone._grassTint, 0) || clone._grassTint;
+    }
+    delete clone._terrain;
+    delete clone.terrain;
     return clone;
   });
 }
@@ -691,9 +1376,10 @@ function updateStatusSelection() {
     }
     case 'carrot_zone': el.textContent = `Selected: Carrot Zone #${selection.idx}`; break;
     case 'wild_zone': el.textContent = `Selected: Wild Zone #${selection.idx}`; break;
-    case 'terrain': el.textContent = `Selected: Terrain #${selection.idx}`; break;
+    case 'event_circle': el.textContent = `Selected: Event Circle #${selection.idx}`; break;
     case 'mine': el.textContent = `Selected: Mine #${selection.idx} (${selection.side})`; break;
     case 'armory': el.textContent = `Selected: Armory #${selection.idx} (${selection.side})`; break;
+    case 'boundary': el.textContent = `Selected: Boundary #${selection.idx}`; break;
     default: el.textContent = 'No selection';
   }
 }
@@ -715,9 +1401,9 @@ function deleteSelection() {
     case 'wild_zone':
       m.wildZones.splice(selection.idx, 1);
       break;
-    case 'terrain': {
-      const terrain = getTerrain();
-      terrain.splice(selection.idx, 1);
+    case 'event_circle': {
+      const circles = getEventCircles();
+      circles.splice(selection.idx, 1);
       break;
     }
     case 'mine':
@@ -727,6 +1413,22 @@ function deleteSelection() {
     case 'armory':
       if (!m.armorySlots) return;
       m.armorySlots.splice(selection.idx, 1);
+      break;
+    case 'tower':
+      if (!m.towerSlots) return;
+      m.towerSlots.splice(selection.idx, 1);
+      break;
+    case 'bush':
+      if (!m.bushZones) return;
+      m.bushZones.splice(selection.idx, 1);
+      break;
+    case 'rock':
+      if (!m.rockPositions) return;
+      m.rockPositions.splice(selection.idx, 1);
+      break;
+    case 'boundary':
+      if (!m.boundaryBlocks) return;
+      m.boundaryBlocks.splice(selection.idx, 1);
       break;
     case 'base':
       showToast("Can't delete a base!");
@@ -769,13 +1471,13 @@ function duplicateSelection() {
       selection = { type: 'wild_zone', idx: m.wildZones.length - 1 };
       break;
     }
-    case 'terrain': {
-      const terrain = getTerrain();
-      const orig = terrain[selection.idx];
+    case 'event_circle': {
+      const circles = getEventCircles();
+      const orig = circles[selection.idx];
       const clone = deepClone(orig);
       clone.x += offset; clone.y += offset;
-      terrain.push(clone);
-      selection = { type: 'terrain', idx: terrain.length - 1 };
+      circles.push(clone);
+      selection = { type: 'event_circle', idx: circles.length - 1 };
       break;
     }
     case 'mine': {
@@ -798,6 +1500,45 @@ function duplicateSelection() {
       selection = { type: 'armory', idx: m.armorySlots.length - 1, side: selection.side };
       break;
     }
+    case 'tower': {
+      if (!m.towerSlots) return;
+      const orig = m.towerSlots[selection.idx];
+      const clone = deepClone(orig);
+      clone.bluePos.x += offset; clone.bluePos.y += offset;
+      clone.redPos.x += offset; clone.redPos.y += offset;
+      m.towerSlots.push(clone);
+      selection = { type: 'tower', idx: m.towerSlots.length - 1, side: selection.side };
+      break;
+    }
+    case 'bush': {
+      if (!m.bushZones) return;
+      const orig = m.bushZones[selection.idx];
+      const clone = deepClone(orig);
+      clone.blueZone.x += offset; clone.blueZone.y += offset;
+      clone.redZone.x += offset; clone.redZone.y += offset;
+      m.bushZones.push(clone);
+      selection = { type: 'bush', idx: m.bushZones.length - 1, side: selection.side };
+      break;
+    }
+    case 'rock': {
+      if (!m.rockPositions) return;
+      const orig = m.rockPositions[selection.idx];
+      const clone = deepClone(orig);
+      clone.bluePos.x += offset; clone.bluePos.y += offset;
+      clone.redPos.x += offset; clone.redPos.y += offset;
+      m.rockPositions.push(clone);
+      selection = { type: 'rock', idx: m.rockPositions.length - 1, side: selection.side };
+      break;
+    }
+    case 'boundary': {
+      if (!m.boundaryBlocks) return;
+      const orig = m.boundaryBlocks[selection.idx];
+      const clone = deepClone(orig);
+      clone.x += offset; clone.y += offset;
+      m.boundaryBlocks.push(clone);
+      selection = { type: 'boundary', idx: m.boundaryBlocks.length - 1 };
+      break;
+    }
     default:
       showToast("Can't duplicate this");
       return;
@@ -814,9 +1555,10 @@ function copySelection() {
     case 'camp': clipboard = { type: 'camp', data: deepClone(m.campSlots[selection.idx]) }; break;
     case 'carrot_zone': clipboard = { type: 'carrot_zone', data: deepClone(m.carrotZones[selection.idx]) }; break;
     case 'wild_zone': clipboard = { type: 'wild_zone', data: deepClone(m.wildZones[selection.idx]) }; break;
-    case 'terrain': clipboard = { type: 'terrain', data: deepClone(getTerrain()[selection.idx]) }; break;
+    case 'event_circle': clipboard = { type: 'event_circle', data: deepClone(getEventCircles()[selection.idx]) }; break;
     case 'mine': clipboard = { type: 'mine', data: deepClone((m.mineSlots || [])[selection.idx]) }; break;
     case 'armory': clipboard = { type: 'armory', data: deepClone((m.armorySlots || [])[selection.idx]) }; break;
+    case 'boundary': clipboard = { type: 'boundary', data: deepClone((m.boundaryBlocks || [])[selection.idx]) }; break;
     default: showToast("Can't copy this"); return;
   }
   showToast('Copied');
@@ -845,10 +1587,11 @@ function pasteClipboard() {
       m.wildZones.push(data);
       selection = { type: 'wild_zone', idx: m.wildZones.length - 1 };
       break;
-    case 'terrain':
+    case 'event_circle':
       data.x += offset; data.y += offset;
-      getTerrain().push(data);
-      selection = { type: 'terrain', idx: getTerrain().length - 1 };
+      if (!m.eventCircles) m.eventCircles = [];
+      m.eventCircles.push(data);
+      selection = { type: 'event_circle', idx: m.eventCircles.length - 1 };
       break;
     case 'mine':
       data.bluePos.x += offset; data.bluePos.y += offset;
@@ -863,6 +1606,12 @@ function pasteClipboard() {
       if (!m.armorySlots) m.armorySlots = [];
       m.armorySlots.push(data);
       selection = { type: 'armory', idx: m.armorySlots.length - 1, side: 'blue' };
+      break;
+    case 'boundary':
+      data.x += offset; data.y += offset;
+      if (!m.boundaryBlocks) m.boundaryBlocks = [];
+      m.boundaryBlocks.push(data);
+      selection = { type: 'boundary', idx: m.boundaryBlocks.length - 1 };
       break;
   }
   syncInspector();
@@ -992,37 +1741,21 @@ function syncInspector() {
       dupBtn.style.display = '';
       break;
     }
-    case 'terrain': {
-      const terrain = getTerrain();
-      const t = terrain[selection.idx];
-      if (!t) { clearSelection(); return; }
-      const tc = TERRAIN_TYPES.find(tt => tt.id === t.type);
-      icon.textContent = tc ? tc.icon : '?';
-      title.textContent = `Terrain: ${tc ? tc.label : t.type}`;
-      const isCircle = t.shape === 'circle';
+    case 'event_circle': {
+      const circles = getEventCircles();
+      const ec = circles[selection.idx];
+      if (!ec) { clearSelection(); return; }
+      icon.textContent = '\u2B55';
+      title.textContent = `Event Circle #${selection.idx}`;
       body.innerHTML = `
-        <div class="insp-row"><label>Type</label>
-          <select data-prop="type">
-            ${TERRAIN_TYPES.map(tt => `<option value="${tt.id}" ${tt.id===t.type?'selected':''}>${tt.label}</option>`).join('')}
-          </select>
-        </div>
-        <div class="insp-row"><label>X</label><input type="number" data-prop="x" value="${t.x}" step="10"></div>
-        <div class="insp-row"><label>Y</label><input type="number" data-prop="y" value="${t.y}" step="10"></div>
-        ${isCircle
-          ? `<div class="insp-row"><label>Radius</label><input type="number" data-prop="radius" value="${t.radius}" step="10" min="10"></div>`
-          : `<div class="insp-row"><label>Width</label><input type="number" data-prop="w" value="${t.w}" step="10" min="10"></div>
-             <div class="insp-row"><label>Height</label><input type="number" data-prop="h" value="${t.h}" step="10" min="10"></div>`
-        }
+        <div class="insp-row"><label>X</label><input type="number" data-prop="x" value="${ec.x}" step="10"></div>
+        <div class="insp-row"><label>Y</label><input type="number" data-prop="y" value="${ec.y}" step="10"></div>
+        <div class="insp-row"><label>Radius</label><input type="number" data-prop="radius" value="${ec.radius}" step="10" min="30"></div>
       `;
-      body.querySelector('select').addEventListener('change', (e) => {
-        pushUndo();
-        t.type = e.target.value;
-        syncInspector(); render();
-      });
       body.querySelectorAll('input').forEach(inp => {
         inp.addEventListener('change', () => {
           pushUndo();
-          t[inp.dataset.prop] = parseInt(inp.value) || 10;
+          ec[inp.dataset.prop] = parseInt(inp.value) || 30;
           render();
         });
       });
@@ -1063,6 +1796,12 @@ function syncInspector() {
       icon.textContent = '\u2692\uFE0F';
       title.textContent = `Armory #${selection.idx}`;
       body.innerHTML = `
+        <div class="insp-row"><label>Equip</label>
+          <select data-prop="equipmentType">
+            <option value="" ${!slot.equipmentType?'selected':''}>None</option>
+            ${EQUIPMENT_TYPES.map(eq => `<option value="${eq.id}" ${slot.equipmentType===eq.id?'selected':''}>${eq.emoji} ${eq.id}</option>`).join('')}
+          </select>
+        </div>
         <div style="font-size:10px;color:#4499FF;margin:4px 0 2px">Blue Position</div>
         <div class="insp-row"><label>X</label><input type="number" data-target="blue" data-prop="x" value="${slot.bluePos.x}" step="10"></div>
         <div class="insp-row"><label>Y</label><input type="number" data-target="blue" data-prop="y" value="${slot.bluePos.y}" step="10"></div>
@@ -1070,12 +1809,41 @@ function syncInspector() {
         <div class="insp-row"><label>X</label><input type="number" data-target="red" data-prop="x" value="${slot.redPos.x}" step="10"></div>
         <div class="insp-row"><label>Y</label><input type="number" data-target="red" data-prop="y" value="${slot.redPos.y}" step="10"></div>
       `;
+      body.querySelector('select').addEventListener('change', (e) => {
+        pushUndo();
+        slot.equipmentType = e.target.value || undefined;
+        syncUI(); render();
+      });
       body.querySelectorAll('input').forEach(inp => {
         inp.addEventListener('change', () => {
           pushUndo();
           const pos = inp.dataset.target === 'blue' ? slot.bluePos : slot.redPos;
           pos[inp.dataset.prop] = parseInt(inp.value) || 0;
           render();
+        });
+      });
+      delBtn.style.display = '';
+      dupBtn.style.display = '';
+      break;
+    }
+    case 'boundary': {
+      const blocks = m.boundaryBlocks || [];
+      const b = blocks[selection.idx];
+      if (!b) { clearSelection(); return; }
+      icon.textContent = '\u{1F6A7}';
+      title.textContent = `Boundary #${selection.idx}`;
+      body.innerHTML = `
+        <div style="font-size:10px;color:#FF6666;margin:2px 0 4px">Invisible wall — blocks unit movement</div>
+        <div class="insp-row"><label>X</label><input type="number" data-prop="x" value="${b.x}" step="10"></div>
+        <div class="insp-row"><label>Y</label><input type="number" data-prop="y" value="${b.y}" step="10"></div>
+        <div class="insp-row"><label>Width</label><input type="number" data-prop="w" value="${b.w}" step="10" min="20"></div>
+        <div class="insp-row"><label>Height</label><input type="number" data-prop="h" value="${b.h}" step="10" min="20"></div>
+      `;
+      body.querySelectorAll('input').forEach(inp => {
+        inp.addEventListener('change', () => {
+          pushUndo();
+          b[inp.dataset.prop] = Math.max(inp.dataset.prop === 'w' || inp.dataset.prop === 'h' ? 20 : -Infinity, parseInt(inp.value) || 0);
+          syncUI(); render();
         });
       });
       delBtn.style.display = '';
@@ -1106,8 +1874,8 @@ function render() {
   ctx.lineWidth = 1;
   ctx.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
 
+  if (layerVisible.tiles) drawTileGrid(m);
   if (layerVisible.grid) drawGrid(m);
-  if (layerVisible.terrain) drawTerrain(m);
 
   // Carrot zones
   if (layerVisible.carrot_zones) m.carrotZones.forEach((z, i) => {
@@ -1184,7 +1952,7 @@ function render() {
   // Camp slots
   if (layerVisible.camps) m.campSlots.forEach((slot, i) => {
     const tier = slot.tier;
-    const r = (5 + tier * 2) * Math.min(1, zoom * 3);
+    const r = (10 + tier * 4) * Math.min(1, zoom * 3);
     const tc = TIER_COLORS[tier];
 
     const drawCamp = (pos, fill, side) => {
@@ -1200,7 +1968,7 @@ function render() {
         ctx.lineWidth = 1;
         ctx.beginPath(); ctx.arc(p.x, p.y, r + 6, 0, Math.PI * 2); ctx.stroke();
       }
-      if (zoom > 0.08) {
+      if (zoom > 0.04) {
         ctx.fillStyle = '#fff';
         ctx.font = `bold ${Math.max(8, r * 0.9)}px monospace`;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -1215,7 +1983,7 @@ function render() {
   // Troll slot
   if (layerVisible.camps && m.trollSlot) {
     const p = worldToScreen(m.trollSlot.x, m.trollSlot.y);
-    const r = 10 * Math.min(1, zoom * 3);
+    const r = 20 * Math.min(1, zoom * 3);
     const isSel = selection && selection.type === 'troll';
     ctx.fillStyle = '#FFD700';
     ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
@@ -1227,7 +1995,7 @@ function render() {
       ctx.lineWidth = 1;
       ctx.beginPath(); ctx.arc(p.x, p.y, r + 6, 0, Math.PI * 2); ctx.stroke();
     }
-    if (zoom > 0.08) {
+    if (zoom > 0.04) {
       ctx.fillStyle = '#000';
       ctx.font = `bold ${Math.max(8, r * 0.85)}px monospace`;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -1238,7 +2006,7 @@ function render() {
   // Mine slots
   const mines = m.mineSlots || [];
   if (layerVisible.mines) mines.forEach((slot, i) => {
-    const r = 7 * Math.min(1, zoom * 3);
+    const r = 14 * Math.min(1, zoom * 3);
 
     const drawMine = (pos, fill, side) => {
       const p = worldToScreen(pos.x, pos.y);
@@ -1258,7 +2026,7 @@ function render() {
         ctx.beginPath();
         ctx.arc(p.x, p.y, r + 6, 0, Math.PI * 2); ctx.stroke();
       }
-      if (zoom > 0.08) {
+      if (zoom > 0.04) {
         ctx.fillStyle = '#fff';
         ctx.font = `bold ${Math.max(7, r * 0.8)}px monospace`;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -1280,7 +2048,7 @@ function render() {
   // Armory slots
   const armories = m.armorySlots || [];
   if (layerVisible.armories) armories.forEach((slot, i) => {
-    const r = 8 * Math.min(1, zoom * 3);
+    const r = 16 * Math.min(1, zoom * 3);
 
     const drawArmory = (pos, fill, side) => {
       const p = worldToScreen(pos.x, pos.y);
@@ -1297,11 +2065,27 @@ function render() {
         ctx.beginPath();
         ctx.arc(p.x, p.y, r + 6, 0, Math.PI * 2); ctx.stroke();
       }
-      if (zoom > 0.08) {
-        ctx.fillStyle = '#fff';
-        ctx.font = `bold ${Math.max(7, r * 0.8)}px monospace`;
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText('\u2692', p.x, p.y);
+      if (zoom > 0.04) {
+        const eqDef = EQUIPMENT_TYPES.find(e => e.id === slot.equipmentType);
+        if (eqDef) {
+          ctx.font = `${Math.max(10, r * 1.2)}px sans-serif`;
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText(eqDef.emoji, p.x, p.y);
+          // Label below icon
+          if (zoom > 0.06) {
+            ctx.fillStyle = '#fff';
+            ctx.font = `bold ${Math.max(8, r * 0.6)}px monospace`;
+            ctx.fillText(eqDef.id, p.x, p.y + r + 6);
+            ctx.font = `${Math.max(7, r * 0.45)}px monospace`;
+            ctx.fillStyle = '#ccc';
+            ctx.fillText(eqDef.desc.slice(0, 20), p.x, p.y + r + 15);
+          }
+        } else {
+          ctx.fillStyle = '#fff';
+          ctx.font = `bold ${Math.max(7, r * 0.8)}px monospace`;
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText('\u2692', p.x, p.y);
+        }
       }
     };
     drawArmory(slot.bluePos, '#334477', 'blue');
@@ -1316,10 +2100,143 @@ function render() {
     ctx.setLineDash([]);
   });
 
+  // Tower slots
+  const towers = m.towerSlots || [];
+  if (layerVisible.towers) towers.forEach((slot, i) => {
+    const r = 20 * Math.min(1, zoom * 3);
+    const drawTower = (pos, fill, side) => {
+      const p = worldToScreen(pos.x, pos.y);
+      const isSel = selection && selection.type === 'tower' && selection.idx === i && selection.side === side;
+      // Tower shape: pentagon
+      ctx.fillStyle = fill;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y - r * 1.3);
+      ctx.lineTo(p.x + r, p.y - r * 0.3);
+      ctx.lineTo(p.x + r * 0.7, p.y + r);
+      ctx.lineTo(p.x - r * 0.7, p.y + r);
+      ctx.lineTo(p.x - r, p.y - r * 0.3);
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = isSel ? '#FFD700' : '#aaa';
+      ctx.lineWidth = isSel ? 3 : 2;
+      ctx.stroke();
+      if (isSel) {
+        ctx.strokeStyle = 'rgba(255,215,0,0.3)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(p.x, p.y, r + 8, 0, Math.PI * 2); ctx.stroke();
+      }
+      if (zoom > 0.03) {
+        ctx.fillStyle = '#fff';
+        ctx.font = `bold ${Math.max(8, r * 0.9)}px sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('\u{1F3F0}', p.x, p.y);
+      }
+    };
+    drawTower(slot.bluePos, '#2255AA', 'blue');
+    drawTower(slot.redPos, '#AA2233', 'red');
+    const bp = worldToScreen(slot.bluePos.x, slot.bluePos.y);
+    const rp = worldToScreen(slot.redPos.x, slot.redPos.y);
+    ctx.strokeStyle = 'rgba(100,100,200,0.08)'; ctx.lineWidth = 1; ctx.setLineDash([2, 4]);
+    ctx.beginPath(); ctx.moveTo(bp.x, bp.y); ctx.lineTo(rp.x, rp.y); ctx.stroke();
+    ctx.setLineDash([]);
+  });
+
+  // Bush zones (LoL-style brush)
+  const bushes = m.bushZones || [];
+  if (layerVisible.bushes) bushes.forEach((bush, i) => {
+    const drawBush = (zone, side) => {
+      const isSel = selection && selection.type === 'bush' && selection.idx === i && selection.side === side;
+      const p = worldToScreen(zone.x, zone.y);
+      const s = { x: zone.w * zoom, y: zone.h * zoom };
+      // Green brush zone
+      ctx.fillStyle = isSel ? 'rgba(30,140,30,0.3)' : 'rgba(20,100,20,0.2)';
+      ctx.fillRect(p.x, p.y, s.x, s.y);
+      // Bush pattern inside
+      const bushStep = 40 * zoom;
+      if (bushStep > 3) {
+        ctx.font = `${Math.max(6, 16 * zoom)}px sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(30,120,30,0.5)';
+        for (let bx = p.x + bushStep; bx < p.x + s.x - bushStep * 0.5; bx += bushStep * 1.5) {
+          for (let by = p.y + bushStep; by < p.y + s.y - bushStep * 0.5; by += bushStep * 1.5) {
+            ctx.fillText('\u{1F33F}', bx, by);
+          }
+        }
+      }
+      ctx.strokeStyle = isSel ? '#FFD700' : 'rgba(30,180,30,0.6)';
+      ctx.lineWidth = isSel ? 2.5 : 1.5;
+      ctx.setLineDash(isSel ? [] : [4, 3]);
+      ctx.strokeRect(p.x, p.y, s.x, s.y);
+      ctx.setLineDash([]);
+      if (zoom > 0.03) {
+        ctx.fillStyle = 'rgba(200,255,200,0.8)';
+        ctx.font = `bold ${Math.max(8, 10 * zoom * 2)}px sans-serif`;
+        ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+        ctx.fillText('BUSH', p.x + 3, p.y + 2);
+      }
+      if (isSel) drawResizeHandles(p.x, p.y, s.x, s.y);
+    };
+    drawBush(bush.blueZone, 'blue');
+    drawBush(bush.redZone, 'red');
+  });
+
+  // Rock positions
+  const rocks = m.rockPositions || [];
+  if (layerVisible.rocks) rocks.forEach((rock, i) => {
+    const r = 12 * Math.min(1, zoom * 3);
+    const drawRock = (pos, side) => {
+      const p = worldToScreen(pos.x, pos.y);
+      const isSel = selection && selection.type === 'rock' && selection.idx === i && selection.side === side;
+      ctx.fillStyle = isSel ? '#887766' : '#665544';
+      ctx.beginPath();
+      // Irregular rock shape
+      ctx.moveTo(p.x - r, p.y + r * 0.3);
+      ctx.lineTo(p.x - r * 0.6, p.y - r);
+      ctx.lineTo(p.x + r * 0.4, p.y - r * 0.8);
+      ctx.lineTo(p.x + r, p.y);
+      ctx.lineTo(p.x + r * 0.5, p.y + r);
+      ctx.lineTo(p.x - r * 0.3, p.y + r);
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = isSel ? '#FFD700' : '#998877';
+      ctx.lineWidth = isSel ? 2.5 : 1;
+      ctx.stroke();
+      if (zoom > 0.04) {
+        ctx.fillStyle = '#ccc';
+        ctx.font = `${Math.max(6, r * 1.2)}px sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(`R${rock.variant}`, p.x, p.y);
+      }
+    };
+    drawRock(rock.bluePos, 'blue');
+    drawRock(rock.redPos, 'red');
+  });
+
+  // Boundary blocks (invisible walls)
+  const boundaries = m.boundaryBlocks || [];
+  if (layerVisible.boundaries) boundaries.forEach((b, i) => {
+    const p = worldToScreen(b.x, b.y);
+    const sw = b.w * zoom, sh = b.h * zoom;
+    const isSel = selection && selection.type === 'boundary' && selection.idx === i;
+    // Dashed red outline with translucent fill
+    ctx.fillStyle = isSel ? 'rgba(255,60,60,0.25)' : 'rgba(255,60,60,0.12)';
+    ctx.fillRect(p.x, p.y, sw, sh);
+    ctx.strokeStyle = isSel ? '#FFD700' : '#FF4444';
+    ctx.lineWidth = isSel ? 2.5 : 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeRect(p.x, p.y, sw, sh);
+    ctx.setLineDash([]);
+    // Label
+    if (zoom > 0.03) {
+      ctx.fillStyle = '#FF6666';
+      ctx.font = `bold ${Math.max(8, 10 * zoom * 8)}px sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('\u{1F6A7}', p.x + sw / 2, p.y + sh / 2);
+    }
+    if (isSel) drawResizeHandles(p.x, p.y, sw, sh);
+  });
+
   // Bases
   const drawBase = (base, color, label, side) => {
     const p = worldToScreen(base.x, base.y);
-    const r = 14 * Math.min(1, zoom * 3);
+    const r = 24 * Math.min(1, zoom * 3);
     const isSel = selection && selection.type === 'base' && selection.side === side;
     ctx.fillStyle = color;
     ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
@@ -1339,82 +2256,313 @@ function render() {
   drawBase(m.p1Base, '#4499FF', 'P1', 'p1');
   drawBase(m.p2Base, '#FF5555', 'P2', 'p2');
 
-  // Brush preview
-  if ((currentTool === 'terrain_paint' || currentTool === 'terrain_erase') && lastMouse) {
-    const wp = screenToWorld(lastMouse.x, lastMouse.y);
-    const sp = worldToScreen(wp.x, wp.y);
-    const sr = brushSize * zoom;
-    ctx.strokeStyle = currentTool === 'terrain_erase' ? '#FF4444' : '#FFD700';
-    ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]);
-    if (brushShape === 'circle') {
-      ctx.beginPath(); ctx.arc(sp.x, sp.y, sr, 0, Math.PI * 2); ctx.stroke();
-    } else {
-      ctx.strokeRect(sp.x - sr, sp.y - sr, sr * 2, sr * 2);
-    }
+  // Event circles
+  const evtCircles = m.eventCircles || [];
+  evtCircles.forEach((ec, i) => {
+    const isSel = selection && selection.type === 'event_circle' && selection.idx === i;
+    const p = worldToScreen(ec.x, ec.y);
+    const r = ec.radius * zoom;
+    ctx.fillStyle = isSel ? 'rgba(255, 215, 0, 0.12)' : 'rgba(255, 215, 0, 0.06)';
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = isSel ? '#FFD700' : 'rgba(255,215,0,0.5)';
+    ctx.lineWidth = isSel ? 2.5 : 1.5;
+    ctx.setLineDash(isSel ? [] : [6, 4]);
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.stroke();
     ctx.setLineDash([]);
+    if (zoom > 0.06 && r > 15) {
+      ctx.fillStyle = 'rgba(255,215,0,0.6)';
+      ctx.font = `bold ${Math.max(9, r * 0.25)}px sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('EVT', p.x, p.y);
+    }
+  });
+
+  // Brush cursor preview (tile_paint, grass_tint, brush_rock)
+  const isBrushTool = currentTool === 'tile_paint' || currentTool === 'grass_tint';
+  if (isBrushTool && lastMouse) {
+    const wp = screenToWorld(lastMouse.x, lastMouse.y);
+    const col = Math.floor(wp.x / TILE_SIZE);
+    const row = Math.floor(wp.y / TILE_SIZE);
+    if (col >= 0 && col < GRID_COLS && row >= 0 && row < GRID_ROWS) {
+      const destSize = TILE_SIZE * zoom;
+      const colors = ['#4a8b3a', '#8B7355', '#2266CC', '#666655'];
+      const brushColor = currentTool === 'tile_paint'
+        ? (colors[currentTileType] || '#FFD700')
+        : (GRASS_TINTS[currentGrassTint]?.color || '#FFD700');
+      // Draw brush cells
+      forEachBrushCell(row, col, (r, c) => {
+        const sp = worldToScreen(c * TILE_SIZE, r * TILE_SIZE);
+        ctx.strokeStyle = brushColor;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(sp.x, sp.y, destSize, destSize);
+        if (currentTool === 'grass_tint' && GRASS_TINTS[currentGrassTint]?.color) {
+          ctx.fillStyle = GRASS_TINTS[currentGrassTint].color;
+          ctx.fillRect(sp.x, sp.y, destSize, destSize);
+        }
+      });
+      // Mirror cursor
+      if (mirrorMode) {
+        ctx.globalAlpha = 0.4;
+        ctx.strokeStyle = '#4af';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([3, 3]);
+        forEachBrushCell(row, col, (r, c) => {
+          const mc = mirrorCell(r, c);
+          const msp = worldToScreen(mc.col * TILE_SIZE, mc.row * TILE_SIZE);
+          ctx.strokeRect(msp.x, msp.y, destSize, destSize);
+        });
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
+
+  // Manual tile cursor preview (shows selected tile ghost)
+  if ((currentTool === 'tile_manual' || currentTool === 'tile_erase') && lastMouse) {
+    const wp = screenToWorld(lastMouse.x, lastMouse.y);
+    const col = Math.floor(wp.x / TILE_SIZE);
+    const row = Math.floor(wp.y / TILE_SIZE);
+    if (col >= 0 && col < GRID_COLS && row >= 0 && row < GRID_ROWS) {
+      const sp = worldToScreen(col * TILE_SIZE, row * TILE_SIZE);
+      const destSize = TILE_SIZE * zoom;
+      if (currentTool === 'tile_manual' && selectedPaletteTile !== null && tilesetImg && tilesetImg.complete) {
+        // Draw ghost of selected tile
+        ctx.globalAlpha = 0.5;
+        const srcC = selectedPaletteTile % TILESET_COLS;
+        const srcR = Math.floor(selectedPaletteTile / TILESET_COLS);
+        ctx.drawImage(tilesetImg, srcC * 64, srcR * 64, 64, 64, sp.x, sp.y, destSize, destSize);
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = '#FFD700';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(sp.x, sp.y, destSize, destSize);
+      } else if (currentTool === 'tile_erase') {
+        // Eraser cursor
+        ctx.strokeStyle = '#FF5555';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.strokeRect(sp.x, sp.y, destSize, destSize);
+        ctx.setLineDash([]);
+        ctx.fillStyle = 'rgba(255,50,50,0.15)';
+        ctx.fillRect(sp.x, sp.y, destSize, destSize);
+      }
+      // Layer indicator
+      ctx.fillStyle = activeLayer === 'ground' ? 'rgba(74,139,58,0.7)' : 'rgba(139,115,85,0.7)';
+      ctx.font = `bold ${Math.max(8, 10 * zoom * 3)}px sans-serif`;
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      ctx.fillText(activeLayer === 'ground' ? 'G' : 'H', sp.x + 2, sp.y + 2);
+
+      // Mirror cursor preview
+      if (mirrorMode) {
+        const mc = mirrorCell(row, col);
+        const msp = worldToScreen(mc.col * TILE_SIZE, mc.row * TILE_SIZE);
+        ctx.globalAlpha = 0.3;
+        if (currentTool === 'tile_manual' && selectedPaletteTile !== null && tilesetImg && tilesetImg.complete) {
+          const srcC = selectedPaletteTile % TILESET_COLS;
+          const srcR = Math.floor(selectedPaletteTile / TILESET_COLS);
+          ctx.drawImage(tilesetImg, srcC * 64, srcR * 64, 64, 64, msp.x, msp.y, destSize, destSize);
+        }
+        ctx.strokeStyle = currentTool === 'tile_erase' ? '#FF5555' : '#4af';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([3, 3]);
+        ctx.strokeRect(msp.x, msp.y, destSize, destSize);
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
+
+  // Mirror mode: draw symmetry line (diagonal from top-left to bottom-right)
+  if (mirrorMode) {
+    const m = getMap();
+    const p1 = worldToScreen(0, 0);
+    const p2 = worldToScreen(m.worldW, m.worldH);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(68, 170, 255, 0.35)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([8, 6]);
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // Draw small rotation icon at center
+    const cx = (p1.x + p2.x) / 2, cy = (p1.y + p2.y) / 2;
+    ctx.fillStyle = 'rgba(68, 170, 255, 0.5)';
+    ctx.font = '14px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('\u{1F501}', cx + 12, cy - 12);
+    ctx.restore();
   }
 }
 
 function drawGrid(m) {
-  const step = 200;
-  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+  const step = TILE_SIZE;
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
   ctx.lineWidth = 0.5;
-  for (let x = 0; x <= m.worldW; x += step) {
-    const p = worldToScreen(x, 0);
-    const p2 = worldToScreen(x, m.worldH);
+
+  const topLeft = screenToWorld(0, 0);
+  const botRight = screenToWorld(canvas.width, canvas.height);
+  const startX = Math.max(0, Math.floor(topLeft.x / step) * step);
+  const startY = Math.max(0, Math.floor(topLeft.y / step) * step);
+
+  for (let x = startX; x <= Math.min(m.worldW, botRight.x); x += step) {
+    const p = worldToScreen(x, Math.max(0, topLeft.y));
+    const p2 = worldToScreen(x, Math.min(m.worldH, botRight.y));
     ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
   }
-  for (let y = 0; y <= m.worldH; y += step) {
-    const p = worldToScreen(0, y);
-    const p2 = worldToScreen(m.worldW, y);
+  for (let y = startY; y <= Math.min(m.worldH, botRight.y); y += step) {
+    const p = worldToScreen(Math.max(0, topLeft.x), y);
+    const p2 = worldToScreen(Math.min(m.worldW, botRight.x), y);
     ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
   }
 }
 
-function drawTerrain(m) {
-  const terrain = m._terrain || [];
-  terrain.forEach((t, i) => {
-    const tc = TERRAIN_TYPES.find(tt => tt.id === t.type);
-    if (!tc) return;
-    const p = worldToScreen(t.x, t.y);
-    const isSel = selection && selection.type === 'terrain' && selection.idx === i;
-
-    if (t.shape === 'circle') {
-      const sr = t.radius * zoom;
-      ctx.fillStyle = tc.color + '55';
-      ctx.beginPath(); ctx.arc(p.x, p.y, sr, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = isSel ? '#FFD700' : tc.color + '88';
-      ctx.lineWidth = isSel ? 2.5 : 1.5;
-      ctx.stroke();
-      if (isSel) {
-        ctx.strokeStyle = 'rgba(255,215,0,0.3)';
-        ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.arc(p.x, p.y, sr + 5, 0, Math.PI * 2); ctx.stroke();
-      }
-      if (zoom > 0.06 && sr > 12) {
-        ctx.font = `${Math.max(10, sr * 0.5)}px sans-serif`;
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(tc.icon, p.x, p.y);
-      }
-    } else {
-      const sw = t.w * zoom, sh = t.h * zoom;
-      ctx.fillStyle = tc.color + '55';
-      ctx.fillRect(p.x - sw / 2, p.y - sh / 2, sw, sh);
-      ctx.strokeStyle = isSel ? '#FFD700' : tc.color + '88';
-      ctx.lineWidth = isSel ? 2.5 : 1.5;
-      ctx.strokeRect(p.x - sw / 2, p.y - sh / 2, sw, sh);
-      if (isSel) {
-        ctx.strokeStyle = 'rgba(255,215,0,0.3)';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(p.x - sw / 2 - 3, p.y - sh / 2 - 3, sw + 6, sh + 6);
-      }
-      if (zoom > 0.06 && sw > 20) {
-        ctx.font = `${Math.max(10, Math.min(sw, sh) * 0.3)}px sans-serif`;
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(tc.icon, p.x, p.y);
+function drawTileGrid(m) {
+  if (!resolvedTiles || !tilesetImg || !tilesetImg.complete) {
+    // Fallback: draw colored squares if tileset not loaded
+    const tiles = m._tiles;
+    if (!tiles) return;
+    const rows = tiles.length, cols = rows > 0 ? tiles[0].length : 0;
+    const topLeft = screenToWorld(0, 0);
+    const botRight = screenToWorld(canvas.width, canvas.height);
+    const minCol = Math.max(0, Math.floor(topLeft.x / TILE_SIZE));
+    const maxCol = Math.min(cols - 1, Math.ceil(botRight.x / TILE_SIZE));
+    const minRow = Math.max(0, Math.floor(topLeft.y / TILE_SIZE));
+    const maxRow = Math.min(rows - 1, Math.ceil(botRight.y / TILE_SIZE));
+    const destSize = TILE_SIZE * zoom;
+    const fallbackColors = ['#4a8b3a', '#8B7355', '#2266CC', '#666655'];
+    for (let r = minRow; r <= maxRow; r++) {
+      for (let c = minCol; c <= maxCol; c++) {
+        const sp = worldToScreen(c * TILE_SIZE, r * TILE_SIZE);
+        ctx.fillStyle = fallbackColors[tiles[r][c]] || fallbackColors[0];
+        ctx.fillRect(sp.x, sp.y, destSize + 0.5, destSize + 0.5);
       }
     }
-  });
+    return;
+  }
+  const tiles = m._tiles;
+  if (!tiles) return;
+  const rows = tiles.length, cols = rows > 0 ? tiles[0].length : 0;
+
+  const topLeft = screenToWorld(0, 0);
+  const botRight = screenToWorld(canvas.width, canvas.height);
+  const minCol = Math.max(0, Math.floor(topLeft.x / TILE_SIZE));
+  const maxCol = Math.min(cols - 1, Math.ceil(botRight.x / TILE_SIZE));
+  const minRow = Math.max(0, Math.floor(topLeft.y / TILE_SIZE));
+  const maxRow = Math.min(rows - 1, Math.ceil(botRight.y / TILE_SIZE));
+
+  const destSize = TILE_SIZE * zoom;
+
+  for (let r = minRow; r <= maxRow; r++) {
+    for (let c = minCol; c <= maxCol; c++) {
+      const resolved = resolvedTiles[r][c];
+      const sp = worldToScreen(c * TILE_SIZE, r * TILE_SIZE);
+
+      if (resolved.terrain === 2) {
+        ctx.fillStyle = '#3fa4d4';
+        ctx.fillRect(sp.x, sp.y, destSize + 0.5, destSize + 0.5);
+      } else {
+        // Rock tiles render as grass underneath
+        const tileTerrain = resolved.terrain === 3 ? 0 : resolved.terrain;
+        const src = getTileRect(tileTerrain, resolved.role);
+        ctx.drawImage(tilesetImg, src.x, src.y, T, T, sp.x, sp.y, destSize + 0.5, destSize + 0.5);
+
+        if (resolved.innerCorners > 0 && resolved.role === 'CENTER') {
+          const corners = [
+            { bit: 1, role: 'INNER_NW' }, { bit: 2, role: 'INNER_NE' },
+            { bit: 4, role: 'INNER_SW' }, { bit: 8, role: 'INNER_SE' },
+          ];
+          for (const ic of corners) {
+            if (resolved.innerCorners & ic.bit) {
+              const icSrc = getTileRect(tileTerrain, ic.role);
+              ctx.drawImage(tilesetImg, icSrc.x, icSrc.y, T, T, sp.x, sp.y, destSize + 0.5, destSize + 0.5);
+            }
+          }
+        }
+
+        // Draw rock sprite overlay for rock terrain
+        if (resolved.terrain === 3 && rocksLoaded === 4) {
+          const ri = rockVariant(r, c);
+          ctx.drawImage(rockImgs[ri], 0, 0, 64, 64, sp.x, sp.y, destSize + 0.5, destSize + 0.5);
+        }
+      }
+    }
+  }
+
+  // ── Grass tint overlay ──
+  const gt = m._grassTint;
+  if (gt) {
+    for (let r = minRow; r <= maxRow; r++) {
+      if (!gt[r]) continue;
+      for (let c = minCol; c <= maxCol; c++) {
+        const tintIdx = gt[r][c];
+        if (!tintIdx) continue;
+        const tintDef = GRASS_TINTS[tintIdx];
+        if (!tintDef || !tintDef.color) continue;
+        const sp = worldToScreen(c * TILE_SIZE, r * TILE_SIZE);
+        ctx.fillStyle = tintDef.color;
+        ctx.fillRect(sp.x, sp.y, destSize + 0.5, destSize + 0.5);
+      }
+    }
+  }
+
+  // ── Manual ground layer ──
+  if (layerVisible.manual_ground && tilesetImg && tilesetImg.complete) {
+    const gl = m._groundLayer;
+    if (gl) {
+      const prevAlpha = ctx.globalAlpha;
+      ctx.globalAlpha = layerOpacity.ground;
+      const gRows = gl.length, gCols = gRows > 0 ? gl[0].length : 0;
+      for (let r = Math.max(minRow, 0); r <= Math.min(maxRow, gRows - 1); r++) {
+        for (let c = Math.max(minCol, 0); c <= Math.min(maxCol, gCols - 1); c++) {
+          const tileIdx = gl[r][c];
+          if (tileIdx == null) continue;
+          const sp = worldToScreen(c * TILE_SIZE, r * TILE_SIZE);
+          const srcC = tileIdx % TILESET_COLS;
+          const srcR = Math.floor(tileIdx / TILESET_COLS);
+          ctx.drawImage(tilesetImg, srcC * 64, srcR * 64, 64, 64, sp.x, sp.y, destSize + 0.5, destSize + 0.5);
+        }
+      }
+      ctx.globalAlpha = prevAlpha;
+    }
+  }
+
+  // ── Manual high ground layer ──
+  if (layerVisible.manual_high && tilesetImg && tilesetImg.complete) {
+    const hl = m._highLayer;
+    if (hl) {
+      const prevAlpha = ctx.globalAlpha;
+      ctx.globalAlpha = layerOpacity.high;
+      const hRows = hl.length, hCols = hRows > 0 ? hl[0].length : 0;
+      for (let r = Math.max(minRow, 0); r <= Math.min(maxRow, hRows - 1); r++) {
+        for (let c = Math.max(minCol, 0); c <= Math.min(maxCol, hCols - 1); c++) {
+          const tileIdx = hl[r][c];
+          if (tileIdx == null) continue;
+          const sp = worldToScreen(c * TILE_SIZE, r * TILE_SIZE);
+          const srcC = tileIdx % TILESET_COLS;
+          const srcR = Math.floor(tileIdx / TILESET_COLS);
+          ctx.drawImage(tilesetImg, srcC * 64, srcR * 64, 64, 64, sp.x, sp.y, destSize + 0.5, destSize + 0.5);
+        }
+      }
+      ctx.globalAlpha = prevAlpha;
+    }
+  }
+
+  // ── Active layer highlight (dim outline on active layer cells when painting) ──
+  if ((currentTool === 'tile_manual' || currentTool === 'tile_erase') && zoom > 0.06) {
+    const layerData = getActiveLayerData();
+    const lRows = layerData.length, lCols = lRows > 0 ? layerData[0].length : 0;
+    ctx.strokeStyle = activeLayer === 'ground' ? 'rgba(74,139,58,0.2)' : 'rgba(139,115,85,0.2)';
+    ctx.lineWidth = 0.5;
+    for (let r = Math.max(minRow, 0); r <= Math.min(maxRow, lRows - 1); r++) {
+      for (let c = Math.max(minCol, 0); c <= Math.min(maxCol, lCols - 1); c++) {
+        if (layerData[r][c] != null) {
+          const sp = worldToScreen(c * TILE_SIZE, r * TILE_SIZE);
+          ctx.strokeRect(sp.x + 1, sp.y + 1, destSize - 2, destSize - 2);
+        }
+      }
+    }
+  }
 }
 
 // Zone resize handles
@@ -1471,6 +2619,10 @@ function syncUI() {
   document.getElementById('knob-safe').value = m.safeRadius;
   document.getElementById('val-safe').textContent = m.safeRadius;
 
+  // Tileset color dropdown
+  const tcSel = document.getElementById('tileset-color');
+  if (tcSel) tcSel.value = m.tilesetColor || 4;
+
   // Camp list
   const campList = document.getElementById('camp-list');
   campList.innerHTML = m.campSlots.map((s, i) => {
@@ -1511,7 +2663,31 @@ function syncUI() {
   if (armoryList) {
     armoryList.innerHTML = (m.armorySlots || []).map((s, i) => {
       const sel = selection && selection.type === 'armory' && selection.idx === i ? ' selected' : '';
-      return `<div class="zone-item${sel}" data-select-armory="${i}">\u2692\uFE0F <span class="coords" style="color:#4499FF">(${s.bluePos.x},${s.bluePos.y})</span> <span class="coords" style="color:#FF5555">(${s.redPos.x},${s.redPos.y})</span> <span class="del-btn" data-del-armory="${i}">\u2715</span></div>`;
+      const eqDef = EQUIPMENT_TYPES.find(e => e.id === s.equipmentType);
+      const eqLabel = eqDef ? `${eqDef.emoji} ${eqDef.id}` : '\u2692\uFE0F none';
+      const eqDesc = eqDef ? eqDef.desc : '';
+      return `<div class="zone-item${sel}" data-select-armory="${i}" title="${eqDesc}">
+        ${eqLabel} <span class="coords" style="color:#888;font-size:9px">${eqDesc.slice(0,22)}</span>
+        <span class="del-btn" data-del-armory="${i}">\u2715</span>
+      </div>`;
+    }).join('');
+  }
+
+  // Event circle list
+  const ecList = document.getElementById('event-circle-list');
+  if (ecList) {
+    ecList.innerHTML = (m.eventCircles || []).map((ec, i) => {
+      const sel = selection && selection.type === 'event_circle' && selection.idx === i ? ' selected' : '';
+      return `<div class="zone-item${sel}" data-select-ec="${i}">\u2B55 (${ec.x},${ec.y}) r=${ec.radius} <span class="del-btn" data-del-ec="${i}">\u2715</span></div>`;
+    }).join('');
+  }
+
+  // Boundary block list
+  const boundaryList = document.getElementById('boundary-list');
+  if (boundaryList) {
+    boundaryList.innerHTML = (m.boundaryBlocks || []).map((b, i) => {
+      const sel = selection && selection.type === 'boundary' && selection.idx === i ? ' selected' : '';
+      return `<div class="zone-item${sel}" data-select-boundary="${i}">\u{1F6A7} (${b.x},${b.y}) ${b.w}x${b.h} <span class="del-btn" data-del-boundary="${i}">\u2715</span></div>`;
     }).join('');
   }
 
@@ -1522,7 +2698,12 @@ function syncUI() {
     const nm = (m.mineSlots || []).length;
     const na = (m.armorySlots || []).length;
     const t = m.trollSlot ? 1 : 0;
-    oc.textContent = `(${nc}C ${nm}M ${na}A ${t}T)`;
+    const ne = (m.eventCircles || []).length;
+    const ntw = (m.towerSlots || []).length;
+    const nb = (m.bushZones || []).length;
+    const nr = (m.rockPositions || []).length;
+    const nbd = (m.boundaryBlocks || []).length;
+    oc.textContent = `(${nc}C ${nm}M ${na}A ${ntw}Tw ${nb}B ${nr}R ${t}T ${ne}E ${nbd}Bd)`;
   }
 }
 
@@ -1534,27 +2715,7 @@ function populateMapSelect() {
   sel.value = mapIdx;
 }
 
-// =================================================================
-// TERRAIN PALETTE
-// =================================================================
-
-function buildTerrainPalette() {
-  const pal = document.getElementById('terrain-palette');
-  pal.innerHTML = '';
-  for (const t of TERRAIN_TYPES) {
-    const btn = document.createElement('div');
-    btn.className = 'terrain-btn' + (t.id === selectedTerrain ? ' active' : '');
-    btn.style.background = t.color;
-    btn.innerHTML = `<span class="icon">${t.icon}</span><span>${t.label}</span>`;
-    btn.onclick = () => {
-      selectedTerrain = t.id;
-      pal.querySelectorAll('.terrain-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-    };
-    pal.appendChild(btn);
-  }
-}
-buildTerrainPalette();
+// (Tile palette is handled in HTML and event listeners above)
 
 // =================================================================
 // HIT TESTING
@@ -1562,7 +2723,7 @@ buildTerrainPalette();
 
 function hitTest(wx, wy) {
   const m = getMap();
-  const hitR = 30 / zoom;
+  const hitR = 50 / zoom;
 
   // Bases
   if (Math.hypot(wx - m.p1Base.x, wy - m.p1Base.y) < hitR) return { type: 'base', side: 'p1' };
@@ -1594,17 +2755,44 @@ function hitTest(wx, wy) {
     if (Math.hypot(wx - s.redPos.x, wy - s.redPos.y) < hitR) return { type: 'armory', idx: i, side: 'red' };
   }
 
-  // Terrain features (reverse order so top-most gets hit first)
-  const terrain = getTerrain();
-  for (let i = terrain.length - 1; i >= 0; i--) {
-    const t = terrain[i];
-    if (t.shape === 'circle') {
-      if (Math.hypot(wx - t.x, wy - t.y) < t.radius) return { type: 'terrain', idx: i };
-    } else {
-      if (wx >= t.x - t.w/2 && wx <= t.x + t.w/2 && wy >= t.y - t.h/2 && wy <= t.y + t.h/2) {
-        return { type: 'terrain', idx: i };
-      }
-    }
+  // Towers
+  const towerSlots = m.towerSlots || [];
+  for (let i = towerSlots.length - 1; i >= 0; i--) {
+    const s = towerSlots[i];
+    if (Math.hypot(wx - s.bluePos.x, wy - s.bluePos.y) < hitR) return { type: 'tower', idx: i, side: 'blue' };
+    if (Math.hypot(wx - s.redPos.x, wy - s.redPos.y) < hitR) return { type: 'tower', idx: i, side: 'red' };
+  }
+
+  // Rocks
+  const rockDefs = m.rockPositions || [];
+  for (let i = rockDefs.length - 1; i >= 0; i--) {
+    const r = rockDefs[i];
+    if (Math.hypot(wx - r.bluePos.x, wy - r.bluePos.y) < hitR) return { type: 'rock', idx: i, side: 'blue' };
+    if (Math.hypot(wx - r.redPos.x, wy - r.redPos.y) < hitR) return { type: 'rock', idx: i, side: 'red' };
+  }
+
+  // Bush zones
+  const bushDefs = m.bushZones || [];
+  for (let i = bushDefs.length - 1; i >= 0; i--) {
+    const b = bushDefs[i];
+    const bz = b.blueZone;
+    if (wx >= bz.x && wx <= bz.x + bz.w && wy >= bz.y && wy <= bz.y + bz.h) return { type: 'bush', idx: i, side: 'blue' };
+    const rz = b.redZone;
+    if (wx >= rz.x && wx <= rz.x + rz.w && wy >= rz.y && wy <= rz.y + rz.h) return { type: 'bush', idx: i, side: 'red' };
+  }
+
+  // Event circles
+  const evtCircles = getEventCircles();
+  for (let i = evtCircles.length - 1; i >= 0; i--) {
+    const ec = evtCircles[i];
+    if (Math.hypot(wx - ec.x, wy - ec.y) < ec.radius) return { type: 'event_circle', idx: i };
+  }
+
+  // Boundary blocks
+  const boundaryDefs = m.boundaryBlocks || [];
+  for (let i = boundaryDefs.length - 1; i >= 0; i--) {
+    const b = boundaryDefs[i];
+    if (wx >= b.x && wx <= b.x + b.w && wy >= b.y && wy <= b.y + b.h) return { type: 'boundary', idx: i };
   }
 
   // Carrot zones
@@ -1649,17 +2837,58 @@ canvas.addEventListener('mousedown', e => {
 
   const m = getMap();
 
-  // Terrain paint/erase
-  if (currentTool === 'terrain_paint') {
-    paintSnapshot = snapshotMap();
+  // Tile paint (auto-tile base)
+  if (currentTool === 'tile_paint') {
+    if (!paintSnapshot) { paintSnapshot = snapshotMap(); }
     painting = true;
-    paintTerrain(wp.x, wp.y);
+    paintTile(wp.x, wp.y);
     return;
   }
-  if (currentTool === 'terrain_erase') {
-    paintSnapshot = snapshotMap();
+
+  // Grass tint brush
+  if (currentTool === 'grass_tint') {
+    if (!paintSnapshot) { paintSnapshot = snapshotMap(); }
     painting = true;
-    eraseTerrain(wp.x, wp.y);
+    paintGrassTint(wp.x, wp.y);
+    return;
+  }
+
+  // Rock brush
+  if (currentTool === 'brush_rock') {
+    if (!paintSnapshot) { paintSnapshot = snapshotMap(); }
+    painting = true;
+    lastBrushRockCell = null;
+    brushRock(wp.x, wp.y);
+    return;
+  }
+
+  // Bush brush
+  if (currentTool === 'brush_bush') {
+    if (!paintSnapshot) { paintSnapshot = snapshotMap(); }
+    painting = true;
+    lastBrushBushCell = null;
+    brushBush(wp.x, wp.y);
+    return;
+  }
+
+  // Manual tile paint / erase
+  if (currentTool === 'tile_manual' || currentTool === 'tile_erase') {
+    if (!paintSnapshot) { paintSnapshot = snapshotMap(); }
+    painting = true;
+    lastPaintedCell = null;
+    paintManualTile(wp.x, wp.y);
+    return;
+  }
+
+  // Tile fill (flood fill on active layer)
+  if (currentTool === 'tile_fill') {
+    floodFillManualTile(wp.x, wp.y);
+    return;
+  }
+
+  // Eyedrop (pick tile from canvas)
+  if (currentTool === 'tile_eyedrop') {
+    eyedropTile(wp.x, wp.y);
     return;
   }
 
@@ -1709,8 +2938,69 @@ canvas.addEventListener('mousedown', e => {
     m.armorySlots.push({
       bluePos: { x: snap(wp.x), y: snap(wp.y) },
       redPos: { x: snap(rx), y: snap(ry) },
+      equipmentType: 'sword',
     });
     setSelection({ type: 'armory', idx: m.armorySlots.length - 1, side: 'blue' });
+    return;
+  }
+
+  // Place tower
+  if (currentTool === 'place_tower') {
+    pushUndo();
+    if (!m.towerSlots) m.towerSlots = [];
+    const rx = m.worldW - wp.x;
+    const ry = m.worldH - wp.y;
+    m.towerSlots.push({
+      bluePos: { x: snap(wp.x), y: snap(wp.y) },
+      redPos: { x: snap(rx), y: snap(ry) },
+    });
+    setSelection({ type: 'tower', idx: m.towerSlots.length - 1, side: 'blue' });
+    return;
+  }
+
+  // Add bush zone
+  if (currentTool === 'add_bush') {
+    pushUndo();
+    if (!m.bushZones) m.bushZones = [];
+    const bx = Math.round(wp.x), by = Math.round(wp.y);
+    const bw = 200, bh = 120;
+    const rx = m.worldW - bx - bw, ry = m.worldH - by - bh;
+    m.bushZones.push({
+      blueZone: { x: bx, y: by, w: bw, h: bh },
+      redZone: { x: rx, y: ry, w: bw, h: bh },
+    });
+    setSelection({ type: 'bush', idx: m.bushZones.length - 1, side: 'blue' });
+    return;
+  }
+
+  // Place rock
+  if (currentTool === 'place_rock') {
+    pushUndo();
+    if (!m.rockPositions) m.rockPositions = [];
+    const rx = m.worldW - wp.x;
+    const ry = m.worldH - wp.y;
+    const variant = (m.rockPositions.length % 3) + 1;
+    m.rockPositions.push({
+      bluePos: { x: snap(wp.x), y: snap(wp.y) },
+      redPos: { x: snap(rx), y: snap(ry) },
+      variant,
+    });
+    setSelection({ type: 'rock', idx: m.rockPositions.length - 1, side: 'blue' });
+    return;
+  }
+
+  // Place boundary block
+  if (currentTool === 'place_boundary') {
+    pushUndo();
+    if (!m.boundaryBlocks) m.boundaryBlocks = [];
+    const bw = 200, bh = 40;
+    const bx = Math.round(wp.x), by = Math.round(wp.y);
+    m.boundaryBlocks.push({ x: bx, y: by, w: bw, h: bh });
+    if (mirrorMode) {
+      const rx = Math.round(m.worldW - bx - bw), ry = Math.round(m.worldH - by - bh);
+      m.boundaryBlocks.push({ x: rx, y: ry, w: bw, h: bh });
+    }
+    setSelection({ type: 'boundary', idx: m.boundaryBlocks.length - (mirrorMode ? 2 : 1) });
     return;
   }
 
@@ -1728,13 +3018,29 @@ canvas.addEventListener('mousedown', e => {
     setSelection({ type: 'wild_zone', idx: m.wildZones.length - 1 });
     return;
   }
+  // Add event circle
+  if (currentTool === 'add_event_circle') {
+    pushUndo();
+    if (!m.eventCircles) m.eventCircles = [];
+    m.eventCircles.push({ x: Math.round(wp.x), y: Math.round(wp.y), radius: 200 });
+    setSelection({ type: 'event_circle', idx: m.eventCircles.length - 1 });
+    return;
+  }
 
   // Select tool
   if (currentTool === 'select') {
     // Check resize handles on selected zones first
-    if (selection && (selection.type === 'carrot_zone' || selection.type === 'wild_zone')) {
-      const arr = selection.type === 'carrot_zone' ? m.carrotZones : m.wildZones;
-      const z = arr[selection.idx];
+    if (selection && (selection.type === 'carrot_zone' || selection.type === 'wild_zone' || selection.type === 'bush' || selection.type === 'boundary')) {
+      let z;
+      if (selection.type === 'bush') {
+        const bush = (m.bushZones || [])[selection.idx];
+        z = bush ? (selection.side === 'blue' ? bush.blueZone : bush.redZone) : null;
+      } else if (selection.type === 'boundary') {
+        z = (m.boundaryBlocks || [])[selection.idx];
+      } else {
+        const arr = selection.type === 'carrot_zone' ? m.carrotZones : m.wildZones;
+        z = arr[selection.idx];
+      }
       if (z) {
         const zp = worldToScreen(z.x, z.y);
         const zs = { x: z.w * zoom, y: z.h * zoom };
@@ -1744,6 +3050,7 @@ canvas.addEventListener('mousedown', e => {
           resizing = {
             type: selection.type,
             idx: selection.idx,
+            side: selection.side,
             handle: handle.handle,
             origZone: deepClone(z),
             startWX: wp.x,
@@ -1766,9 +3073,16 @@ canvas.addEventListener('mousedown', e => {
       } else if (hit.type === 'wild_zone') {
         const z = m.wildZones[hit.idx];
         dragging.origX = z.x; dragging.origY = z.y;
-      } else if (hit.type === 'terrain') {
-        const t = getTerrain()[hit.idx];
-        dragging.origX = t.x; dragging.origY = t.y;
+      } else if (hit.type === 'event_circle') {
+        const ec = getEventCircles()[hit.idx];
+        dragging.origX = ec.x; dragging.origY = ec.y;
+      } else if (hit.type === 'bush') {
+        const bz = (m.bushZones || [])[hit.idx];
+        const zone = hit.side === 'blue' ? bz.blueZone : bz.redZone;
+        dragging.origX = zone.x; dragging.origY = zone.y;
+      } else if (hit.type === 'boundary') {
+        const b = (m.boundaryBlocks || [])[hit.idx];
+        dragging.origX = b.x; dragging.origY = b.y;
       }
     } else {
       clearSelection();
@@ -1802,11 +3116,11 @@ document.addEventListener('mousemove', e => {
     else if (hit.type === 'wild_zone') tooltip.textContent = `Wild Zone #${hit.idx}`;
     else if (hit.type === 'mine') tooltip.textContent = `Mine #${hit.idx} (${hit.side})`
     else if (hit.type === 'armory') tooltip.textContent = `Armory #${hit.idx} (${hit.side})`
-    else if (hit.type === 'terrain') {
-      const t = getTerrain()[hit.idx];
-      const tc = TERRAIN_TYPES.find(tt => tt.id === t.type);
-      tooltip.textContent = `Terrain: ${tc ? tc.label : t.type}`;
-    }
+    else if (hit.type === 'event_circle') tooltip.textContent = `Event Circle #${hit.idx}`
+    else if (hit.type === 'tower') tooltip.textContent = `Tower #${hit.idx} (${hit.side})`
+    else if (hit.type === 'bush') tooltip.textContent = `Bush Zone #${hit.idx} (${hit.side})`
+    else if (hit.type === 'rock') tooltip.textContent = `Rock #${hit.idx} R${(m.rockPositions||[])[hit.idx]?.variant} (${hit.side})`
+    else if (hit.type === 'boundary') { const b = (m.boundaryBlocks||[])[hit.idx]; tooltip.textContent = `Boundary #${hit.idx} ${b?.w}x${b?.h}`; }
   } else {
     tooltip.style.display = 'none';
   }
@@ -1819,11 +3133,33 @@ document.addEventListener('mousemove', e => {
     return;
   }
 
-  // Painting terrain
-  if (painting) {
-    if (currentTool === 'terrain_paint') paintTerrain(wp.x, wp.y);
-    else if (currentTool === 'terrain_erase') eraseTerrain(wp.x, wp.y);
-    render();
+  // Painting tiles
+  if (painting && currentTool === 'tile_paint') {
+    paintTile(wp.x, wp.y);
+    return;
+  }
+
+  // Grass tint painting
+  if (painting && currentTool === 'grass_tint') {
+    paintGrassTint(wp.x, wp.y);
+    return;
+  }
+
+  // Rock brush painting
+  if (painting && currentTool === 'brush_rock') {
+    brushRock(wp.x, wp.y);
+    return;
+  }
+
+  // Bush brush painting
+  if (painting && currentTool === 'brush_bush') {
+    brushBush(wp.x, wp.y);
+    return;
+  }
+
+  // Manual tile painting
+  if (painting && (currentTool === 'tile_manual' || currentTool === 'tile_erase')) {
+    paintManualTile(wp.x, wp.y);
     return;
   }
 
@@ -1832,8 +3168,16 @@ document.addEventListener('mousemove', e => {
     const oz = resizing.origZone;
     const dx = wp.x - resizing.startWX;
     const dy = wp.y - resizing.startWY;
-    const arr = resizing.type === 'carrot_zone' ? m.carrotZones : m.wildZones;
-    const z = arr[resizing.idx];
+    let z;
+    if (resizing.type === 'bush') {
+      const bush = (m.bushZones || [])[resizing.idx];
+      z = bush ? (resizing.side === 'blue' ? bush.blueZone : bush.redZone) : null;
+    } else if (resizing.type === 'boundary') {
+      z = (m.boundaryBlocks || [])[resizing.idx];
+    } else {
+      const arr = resizing.type === 'carrot_zone' ? m.carrotZones : m.wildZones;
+      z = arr[resizing.idx];
+    }
     if (!z) { resizing = null; return; }
     const minSize = 50;
 
@@ -1873,6 +3217,16 @@ document.addEventListener('mousemove', e => {
         z.w = Math.max(minSize, Math.round(oz.w - dx));
         break;
     }
+    // Mirror bush zone resize
+    if (mirrorMode && resizing.type === 'bush') {
+      const bush = (m.bushZones || [])[resizing.idx];
+      if (bush) {
+        const opp = resizing.side === 'blue' ? bush.redZone : bush.blueZone;
+        opp.w = z.w; opp.h = z.h;
+        opp.x = Math.round(m.worldW - z.x - z.w);
+        opp.y = Math.round(m.worldH - z.y - z.h);
+      }
+    }
     syncUI(); render();
     return;
   }
@@ -1885,12 +3239,20 @@ document.addEventListener('mousemove', e => {
     if (dragging.type === 'base') {
       const base = dragging.side === 'p1' ? m.p1Base : m.p2Base;
       base.x = snap(wp.x); base.y = snap(wp.y);
+      if (mirrorMode) {
+        const opp = dragging.side === 'p1' ? m.p2Base : m.p1Base;
+        opp.x = snap(m.worldW - wp.x); opp.y = snap(m.worldH - wp.y);
+      }
     } else if (dragging.type === 'troll') {
       m.trollSlot.x = snap(wp.x); m.trollSlot.y = snap(wp.y);
     } else if (dragging.type === 'camp') {
       const slot = m.campSlots[dragging.idx];
       const pos = dragging.side === 'blue' ? slot.bluePos : slot.redPos;
       pos.x = snap(wp.x); pos.y = snap(wp.y);
+      if (mirrorMode) {
+        const opp = dragging.side === 'blue' ? slot.redPos : slot.bluePos;
+        opp.x = snap(m.worldW - wp.x); opp.y = snap(m.worldH - wp.y);
+      }
     } else if (dragging.type === 'carrot_zone') {
       const z = m.carrotZones[dragging.idx];
       z.x = Math.round(dragging.origX + dx);
@@ -1899,21 +3261,67 @@ document.addEventListener('mousemove', e => {
       const z = m.wildZones[dragging.idx];
       z.x = Math.round(dragging.origX + dx);
       z.y = Math.round(dragging.origY + dy);
-    } else if (dragging.type === 'terrain') {
-      const t = getTerrain()[dragging.idx];
-      t.x = Math.round(dragging.origX + dx);
-      t.y = Math.round(dragging.origY + dy);
+    } else if (dragging.type === 'event_circle') {
+      const ec = getEventCircles()[dragging.idx];
+      ec.x = Math.round(dragging.origX + dx);
+      ec.y = Math.round(dragging.origY + dy);
     } else if (dragging.type === 'mine') {
       const slot = (m.mineSlots || [])[dragging.idx];
       if (slot) {
         const pos = dragging.side === 'blue' ? slot.bluePos : slot.redPos;
         pos.x = snap(wp.x); pos.y = snap(wp.y);
+        if (mirrorMode) {
+          const opp = dragging.side === 'blue' ? slot.redPos : slot.bluePos;
+          opp.x = snap(m.worldW - wp.x); opp.y = snap(m.worldH - wp.y);
+        }
       }
     } else if (dragging.type === 'armory') {
       const slot = (m.armorySlots || [])[dragging.idx];
       if (slot) {
         const pos = dragging.side === 'blue' ? slot.bluePos : slot.redPos;
         pos.x = snap(wp.x); pos.y = snap(wp.y);
+        if (mirrorMode) {
+          const opp = dragging.side === 'blue' ? slot.redPos : slot.bluePos;
+          opp.x = snap(m.worldW - wp.x); opp.y = snap(m.worldH - wp.y);
+        }
+      }
+    } else if (dragging.type === 'tower') {
+      const slot = (m.towerSlots || [])[dragging.idx];
+      if (slot) {
+        const pos = dragging.side === 'blue' ? slot.bluePos : slot.redPos;
+        pos.x = snap(wp.x); pos.y = snap(wp.y);
+        if (mirrorMode) {
+          const opp = dragging.side === 'blue' ? slot.redPos : slot.bluePos;
+          opp.x = snap(m.worldW - wp.x); opp.y = snap(m.worldH - wp.y);
+        }
+      }
+    } else if (dragging.type === 'rock') {
+      const rock = (m.rockPositions || [])[dragging.idx];
+      if (rock) {
+        const pos = dragging.side === 'blue' ? rock.bluePos : rock.redPos;
+        pos.x = snap(wp.x); pos.y = snap(wp.y);
+        if (mirrorMode) {
+          const opp = dragging.side === 'blue' ? rock.redPos : rock.bluePos;
+          opp.x = snap(m.worldW - wp.x); opp.y = snap(m.worldH - wp.y);
+        }
+      }
+    } else if (dragging.type === 'bush') {
+      const bush = (m.bushZones || [])[dragging.idx];
+      if (bush) {
+        const zone = dragging.side === 'blue' ? bush.blueZone : bush.redZone;
+        zone.x = Math.round(dragging.origX + dx);
+        zone.y = Math.round(dragging.origY + dy);
+        if (mirrorMode) {
+          const opp = dragging.side === 'blue' ? bush.redZone : bush.blueZone;
+          opp.x = Math.round(m.worldW - zone.x - zone.w);
+          opp.y = Math.round(m.worldH - zone.y - zone.h);
+        }
+      }
+    } else if (dragging.type === 'boundary') {
+      const b = (m.boundaryBlocks || [])[dragging.idx];
+      if (b) {
+        b.x = Math.round(dragging.origX + dx);
+        b.y = Math.round(dragging.origY + dy);
       }
     }
     syncUI(); render();
@@ -1921,9 +3329,17 @@ document.addEventListener('mousemove', e => {
   }
 
   // Cursor: check resize handles
-  if (currentTool === 'select' && selection && (selection.type === 'carrot_zone' || selection.type === 'wild_zone')) {
-    const arr = selection.type === 'carrot_zone' ? m.carrotZones : m.wildZones;
-    const z = arr[selection.idx];
+  if (currentTool === 'select' && selection && (selection.type === 'carrot_zone' || selection.type === 'wild_zone' || selection.type === 'bush' || selection.type === 'boundary')) {
+    let z;
+    if (selection.type === 'bush') {
+      const bush = (m.bushZones || [])[selection.idx];
+      z = bush ? (selection.side === 'blue' ? bush.blueZone : bush.redZone) : null;
+    } else if (selection.type === 'boundary') {
+      z = (m.boundaryBlocks || [])[selection.idx];
+    } else {
+      const arr = selection.type === 'carrot_zone' ? m.carrotZones : m.wildZones;
+      z = arr[selection.idx];
+    }
     if (z) {
       const zp = worldToScreen(z.x, z.y);
       const zs = { x: z.w * zoom, y: z.h * zoom };
@@ -1933,10 +3349,13 @@ document.addEventListener('mousemove', e => {
   }
 
   if (currentTool === 'select' && hit) canvas.style.cursor = 'grab';
-  else if (currentTool === 'terrain_paint' || currentTool === 'terrain_erase') canvas.style.cursor = 'crosshair';
+  else if (currentTool === 'tile_paint' || currentTool === 'tile_manual' || currentTool === 'tile_fill') canvas.style.cursor = 'crosshair';
+  else if (currentTool === 'tile_erase') canvas.style.cursor = 'crosshair';
+  else if (currentTool === 'tile_eyedrop') canvas.style.cursor = 'crosshair';
+  else if (currentTool === 'place_tower' || currentTool === 'add_bush' || currentTool === 'place_rock' || currentTool === 'place_boundary' || currentTool === 'brush_rock' || currentTool === 'brush_bush' || currentTool === 'grass_tint') canvas.style.cursor = 'crosshair';
   else canvas.style.cursor = 'default';
 
-  if (currentTool === 'terrain_paint' || currentTool === 'terrain_erase') render();
+  if (currentTool === 'tile_paint' || currentTool === 'tile_manual' || currentTool === 'tile_erase') render();
 });
 
 document.addEventListener('mouseup', () => {
@@ -1967,6 +3386,7 @@ document.addEventListener('mouseup', () => {
   resizing = null;
   painting = false;
   panning = false;
+  lastPaintedCell = null;
   canvas.style.cursor = 'default';
   syncInspector();
   syncUI();
@@ -1991,36 +3411,197 @@ canvasArea.addEventListener('wheel', e => {
 }, { passive: false });
 
 // =================================================================
-// TERRAIN PAINT / ERASE
+// TILE PAINT
 // =================================================================
 
-function paintTerrain(wx, wy) {
-  const terrain = getTerrain();
-  const feature = {
-    type: selectedTerrain,
-    shape: brushShape,
-    x: Math.round(wx),
-    y: Math.round(wy),
-  };
-  if (brushShape === 'circle') {
-    feature.radius = brushSize;
-  } else {
-    feature.w = brushSize * 2;
-    feature.h = brushSize * 2;
+/** Get the 180°-rotated mirror of a grid cell */
+function mirrorCell(row, col) {
+  return { row: GRID_ROWS - 1 - row, col: GRID_COLS - 1 - col };
+}
+
+/** Iterate cells in a circular brush radius around (centerRow, centerCol) */
+function forEachBrushCell(centerRow, centerCol, fn) {
+  const r = brushRadius - 1; // 1 = single tile, 2 = radius 1 (3x3), etc.
+  for (let dr = -r; dr <= r; dr++) {
+    for (let dc = -r; dc <= r; dc++) {
+      // Circular check
+      if (dr * dr + dc * dc > r * r + r) continue;
+      const rr = centerRow + dr, cc = centerCol + dc;
+      if (rr < 0 || rr >= GRID_ROWS || cc < 0 || cc >= GRID_COLS) continue;
+      fn(rr, cc);
+    }
   }
-  terrain.push(feature);
+}
+
+function paintTile(wx, wy) {
+  const tiles = getTiles();
+  const col = Math.floor(wx / TILE_SIZE);
+  const row = Math.floor(wy / TILE_SIZE);
+  if (row < 0 || row >= GRID_ROWS || col < 0 || col >= GRID_COLS) return;
+  let changed = false;
+  forEachBrushCell(row, col, (r, c) => {
+    if (tiles[r][c] !== currentTileType) {
+      tiles[r][c] = currentTileType;
+      resolveNeighborhood(r, c, 2);
+      changed = true;
+      if (mirrorMode) {
+        const m = mirrorCell(r, c);
+        tiles[m.row][m.col] = currentTileType;
+        resolveNeighborhood(m.row, m.col, 2);
+      }
+    }
+  });
+  if (changed) render();
+}
+
+let lastBrushRockCell = null;
+let lastBrushBushCell = null;
+
+function brushRock(wx, wy) {
+  const m = getMap();
+  if (!m.rockPositions) m.rockPositions = [];
+  // Snap to grid, skip if already a rock nearby
+  const sx = snap(wx), sy = snap(wy);
+  const cellKey = `${Math.floor(sx / 80)},${Math.floor(sy / 80)}`;
+  if (lastBrushRockCell === cellKey) return;
+  lastBrushRockCell = cellKey;
+  // Check if there's already a rock within 60px
+  const tooClose = m.rockPositions.some(r =>
+    Math.abs(r.bluePos.x - sx) < 60 && Math.abs(r.bluePos.y - sy) < 60
+  );
+  if (tooClose) return;
+  const variant = (m.rockPositions.length % 3) + 1;
+  const rx = m.worldW - sx, ry = m.worldH - sy;
+  m.rockPositions.push({
+    bluePos: { x: sx, y: sy },
+    redPos: { x: snap(rx), y: snap(ry) },
+    variant,
+  });
   render();
 }
 
-function eraseTerrain(wx, wy) {
-  const terrain = getTerrain();
-  const r = brushSize;
-  getMap()._terrain = terrain.filter(t => {
-    const dist = Math.hypot(t.x - wx, t.y - wy);
-    const tr = t.shape === 'circle' ? t.radius : Math.max(t.w, t.h) / 2;
-    return dist > r + tr * 0.5;
+function brushBush(wx, wy) {
+  const m = getMap();
+  if (!m.bushZones) m.bushZones = [];
+  // Snap to grid, create or extend bush zone
+  const bw = 200, bh = 120;
+  const bx = snap(wx - bw / 2), by = snap(wy - bh / 2);
+  const cellKey = `${Math.floor(wx / 150)},${Math.floor(wy / 150)}`;
+  if (lastBrushBushCell === cellKey) return;
+  lastBrushBushCell = cellKey;
+  // Check if click is inside an existing bush zone
+  const inside = m.bushZones.some(bz => {
+    const z = bz.blueZone;
+    return wx >= z.x && wx <= z.x + z.w && wy >= z.y && wy <= z.y + z.h;
+  });
+  if (inside) return;
+  const rx = m.worldW - bx - bw, ry = m.worldH - by - bh;
+  m.bushZones.push({
+    blueZone: { x: bx, y: by, w: bw, h: bh },
+    redZone: { x: rx, y: ry, w: bw, h: bh },
   });
   render();
+}
+
+function paintGrassTint(wx, wy) {
+  const m = getMap();
+  if (!m._grassTint) return;
+  const col = Math.floor(wx / TILE_SIZE);
+  const row = Math.floor(wy / TILE_SIZE);
+  if (row < 0 || row >= GRID_ROWS || col < 0 || col >= GRID_COLS) return;
+  let changed = false;
+  forEachBrushCell(row, col, (r, c) => {
+    if (m._grassTint[r][c] !== currentGrassTint) {
+      m._grassTint[r][c] = currentGrassTint;
+      changed = true;
+      if (mirrorMode) {
+        const mr = mirrorCell(r, c);
+        m._grassTint[mr.row][mr.col] = currentGrassTint;
+      }
+    }
+  });
+  if (changed) render();
+}
+
+function paintManualTile(wx, wy) {
+  const col = Math.floor(wx / TILE_SIZE);
+  const row = Math.floor(wy / TILE_SIZE);
+  if (row < 0 || row >= GRID_ROWS || col < 0 || col >= GRID_COLS) return;
+  // Skip if same cell already painted this stroke
+  const cellKey = `${row},${col}`;
+  if (lastPaintedCell === cellKey) return;
+  lastPaintedCell = cellKey;
+
+  const layer = getActiveLayerData();
+  if (currentTool === 'tile_erase') {
+    if (layer[row][col] === null) return;
+    layer[row][col] = null;
+    if (mirrorMode) {
+      const m = mirrorCell(row, col);
+      layer[m.row][m.col] = null;
+    }
+  } else if (currentTool === 'tile_manual' && selectedPaletteTile !== null) {
+    if (layer[row][col] === selectedPaletteTile) return;
+    layer[row][col] = selectedPaletteTile;
+    if (mirrorMode) {
+      const m = mirrorCell(row, col);
+      layer[m.row][m.col] = selectedPaletteTile;
+    }
+  } else {
+    return;
+  }
+  render();
+}
+
+function floodFillManualTile(wx, wy) {
+  if (selectedPaletteTile === null) { showToast('Select a tile first'); return; }
+  const col = Math.floor(wx / TILE_SIZE);
+  const row = Math.floor(wy / TILE_SIZE);
+  if (row < 0 || row >= GRID_ROWS || col < 0 || col >= GRID_COLS) return;
+  const layer = getActiveLayerData();
+  const target = layer[row][col];
+  if (target === selectedPaletteTile) return;
+
+  pushUndo();
+  const stack = [[row, col]];
+  const visited = new Set();
+  const filledCells = []; // track filled cells for mirroring
+  while (stack.length > 0) {
+    const [r, c] = stack.pop();
+    const key = `${r},${c}`;
+    if (visited.has(key)) continue;
+    if (r < 0 || r >= GRID_ROWS || c < 0 || c >= GRID_COLS) continue;
+    if (layer[r][c] !== target) continue;
+    visited.add(key);
+    layer[r][c] = selectedPaletteTile;
+    filledCells.push([r, c]);
+    stack.push([r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]);
+    if (visited.size > 5000) break; // safety
+  }
+  // Mirror all filled cells
+  if (mirrorMode) {
+    for (const [r, c] of filledCells) {
+      const m = mirrorCell(r, c);
+      layer[m.row][m.col] = selectedPaletteTile;
+    }
+  }
+  render();
+}
+
+function eyedropTile(wx, wy) {
+  const col = Math.floor(wx / TILE_SIZE);
+  const row = Math.floor(wy / TILE_SIZE);
+  if (row < 0 || row >= GRID_ROWS || col < 0 || col >= GRID_COLS) return;
+  const layer = getActiveLayerData();
+  const tileIdx = layer[row][col];
+  if (tileIdx != null) {
+    selectedPaletteTile = tileIdx;
+    updatePaletteSelection();
+    setTool('tile_manual');
+    showToast(`Picked tile [${tileIdx % TILESET_COLS},${Math.floor(tileIdx / TILESET_COLS)}]`);
+  } else {
+    showToast('Empty cell — no tile to pick');
+  }
 }
 
 // =================================================================
@@ -2035,6 +3616,8 @@ document.getElementById('map-select').addEventListener('change', e => {
   redoStack = [];
   syncUndoButtons();
   centerCamera();
+  resolveTileGrid();
+  loadTileset();
   syncInspector();
   syncUI(); render();
 });
@@ -2080,25 +3663,43 @@ document.getElementById('knob-desc').addEventListener('change', e => {
   getMap().description = e.target.value;
 });
 
-// Brush size
-document.getElementById('brush-size').addEventListener('input', e => {
-  brushSize = parseInt(e.target.value);
-  document.getElementById('val-brush').textContent = brushSize;
+// Tile palette click handler
+document.getElementById('tile-palette')?.addEventListener('click', e => {
+  const btn = e.target.closest('[data-tile]');
+  if (!btn) return;
+  currentTileType = parseInt(btn.dataset.tile);
+  document.querySelectorAll('#tile-palette [data-tile]').forEach(b => b.classList.toggle('active', parseInt(b.dataset.tile) === currentTileType));
+  setTool('tile_paint');
 });
 
-// Brush shape
-document.querySelectorAll('[data-shape]').forEach(btn => {
-  btn.addEventListener('click', () => {
-    brushShape = btn.dataset.shape;
-    document.querySelectorAll('[data-shape]').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-  });
+// Tileset color variant
+document.getElementById('tileset-color')?.addEventListener('change', e => {
+  const m = getMap();
+  m.tilesetColor = parseInt(e.target.value) || 4;
+  tilesetColor = m.tilesetColor;
+  loadTileset();
+});
+
+// Brush radius
+document.getElementById('brush-radius')?.addEventListener('input', e => {
+  brushRadius = parseInt(e.target.value) || 1;
+  document.getElementById('brush-radius-val').textContent = brushRadius;
+  render();
 });
 
 // Tool selection
 document.querySelectorAll('[data-tool]').forEach(btn => {
   btn.addEventListener('click', () => {
     currentTool = btn.dataset.tool;
+    // If tile paint, also set the tile type
+    if (btn.dataset.tile !== undefined) {
+      currentTileType = parseInt(btn.dataset.tile);
+      document.querySelectorAll('#tile-palette [data-tile]').forEach(b => b.classList.toggle('active', parseInt(b.dataset.tile) === currentTileType));
+    }
+    // If grass tint, set tint index
+    if (btn.dataset.tint !== undefined) {
+      currentGrassTint = parseInt(btn.dataset.tint);
+    }
     document.querySelectorAll('[data-tool]').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById('status-tool').textContent = `Tool: ${btn.textContent.trim()}`;
@@ -2217,6 +3818,44 @@ document.getElementById('armory-list')?.addEventListener('click', e => {
   }
 });
 
+// Event circle list clicks
+document.getElementById('event-circle-list')?.addEventListener('click', e => {
+  const del = e.target.closest('[data-del-ec]');
+  if (del) {
+    const idx = parseInt(del.dataset.delEc);
+    pushUndo();
+    const m = getMap();
+    if (m.eventCircles) m.eventCircles.splice(idx, 1);
+    if (selection && selection.type === 'event_circle' && selection.idx === idx) selection = null;
+    syncInspector();
+    syncUI(); render();
+    return;
+  }
+  const item = e.target.closest('[data-select-ec]');
+  if (item) {
+    setSelection({ type: 'event_circle', idx: parseInt(item.dataset.selectEc) });
+  }
+});
+
+// Boundary list clicks
+document.getElementById('boundary-list')?.addEventListener('click', e => {
+  const del = e.target.closest('[data-del-boundary]');
+  if (del) {
+    const idx = parseInt(del.dataset.delBoundary);
+    pushUndo();
+    const m = getMap();
+    if (m.boundaryBlocks) m.boundaryBlocks.splice(idx, 1);
+    if (selection && selection.type === 'boundary' && selection.idx === idx) selection = null;
+    syncInspector();
+    syncUI(); render();
+    return;
+  }
+  const item = e.target.closest('[data-select-boundary]');
+  if (item) {
+    setSelection({ type: 'boundary', idx: parseInt(item.dataset.selectBoundary) });
+  }
+});
+
 // Undo/redo buttons
 document.getElementById('btn-undo').addEventListener('click', undo);
 document.getElementById('btn-redo').addEventListener('click', redo);
@@ -2231,23 +3870,28 @@ document.getElementById('btn-new-map').addEventListener('click', () => {
     id: `custom_${Date.now()}`,
     name: 'New Map',
     description: 'Custom horde map',
-    worldW: 3200, worldH: 3200,
-    p1Base: { x: 300, y: 2900 },
-    p2Base: { x: 2900, y: 300 },
-    safeRadius: 500,
+    worldW: 6400, worldH: 6400,
+    p1Base: { x: 600, y: 5800 },
+    p2Base: { x: 5800, y: 600 },
+    safeRadius: 800,
     campSlots: [],
-    trollSlot: { x: 1600, y: 1600 },
-    carrotZones: [{ x: 100, y: 1600, w: 1400, h: 1400 }, { x: 1700, y: 100, w: 1400, h: 1400 }],
-    wildZones: [{ x: 800, y: 800, w: 1600, h: 1600 }],
-    wildExclusions: [{ x: 300, y: 2900, radius: 500 }, { x: 2900, y: 300, radius: 500 }],
+    trollSlot: { x: 3200, y: 3200 },
+    carrotZones: [{ x: 200, y: 3200, w: 2800, h: 2800 }, { x: 3400, y: 200, w: 2800, h: 2800 }],
+    wildZones: [{ x: 1600, y: 1600, w: 3200, h: 3200 }],
+    wildExclusions: [{ x: 600, y: 5800, radius: 800 }, { x: 5800, y: 600, radius: 800 }],
     mineSlots: [
-      { bluePos: { x: 500, y: 2400 }, redPos: { x: 2700, y: 800 } },
-      { bluePos: { x: 800, y: 2700 }, redPos: { x: 2400, y: 500 } },
+      { bluePos: { x: 1000, y: 4800 }, redPos: { x: 5400, y: 1600 } },
+      { bluePos: { x: 1600, y: 5400 }, redPos: { x: 4800, y: 1000 } },
     ],
     armorySlots: [
-      { bluePos: { x: 550, y: 2650 }, redPos: { x: 2650, y: 550 } },
+      { bluePos: { x: 1100, y: 5300 }, redPos: { x: 5300, y: 1100 }, equipmentType: 'sword' },
     ],
-    _terrain: [],
+    _tiles: (() => { const t = []; for (let r = 0; r < GRID_ROWS; r++) t.push(new Array(GRID_COLS).fill(0)); return t; })(),
+    _groundLayer: (() => { const t = []; for (let r = 0; r < GRID_ROWS; r++) t.push(new Array(GRID_COLS).fill(null)); return t; })(),
+    _highLayer: (() => { const t = []; for (let r = 0; r < GRID_ROWS; r++) t.push(new Array(GRID_COLS).fill(null)); return t; })(),
+    _grassTint: (() => { const t = []; for (let r = 0; r < GRID_ROWS; r++) t.push(new Array(GRID_COLS).fill(0)); return t; })(),
+    tilesetColor: 4,
+    eventCircles: [],
   };
   maps.push(newMap);
   mapIdx = maps.length - 1;
@@ -2257,6 +3901,8 @@ document.getElementById('btn-new-map').addEventListener('click', () => {
   syncUndoButtons();
   populateMapSelect();
   centerCamera();
+  resolveTileGrid();
+  loadTileset();
   syncInspector();
   syncUI(); render();
 });
@@ -2273,6 +3919,8 @@ document.getElementById('btn-duplicate').addEventListener('click', () => {
   redoStack = [];
   syncUndoButtons();
   populateMapSelect();
+  resolveTileGrid();
+  loadTileset();
   syncInspector();
   syncUI(); render();
 });
@@ -2283,19 +3931,42 @@ document.getElementById('btn-reset').addEventListener('click', () => {
     if (!confirm('Reset this map to defaults? Your changes will be lost (undo available).')) return;
     pushUndo();
     maps[mapIdx] = deepClone(ALL_MAPS[mapIdx]);
-    maps[mapIdx]._terrain = [];
+    if (!maps[mapIdx]._tiles) {
+      maps[mapIdx]._tiles = [];
+      for (let r = 0; r < GRID_ROWS; r++) maps[mapIdx]._tiles.push(new Array(GRID_COLS).fill(0));
+    }
+    if (maps[mapIdx].groundLayer) { maps[mapIdx]._groundLayer = maps[mapIdx].groundLayer; delete maps[mapIdx].groundLayer; }
+    if (maps[mapIdx].highLayer) { maps[mapIdx]._highLayer = maps[mapIdx].highLayer; delete maps[mapIdx].highLayer; }
+    if (!maps[mapIdx].eventCircles) maps[mapIdx].eventCircles = [];
+    maps[mapIdx].tilesetColor = maps[mapIdx].tilesetColor || 4;
+    if (maps[mapIdx].grassTint) { maps[mapIdx]._grassTint = maps[mapIdx].grassTint; delete maps[mapIdx].grassTint; }
+    if (!maps[mapIdx]._grassTint) {
+      maps[mapIdx]._grassTint = [];
+      for (let r = 0; r < GRID_ROWS; r++) maps[mapIdx]._grassTint.push(new Array(GRID_COLS).fill(0));
+    }
+    delete maps[mapIdx]._terrain;
+    delete maps[mapIdx].terrain;
     selection = null;
+    resolveTileGrid();
+    loadTileset();
     syncInspector();
   }
   syncUI(); render();
 });
 
-// Clear terrain
-document.getElementById('btn-clear-terrain').addEventListener('click', () => {
+// Clear tiles (reset all to grass and clear manual layers)
+document.getElementById('btn-clear-tiles')?.addEventListener('click', () => {
   pushUndo();
-  getMap()._terrain = [];
-  if (selection && selection.type === 'terrain') { selection = null; syncInspector(); }
+  const m = getMap();
+  m._tiles = [];
+  for (let r = 0; r < GRID_ROWS; r++) m._tiles.push(new Array(GRID_COLS).fill(0));
+  m._groundLayer = [];
+  for (let r = 0; r < GRID_ROWS; r++) m._groundLayer.push(new Array(GRID_COLS).fill(null));
+  m._highLayer = [];
+  for (let r = 0; r < GRID_ROWS; r++) m._highLayer.push(new Array(GRID_COLS).fill(null));
+  resolveTileGrid();
   render();
+  showToast('All tiles and layers cleared');
 });
 
 // =================================================================
@@ -2353,20 +4024,53 @@ function generateCode(m) {
   if (m.armorySlots && m.armorySlots.length > 0) {
     code += `${indent}armorySlots: [\n`;
     for (const s of m.armorySlots) {
-      code += `${i2}{ bluePos: { x: ${s.bluePos.x}, y: ${s.bluePos.y} }, redPos: { x: ${s.redPos.x}, y: ${s.redPos.y} } },\n`;
+      const eqStr = s.equipmentType ? `, equipmentType: '${s.equipmentType}'` : '';
+      code += `${i2}{ bluePos: { x: ${s.bluePos.x}, y: ${s.bluePos.y} }, redPos: { x: ${s.redPos.x}, y: ${s.redPos.y} }${eqStr} },\n`;
     }
     code += `${indent}],\n`;
   }
 
-  if (m._terrain && m._terrain.length > 0) {
-    code += `${indent}// Terrain features\n`;
-    code += `${indent}terrain: [\n`;
-    for (const t of m._terrain) {
-      if (t.shape === 'circle') {
-        code += `${i2}{ type: '${t.type}', shape: 'circle', x: ${t.x}, y: ${t.y}, radius: ${t.radius} },\n`;
-      } else {
-        code += `${i2}{ type: '${t.type}', shape: 'rect', x: ${t.x}, y: ${t.y}, w: ${t.w}, h: ${t.h} },\n`;
-      }
+  if (m._tiles) {
+    code += `${indent}tiles: [\n`;
+    for (const row of m._tiles) {
+      code += `${i2}[${row.join(',')}],\n`;
+    }
+    code += `${indent}],\n`;
+  }
+  if (m.tilesetColor && m.tilesetColor !== 4) {
+    code += `${indent}tilesetColor: ${m.tilesetColor},\n`;
+  }
+  // Grass tint layer (only export if has non-zero values)
+  const hasGrassTints = m._grassTint && m._grassTint.some(row => row.some(v => v !== 0));
+  if (hasGrassTints) {
+    code += `${indent}grassTint: [\n`;
+    for (const row of m._grassTint) {
+      code += `${i2}[${row.join(',')}],\n`;
+    }
+    code += `${indent}],\n`;
+  }
+  // Manual tile layers (only export if they have any non-null tiles)
+  const hasGroundTiles = m._groundLayer && m._groundLayer.some(row => row.some(v => v !== null));
+  const hasHighTiles = m._highLayer && m._highLayer.some(row => row.some(v => v !== null));
+  if (hasGroundTiles) {
+    code += `${indent}groundLayer: [\n`;
+    for (const row of m._groundLayer) {
+      code += `${i2}[${row.map(v => v === null ? 'null' : v).join(',')}],\n`;
+    }
+    code += `${indent}],\n`;
+  }
+  if (hasHighTiles) {
+    code += `${indent}highLayer: [\n`;
+    for (const row of m._highLayer) {
+      code += `${i2}[${row.map(v => v === null ? 'null' : v).join(',')}],\n`;
+    }
+    code += `${indent}],\n`;
+  }
+
+  if (m.eventCircles && m.eventCircles.length > 0) {
+    code += `${indent}eventCircles: [\n`;
+    for (const ec of m.eventCircles) {
+      code += `${i2}{ x: ${ec.x}, y: ${ec.y}, radius: ${ec.radius} },\n`;
     }
     code += `${indent}],\n`;
   }
@@ -2382,9 +4086,7 @@ document.getElementById('btn-export').addEventListener('click', () => {
 });
 
 document.getElementById('btn-copy-json').addEventListener('click', async () => {
-  const m = deepClone(getMap());
-  delete m._terrain;
-  if (getMap()._terrain?.length) m.terrain = getMap()._terrain;
+  const m = cleanMapForSave(getMap());
   await navigator.clipboard.writeText(JSON.stringify(m, null, 2));
   showToast('JSON copied!');
 });
@@ -2469,14 +4171,41 @@ document.addEventListener('keydown', e => {
 
   // Tool shortcuts
   if (e.key === 'v' || e.key === 'V' || e.key === 's' || e.key === 'S') { setTool('select'); }
-  if (e.key === 'b' || e.key === 'B' || e.key === 'p' || e.key === 'P') { setTool('terrain_paint'); }
-  if (e.key === 'e' || e.key === 'E') { setTool('terrain_erase'); }
+  if (e.key === 'g' || e.key === 'G') { currentTileType = 0; setTool('tile_paint'); }
+  if (e.key === 'h' || e.key === 'H') { currentTileType = 1; setTool('tile_paint'); }
+  if (e.key === 'w' || e.key === 'W') { currentTileType = 2; setTool('tile_paint'); }
+  if (e.key === 'j' || e.key === 'J') { currentTileType = 3; setTool('tile_paint'); }
+  if (e.key === 'x' || e.key === 'X') { setTool('add_event_circle'); }
   if (e.key === 'c' && !e.ctrlKey && !e.metaKey) { setTool('place_camp'); }
   if (e.key === 'm' || e.key === 'M') { setTool('place_mine'); }
   if (e.key === 'a' && !e.ctrlKey && !e.metaKey) { setTool('place_armory'); }
-  if (e.key === '[') { brushSize = Math.max(20, brushSize - 20); document.getElementById('brush-size').value = brushSize; document.getElementById('val-brush').textContent = brushSize; }
-  if (e.key === ']') { brushSize = Math.min(400, brushSize + 20); document.getElementById('brush-size').value = brushSize; document.getElementById('val-brush').textContent = brushSize; }
+  if (e.key === 'o' || e.key === 'O') { setTool('place_tower'); }
+  if (e.key === 'b' || e.key === 'B') { setTool('add_bush'); }
+  if (e.key === 'k' || e.key === 'K') { setTool('place_rock'); }
+  if (e.key === 'i' || e.key === 'I') { setTool('place_boundary'); }
   if (e.key === 'f' || e.key === 'F') { centerCamera(); render(); }
+  // Manual tile tools
+  if (e.key === 't' || e.key === 'T') { setTool('tile_manual'); }
+  if (e.key === 'e' || e.key === 'E') { setTool('tile_erase'); }
+  if (e.key === 'i' || e.key === 'I') { setTool('tile_eyedrop'); }
+  // Layer switching: 1=ground, 2=high
+  if (e.key === '1') { switchLayer('ground'); }
+  if (e.key === '2') { switchLayer('high'); }
+  // Mirror mode toggle
+  if (e.key === 'r' || e.key === 'R') { toggleMirrorMode(); }
+  // Brush radius: [ decrease, ] increase
+  if (e.key === '[') {
+    brushRadius = Math.max(1, brushRadius - 1);
+    document.getElementById('brush-radius').value = brushRadius;
+    document.getElementById('brush-radius-val').textContent = brushRadius;
+    render();
+  }
+  if (e.key === ']') {
+    brushRadius = Math.min(8, brushRadius + 1);
+    document.getElementById('brush-radius').value = brushRadius;
+    document.getElementById('brush-radius-val').textContent = brushRadius;
+    render();
+  }
 });
 
 function setTool(tool) {
@@ -2488,11 +4217,86 @@ function setTool(tool) {
     updateStatusSelection();
   }
   document.querySelectorAll('[data-tool]').forEach(b => {
-    b.classList.toggle('active', b.dataset.tool === currentTool);
+    if (b.dataset.tool === 'tile_paint') {
+      b.classList.toggle('active', b.dataset.tool === currentTool && parseInt(b.dataset.tile) === currentTileType);
+    } else if (b.dataset.tool === 'grass_tint') {
+      b.classList.toggle('active', b.dataset.tool === currentTool && parseInt(b.dataset.tint) === currentGrassTint);
+    } else {
+      b.classList.toggle('active', b.dataset.tool === currentTool);
+    }
   });
+  if (tool === 'tile_paint') {
+    document.querySelectorAll('#tile-palette [data-tile]').forEach(b => b.classList.toggle('active', parseInt(b.dataset.tile) === currentTileType));
+  }
   document.getElementById('status-tool').textContent = `Tool: ${currentTool}`;
   render();
 }
+
+// =================================================================
+// LAYER TAB & PALETTE UI
+// =================================================================
+
+function switchLayer(layer) {
+  activeLayer = layer;
+  document.querySelectorAll('[data-layer-tab]').forEach(tab => {
+    tab.classList.toggle('active', tab.dataset.layerTab === layer);
+  });
+  // Update opacity slider to show current layer's opacity
+  const opSlider = document.getElementById('layer-opacity');
+  const opVal = document.getElementById('layer-opacity-val');
+  if (opSlider) {
+    opSlider.value = Math.round(layerOpacity[layer] * 100);
+    opVal.textContent = Math.round(layerOpacity[layer] * 100);
+  }
+  render();
+}
+
+// Mirror mode toggle
+function toggleMirrorMode() {
+  mirrorMode = !mirrorMode;
+  const btn = document.getElementById('mirror-toggle');
+  if (btn) btn.classList.toggle('active', mirrorMode);
+  showToast(mirrorMode ? 'Mirror mode ON — edits mirrored 180°' : 'Mirror mode OFF');
+  render();
+}
+document.getElementById('mirror-toggle')?.addEventListener('click', () => toggleMirrorMode());
+
+// Layer tab clicks
+document.querySelectorAll('[data-layer-tab]').forEach(tab => {
+  tab.addEventListener('click', e => {
+    // Don't switch if clicking the visibility toggle
+    if (e.target.classList.contains('layer-vis')) return;
+    switchLayer(tab.dataset.layerTab);
+  });
+});
+
+// Layer visibility toggles
+document.getElementById('vis-ground')?.addEventListener('click', e => {
+  e.stopPropagation();
+  layerVisible.manual_ground = !layerVisible.manual_ground;
+  e.target.classList.toggle('hidden', !layerVisible.manual_ground);
+  // Also update the checkbox in the layers section
+  const cb = document.querySelector('[data-layer="manual_ground"]');
+  if (cb) cb.checked = layerVisible.manual_ground;
+  render();
+});
+
+document.getElementById('vis-high')?.addEventListener('click', e => {
+  e.stopPropagation();
+  layerVisible.manual_high = !layerVisible.manual_high;
+  e.target.classList.toggle('hidden', !layerVisible.manual_high);
+  const cb = document.querySelector('[data-layer="manual_high"]');
+  if (cb) cb.checked = layerVisible.manual_high;
+  render();
+});
+
+// Layer opacity slider
+document.getElementById('layer-opacity')?.addEventListener('input', e => {
+  const val = parseInt(e.target.value);
+  layerOpacity[activeLayer] = val / 100;
+  document.getElementById('layer-opacity-val').textContent = val;
+  render();
+});
 
 // =================================================================
 // LIVE SYNC (BroadcastChannel) — Editor <-> Game
@@ -2514,8 +4318,11 @@ let syncThrottleTimer = null;
 
 function buildSyncMap() {
   const m = deepClone(getMap());
-  if (m._terrain?.length) m.terrain = m._terrain;
+  if (m._tiles) { m.tiles = m._tiles; delete m._tiles; }
+  if (m._groundLayer) { m.groundLayer = m._groundLayer; delete m._groundLayer; }
+  if (m._highLayer) { m.highLayer = m._highLayer; delete m._highLayer; }
   delete m._terrain;
+  delete m.terrain;
   return m;
 }
 
@@ -2756,6 +4563,10 @@ async function boot() {
   populateMapSelect();
   resizeCanvas();
   centerCamera();
+  // Load tileset and resolve tile grid
+  resolveTileGrid();
+  loadTileset();
+  setupPalette();
   syncUI();
   syncInspector();
   syncUndoButtons();

@@ -3,24 +3,27 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Prompt Battle</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <title>Mark My Hordes</title>
+  <!-- Fonts loaded inline to avoid cross-origin issues in itch.io iframe -->
+  <style>
+    /* System font fallbacks for Fredoka and Nunito */
+    @font-face { font-family: 'Fredoka'; font-style: normal; font-weight: 400 700; src: local('Fredoka'), local('Nunito'); }
+    @font-face { font-family: 'Nunito'; font-style: normal; font-weight: 400 800; src: local('Nunito'), local('Segoe UI'); }
+  </style>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      background: #1B1040;
-      color: #f0e8ff;
+    html, body {
+      background: #0f1a0a;
+      color: #d4c8a0;
       font-family: 'Nunito', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
       overflow: hidden;
-      width: 100vw;
-      height: 100vh;
+      width: 100%;
+      height: 100%;
     }
     #game-container {
       position: relative;
-      width: 100vw;
-      height: 100vh;
+      width: 100%;
+      height: 100%;
     }
     #hud-overlay {
       position: absolute;
@@ -439,6 +442,46 @@
     @keyframes ability-pulse {
       0%, 100% { box-shadow: 0 0 0 0 rgba(201, 143, 255, 0); }
       50% { box-shadow: 0 0 8px 2px rgba(201, 143, 255, 0.25); }
+    }
+
+    /* ─── HORDE MODE RESPONSIVE PANELS ──────────────────── */
+    #game-container {
+      --horde-sidebar-w: clamp(200px, 17vw, 300px);
+      --horde-rpanel-w: clamp(260px, 23vw, 400px);
+    }
+
+    #horde-sidebar,
+    #horde-char-panel {
+      transition: width 0.25s ease;
+    }
+
+    #horde-sidebar::-webkit-scrollbar,
+    #horde-char-panel::-webkit-scrollbar {
+      width: 5px;
+    }
+    #horde-sidebar::-webkit-scrollbar-track,
+    #horde-char-panel::-webkit-scrollbar-track {
+      background: rgba(139,115,85,0.15);
+      border-radius: 3px;
+    }
+    #horde-sidebar::-webkit-scrollbar-thumb,
+    #horde-char-panel::-webkit-scrollbar-thumb {
+      background: rgba(139,115,85,0.4);
+      border-radius: 3px;
+    }
+    #horde-sidebar::-webkit-scrollbar-thumb:hover,
+    #horde-char-panel::-webkit-scrollbar-thumb:hover {
+      background: rgba(139,115,85,0.6);
+    }
+
+    /* On small screens, shrink font sizes inside panels */
+    @media (max-width: 1200px) {
+      #horde-sidebar { font-size: 12px; }
+      #horde-char-panel { font-size: 12px; }
+    }
+    @media (max-width: 900px) {
+      #horde-sidebar { font-size: 11px; }
+      #horde-char-panel { font-size: 11px; }
     }
   </style>
 </head>

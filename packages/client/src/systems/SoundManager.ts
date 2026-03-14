@@ -6,7 +6,7 @@ export class SoundManager {
   private muted = false;
 
   private constructor() {
-    this.muted = localStorage.getItem('sound_muted') === 'true';
+    this.muted = localStorage.getItem('pb_sound_muted') === 'true';
   }
 
   static getInstance(): SoundManager {
@@ -26,7 +26,7 @@ export class SoundManager {
 
   toggleMute() {
     this.muted = !this.muted;
-    localStorage.setItem('sound_muted', String(this.muted));
+    localStorage.setItem('pb_sound_muted', String(this.muted));
     return this.muted;
   }
 

@@ -9,7 +9,8 @@
   "scripts": {
     "dev": "npm run dev --workspace=packages/client",
     "build": "npm run build --workspace=packages/shared && npm run build --workspace=packages/client",
-    "deploy": "npm run build && firebase deploy"
+    "deploy": "npm run build && firebase deploy",
+    "build:itch": "npm run build && powershell Compress-Archive -Path dist/* -DestinationPath prompt-battle-itch.zip -Force"
   },
   "devDependencies": {
     "@sparktory/context-search": "^0.2.0"

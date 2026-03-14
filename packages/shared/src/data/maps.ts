@@ -49,6 +49,13 @@ export interface MapRockDef {
   variant: 1 | 2 | 3;
 }
 
+export interface MapBoundaryBlock {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 // ─── TILE GRID TYPES ──────────────────────────────────────
 export const TILE_SIZE = 64;
 export type TileValue = 0 | 1 | 2 | 3; // 0=normal(grass), 1=high_ground, 2=water, 3=rock(impassable)
@@ -86,6 +93,7 @@ export interface MapDef {
   towerSlots?: MapTowerSlot[];     // defensive tower positions (blue/red pairs)
   bushZones?: MapBushZone[];       // LoL-style brush zones (hide units inside, blue/red pairs)
   rockPositions?: MapRockDef[];    // decorative rock positions (blue/red pairs)
+  boundaryBlocks?: MapBoundaryBlock[]; // invisible rectangular walls that block unit movement
 }
 
 // ─── TIER POOLS ──────────────────────────────────────────
@@ -94,7 +102,7 @@ export interface MapDef {
 export const TIER_POOLS: Record<number, string[]> = {
   0: ['gnome'],
   1: ['gnome', 'turtle'],
-  2: ['skull', 'spider', 'hyena', 'rogue'],
+  2: ['skull', 'spider', 'hyena', 'rogue', 'turtle'],
   3: ['panda', 'lizard'],
   4: ['minotaur', 'shaman'],
 };
@@ -167,10 +175,10 @@ const DEFAULT_MAP: MapDef = {
   p2Base: { x: 5900, y: 500 },
   safeRadius: 900,
   campSlots: [
-    // T1 — jungle entrance, near base (safe first clears)
-    { tier: 1, bluePos: { x: 1400, y: 5000 },  redPos: { x: 5000, y: 1400 } },
+    // T0 — gnome starter camp (always pre-captured); T2 — near-base jungle
+    { tier: 0, bluePos: { x: 1400, y: 5000 },  redPos: { x: 5000, y: 1400 } },
     { tier: 2, bluePos: { x: 800, y: 4600 },   redPos: { x: 5600, y: 1800 } },
-    { tier: 1, bluePos: { x: 1600, y: 5500 },  redPos: { x: 4800, y: 900 } },
+    { tier: 2, bluePos: { x: 1600, y: 5500 },  redPos: { x: 4800, y: 900 } },
     // T2 — mid jungle, lane intersections
     { tier: 2, bluePos: { x: 2000, y: 4200 },  redPos: { x: 4400, y: 2200 } },
     { tier: 2, bluePos: { x: 1200, y: 3800 },  redPos: { x: 5200, y: 2600 } },
@@ -257,10 +265,10 @@ const CROSSROADS_MAP: MapDef = {
   p2Base: { x: 5900, y: 500 },
   safeRadius: 900,
   campSlots: [
-    // T1 — safe jungle near base
-    { tier: 1, bluePos: { x: 1200, y: 5200 },  redPos: { x: 5200, y: 1200 } },
+    // T0 — gnome starter camp (always pre-captured); T2 — near-base jungle
+    { tier: 0, bluePos: { x: 1200, y: 5200 },  redPos: { x: 5200, y: 1200 } },
     { tier: 2, bluePos: { x: 1000, y: 4600 },  redPos: { x: 5400, y: 1800 } },
-    { tier: 1, bluePos: { x: 1800, y: 5600 },  redPos: { x: 4600, y: 800 } },
+    { tier: 2, bluePos: { x: 1800, y: 5600 },  redPos: { x: 4600, y: 800 } },
     // T2 — lane intersections
     { tier: 2, bluePos: { x: 2000, y: 4400 },  redPos: { x: 4400, y: 2000 } },
     { tier: 2, bluePos: { x: 1400, y: 3800 },  redPos: { x: 5000, y: 2600 } },
@@ -338,10 +346,10 @@ const RING_MAP: MapDef = {
   p2Base: { x: 5800, y: 600 },
   safeRadius: 900,
   campSlots: [
-    // T1 — near base
-    { tier: 1, bluePos: { x: 1300, y: 5000 },  redPos: { x: 5100, y: 1400 } },
+    // T0 — gnome starter camp (always pre-captured); T2 — near-base jungle
+    { tier: 0, bluePos: { x: 1300, y: 5000 },  redPos: { x: 5100, y: 1400 } },
     { tier: 2, bluePos: { x: 900, y: 4600 },   redPos: { x: 5500, y: 1800 } },
-    { tier: 1, bluePos: { x: 1600, y: 5500 },  redPos: { x: 4800, y: 900 } },
+    { tier: 2, bluePos: { x: 1600, y: 5500 },  redPos: { x: 4800, y: 900 } },
     // T2 — ring entrances
     { tier: 2, bluePos: { x: 1800, y: 4200 },  redPos: { x: 4600, y: 2200 } },
     { tier: 2, bluePos: { x: 2200, y: 4800 },  redPos: { x: 4200, y: 1600 } },
@@ -430,10 +438,10 @@ const THREE_KINGDOMS_MAP: MapDef = {
   p2Base: { x: 5800, y: 600 },
   safeRadius: 1000,
   campSlots: [
-    // T1 — near base
-    { tier: 1, bluePos: { x: 1100, y: 5100 },  redPos: { x: 5300, y: 1300 } },
+    // T0 — gnome starter camp (always pre-captured); T2 — near-base jungle
+    { tier: 0, bluePos: { x: 1100, y: 5100 },  redPos: { x: 5300, y: 1300 } },
     { tier: 2, bluePos: { x: 1500, y: 5500 },  redPos: { x: 4900, y: 900 } },
-    { tier: 1, bluePos: { x: 800, y: 4600 },   redPos: { x: 5600, y: 1800 } },
+    { tier: 2, bluePos: { x: 800, y: 4600 },   redPos: { x: 5600, y: 1800 } },
     // T2 — flanks (3 per side)
     { tier: 2, bluePos: { x: 1000, y: 4000 },  redPos: { x: 5400, y: 2400 } },
     { tier: 2, bluePos: { x: 2200, y: 4800 },  redPos: { x: 4200, y: 1600 } },

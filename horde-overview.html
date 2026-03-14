@@ -1,0 +1,1733 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Horde Capture - Monster Overview</title>
+<style>
+  :root {
+    --bg: #0a0c12;
+    --card: #141722;
+    --border: #252840;
+    --text: #e0e0e0;
+    --muted: #7a7f96;
+    --accent: #c06bf0;
+    --tier1: #5fcc5f;
+    --tier2: #4ea8de;
+    --tier3: #e08030;
+    --tier4: #e04545;
+    --tier5: #d4af37;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 2rem;
+    min-height: 100vh;
+    position: relative;
+    overflow-x: hidden;
+    padding-bottom: 70px;
+  }
+  h1 {
+    text-align: center;
+    font-size: 2.6rem;
+    margin-bottom: 0.3rem;
+    background: linear-gradient(135deg, #f06b6b, #c06bf0, #6bb0f0);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: 0.02em;
+  }
+  .subtitle {
+    text-align: center;
+    color: var(--muted);
+    margin-bottom: 2rem;
+    font-size: 1rem;
+  }
+
+  /* Single-frame sprite clipping */
+  .sprite-box {
+    width: 80px;
+    height: 80px;
+    background: #0e1018;
+    border-radius: 12px;
+    flex-shrink: 0;
+    overflow: hidden;
+    border: 1px solid #2a2d40;
+    position: relative;
+  }
+  .sprite-frame {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    image-rendering: pixelated;
+  }
+
+  /* Resource legend */
+  .resource-legend {
+    max-width: 800px;
+    margin: 0 auto 2rem;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 1.5rem;
+  }
+  .resource-legend h2 { font-size: 1.2rem; margin-bottom: 0.8rem; color: var(--accent); }
+  .res-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.8rem;
+  }
+  .res-item {
+    background: #0e1018;
+    border-radius: 10px;
+    padding: 0.8rem 1rem;
+    text-align: center;
+  }
+  .res-icon { font-size: 2rem; }
+  .res-name { font-weight: 700; font-size: 1rem; margin: 0.2rem 0; }
+  .res-desc { font-size: 0.78rem; color: var(--muted); }
+
+  /* Tier sections */
+  .tier-section { margin-bottom: 2.5rem; }
+  .tier-header {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 1rem;
+    padding-left: 0.6rem;
+    border-left: 4px solid;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .tier-1 .tier-header { border-color: var(--tier1); color: var(--tier1); }
+  .tier-2 .tier-header { border-color: var(--tier2); color: var(--tier2); }
+  .tier-3 .tier-header { border-color: var(--tier3); color: var(--tier3); }
+  .tier-4 .tier-header { border-color: var(--tier4); color: var(--tier4); }
+  .tier-5 .tier-header { border-color: var(--tier5); color: var(--tier5); }
+
+  .tier-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 2rem;
+  }
+
+  /* Tier sections */
+  .tier-section { margin-bottom: 3rem; }
+
+  /* Cards */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+    transition: transform 0.15s, box-shadow 0.15s;
+  }
+  .card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  }
+  .card-top {
+    display: flex;
+    align-items: center;
+    padding: 1.2rem 1.4rem 0.6rem;
+    gap: 1rem;
+  }
+  .card-info { flex: 1; }
+  .card-name { font-size: 1.3rem; font-weight: 700; }
+  .tier-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 20px;
+    color: #fff;
+    margin-left: 0.5rem;
+    vertical-align: middle;
+  }
+  .tb1 { background: var(--tier1); }
+  .tb2 { background: var(--tier2); }
+  .tb3 { background: var(--tier3); }
+  .tb4 { background: var(--tier4); }
+  .tb5 { background: var(--tier5); }
+  .card-ability { margin-top: 4px; font-size: 0.82rem; }
+  .ability-name { color: #d0a0f0; font-weight: 600; }
+  .ability-desc { color: var(--muted); }
+  .card-role { margin-top: 3px; font-size: 0.78rem; color: var(--muted); font-style: italic; }
+
+  /* Stats */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    padding: 0.5rem 1.4rem;
+  }
+  .stat { text-align: center; padding: 0.35rem 0; }
+  .stat-label { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+  .stat-value { font-size: 1.15rem; font-weight: 700; }
+  .s-hp .stat-value { color: #5fdd5f; }
+  .s-atk .stat-value { color: #e06060; }
+  .s-spd .stat-value { color: #e0c040; }
+
+  /* Food */
+  .card-bottom {
+    padding: 0.6rem 1.4rem 1.2rem;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .food-box {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    background: linear-gradient(135deg, #151a10, #10151a);
+    border: 1px solid #2a3520;
+    border-radius: 10px;
+    padding: 0.5rem 0.9rem;
+    font-size: 0.88rem;
+  }
+  .food-icon { font-size: 1.5rem; }
+  .food-label { font-weight: 600; color: #a0cc70; }
+  .food-cost { color: #e0e0e0; font-weight: 700; font-size: 1rem; }
+  .food-type { color: var(--muted); font-size: 0.8rem; }
+  .trait-box {
+    background: #0e1018;
+    border-radius: 8px;
+    padding: 0.45rem 0.8rem;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .trait-box strong { color: #90c0e0; }
+
+  /* HP bar */
+  .hp-bar-container { padding: 0 1.4rem 0.4rem; }
+  .hp-bar-bg { height: 6px; background: #1a1d28; border-radius: 3px; overflow: hidden; }
+  .hp-bar-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #3a8a3a, #5fdd5f); }
+
+  /* Interactive walker */
+  #thief-walker {
+    position: fixed;
+    width: 64px;
+    height: 64px;
+    pointer-events: none;
+    z-index: 9999;
+    image-rendering: pixelated;
+    transition: none;
+    filter: drop-shadow(0 4px 8px rgba(0,0,0,0.7));
+  }
+  #click-hint {
+    position: fixed;
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(20,23,34,0.9);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 8px 18px;
+    border-radius: 20px;
+    font-size: 0.82rem;
+    z-index: 10000;
+    pointer-events: none;
+    opacity: 1;
+    transition: opacity 2s;
+  }
+
+  /* Character cycling UI */
+  #char-cycler {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 10001;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    background: var(--card);
+    border-top: 1px solid var(--border);
+    padding: 8px 16px;
+    box-shadow: 0 -4px 20px rgba(0,0,0,0.5);
+  }
+  #char-cycler .arrow-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 1.4rem;
+    cursor: pointer;
+    padding: 6px 14px;
+    border-radius: 8px;
+    transition: background 0.15s, border-color 0.15s;
+    user-select: none;
+  }
+  #char-cycler .arrow-btn:hover {
+    background: var(--border);
+    border-color: var(--accent);
+  }
+  #char-card-display {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 20px;
+    min-width: 240px;
+    justify-content: center;
+    cursor: grab;
+    user-select: none;
+  }
+  #char-card-display:active { cursor: grabbing; }
+  #char-card-display .char-emoji { font-size: 1.8rem; }
+  #char-card-display .char-name { font-weight: 700; font-size: 1.1rem; }
+  #char-card-display .char-tier { font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 12px; color: #fff; }
+  #char-card-display .drag-hint {
+    font-size: 0.7rem;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  #char-card-display .drag-icon {
+    font-size: 1rem;
+    color: var(--muted);
+    opacity: 0.6;
+  }
+
+  /* Spawned neutral monsters */
+  .spawned-monster {
+    position: absolute;
+    pointer-events: none;
+    z-index: 100;
+  }
+  .spawned-monster canvas {
+    image-rendering: pixelated;
+    display: block;
+    margin: 0 auto;
+  }
+  .spawned-label {
+    text-align: center;
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: var(--text);
+    text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+    margin-bottom: 2px;
+  }
+  .spawned-hp-bar {
+    width: 48px;
+    height: 4px;
+    background: #1a1d28;
+    border-radius: 2px;
+    overflow: hidden;
+    margin: 0 auto 2px;
+  }
+  .spawned-hp-fill {
+    width: 100%;
+    height: 100%;
+    border-radius: 2px;
+    background: linear-gradient(90deg, #3a8a3a, #5fdd5f);
+  }
+
+  /* Drag ghost */
+  #drag-ghost {
+    position: fixed;
+    pointer-events: none;
+    z-index: 20000;
+    opacity: 0.8;
+    display: none;
+    font-size: 2.4rem;
+    filter: drop-shadow(0 2px 8px rgba(0,0,0,0.7));
+  }
+
+  /* Content layers — above terrain */
+  .resource-legend, .tier-section, .card, .tier-header, h1, .subtitle,
+  .resource-legend *, .tier-section *, .card * {
+    position: relative;
+    z-index: 5;
+  }
+  table { position: relative; z-index: 5; }
+
+  /* Terrain obstacles — behind content */
+  .terrain-obstacle {
+    position: absolute;
+    z-index: 1;
+    pointer-events: none;
+    image-rendering: pixelated;
+  }
+  .terrain-obstacle img {
+    display: block;
+    image-rendering: pixelated;
+  }
+
+  /* Spawn button on cards */
+  .card { position: relative; }
+  .card .spawn-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: rgba(14,16,24,0.9);
+    color: var(--accent);
+    font-size: 1.2rem;
+    line-height: 26px;
+    text-align: center;
+    cursor: pointer;
+    z-index: 10;
+    transition: background 0.15s, border-color 0.15s, transform 0.15s;
+    user-select: none;
+  }
+  .card .spawn-btn:hover {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+    transform: scale(1.15);
+  }
+
+  /* Walker HP HUD */
+  #walker-hud {
+    position: fixed;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10002;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(20,23,34,0.92);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 8px 18px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  }
+  #walker-hud .hud-name {
+    font-weight: 700;
+    font-size: 1rem;
+    color: var(--text);
+  }
+  #walker-hud .hud-hp-bar {
+    width: 180px;
+    height: 12px;
+    background: #1a1d28;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid #2a2d40;
+  }
+  #walker-hud .hud-hp-fill {
+    height: 100%;
+    border-radius: 6px;
+    background: linear-gradient(90deg, #3a8a3a, #5fdd5f);
+    transition: width 0.2s;
+  }
+  #walker-hud .hud-hp-text {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #5fdd5f;
+    min-width: 70px;
+    text-align: right;
+  }
+
+  /* Floating damage numbers */
+  .dmg-number {
+    position: absolute;
+    font-weight: 900;
+    font-size: 1.1rem;
+    pointer-events: none;
+    z-index: 10000;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+    animation: dmgFloat 0.9s ease-out forwards;
+  }
+  @keyframes dmgFloat {
+    0%   { opacity: 1; transform: translateY(0) scale(1.2); }
+    60%  { opacity: 1; }
+    100% { opacity: 0; transform: translateY(-50px) scale(0.7); }
+  }
+
+  @media (max-width: 800px) {
+    .tier-grid { grid-template-columns: 1fr; }
+    .res-grid { grid-template-columns: 1fr; }
+    body { padding: 1rem; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Walker HP HUD -->
+<div id="walker-hud">
+  <span class="hud-name" id="hud-char-name">Thief</span>
+  <div class="hud-hp-bar"><div class="hud-hp-fill" id="hud-hp-fill" style="width:100%"></div></div>
+  <span class="hud-hp-text" id="hud-hp-text">45 / 45</span>
+</div>
+
+<!-- Interactive walker sprite -->
+<canvas id="thief-walker" width="64" height="64"></canvas>
+<div id="click-hint">Click anywhere to send your unit scurrying across the page. Use arrows or Left/Right keys to switch characters. Drag the character card to spawn neutral monsters!</div>
+
+<!-- Drag ghost element -->
+<div id="drag-ghost"></div>
+
+<!-- Character cycling UI -->
+<div id="char-cycler">
+  <button class="arrow-btn" id="char-prev" title="Previous character (Left arrow)">&larr;</button>
+  <div id="char-card-display" draggable="true">
+    <span class="drag-icon" title="Drag to spawn">&#x2630;</span>
+    <span class="char-emoji"></span>
+    <span class="char-name"></span>
+    <span class="char-tier"></span>
+    <span class="drag-hint">drag to spawn</span>
+  </div>
+  <button class="arrow-btn" id="char-next" title="Next character (Right arrow)">&rarr;</button>
+</div>
+
+<h1>Horde Capture - Bestiary</h1>
+<p class="subtitle">All 12 units across 5 tiers - stats, abilities, food costs & sprites</p>
+
+<!-- Resource Legend -->
+<div class="resource-legend">
+  <h2>Resources & Economy</h2>
+  <div class="res-grid">
+    <div class="res-item">
+      <div class="res-icon">🥕</div>
+      <div class="res-name">Carrots</div>
+      <div class="res-desc">Spawn on ground naturally. Used for Tier 1 units. Cheapest resource.</div>
+    </div>
+    <div class="res-item">
+      <div class="res-icon">🍖</div>
+      <div class="res-name">Meat</div>
+      <div class="res-desc">Drops from killed wild animals. Hunt first, then collect. For Tier 2-3.</div>
+    </div>
+    <div class="res-item">
+      <div class="res-icon">💎</div>
+      <div class="res-name">Crystals</div>
+      <div class="res-desc">Drops from elite golden minotaurs (rare, tough). For Tier 4-5.</div>
+    </div>
+  </div>
+</div>
+
+<!-- TIER 1 -->
+<div class="tier-section tier-1">
+  <div class="tier-header">Tier 1 - Starter Units</div>
+  <div class="tier-grid">
+    <!-- Gnome -->
+    <div class="card">
+      <div class="card-top">
+        <div class="sprite-box">
+          <img class="sprite-frame" src="assets/enemies/gnome/Gnome_Idle.png"
+               data-fw="192" data-fh="192" data-frames="8" alt="Gnome">
+        </div>
+        <div class="card-info">
+          <div class="card-name">Gnome <span style="font-size:1.2rem">🧝</span> <span class="tier-badge tb1">T1</span></div>
+          <div class="card-ability"><span class="ability-name">Nimble Hands</span> — <span class="ability-desc">2x pickup range, fastest gatherer</span></div>
+          <div class="card-role">Fast scout & gatherer. Weak in combat.</div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat s-hp"><div class="stat-label">HP</div><div class="stat-value">15</div></div>
+        <div class="stat s-atk"><div class="stat-label">ATK</div><div class="stat-value">3</div></div>
+        <div class="stat s-spd"><div class="stat-label">SPD</div><div class="stat-value">210</div></div>
+      </div>
+      <div class="hp-bar-container"><div class="hp-bar-bg"><div class="hp-bar-fill" style="width:1.07%"></div></div></div>
+      <div class="card-bottom">
+        <div class="food-box">
+          <span class="food-icon">🥕</span>
+          <div><span class="food-label">Feed:</span> <span class="food-cost">1 Carrot</span><br><span class="food-type">Gather carrots → deliver to Gnome camp</span></div>
+        </div>
+      </div>
+    </div>
+    <!-- Turtle -->
+    <div class="card">
+      <div class="card-top">
+        <div class="sprite-box">
+          <img class="sprite-frame" src="assets/enemies/turtle/Turtle_Idle.png"
+               data-fw="320" data-fh="320" data-frames="10" alt="Turtle">
+        </div>
+        <div class="card-info">
+          <div class="card-name">Turtle <span style="font-size:1.2rem">🐢</span> <span class="tier-badge tb1">T1</span></div>
+          <div class="card-ability"><span class="ability-name">Shell Stance</span> — <span class="ability-desc">60% DR when guarding (stationary)</span></div>
+          <div class="card-role">Slow but carries 10x resources per trip! Ultimate hauler.</div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat s-hp"><div class="stat-label">HP</div><div class="stat-value">65</div></div>
+        <div class="stat s-atk"><div class="stat-label">ATK</div><div class="stat-value">3</div></div>
+        <div class="stat s-spd"><div class="stat-label">SPD</div><div class="stat-value">55</div></div>
+      </div>
+      <div class="hp-bar-container"><div class="hp-bar-bg"><div class="hp-bar-fill" style="width:4.6%"></div></div></div>
+      <div class="card-bottom">
+        <div class="food-box">
+          <span class="food-icon">🥕</span>
+          <div><span class="food-label">Feed:</span> <span class="food-cost">1 Carrot</span><br><span class="food-type">Gather carrots → deliver to Turtle camp</span></div>
+        </div>
+        <div class="trait-box"><strong>Special:</strong> Carries 10x resources per trip — always prefer for gather/deliver workflows</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TIER 2 -->
+<div class="tier-section tier-2">
+  <div class="tier-header">Tier 2 - Mid Game</div>
+  <div class="tier-grid">
+    <!-- Skull -->
+    <div class="card">
+      <div class="card-top">
+        <div class="sprite-box">
+          <img class="sprite-frame" src="assets/enemies/skull/Skull_Idle.png"
+               data-fw="192" data-fh="192" data-frames="8" alt="Skull">
+        </div>
+        <div class="card-info">
+          <div class="card-name">Skull <span style="font-size:1.2rem">💀</span> <span class="tier-badge tb2">T2</span></div>
+          <div class="card-ability"><span class="ability-name">Undying</span> — <span class="ability-desc">Cheats death once (survives lethal at 1 HP)</span></div>
+          <div class="card-role">Durable fighter. Can self-sustain: hunt → collect → deliver.</div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat s-hp"><div class="stat-label">HP</div><div class="stat-value">80</div></div>
+        <div class="stat s-atk"><div class="stat-label">ATK</div><div class="stat-value">14</div></div>
+        <div class="stat s-spd"><div class="stat-label">SPD</div><div class="stat-value">155</div></div>
+      </div>
+      <div class="hp-bar-container"><div class="hp-bar-bg"><div class="hp-bar-fill" style="width:5.7%"></div></div></div>
+      <div class="card-bottom">
+        <div class="food-box">
+          <span class="food-icon">🍖</span>
+          <div><span class="food-label">Feed:</span> <span class="food-cost">3 Meat</span><br><span class="food-type">Hunt wilds → collect meat → deliver to Skull camp</span></div>
+        </div>
+      </div>
+    </div>
+    <!-- Spider -->
+    <div class="card">
+      <div class="card-top">
+        <div class="sprite-box">
+          <img class="sprite-frame" src="assets/enemies/spider/Spider_Idle.png"
+               data-fw="192" data-fh="192" data-frames="8" alt="Spider">
+        </div>
+        <div class="card-info">
+          <div class="card-name">Spider <span style="font-size:1.2rem">🕷️</span> <span class="tier-badge tb2">T2</span></div>
+          <div class="card-ability"><span class="ability-name">Venom Bite</span> — <span class="ability-desc">+5% target max HP per hit</span></div>
+          <div class="card-role">Fast ambusher. Great for raiding and hit-and-run.</div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat s-hp"><div class="stat-label">HP</div><div class="stat-value">120</div></div>
+        <div class="stat s-atk"><div class="stat-label">ATK</div><div class="stat-value">18</div></div>
+        <div class="stat s-spd"><div class="stat-label">SPD</div><div class="stat-value">85</div></div>
+      </div>
+      <div class="hp-bar-container"><div class="hp-bar-bg"><div class="hp-bar-fill" style="width:8.6%"></div></div></div>
+      <div class="card-bottom">
+        <div class="food-box">
+          <span class="food-icon">🍖</span>
+          <div><span class="food-label">Feed:</span> <span class="food-cost">3 Meat</span><br><span class="food-type">Hunt wilds → collect meat → deliver to Spider camp</span></div>
+        </div>
+      </div>
+    </div>
+    <!-- Gnoll -->
+    <div class="card">
+      <div class="card-top">
+        <div class="sprite-box">
+          <img class="sprite-frame" src="assets/enemies/gnoll/Gnoll_Idle.png"
+               data-fw="192" data-fh="192" data-frames="6" alt="Gnoll">
+        </div>
+        <div class="card-info">
+          <div class="card-name">Gnoll <span style="font-size:1.2rem">🐺</span> <span class="tier-badge tb2">T2</span></div>
+          <div class="card-ability"><span class="ability-name">Bone Toss</span> — <span class="ability-desc">Extended range (120 vs 80)</span></div>
+          <div class="card-role">Ranged attacker. Excellent for defense and kiting.</div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat s-hp"><div class="stat-label">HP</div><div class="stat-value">55</div></div>
+        <div class="stat s-atk"><div class="stat-label">ATK</div><div class="stat-value">28</div></div>
+        <div class="stat s-spd"><div class="stat-label">SPD</div><div class="stat-value">175</div></div>
+      </div>
+      <div class="hp-bar-container"><div class="hp-bar-bg"><div class="hp-bar-fill" style="width:3.9%"></div></div></div>
+      <div class="card-bottom">
+        <div class="food-box">
+          <span class="food-icon">🍖</span>
+          <div><span class="food-label">Feed:</span> <span class="food-cost">3 Meat</span><br><span class="food-type">Hunt wilds → collect meat → deliver to Gnoll camp</span></div>
+        </div>
+      </div>
+    </div>
+    <!-- THIEF (NEW) -->
+    <div class="card" style="border-color: #5080c0;">
+      <div class="card-top">
+        <div class="sprite-box" style="border-color: #5080c0;">
+          <img class="sprite-frame" src="assets/enemies/thief/Thief_Idle.png"
+               data-fw="192" data-fh="192" data-frames="6" alt="Thief">
+        </div>
+        <div class="card-info">
+          <div class="card-name">Thief <span style="font-size:1.2rem">🗡️</span> <span class="tier-badge tb2">T2</span></div>
+          <div class="card-ability"><span class="ability-name">Shadow Step</span> — <span class="ability-desc">Only unit that can hop through terrain. Steals resources on hit.</span></div>
+          <div class="card-role">The only unit that crosses terrain — hops over obstacles via shortest path.</div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat s-hp"><div class="stat-label">HP</div><div class="stat-value">45</div></div>
+        <div class="stat s-atk"><div class="stat-label">ATK</div><div class="stat-value">22</div></div>
+        <div class="stat s-spd"><div class="stat-label">SPD</div><div class="stat-value">200</div></div>
+      </div>
+      <div class="hp-bar-container"><div class="hp-bar-bg"><div class="hp-bar-fill" style="width:3.2%"></div></div></div>
+      <div class="card-bottom">
+        <div class="food-box">
+          <span class="food-icon">🍖</span>
+          <div><span class="food-label">Feed:</span> <span class="food-cost">3 Meat</span><br><span class="food-type">Hunt wilds → collect meat → deliver to Thief camp</span></div>
+        </div>
+        <div class="trait-box"><strong>Unique:</strong> The only unit that can cross terrain — takes the shortest path, hopping over cards and obstacles. Steals 1 resource from enemy units on hit.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TIER 3 -->
+<div class="tier-section tier-3">
+  <div class="tier-header">Tier 3 - Heavy Hitters</div>
+  <div class="tier-grid">
+    <!-- Panda -->
+    <div class="card">
+      <div class="card-top">
+        <div class="sprite-box">
+          <img class="sprite-frame" src="assets/enemies/panda/Panda_Idle.png"
+               data-fw="256" data-fh="256" data-frames="10" alt="Panda">
+        </div>
+        <div class="card-info">
+          <div class="card-name">Panda <span style="font-size:1.2rem">🐼</span> <span class="tier-badge tb3">T3</span></div>
+          <div class="card-ability"><span class="ability-name">Thick Hide</span> — <span class="ability-desc">Regenerates 1% max HP/sec</span></div>
+          <div class="card-role">Tanky brawler, high HP. Excellent frontline defender.</div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat s-hp"><div class="stat-label">HP</div><div class="stat-value">900</div></div>
+        <div class="stat s-atk"><div class="stat-label">ATK</div><div class="stat-value">35</div></div>
+        <div class="stat s-spd"><div class="stat-label">SPD</div><div class="stat-value">80</div></div>
+      </div>
+      <div class="hp-bar-container"><div class="hp-bar-bg"><div class="hp-bar-fill" style="width:6.4%"></div></div></div>
+      <div class="card-bottom">
+        <div class="food-box">
+          <span class="food-icon">🍖</span>
+          <div><span class="food-label">Feed:</span> <span class="food-cost">5 Meat</span><br><span class="food-type">Hunt wilds → collect meat → deliver to Panda camp</span></div>
+        </div>
+        <div class="trait-box"><strong>Regen:</strong> 9 HP/sec passive healing makes Panda incredibly hard to kill</div>
+      </div>
+    </div>
+    <!-- Lizard -->
+    <div class="card">
+      <div class="card-top">
+        <div class="sprite-box">
+          <img class="sprite-frame" src="assets/enemies/lizard/Lizard_Idle.png"
+               data-fw="192" data-fh="192" data-frames="7" alt="Lizard">
+        </div>
+        <div class="card-info">
+          <div class="card-name">Lizard <span style="font-size:1.2rem">🦎</span> <span class="tier-badge tb3">T3</span></div>
+          <div class="card-ability"><span class="ability-name">Cold Blood</span> — <span class="ability-desc">3x damage to targets below 40% HP</span></div>
+          <div class="card-role">Agile, great damage. Excellent raider & finisher.</div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat s-hp"><div class="stat-label">HP</div><div class="stat-value">450</div></div>
+        <div class="stat s-atk"><div class="stat-label">ATK</div><div class="stat-value">70</div></div>
+        <div class="stat s-spd"><div class="stat-label">SPD</div><div class="stat-value">110</div></div>
+      </div>
+      <div class="hp-bar-container"><div class="hp-bar-bg"><div class="hp-bar-fill" style="width:3.2%"></div></div></div>
+      <div class="card-bottom">
+        <div class="food-box">
+          <span class="food-icon">🥕</span>
+          <div><span class="food-label">Feed:</span> <span class="food-cost">5 Carrots</span><br><span class="food-type">Gather carrots → deliver to Lizard camp</span></div>
+        </div>
+        <div class="trait-box"><strong>Execute:</strong> Deals 210 ATK to low-HP targets — devastating finisher</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TIER 4 -->
+<div class="tier-section tier-4">
+  <div class="tier-header">Tier 4 - Elite Powerhouses</div>
+  <div class="tier-grid">
+    <!-- Minotaur -->
+    <div class="card">
+      <div class="card-top">
+        <div class="sprite-box">
+          <img class="sprite-frame" src="assets/enemies/minotaur/Minotaur_Idle.png"
+               data-fw="320" data-fh="320" data-frames="16" alt="Minotaur">
+        </div>
+        <div class="card-info">
+          <div class="card-name">Minotaur <span style="font-size:1.2rem">🐂</span> <span class="tier-badge tb4">T4</span></div>
+          <div class="card-ability"><span class="ability-name">War Cry</span> — <span class="ability-desc">Nearby allies +25% attack</span></div>
+          <div class="card-role">Massive HP and damage. Late-game frontline powerhouse.</div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat s-hp"><div class="stat-label">HP</div><div class="stat-value">2,200</div></div>
+        <div class="stat s-atk"><div class="stat-label">ATK</div><div class="stat-value">110</div></div>
+        <div class="stat s-spd"><div class="stat-label">SPD</div><div class="stat-value">120</div></div>
+      </div>
+      <div class="hp-bar-container"><div class="hp-bar-bg"><div class="hp-bar-fill" style="width:15.7%"></div></div></div>
+      <div class="card-bottom">
+        <div class="food-box">
+          <span class="food-icon">💎</span>
+          <div><span class="food-label">Feed:</span> <span class="food-cost">8 Crystals</span><br><span class="food-type">Hunt elite prey → collect crystals → deliver to Minotaur camp</span></div>
+        </div>
+        <div class="trait-box"><strong>Aura:</strong> +25% attack to all nearby allied units</div>
+      </div>
+    </div>
+    <!-- Shaman -->
+    <div class="card">
+      <div class="card-top">
+        <div class="sprite-box">
+          <img class="sprite-frame" src="assets/enemies/shaman/Shaman_Idle.png"
+               data-fw="192" data-fh="192" data-frames="8" alt="Shaman">
+        </div>
+        <div class="card-info">
+          <div class="card-name">Shaman <span style="font-size:1.2rem">🔮</span> <span class="tier-badge tb4">T4</span></div>
+          <div class="card-ability"><span class="ability-name">Arcane Blast</span> — <span class="ability-desc">All attacks splash 60px</span></div>
+          <div class="card-role">Support/caster. Strong AoE damage dealer.</div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat s-hp"><div class="stat-label">HP</div><div class="stat-value">1,400</div></div>
+        <div class="stat s-atk"><div class="stat-label">ATK</div><div class="stat-value">180</div></div>
+        <div class="stat s-spd"><div class="stat-label">SPD</div><div class="stat-value">100</div></div>
+      </div>
+      <div class="hp-bar-container"><div class="hp-bar-bg"><div class="hp-bar-fill" style="width:10%"></div></div></div>
+      <div class="card-bottom">
+        <div class="food-box">
+          <span class="food-icon">💎</span>
+          <div><span class="food-label">Feed:</span> <span class="food-cost">8 Crystals</span><br><span class="food-type">Hunt elite prey → collect crystals → deliver to Shaman camp</span></div>
+        </div>
+        <div class="trait-box"><strong>Splash:</strong> Every attack hits all enemies in 60px radius — devastating vs groups</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TIER 5 -->
+<div class="tier-section tier-5">
+  <div class="tier-header">Tier 5 - BOSS</div>
+  <div class="tier-grid">
+    <!-- Troll -->
+    <div class="card" style="border-color: var(--tier5); box-shadow: 0 0 20px rgba(212,175,55,0.15);">
+      <div class="card-top">
+        <div class="sprite-box" style="border-color: var(--tier5); width: 96px; height: 96px;">
+          <img class="sprite-frame" src="assets/enemies/troll/Troll_Idle.png"
+               data-fw="384" data-fh="384" data-frames="12" alt="Troll">
+        </div>
+        <div class="card-info">
+          <div class="card-name" style="font-size: 1.5rem;">Troll <span style="font-size:1.3rem">👹</span> <span class="tier-badge tb5">T5 BOSS</span></div>
+          <div class="card-ability"><span class="ability-name">Club Slam</span> — <span class="ability-desc">Massive 90px splash, slows enemies</span></div>
+          <div class="card-role">Ultimate unit. Only 1 camp at map center. Game-ender.</div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat s-hp"><div class="stat-label">HP</div><div class="stat-value" style="font-size:1.4rem;">14,000</div></div>
+        <div class="stat s-atk"><div class="stat-label">ATK</div><div class="stat-value" style="font-size:1.4rem;">350</div></div>
+        <div class="stat s-spd"><div class="stat-label">SPD</div><div class="stat-value" style="font-size:1.4rem;">50</div></div>
+      </div>
+      <div class="hp-bar-container"><div class="hp-bar-bg"><div class="hp-bar-fill" style="width:100%; background: linear-gradient(90deg, #8a6a10, #d4af37, #f0d060);"></div></div></div>
+      <div class="card-bottom">
+        <div class="food-box" style="border-color: #4a3a10; background: linear-gradient(135deg, #1a1508, #10121a);">
+          <span class="food-icon">💎</span>
+          <div><span class="food-label" style="color: var(--tier5);">Feed:</span> <span class="food-cost">20 Crystals</span><br><span class="food-type">Hunt elite prey → collect crystals → deliver to Troll camp (center)</span></div>
+        </div>
+        <div class="trait-box"><strong>Unique:</strong> Only 1 Troll camp exists — at the very center of the map. Whoever captures it first controls the game's most powerful unit.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Quick Comparison Table -->
+<div class="resource-legend" style="max-width: 900px; margin-top: 2rem;">
+  <h2>Quick Comparison</h2>
+  <table style="width:100%; border-collapse: collapse; font-size: 0.88rem;">
+    <thead>
+      <tr style="border-bottom: 2px solid var(--border);">
+        <th style="text-align:left; padding:0.5rem;">Unit</th>
+        <th style="text-align:center; padding:0.5rem;">Tier</th>
+        <th style="text-align:right; padding:0.5rem; color:#5fdd5f;">HP</th>
+        <th style="text-align:right; padding:0.5rem; color:#e06060;">ATK</th>
+        <th style="text-align:right; padding:0.5rem; color:#e0c040;">SPD</th>
+        <th style="text-align:center; padding:0.5rem;">Food</th>
+        <th style="text-align:left; padding:0.5rem;">Ability</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr style="border-bottom:1px solid #1a1d28;">
+        <td style="padding:0.4rem 0.5rem;">🧝 Gnome</td><td style="text-align:center; color:var(--tier1);">T1</td>
+        <td style="text-align:right;">15</td><td style="text-align:right;">3</td><td style="text-align:right;">210</td>
+        <td style="text-align:center;">🥕 1</td><td style="padding-left:0.5rem; color:var(--muted);">2x pickup range</td>
+      </tr>
+      <tr style="border-bottom:1px solid #1a1d28;">
+        <td style="padding:0.4rem 0.5rem;">🐢 Turtle</td><td style="text-align:center; color:var(--tier1);">T1</td>
+        <td style="text-align:right;">65</td><td style="text-align:right;">3</td><td style="text-align:right;">55</td>
+        <td style="text-align:center;">🥕 1</td><td style="padding-left:0.5rem; color:var(--muted);">10x carry, 60% DR guard</td>
+      </tr>
+      <tr style="border-bottom:1px solid #1a1d28;">
+        <td style="padding:0.4rem 0.5rem;">💀 Skull</td><td style="text-align:center; color:var(--tier2);">T2</td>
+        <td style="text-align:right;">80</td><td style="text-align:right;">14</td><td style="text-align:right;">155</td>
+        <td style="text-align:center;">🍖 3</td><td style="padding-left:0.5rem; color:var(--muted);">Cheats death once</td>
+      </tr>
+      <tr style="border-bottom:1px solid #1a1d28;">
+        <td style="padding:0.4rem 0.5rem;">🕷️ Spider</td><td style="text-align:center; color:var(--tier2);">T2</td>
+        <td style="text-align:right;">120</td><td style="text-align:right;">18</td><td style="text-align:right;">85</td>
+        <td style="text-align:center;">🍖 3</td><td style="padding-left:0.5rem; color:var(--muted);">+5% target max HP/hit</td>
+      </tr>
+      <tr style="border-bottom:1px solid #1a1d28;">
+        <td style="padding:0.4rem 0.5rem;">🐺 Gnoll</td><td style="text-align:center; color:var(--tier2);">T2</td>
+        <td style="text-align:right;">55</td><td style="text-align:right;">28</td><td style="text-align:right;">175</td>
+        <td style="text-align:center;">🍖 3</td><td style="padding-left:0.5rem; color:var(--muted);">120 range (vs 80)</td>
+      </tr>
+      <tr style="border-bottom:1px solid #1a1d28; background: rgba(80,128,192,0.08);">
+        <td style="padding:0.4rem 0.5rem;">🗡️ Thief</td><td style="text-align:center; color:var(--tier2);">T2</td>
+        <td style="text-align:right;">45</td><td style="text-align:right;">22</td><td style="text-align:right;">200</td>
+        <td style="text-align:center;">🍖 3</td><td style="padding-left:0.5rem; color:var(--muted);">Terrain hop, steal res</td>
+      </tr>
+      <tr style="border-bottom:1px solid #1a1d28;">
+        <td style="padding:0.4rem 0.5rem;">🐼 Panda</td><td style="text-align:center; color:var(--tier3);">T3</td>
+        <td style="text-align:right;">900</td><td style="text-align:right;">35</td><td style="text-align:right;">80</td>
+        <td style="text-align:center;">🍖 5</td><td style="padding-left:0.5rem; color:var(--muted);">1% max HP regen/sec</td>
+      </tr>
+      <tr style="border-bottom:1px solid #1a1d28;">
+        <td style="padding:0.4rem 0.5rem;">🦎 Lizard</td><td style="text-align:center; color:var(--tier3);">T3</td>
+        <td style="text-align:right;">450</td><td style="text-align:right;">70</td><td style="text-align:right;">110</td>
+        <td style="text-align:center;">🥕 5</td><td style="padding-left:0.5rem; color:var(--muted);">3x dmg below 40% HP</td>
+      </tr>
+      <tr style="border-bottom:1px solid #1a1d28;">
+        <td style="padding:0.4rem 0.5rem;">🐂 Minotaur</td><td style="text-align:center; color:var(--tier4);">T4</td>
+        <td style="text-align:right;">2,200</td><td style="text-align:right;">110</td><td style="text-align:right;">120</td>
+        <td style="text-align:center;">💎 8</td><td style="padding-left:0.5rem; color:var(--muted);">+25% ATK aura</td>
+      </tr>
+      <tr style="border-bottom:1px solid #1a1d28;">
+        <td style="padding:0.4rem 0.5rem;">🔮 Shaman</td><td style="text-align:center; color:var(--tier4);">T4</td>
+        <td style="text-align:right;">1,400</td><td style="text-align:right;">180</td><td style="text-align:right;">100</td>
+        <td style="text-align:center;">💎 8</td><td style="padding-left:0.5rem; color:var(--muted);">60px splash attacks</td>
+      </tr>
+      <tr style="background: rgba(212,175,55,0.05);">
+        <td style="padding:0.4rem 0.5rem; font-weight:700;">👹 Troll</td><td style="text-align:center; color:var(--tier5); font-weight:700;">T5</td>
+        <td style="text-align:right; font-weight:700;">14,000</td><td style="text-align:right; font-weight:700;">350</td><td style="text-align:right;">50</td>
+        <td style="text-align:center;">💎 20</td><td style="padding-left:0.5rem; color:var(--muted);">90px splash + slow</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+// CHARACTER DATA
+// ═══════════════════════════════════════════════════════════
+const ALL_CHARACTERS = [
+  { name: 'Gnome',    emoji: '🧝',  tier: 1, tierLabel: 'T1', hp: 15,    atk: 3,   spd: 210, runSrc: 'gnome/Gnome_Run.png',       runFrames: 6,  idleSrc: 'gnome/Gnome_Idle.png',       idleFrames: 8,  atkSrc: 'gnome/Gnome_Attack.png',       atkFrames: 7,  fw: 192, fh: 192 },
+  { name: 'Turtle',   emoji: '🐢',  tier: 1, tierLabel: 'T1', hp: 65,    atk: 3,   spd: 55,  runSrc: 'turtle/Turtle_Walk.png',     runFrames: 7,  idleSrc: 'turtle/Turtle_Idle.png',     idleFrames: 10, atkSrc: 'turtle/Turtle_Attack.png',     atkFrames: 10, fw: 320, fh: 320 },
+  { name: 'Skull',    emoji: '💀',  tier: 2, tierLabel: 'T2', hp: 80,    atk: 14,  spd: 155, runSrc: 'skull/Skull_Run.png',        runFrames: 6,  idleSrc: 'skull/Skull_Idle.png',       idleFrames: 8,  atkSrc: 'skull/Skull_Attack.png',       atkFrames: 7,  fw: 192, fh: 192 },
+  { name: 'Spider',   emoji: '🕷️', tier: 2, tierLabel: 'T2', hp: 120,   atk: 18,  spd: 85,  runSrc: 'spider/Spider_Run.png',      runFrames: 5,  idleSrc: 'spider/Spider_Idle.png',     idleFrames: 8,  atkSrc: 'spider/Spider_Attack.png',     atkFrames: 8,  fw: 192, fh: 192 },
+  { name: 'Gnoll',    emoji: '🐺',  tier: 2, tierLabel: 'T2', hp: 55,    atk: 28,  spd: 175, runSrc: 'gnoll/Gnoll_Walk.png',       runFrames: 8,  idleSrc: 'gnoll/Gnoll_Idle.png',       idleFrames: 6,  atkSrc: 'gnoll/Gnoll_Throw.png',        atkFrames: 8,  fw: 192, fh: 192 },
+  { name: 'Thief',    emoji: '🗡️', tier: 2, tierLabel: 'T2', hp: 45,    atk: 22,  spd: 200, runSrc: 'thief/Thief_Run.png',        runFrames: 6,  idleSrc: 'thief/Thief_Idle.png',       idleFrames: 6,  atkSrc: 'thief/Thief_Attack.png',       atkFrames: 6,  fw: 192, fh: 192 },
+  { name: 'Panda',    emoji: '🐼',  tier: 3, tierLabel: 'T3', hp: 900,   atk: 35,  spd: 80,  runSrc: 'panda/Panda_Run.png',        runFrames: 6,  idleSrc: 'panda/Panda_Idle.png',       idleFrames: 10, atkSrc: 'panda/Panda_Attack.png',       atkFrames: 13, fw: 256, fh: 256 },
+  { name: 'Lizard',   emoji: '🦎',  tier: 3, tierLabel: 'T3', hp: 450,   atk: 70,  spd: 110, runSrc: 'lizard/Lizard_Run.png',      runFrames: 6,  idleSrc: 'lizard/Lizard_Idle.png',     idleFrames: 7,  atkSrc: 'lizard/Lizard_Attack.png',     atkFrames: 9,  fw: 192, fh: 192 },
+  { name: 'Minotaur', emoji: '🐂',  tier: 4, tierLabel: 'T4', hp: 2200,  atk: 110, spd: 120, runSrc: 'minotaur/Minotaur_Walk.png', runFrames: 8,  idleSrc: 'minotaur/Minotaur_Idle.png', idleFrames: 16, atkSrc: 'minotaur/Minotaur_Attack.png', atkFrames: 12, fw: 320, fh: 320 },
+  { name: 'Shaman',   emoji: '🔮',  tier: 4, tierLabel: 'T4', hp: 1400,  atk: 180, spd: 100, runSrc: 'shaman/Shaman_Run.png',      runFrames: 4,  idleSrc: 'shaman/Shaman_Idle.png',     idleFrames: 8,  atkSrc: 'shaman/Shaman_Attack.png',     atkFrames: 10, fw: 192, fh: 192 },
+  { name: 'Troll',    emoji: '👹',  tier: 5, tierLabel: 'T5', hp: 14000, atk: 350, spd: 50,  runSrc: 'troll/Troll_Walk.png',       runFrames: 10, idleSrc: 'troll/Troll_Idle.png',       idleFrames: 12, atkSrc: 'troll/Troll_Attack.png',       atkFrames: 6,  fw: 384, fh: 384 },
+];
+
+const ASSET_BASE = 'assets/enemies/';
+const TIER_COLORS = { 1: '#5fcc5f', 2: '#4ea8de', 3: '#e08030', 4: '#e04545', 5: '#d4af37' };
+
+// Preload all images (run, idle, attack)
+ALL_CHARACTERS.forEach(ch => {
+  ch._runImg = new Image();
+  ch._runImg.src = ASSET_BASE + ch.runSrc;
+  ch._idleImg = new Image();
+  ch._idleImg.src = ASSET_BASE + ch.idleSrc;
+  ch._atkImg = new Image();
+  ch._atkImg.src = ASSET_BASE + ch.atkSrc;
+});
+
+// ═══════════════════════════════════════════════════════════
+// 1) SINGLE-FRAME SPRITE CLIPPING (cards)
+// ═══════════════════════════════════════════════════════════
+document.querySelectorAll('.sprite-frame').forEach(img => {
+  const fw = parseInt(img.dataset.fw);
+  const fh = parseInt(img.dataset.fh);
+  const box = img.parentElement;
+  const boxW = box.offsetWidth || 80;
+  const boxH = box.offsetHeight || 80;
+
+  const scale = Math.min(boxW / fw, boxH / fh) * 1.8;
+  const displayW = fw * scale;
+  const displayH = fh * scale;
+  const totalFrames = parseInt(img.dataset.frames);
+
+  img.style.width = (displayW * totalFrames) + 'px';
+  img.style.height = displayH + 'px';
+  img.style.transform = `translate(-${displayW / 2}px, -${displayH / 2}px)`;
+  img.style.clipPath = `inset(0 ${displayW * (totalFrames - 1)}px 0 0)`;
+});
+
+// ═══════════════════════════════════════════════════════════
+// 1b) INJECT "+" SPAWN BUTTONS INTO EVERY CARD
+// ═══════════════════════════════════════════════════════════
+const CARD_CHAR_MAP = {
+  'Gnome': 0, 'Turtle': 1, 'Skull': 2, 'Spider': 3, 'Gnoll': 4,
+  'Thief': 5, 'Panda': 6, 'Lizard': 7, 'Minotaur': 8, 'Shaman': 9, 'Troll': 10
+};
+document.querySelectorAll('.card').forEach(card => {
+  const nameEl = card.querySelector('.card-name');
+  if (!nameEl) return;
+  const text = nameEl.textContent.trim();
+  const charKey = Object.keys(CARD_CHAR_MAP).find(k => text.startsWith(k));
+  if (charKey === undefined) return;
+  const charIdx = CARD_CHAR_MAP[charKey];
+  const btn = document.createElement('div');
+  btn.className = 'spawn-btn';
+  btn.textContent = '+';
+  btn.title = 'Spawn neutral ' + charKey + ' on the page';
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const rect = card.getBoundingClientRect();
+    const sx = rect.left + window.scrollX + rect.width / 2 + (Math.random() - 0.5) * 200;
+    const sy = rect.top + window.scrollY - 40 - Math.random() * 60;
+    window.spawnMonster(ALL_CHARACTERS[charIdx], Math.max(40, sx), Math.max(40, sy));
+  });
+  card.appendChild(btn);
+});
+
+// ═══════════════════════════════════════════════════════════
+// 2) CHARACTER CYCLING UI
+// ═══════════════════════════════════════════════════════════
+let currentCharIdx = 5; // Start on Thief (index 5)
+
+const charEmoji = document.querySelector('#char-card-display .char-emoji');
+const charName = document.querySelector('#char-card-display .char-name');
+const charTier = document.querySelector('#char-card-display .char-tier');
+const charCard = document.getElementById('char-card-display');
+
+// ── Walker HP system ──
+const hudName = document.getElementById('hud-char-name');
+const hudHpFill = document.getElementById('hud-hp-fill');
+const hudHpText = document.getElementById('hud-hp-text');
+
+window._walkerHP = { current: 45, max: 45, atk: 22 };
+
+function updateWalkerHP() {
+  const ch = ALL_CHARACTERS[currentCharIdx];
+  // When switching characters, reset HP to the new char's max
+  window._walkerHP.max = ch.hp;
+  window._walkerHP.current = Math.min(window._walkerHP.current, ch.hp);
+  window._walkerHP.atk = ch.atk;
+  const pct = Math.max(0, (window._walkerHP.current / window._walkerHP.max) * 100);
+  hudHpFill.style.width = pct + '%';
+  hudHpText.textContent = Math.ceil(window._walkerHP.current) + ' / ' + window._walkerHP.max;
+  hudName.textContent = ch.emoji + ' ' + ch.name;
+  // Color shift at low HP
+  if (pct < 25) {
+    hudHpFill.style.background = 'linear-gradient(90deg, #8a2020, #e04040)';
+  } else if (pct < 50) {
+    hudHpFill.style.background = 'linear-gradient(90deg, #8a6a10, #e0c040)';
+  } else {
+    hudHpFill.style.background = 'linear-gradient(90deg, #3a8a3a, #5fdd5f)';
+  }
+}
+
+function resetWalkerHP() {
+  const ch = ALL_CHARACTERS[currentCharIdx];
+  window._walkerHP.current = ch.hp;
+  window._walkerHP.max = ch.hp;
+  window._walkerHP.atk = ch.atk;
+  updateWalkerHP();
+}
+
+function spawnDmgNumber(x, y, amount, color) {
+  const el = document.createElement('div');
+  el.className = 'dmg-number';
+  el.textContent = '-' + Math.ceil(amount);
+  el.style.left = (x - 15) + 'px';
+  el.style.top = (y - 20) + 'px';
+  el.style.color = color;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 900);
+}
+
+function updateCharUI() {
+  const ch = ALL_CHARACTERS[currentCharIdx];
+  charEmoji.textContent = ch.emoji;
+  charName.textContent = ch.name;
+  charTier.textContent = ch.tierLabel;
+  charTier.style.background = TIER_COLORS[ch.tier];
+  resetWalkerHP();
+}
+updateCharUI();
+
+document.getElementById('char-prev').addEventListener('click', (e) => {
+  e.stopPropagation();
+  currentCharIdx = (currentCharIdx - 1 + ALL_CHARACTERS.length) % ALL_CHARACTERS.length;
+  updateCharUI();
+});
+document.getElementById('char-next').addEventListener('click', (e) => {
+  e.stopPropagation();
+  currentCharIdx = (currentCharIdx + 1) % ALL_CHARACTERS.length;
+  updateCharUI();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowLeft' || e.key === 'q' || e.key === 'Q') {
+    e.preventDefault();
+    currentCharIdx = (currentCharIdx - 1 + ALL_CHARACTERS.length) % ALL_CHARACTERS.length;
+    updateCharUI();
+  } else if (e.key === 'ArrowRight' || e.key === 'e' || e.key === 'E') {
+    e.preventDefault();
+    currentCharIdx = (currentCharIdx + 1) % ALL_CHARACTERS.length;
+    updateCharUI();
+  }
+});
+
+// Left-click on the character display area to cycle forward
+document.getElementById('char-card-display').addEventListener('click', () => {
+  currentCharIdx = (currentCharIdx + 1) % ALL_CHARACTERS.length;
+  updateCharUI();
+});
+
+// ═══════════════════════════════════════════════════════════
+// 2.5) RANDOM BACKGROUND TERRAIN — Real sprite images, solid obstacles
+// ═══════════════════════════════════════════════════════════
+(function() {
+  const BASE = 'assets/terrain/';
+  // Each terrain piece: src, display width/height, whether it's a spritesheet needing clipping
+  const TERRAIN_DEFS = [
+    { src: 'Tree1.png',      w: 90,  h: 120, sheet: true,  fw: 192, frames: 8 },
+    { src: 'Tree2.png',      w: 90,  h: 120, sheet: true,  fw: 192, frames: 8 },
+    { src: 'Tree3.png',      w: 90,  h: 120, sheet: true,  fw: 192, frames: 8 },
+    { src: 'Rock1.png',      w: 60,  h: 50,  sheet: false },
+    { src: 'Rock2.png',      w: 55,  h: 45,  sheet: false },
+    { src: 'Rock3.png',      w: 50,  h: 40,  sheet: false },
+    { src: 'Bushe1.png',     w: 60,  h: 40,  sheet: true,  fw: 128, frames: 8 },
+    { src: 'Bushe2.png',     w: 55,  h: 38,  sheet: true,  fw: 128, frames: 8 },
+    { src: 'Stump1.png',     w: 45,  h: 45,  sheet: false },
+    { src: 'GoldStone1.png', w: 50,  h: 50,  sheet: false },
+    { src: 'House1.png',     w: 80,  h: 100, sheet: false },
+    { src: 'Tower.png',      w: 60,  h: 100, sheet: false },
+  ];
+
+  const pageH = Math.max(document.body.scrollHeight, 3000);
+  const pageW = Math.max(document.body.scrollWidth, window.innerWidth);
+  const margin = 60; // keep away from edges
+
+  // Place 20-30 terrain pieces scattered across the page
+  const count = 22 + Math.floor(Math.random() * 8);
+  for (let i = 0; i < count; i++) {
+    const def = TERRAIN_DEFS[Math.floor(Math.random() * TERRAIN_DEFS.length)];
+    // Random scale variation
+    const scale = 0.8 + Math.random() * 0.5;
+    const w = Math.round(def.w * scale);
+    const h = Math.round(def.h * scale);
+    const x = margin + Math.random() * (pageW - w - margin * 2);
+    const y = margin + Math.random() * (pageH - h - margin * 2);
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'terrain-obstacle';
+    wrapper.style.left = x + 'px';
+    wrapper.style.top = y + 'px';
+    wrapper.style.width = w + 'px';
+    wrapper.style.height = h + 'px';
+
+    const img = document.createElement('img');
+    img.src = BASE + def.src;
+
+    if (def.sheet) {
+      // Spritesheet: show only first frame via overflow clip
+      const clipW = w;
+      const fullW = w * def.frames;
+      img.style.width = fullW + 'px';
+      img.style.height = h + 'px';
+      wrapper.style.overflow = 'hidden';
+    } else {
+      img.style.width = w + 'px';
+      img.style.height = h + 'px';
+    }
+
+    wrapper.appendChild(img);
+    document.body.appendChild(wrapper);
+  }
+})();
+
+// ═══════════════════════════════════════════════════════════
+// 3) INTERACTIVE WALKER — with character cycling support
+//    + Neutral monsters that roam & attack the player walker
+// ═══════════════════════════════════════════════════════════
+(function() {
+  const canvas = document.getElementById('thief-walker');
+  const ctx = canvas.getContext('2d');
+  const hint = document.getElementById('click-hint');
+
+  // Walker state — exposed on window for monster AI
+  let posX = 100, posY = 200;
+  window._walkerPos = { x: posX, y: posY };
+  let path = [];
+  let pathIdx = 0;
+  let moving = false;
+  let frame = 0;
+  let frameTimer = 0;
+  let facingLeft = false;
+  let hopPhase = 0;
+  let firstClick = true;
+
+  const CELL = 20;
+
+  function getCurrent() { return ALL_CHARACTERS[currentCharIdx]; }
+
+  function getObstacles() {
+    const blocked = new Set();
+    const els = document.querySelectorAll('.card, .resource-legend, .tier-header, h1, .subtitle, .terrain-obstacle, table');
+    els.forEach(el => {
+      const r = el.getBoundingClientRect();
+      const sx = Math.floor((r.left + window.scrollX) / CELL);
+      const sy = Math.floor((r.top + window.scrollY) / CELL);
+      const ex = Math.ceil((r.right + window.scrollX) / CELL);
+      const ey = Math.ceil((r.bottom + window.scrollY) / CELL);
+      for (let y = sy; y <= ey; y++)
+        for (let x = sx; x <= ex; x++)
+          blocked.add(x + ',' + y);
+    });
+    return blocked;
+  }
+
+  // Only the Thief (Rogue) can hop through terrain; others must go around
+  function isThiefSelected() {
+    return ALL_CHARACTERS[currentCharIdx].name === 'Thief';
+  }
+
+  function aStar(sx, sy, ex, ey) {
+    const blocked = getObstacles();
+    const canCrossTerrain = isThiefSelected();
+    const key = (x, y) => x + ',' + y;
+    const open = [{ x: sx, y: sy, g: 0, f: 0 }];
+    const gMap = new Map();
+    const from = new Map();
+    gMap.set(key(sx, sy), 0);
+
+    const heuristic = (x, y) => Math.abs(x - ex) + Math.abs(y - ey);
+    open[0].f = heuristic(sx, sy);
+
+    const dirs = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
+
+    let iterations = 0;
+    while (open.length > 0 && iterations < 15000) {
+      iterations++;
+      let bestI = 0;
+      for (let i = 1; i < open.length; i++) {
+        if (open[i].f < open[bestI].f) bestI = i;
+      }
+      const cur = open.splice(bestI, 1)[0];
+
+      if (cur.x === ex && cur.y === ey) {
+        const result = [];
+        let k = key(cur.x, cur.y);
+        while (k) {
+          const [px, py] = k.split(',').map(Number);
+          result.unshift({ x: px * CELL + CELL / 2, y: py * CELL + CELL / 2, terrain: blocked.has(k) });
+          k = from.get(k);
+        }
+        return result;
+      }
+
+      for (const [dx, dy] of dirs) {
+        const nx = cur.x + dx, ny = cur.y + dy;
+        if (nx < 0 || ny < 0) continue;
+        const nk = key(nx, ny);
+        const isBlocked = blocked.has(nk);
+        // Non-thief characters cannot enter terrain at all
+        if (isBlocked && !canCrossTerrain) continue;
+        const moveCost = (dx !== 0 && dy !== 0) ? 1.41 : 1;
+        const terrainCost = isBlocked ? 3 : 1; // Thief pays extra but can pass
+        const ng = cur.g + moveCost * terrainCost;
+        const prev = gMap.get(nk);
+        if (prev !== undefined && prev <= ng) continue;
+        gMap.set(nk, ng);
+        from.set(nk, key(cur.x, cur.y));
+        open.push({ x: nx, y: ny, g: ng, f: ng + heuristic(nx, ny) });
+      }
+    }
+
+    return [
+      { x: sx * CELL + CELL / 2, y: sy * CELL + CELL / 2, terrain: false },
+      { x: ex * CELL + CELL / 2, y: ey * CELL + CELL / 2, terrain: false }
+    ];
+  }
+
+  // Click handler
+  document.addEventListener('click', (e) => {
+    // Ignore clicks on the cycler UI
+    if (e.target.closest('#char-cycler')) return;
+    if (firstClick) {
+      hint.style.opacity = '0';
+      firstClick = false;
+    }
+    const targetX = e.pageX;
+    const targetY = e.pageY;
+    const sx = Math.round(posX / CELL);
+    const sy = Math.round(posY / CELL);
+    const ex = Math.round(targetX / CELL);
+    const ey = Math.round(targetY / CELL);
+
+    path = aStar(sx, sy, ex, ey);
+    pathIdx = 0;
+    moving = true;
+  });
+
+  // Animation loop
+  let lastTime = 0;
+  const SPEED = 4;
+  const HOP_SPEED = 0.15;
+  const HOP_HEIGHT = 12;
+  window._walkerAttacking = false; // exposed so monster spawn code can see
+
+  function render(timestamp) {
+    const dt = timestamp - lastTime;
+    lastTime = timestamp;
+
+    const ch = getCurrent();
+
+    // Check if any monster is in attack range
+    let attacking = false;
+    let nearestMonsterX = 0;
+    if (window._spawnedMonsters) {
+      let closestDist = Infinity;
+      for (const m of window._spawnedMonsters) {
+        if (m.dead) continue;
+        const p = m.getPos();
+        const d = Math.sqrt((p.x - posX) ** 2 + (p.y - posY) ** 2);
+        if (d < 50 && d < closestDist) {
+          closestDist = d;
+          attacking = true;
+          nearestMonsterX = p.x;
+        }
+      }
+    }
+    window._walkerAttacking = attacking;
+
+    // Determine animation state: attack > run > idle
+    let animState = 'idle';
+    if (attacking && !moving) {
+      animState = 'attack';
+      facingLeft = nearestMonsterX < posX;
+    } else if (moving) {
+      animState = 'run';
+    }
+
+    // Frame animation
+    frameTimer += dt;
+    const frameSpeed = animState === 'attack' ? 80 : 100;
+    if (frameTimer > frameSpeed) {
+      frameTimer = 0;
+      const maxF = animState === 'attack' ? ch.atkFrames : (animState === 'run' ? ch.runFrames : ch.idleFrames);
+      frame = (frame + 1) % maxF;
+    }
+
+    // Movement along path
+    let onTerrain = false;
+    if (moving && path.length > 0 && pathIdx < path.length) {
+      const target = path[pathIdx];
+      const dx = target.x - posX;
+      const dy = target.y - posY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist < SPEED * 2) {
+        posX = target.x;
+        posY = target.y;
+        onTerrain = target.terrain;
+        pathIdx++;
+        if (pathIdx >= path.length) {
+          moving = false;
+          hopPhase = 0;
+          frame = 0;
+        }
+      } else {
+        posX += (dx / dist) * SPEED;
+        posY += (dy / dist) * SPEED;
+        onTerrain = target.terrain;
+        if (dx < -1) facingLeft = true;
+        else if (dx > 1) facingLeft = false;
+      }
+    }
+
+    // Sync walker position for monster AI
+    window._walkerPos.x = posX;
+    window._walkerPos.y = posY;
+
+    // Hop — only the Thief does the big terrain hop over obstacles
+    let hopOffset = 0;
+    if (moving && onTerrain && isThiefSelected()) {
+      hopPhase += HOP_SPEED;
+      hopOffset = -Math.abs(Math.sin(hopPhase * Math.PI)) * HOP_HEIGHT;
+    } else if (moving) {
+      hopPhase += HOP_SPEED * 0.5;
+      hopOffset = -Math.abs(Math.sin(hopPhase * Math.PI)) * (HOP_HEIGHT * 0.3);
+    }
+
+    // Position canvas
+    canvas.style.position = 'absolute';
+    canvas.style.left = (posX - 32) + 'px';
+    canvas.style.top = (posY - 32 + hopOffset) + 'px';
+
+    // Draw sprite frame — pick sheet based on state
+    ctx.clearRect(0, 0, 64, 64);
+    let sheet, maxFrames;
+    if (animState === 'attack') {
+      sheet = ch._atkImg;
+      maxFrames = ch.atkFrames;
+    } else if (animState === 'run') {
+      sheet = ch._runImg;
+      maxFrames = ch.runFrames;
+    } else {
+      sheet = ch._idleImg;
+      maxFrames = ch.idleFrames;
+    }
+    const f = frame % maxFrames;
+
+    ctx.save();
+    if (facingLeft) {
+      ctx.translate(64, 0);
+      ctx.scale(-1, 1);
+    }
+    if (sheet.complete && sheet.naturalWidth > 0) {
+      ctx.drawImage(sheet, f * ch.fw, 0, ch.fw, ch.fh, 0, 0, 64, 64);
+    }
+    ctx.restore();
+
+    requestAnimationFrame(render);
+  }
+
+  // Start
+  setTimeout(() => requestAnimationFrame(render), 300);
+})();
+
+// ═══════════════════════════════════════════════════════════
+// 4) DRAG-AND-DROP NEUTRAL MONSTER SPAWNING
+// ═══════════════════════════════════════════════════════════
+(function() {
+  const dragGhost = document.getElementById('drag-ghost');
+  const spawnedMonsters = []; // track for animation
+  window._spawnedMonsters = spawnedMonsters; // expose for walker attack detection
+
+  // Drag from character card
+  charCard.addEventListener('dragstart', (e) => {
+    e.dataTransfer.setData('text/plain', String(currentCharIdx));
+    // Use a transparent 1x1 image as drag image, we show our own ghost
+    const img = new Image();
+    img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAUEBAAAACwAAAAAAQABAAACAkQBADs=';
+    e.dataTransfer.setDragImage(img, 0, 0);
+    dragGhost.textContent = ALL_CHARACTERS[currentCharIdx].emoji;
+    dragGhost.style.display = 'block';
+  });
+
+  document.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dragGhost.style.left = (e.clientX + 12) + 'px';
+    dragGhost.style.top = (e.clientY - 20) + 'px';
+  });
+
+  document.addEventListener('dragend', () => {
+    dragGhost.style.display = 'none';
+  });
+
+  // Also allow dragging from unit cards in the page
+  document.querySelectorAll('.card').forEach((card, idx) => {
+    card.draggable = true;
+    // Figure out which character this card represents by name
+    const nameEl = card.querySelector('.card-name');
+    if (!nameEl) return;
+    const nameText = nameEl.textContent.trim().split(' ')[0];
+    const charIdx = ALL_CHARACTERS.findIndex(c => c.name.toLowerCase() === nameText.toLowerCase());
+    if (charIdx < 0) return;
+
+    card.addEventListener('dragstart', (e) => {
+      e.dataTransfer.setData('text/plain', String(charIdx));
+      const img = new Image();
+      img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAUEBAAAACwAAAAAAQABAAACAkQBADs=';
+      e.dataTransfer.setDragImage(img, 0, 0);
+      dragGhost.textContent = ALL_CHARACTERS[charIdx].emoji;
+      dragGhost.style.display = 'block';
+    });
+  });
+
+  // Drop handler on body
+  document.body.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dragGhost.style.display = 'none';
+
+    const idxStr = e.dataTransfer.getData('text/plain');
+    const charIdx = parseInt(idxStr);
+    if (isNaN(charIdx) || charIdx < 0 || charIdx >= ALL_CHARACTERS.length) return;
+
+    // Don't spawn if dropped on the cycler bar
+    if (e.target.closest('#char-cycler')) return;
+
+    const ch = ALL_CHARACTERS[charIdx];
+    const dropX = e.pageX;
+    const dropY = e.pageY;
+
+    window.spawnMonster(ch, dropX, dropY);
+  });
+
+  document.body.addEventListener('dragover', (e) => {
+    e.preventDefault();
+  });
+
+  // ── Roaming neutral monster spawner with REAL COMBAT ──
+  const AGGRO_RANGE = 250;
+  const ATTACK_RANGE = 40;
+  const WALKER_ATTACK_RANGE = 50;
+  const ROAM_SPEED = 0.8;
+  const CHASE_SPEED = 1.8;
+  const ATTACK_INTERVAL = 1200;
+  const WALKER_ATTACK_INTERVAL = 800;
+  const ROAM_CHANGE_MS = 2500;
+
+  // Walker auto-attacks the closest monster in range
+  let walkerAttackTimer = 0;
+  let lastWalkerAttackTime = 0;
+
+  function walkerAutoAttack(timestamp) {
+    const dt = timestamp - lastWalkerAttackTime;
+    lastWalkerAttackTime = timestamp;
+    if (dt > 200) { requestAnimationFrame(walkerAutoAttack); return; }
+
+    walkerAttackTimer += dt;
+    if (walkerAttackTimer >= WALKER_ATTACK_INTERVAL && spawnedMonsters.length > 0) {
+      const wp = window._walkerPos;
+      let closest = null, closestDist = Infinity;
+      for (const m of spawnedMonsters) {
+        if (m.dead) continue;
+        const p = m.getPos();
+        const d = Math.sqrt((p.x - wp.x) ** 2 + (p.y - wp.y) ** 2);
+        if (d < WALKER_ATTACK_RANGE && d < closestDist) {
+          closest = m;
+          closestDist = d;
+        }
+      }
+      if (closest) {
+        walkerAttackTimer = 0;
+        const target = closest;
+        const walkerAtk = window._walkerHP.atk;
+        // Delay damage to sync with attack animation hit frame (~halfway through)
+        setTimeout(() => {
+          if (target.dead) return;
+          target.takeDamage(walkerAtk);
+          const p = target.getPos();
+          spawnDmgNumber(p.x, p.y, walkerAtk, '#5fdd5f');
+        }, 350);
+      }
+    }
+
+    // Walker passive regen for Panda
+    if (ALL_CHARACTERS[currentCharIdx].name === 'Panda') {
+      const regenPerFrame = (window._walkerHP.max * 0.01) * (dt / 1000);
+      window._walkerHP.current = Math.min(window._walkerHP.max, window._walkerHP.current + regenPerFrame);
+    }
+    updateWalkerHP();
+    requestAnimationFrame(walkerAutoAttack);
+  }
+  requestAnimationFrame(walkerAutoAttack);
+
+  window.spawnMonster = function spawnMonster(ch, x, y) {
+    const SIZE = 56;
+    const wrapper = document.createElement('div');
+    wrapper.className = 'spawned-monster';
+
+    const label = document.createElement('div');
+    label.className = 'spawned-label';
+    label.textContent = ch.emoji + ' ' + ch.name;
+
+    const hpBar = document.createElement('div');
+    hpBar.className = 'spawned-hp-bar';
+    const hpFill = document.createElement('div');
+    hpFill.className = 'spawned-hp-fill';
+    hpFill.style.background = `linear-gradient(90deg, ${TIER_COLORS[ch.tier]}88, ${TIER_COLORS[ch.tier]})`;
+    hpBar.appendChild(hpFill);
+
+    const cvs = document.createElement('canvas');
+    cvs.width = SIZE;
+    cvs.height = SIZE;
+    cvs.style.width = SIZE + 'px';
+    cvs.style.height = SIZE + 'px';
+
+    wrapper.appendChild(label);
+    wrapper.appendChild(hpBar);
+    wrapper.appendChild(cvs);
+    document.body.appendChild(wrapper);
+
+    // Monster state with REAL HP
+    const ctxM = cvs.getContext('2d');
+    let mFrame = 0, mTimer = 0, lastT = 0;
+    let mx = x, my = y;
+    let mFacingLeft = false;
+    let state = 'roam';
+    let roamDx = (Math.random() - 0.5) * 2;
+    let roamDy = (Math.random() - 0.5) * 2;
+    let roamTimer = 0;
+    let attackTimer = 0;
+    let monsterHP = ch.hp;
+    const monsterMaxHP = ch.hp;
+    const monsterAtk = ch.atk;
+    let dead = false;
+    let deathTimer = 0;
+
+    const monsterObj = {
+      wrapper,
+      dead: false,
+      getPos: () => ({ x: mx, y: my }),
+      takeDamage: (dmg) => {
+        if (dead) return;
+        monsterHP -= dmg;
+        const pct = Math.max(0, (monsterHP / monsterMaxHP) * 100);
+        hpFill.style.width = pct + '%';
+        // Color shift
+        if (pct < 25) hpFill.style.background = 'linear-gradient(90deg, #8a2020, #e04040)';
+        else if (pct < 50) hpFill.style.background = 'linear-gradient(90deg, #8a6a10, #e0c040)';
+        // Hit shake
+        wrapper.style.transform = 'translateX(4px)';
+        setTimeout(() => wrapper.style.transform = 'translateX(-4px)', 50);
+        setTimeout(() => wrapper.style.transform = '', 100);
+        if (monsterHP <= 0) {
+          dead = true;
+          monsterObj.dead = true;
+        }
+      }
+    };
+
+    function animateMonster(timestamp) {
+      const dt = timestamp - lastT;
+      lastT = timestamp;
+      if (dt > 200) { requestAnimationFrame(animateMonster); return; }
+
+      // Death animation
+      if (dead) {
+        deathTimer += dt;
+        wrapper.style.opacity = Math.max(0, 1 - deathTimer / 500);
+        wrapper.style.transform = `scale(${Math.max(0.3, 1 - deathTimer / 600)})`;
+        if (deathTimer > 500) {
+          wrapper.remove();
+          const idx = spawnedMonsters.indexOf(monsterObj);
+          if (idx >= 0) spawnedMonsters.splice(idx, 1);
+          return; // stop animation loop
+        }
+        requestAnimationFrame(animateMonster);
+        return;
+      }
+
+      // Frame animation — pick sheet based on state
+      mTimer += dt;
+      let sheet, maxF;
+      if (state === 'attack') {
+        sheet = ch._atkImg;
+        maxF = ch.atkFrames;
+      } else if (state === 'chase' || state === 'roam') {
+        sheet = ch._runImg;
+        maxF = ch.runFrames;
+      } else {
+        sheet = ch._idleImg;
+        maxF = ch.idleFrames;
+      }
+      const frameSpeed = state === 'attack' ? 80 : (state === 'roam' || state === 'chase' ? 100 : 140);
+      if (mTimer > frameSpeed) {
+        mTimer = 0;
+        mFrame = (mFrame + 1) % maxF;
+      }
+
+      // Distance to walker
+      const wp = window._walkerPos;
+      const ddx = wp.x - mx;
+      const ddy = wp.y - my;
+      const dist = Math.sqrt(ddx * ddx + ddy * ddy);
+
+      // State machine
+      if (dist < ATTACK_RANGE) {
+        state = 'attack';
+      } else if (dist < AGGRO_RANGE) {
+        state = 'chase';
+      } else {
+        state = 'roam';
+      }
+
+      // Movement
+      if (state === 'chase') {
+        const spd = CHASE_SPEED * (dt / 16);
+        mx += (ddx / dist) * spd;
+        my += (ddy / dist) * spd;
+        mFacingLeft = ddx < 0;
+      } else if (state === 'roam') {
+        roamTimer += dt;
+        if (roamTimer > ROAM_CHANGE_MS) {
+          roamTimer = 0;
+          roamDx = (Math.random() - 0.5) * 2;
+          roamDy = (Math.random() - 0.5) * 2;
+        }
+        const spd = ROAM_SPEED * (dt / 16);
+        mx += roamDx * spd;
+        my += roamDy * spd;
+        if (roamDx < -0.1) mFacingLeft = true;
+        else if (roamDx > 0.1) mFacingLeft = false;
+        const pageW = document.body.scrollWidth - 40;
+        const pageH = document.body.scrollHeight - 40;
+        if (mx < 40) { mx = 40; roamDx = Math.abs(roamDx); }
+        if (mx > pageW) { mx = pageW; roamDx = -Math.abs(roamDx); }
+        if (my < 40) { my = 40; roamDy = Math.abs(roamDy); }
+        if (my > pageH) { my = pageH; roamDy = -Math.abs(roamDy); }
+      } else if (state === 'attack') {
+        mFacingLeft = ddx < 0;
+        attackTimer += dt;
+        if (attackTimer >= ATTACK_INTERVAL) {
+          attackTimer = 0;
+          // Delay damage to sync with attack animation hit frame
+          const atkDmg = monsterAtk;
+          setTimeout(() => {
+            window._walkerHP.current -= atkDmg;
+            const wp2 = window._walkerPos;
+            spawnDmgNumber(wp2.x + (Math.random()-0.5)*20, wp2.y, atkDmg, '#e04040');
+            updateWalkerHP();
+            // Walker dies — respawn after a delay
+            if (window._walkerHP.current <= 0) {
+              window._walkerHP.current = 0;
+              updateWalkerHP();
+              const walkerCanvas2 = document.getElementById('thief-walker');
+              if (walkerCanvas2) {
+                walkerCanvas2.style.opacity = '0.3';
+                walkerCanvas2.style.filter = 'grayscale(1)';
+              }
+              const hud = document.getElementById('walker-hud');
+              if (hud) hud.style.borderColor = '#e04040';
+              setTimeout(() => {
+                resetWalkerHP();
+                if (walkerCanvas2) {
+                  walkerCanvas2.style.opacity = '1';
+                  walkerCanvas2.style.filter = 'drop-shadow(0 4px 8px rgba(0,0,0,0.7))';
+                }
+                if (hud) hud.style.borderColor = '';
+              }, 2000);
+            }
+          }, 400);
+        }
+      }
+
+      // Monster regen for Panda type
+      if (ch.name === 'Panda' && monsterHP < monsterMaxHP) {
+        monsterHP = Math.min(monsterMaxHP, monsterHP + (monsterMaxHP * 0.01 * dt / 1000));
+        const pct = (monsterHP / monsterMaxHP) * 100;
+        hpFill.style.width = pct + '%';
+      }
+
+      wrapper.style.left = (mx - SIZE / 2 - 4) + 'px';
+      wrapper.style.top = (my - SIZE - 20) + 'px';
+
+      ctxM.clearRect(0, 0, SIZE, SIZE);
+      if (sheet && sheet.complete && sheet.naturalWidth > 0) {
+        ctxM.save();
+        if (mFacingLeft) { ctxM.translate(SIZE, 0); ctxM.scale(-1, 1); }
+        ctxM.drawImage(sheet, mFrame * ch.fw, 0, ch.fw, ch.fh, 0, 0, SIZE, SIZE);
+        ctxM.restore();
+      }
+
+      requestAnimationFrame(animateMonster);
+    }
+    requestAnimationFrame(animateMonster);
+
+    spawnedMonsters.push(monsterObj);
+  }
+})();
+</script>
+
+</body>
+</html>

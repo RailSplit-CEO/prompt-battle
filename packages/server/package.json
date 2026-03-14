@@ -1,0 +1,21 @@
+{
+  "name": "@prompt-battle/server",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "ts-node-esm src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "ws": "^8.16.0",
+    "uuid": "^9.0.0",
+    "@prompt-battle/shared": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "ts-node": "^10.9.2",
+    "@types/ws": "^8.5.10",
+    "@types/uuid": "^9.0.7"
+  }
+}

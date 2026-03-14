@@ -199,6 +199,6 @@ export const HORDE_SPRITE_CONFIGS: Record<string, EnemySpriteConfig> = {
 // Animation frame rates by state
 export const ANIM_FRAME_RATES = {
   idle: 8,
-  walk: 10,
+  walk: 20,
   attack: 12,
 };
