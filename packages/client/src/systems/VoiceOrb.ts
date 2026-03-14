@@ -1,10 +1,26 @@
 // Voice Orb UI — floating mic orb replacing the bottom chat bar
 
-export type OrbState = 'idle' | 'listening' | 'processing' | 'speaking' | 'error';
+export type OrbState = 'idle' | 'listening' | 'processing' | 'speaking' | 'error' | 'muted';
+
+const MIC_SVG = `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>`;
+const MIC_OFF_SVG = `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/><line x1="2" y1="2" x2="22" y2="22" stroke="#FF6B6B" stroke-width="2.5"/></svg>`;
+const PROCESSING_SVG = `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" stroke-dasharray="31.4 31.4" stroke-dashoffset="0"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite"/></circle><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>`;
+const SPEAKER_SVG = `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>`;
+
+const STATE_LABELS: Record<OrbState, string> = {
+  idle: '',
+  listening: 'LISTENING',
+  processing: 'THINKING...',
+  speaking: 'SPEAKING',
+  error: 'ERROR',
+  muted: 'MIC OFF',
+};
 
 export class VoiceOrb {
   private container: HTMLDivElement;
   private orb: HTMLDivElement;
+  private iconEl: HTMLDivElement;
+  private statusLabel: HTMLDivElement;
   private partialEl: HTMLDivElement;
   private responseEl: HTMLDivElement;
   private textInputEl: HTMLInputElement;
@@ -41,7 +57,12 @@ export class VoiceOrb {
     this.orb = document.createElement('div');
     this.orb.id = 'voice-orb';
     this.orb.classList.add('idle');
-    this.orb.innerHTML = `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>`;
+
+    // Icon container (swaps SVG based on state)
+    this.iconEl = document.createElement('div');
+    this.iconEl.id = 'voice-orb-icon';
+    this.iconEl.innerHTML = MIC_SVG;
+    this.orb.appendChild(this.iconEl);
 
     // Avatar badge (top-right of orb)
     this.avatarBadge = document.createElement('div');
@@ -50,6 +71,11 @@ export class VoiceOrb {
     this.orb.appendChild(this.avatarBadge);
 
     this.container.appendChild(this.orb);
+
+    // Status label (below orb)
+    this.statusLabel = document.createElement('div');
+    this.statusLabel.id = 'voice-orb-status';
+    this.container.appendChild(this.statusLabel);
 
     // Text input (hidden by default)
     this.textInputEl = document.createElement('input');
@@ -97,9 +123,25 @@ export class VoiceOrb {
     // Clear error reset timer
     if (this.errorResetTimer) { clearTimeout(this.errorResetTimer); this.errorResetTimer = null; }
 
-    this.orb.classList.remove('idle', 'listening', 'processing', 'speaking', 'error');
+    this.orb.classList.remove('idle', 'listening', 'processing', 'speaking', 'error', 'muted');
     this.state = newState;
     this.orb.classList.add(newState);
+
+    // Swap icon based on state
+    if (newState === 'muted') {
+      this.iconEl.innerHTML = MIC_OFF_SVG;
+    } else if (newState === 'processing') {
+      this.iconEl.innerHTML = PROCESSING_SVG;
+    } else if (newState === 'speaking') {
+      this.iconEl.innerHTML = SPEAKER_SVG;
+    } else {
+      this.iconEl.innerHTML = MIC_SVG;
+    }
+
+    // Update status label
+    const label = STATE_LABELS[newState] || '';
+    this.statusLabel.textContent = label;
+    this.statusLabel.className = `voice-status-${newState}`;
 
     if (newState === 'error') {
       // Brief red flash then return to idle

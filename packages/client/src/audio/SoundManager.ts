@@ -59,50 +59,10 @@ export class SoundManager {
   private muted: boolean;
   private globalVolume = 0.5;
   private loading = new Set<string>(); // tracks in-flight lazy loads
-  private _tabAway = false; // true while tab is hidden or in the grace period after return
-  private _fadeVolume = 1; // 0→1 multiplier that ramps up after tab return
-  private _fadeTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
     this.muted = localStorage.getItem('pb_sound_muted') === 'true';
-
-    // Suspend audio entirely when the tab is hidden.
-    // On return: kill queued sounds, then fade volume from silence to full
-    // over 1 second so nothing ever blasts the user's ears.
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden) {
-        // Tab going away — suspend the Web Audio context so nothing queues
-        this._tabAway = true;
-        this._fadeVolume = 0;
-        if (this._fadeTimer) { clearInterval(this._fadeTimer); this._fadeTimer = null; }
-        const ctx = (this.scene.sound as any).context as AudioContext | undefined;
-        if (ctx?.suspend) ctx.suspend();
-      } else {
-        // Tab coming back — nuke every in-flight sound, resume context
-        const ctx = (this.scene.sound as any).context as AudioContext | undefined;
-        if (ctx?.resume) ctx.resume();
-        this.scene.sound.stopAll();
-        // Stay fully silent for 300ms to let the queued burst pass,
-        // then fade in over 700ms (total 1s from tab-back to full volume)
-        this._fadeVolume = 0;
-        setTimeout(() => {
-          this._tabAway = false;
-          // Ramp volume from 0 → 1 in 20 steps over 700ms
-          const steps = 20;
-          let step = 0;
-          if (this._fadeTimer) clearInterval(this._fadeTimer);
-          this._fadeTimer = setInterval(() => {
-            step++;
-            this._fadeVolume = step / steps;
-            if (step >= steps) {
-              this._fadeVolume = 1;
-              if (this._fadeTimer) { clearInterval(this._fadeTimer); this._fadeTimer = null; }
-            }
-          }, 700 / steps);
-        }, 300);
-      }
-    });
   }
 
   // Fix F: only preload essential sounds; rest load lazily on first play
@@ -146,28 +106,27 @@ export class SoundManager {
   }
 
   play(key: SfxKey) {
-    if (this.muted || this._tabAway) return;
+    if (this.muted) return;
     const remapped = this.remapKey(key);
     if (!this.scene.cache.audio.exists(remapped)) {
       this.lazyLoad(remapped);
       return; // will play next time it's requested
     }
-    this.scene.sound.play(remapped, { volume: this.globalVolume * this._fadeVolume });
+    this.scene.sound.play(remapped, { volume: this.globalVolume });
   }
 
   playGlobal(key: SfxKey) {
-    if (this.muted || this._tabAway) return;
+    if (this.muted) return;
     const remapped = this.remapKey(key);
     if (!this.scene.cache.audio.exists(remapped)) {
       this.lazyLoad(remapped);
       return;
     }
-    // Global sounds at full volume (still scaled by fade)
-    this.scene.sound.play(remapped, { volume: this.globalVolume * this._fadeVolume });
+    this.scene.sound.play(remapped, { volume: this.globalVolume });
   }
 
   playAt(key: SfxKey, x: number, y: number) {
-    if (this.muted || this._tabAway) return;
+    if (this.muted) return;
     const remapped = this.remapKey(key);
     if (!this.scene.cache.audio.exists(remapped)) {
       this.lazyLoad(remapped);
@@ -190,13 +149,13 @@ export class SoundManager {
     const pan = Math.max(-1, Math.min(1, (dx / (cam.width / 2)) * 0.6));
 
     this.scene.sound.play(remapped, {
-      volume: vol * this.globalVolume * this._fadeVolume,
+      volume: vol * this.globalVolume,
       pan,
     });
   }
 
   playReaction(reaction: 'yes' | 'charge' | 'confused', units?: { type: string }[]) {
-    if (this.muted || this._tabAway || !units || units.length === 0) return;
+    if (this.muted || !units || units.length === 0) return;
     // Pick a representative unit type (most common in group)
     const counts: Record<string, number> = {};
     for (const u of units) {
@@ -208,7 +167,7 @@ export class SoundManager {
       this.lazyLoad(key);
       return;
     }
-    this.scene.sound.play(key, { volume: this.globalVolume * 0.7 * this._fadeVolume });
+    this.scene.sound.play(key, { volume: this.globalVolume * 0.7 });
   }
 
   toggleMute(): boolean {

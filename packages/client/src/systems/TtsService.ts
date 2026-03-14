@@ -15,13 +15,14 @@ const HOARD_VOICES: Record<string, { id: string; name: string }> = {
   shaman:   { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel' },     // mystical
   troll:    { id: 'VR6AewLTigWG4xSOukaG', name: 'Arnold' },     // deep, slow
   rogue:    { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni' },     // smooth, sneaky
-  all:      { id: 'onwK4e9ZLuTAKqWW03F9', name: 'Daniel' },     // narrator default
-  test:     { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni' },     // test voice
+  all:      { id: 'MF3mGyEYCl7XYWbV9V6O', name: 'Elli' },       // default = gnome voice
+  test:     { id: 'MF3mGyEYCl7XYWbV9V6O', name: 'Elli' },       // test = gnome voice
 };
 
 interface QueueEntry {
   text: string;
   voiceId: string;
+  charId: string;
 }
 
 export class TtsService {
@@ -33,8 +34,8 @@ export class TtsService {
   private enabled = true;
   private volume = 1.0;
 
-  onPlayStart?: () => void;
-  onPlayEnd?: () => void;
+  onPlayStart?: (charId: string, audioEl: HTMLAudioElement) => void;
+  onPlayEnd?: (charId: string) => void;
 
   get isPlaying(): boolean { return this.playing; }
 
@@ -62,7 +63,7 @@ export class TtsService {
       return;
     }
     const voiceId = this.assignVoice(charId);
-    this.queue.push({ text, voiceId });
+    this.queue.push({ text, voiceId, charId });
     console.log(`[TTS] Queued. Queue length: ${this.queue.length}, playing: ${this.playing}`);
     this.processQueue();
   }
@@ -70,7 +71,7 @@ export class TtsService {
   /** Fire a test TTS to verify the API works */
   test() {
     console.log('[TTS] === TEST CALL ===');
-    this.speak('skull', 'Ready for battle, commander.');
+    this.speak('gnome', 'Ready for battle, commander.');
   }
 
   setEnabled(enabled: boolean) { this.enabled = enabled; }
@@ -129,7 +130,7 @@ export class TtsService {
 
       this.currentAudio = audio;
       console.log(`[TTS] ▶ Playing MP3 via <audio> element... vol=${audio.volume} muted=${audio.muted} readyState=${audio.readyState}`);
-      this.onPlayStart?.();
+      this.onPlayStart?.(entry.charId, audio);
 
       audio.onended = () => {
         console.log('[TTS] ✓ Playback ended');
@@ -137,7 +138,7 @@ export class TtsService {
         audio.remove();
         this.currentAudio = null;
         this.playing = false;
-        this.onPlayEnd?.();
+        this.onPlayEnd?.(entry.charId);
         this.processQueue();
       };
       audio.onerror = (e) => {
@@ -146,7 +147,7 @@ export class TtsService {
         audio.remove();
         this.currentAudio = null;
         this.playing = false;
-        this.onPlayEnd?.();
+        this.onPlayEnd?.(entry.charId);
         this.processQueue();
       };
 
@@ -158,13 +159,13 @@ export class TtsService {
         URL.revokeObjectURL(blobUrl);
         audio.remove();
         this.playing = false;
-        this.onPlayEnd?.();
+        this.onPlayEnd?.(entry.charId);
         this.processQueue();
       }
     } catch (err) {
       console.error('[TTS] ✗ Failed:', err);
       this.playing = false;
-      this.onPlayEnd?.();
+      this.onPlayEnd?.(entry.charId);
       this.processQueue();
     }
   }

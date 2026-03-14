@@ -6,6 +6,7 @@ import { resolveGrid, ResolvedTile } from '../map/AutoTileResolver';
 import { getTileSourceRect, getCliffSourceRect, WATER_COLOR_HEX, getTilesetFilename } from '../map/TilesetAtlas';
 import { SoundManager } from '../audio/SoundManager';
 import { buildSpatialGrid, getNearbyFromGrid, SPATIAL_KEY_STRIDE } from './horde-utils';
+import { QuestManager, QState } from './QuestDefs';
 import { ElevenLabsVoiceAgent } from '../systems/ElevenLabsVoiceAgent';
 import type { GameContext as ELGameContext } from '../systems/ElevenLabsVoiceAgent';
 import { MemoryOverlay } from '../profiling/MemoryOverlay';
@@ -683,9 +684,11 @@ EMOTIONAL & URGENT — Players shout in the heat of battle. Interpret the INTENT
 - "no no no come back!" / "stop!" / "come back!" → retreat to base
 - Exclamation marks and repeated words indicate urgency → prefer pacing:"rush"
 
-NOISE & GIBBERISH — If the input is nonsensical words with no game meaning (e.g. "blorp fizzle wompus", "the", "asdf"):
+NOISE, GIBBERISH & CASUAL CHAT — If there is clearly no game command in the input:
+- Nonsensical words (e.g. "blorp fizzle wompus", "asdf") or single filler words ("the", "a", "is") → unrecognized
+- Casual chat, jokes, greetings, or off-topic remarks (e.g. "hello", "you're cute", "what's your favorite color", "I love you") → unrecognized
 - Return responseType:"unrecognized" — do NOT guess a random action
-- Single common words like "the", "a", "is" with no command intent → unrecognized
+- Still provide a narration: a fun, in-character quip, helpful hint, or confused comment from the units — MUST match selected unit personality! Examples by type: gnomes='Hehe, that's funny boss! But where do we go?', skulls='...the void speaks nonsense. Give us a real command.', spiders='*hisss* confusssing... tell usss what to hunt!', hyenas='HAHAHA WHAT?! Just tell us what to SMASH!', turtles='*sigh* We waited... and for that? Try a real order...', pandas='Hmm, that was nice. But maybe tell us where to walk?', lizards='Input not recognized. Awaiting valid directive.', minotaurs='WHAT?! STOP TALKING, START COMMANDING!!', shamans='The spirits heard you... but understood nothing.', rogues='Real clever. Wanna try an actual order this time?'
 
 STATUS QUERIES — If the player asks about their status ("how am I doing?", "what should I do?", "how many units?"):
 - Return targetType "query" with a statusReport containing a 1-2 sentence tactical answer using the game context above
@@ -721,7 +724,7 @@ JSON ONLY (no markdown):
   "qualifier": "<nearest|furthest|weakest|uncaptured|enemy or omit>",
   "workflow": [<array of step objects, only if targetType=workflow>],
   "loopFrom": <index where repeating loop starts, default 0>,
-  "narration": "<Max 5 words, terse military tone>",
+  "narration": "<6-12 words, in-character response from the units receiving the order. STRICTLY match unit personality: gnomes=bubbly, excitable, childlike joy, love food and shiny things, say 'boss' a lot; skulls=grim, ominous, speak of death/darkness/doom, hollow echoing tone; spiders=creepy, hissy, stretch out S sounds ('sssspy', 'yesss'), sinister and skittery; hyenas=unhinged, manic, LOUD, love chaos and destruction, laugh a lot ('AHAHAHA'); turtles=melancholic, reluctant, slow, sad, always complaining or sighing, everything is too hard or too fast; pandas=gentle giants, warm, zen-like, talk about food and naps, peaceful but strong; lizards=cold, calculating, robotic precision, no emotion, clinical; minotaurs=RAGING, furious, primal screaming, all-caps energy, SMASH EVERYTHING; shamans=mystical, cryptic, speak in riddles and prophecy, ethereal; rogues=sarcastic, cocky, street-smart, too cool for this, snarky one-liners. Examples: gnomes='Ooh ooh carrots! We love carrots boss!', skulls='The grave awaits those we march toward...', spiders='*hisss* we ssscatter into the shadowsss', hyenas='AHAHAHA YEAH LETS WRECK EM!!', turtles='*sigh* Do we have to? ...fine, moving.', pandas='Mmm okay, nice walk, maybe snack after?', lizards='Acknowledged. Executing patrol route.', minotaurs='RAAAAGH!! CHARGE!! SMASH THEM ALL!!', shamans='The spirits whisper... this path is fated.', rogues='Yeah yeah, on it. Try to keep up.'>",
   "unitReaction": "<2-5 word in-character grunt reaction from the units, funny/cute personality. Examples: 'Aye aye!', 'SMASH TIME!', 'ooh shiny rocks!', 'hisssss yesss', '*rattles excitedly*', 'me hungry...', 'FOR GLORY!'>",
   "modifiers": {"formation": "spread|tight|null", "caution": "safe|aggressive|null", "pacing": "rush|efficient|null"},
   "planGoal": {"type": "unlock_equipment|stockpile_resource", "equipment": "<equipment id, only if type=unlock_equipment>", "resource": "<resource type, only if type=stockpile_resource>", "amount": "<number, only if stockpile_resource>", "thenAction": "<optional follow-up: defend, attack, etc>"},
@@ -1740,6 +1743,7 @@ export class HordeScene extends Phaser.Scene {
   private arrowKeys!: Record<string, Phaser.Input.Keyboard.Key>;
   private adKeys!: Record<string, Phaser.Input.Keyboard.Key>;
   private spaceKey!: Phaser.Input.Keyboard.Key;
+  private _speechMuted = false;
   private recognition: any = null;
   private isListening = false;
   private voiceAgent: ElevenLabsVoiceAgent | null = null;
@@ -1848,6 +1852,13 @@ export class HordeScene extends Phaser.Scene {
   private topKiller: Record<1|2, { type: string; kills: number }> = {
     1: { type: '', kills: 0 }, 2: { type: '', kills: 0 },
   };
+
+  // ─── QUEST SYSTEM ──────────────────────────────────────────
+  private questManager: QuestManager | null = null;
+  private questPanelEl: HTMLDivElement | null = null;
+  private _questTowersDestroyed = { 1: 0, 2: 0 } as Record<1|2, number>;
+  private _questEventsWon = { 1: 0, 2: 0 } as Record<1|2, number>;
+  private _prevQuestHTML = '';
 
   // ─── MAP CONFIG ──────────────────────────────────────────────
   private mapDef: MapDef | null = null;
@@ -3633,6 +3644,9 @@ export class HordeScene extends Phaser.Scene {
       if (t.hp <= 0) {
         t.alive = false;
         t.hp = 0;
+        // Quest: track tower kills (attacker is enemy of tower)
+        const towerKillerTeam: 1 | 2 = t.team === 1 ? 2 : 1;
+        this._questTowersDestroyed[towerKillerTeam]++;
         if (t.sprite) { t.sprite.destroy(); t.sprite = null; }
         if (t.hpBar) { t.hpBar.clear(); t.hpBar.destroy(); t.hpBar = null; }
         if (t.hpText) { t.hpText.destroy(); t.hpText = null; }
@@ -3901,6 +3915,10 @@ export class HordeScene extends Phaser.Scene {
       D: this.input.keyboard!.addKey('D'),
     };
     this.spaceKey = this.input.keyboard!.addKey('SPACE');
+    this.spaceKey.on('down', () => {
+      if (document.activeElement === this.textInput) return;
+      this.toggleSpeechMute();
+    });
 
     // Voice Orb replaces old bottom command bar
     const gc = document.getElementById('game-container')!;
@@ -4028,10 +4046,10 @@ export class HordeScene extends Phaser.Scene {
   private setupVoice() {
     // 1. Create TTS service with coordination callbacks
     this.ttsService = new TtsService();
-    this.ttsService.onPlayStart = (charId: string) => {
+    this.ttsService.onPlayStart = (charId: string, audioEl: HTMLAudioElement) => {
       this.scribeService?.pause();
       this.voiceOrb?.setState('speaking');
-      this.talkingPortrait?.startTalking(charId);
+      this.talkingPortrait?.startTalking(charId, audioEl);
       // Also pause Web Speech API fallback
       if (this.recognition && this.isListening) {
         try { this.recognition.stop(); } catch (_e) { /* */ }
@@ -4078,6 +4096,39 @@ export class HordeScene extends Phaser.Scene {
     // Test TTS on startup — you should hear "Ready for battle, commander."
     console.log('[Voice] Firing test TTS...');
     this.ttsService!.test();
+  }
+
+  private resumeMicIfNeeded() {
+    if (this._speechMuted) { this.voiceOrb?.setState('muted'); return; }
+    if (this.ttsService?.isPlaying) return; // TTS callbacks handle resume
+    this.scribeService?.resume();
+    if (this.recognition && !this.scribeService?.isAvailable()) {
+      this.startListening();
+    }
+    this.voiceOrb?.setState('listening');
+  }
+
+  private toggleSpeechMute() {
+    this._speechMuted = !this._speechMuted;
+    if (this._speechMuted) {
+      // Mute: pause STT
+      this.scribeService?.pause();
+      if (this.recognition && this.isListening) {
+        try { this.recognition.stop(); } catch (_e) { /* */ }
+        this.isListening = false;
+      }
+      this.voiceOrb?.setState('muted');
+      this.showFeedback('Speech muted (SPACE to unmute)', '#888');
+    } else {
+      // Unmute: resume STT
+      if (this.scribeService?.isAvailable()) {
+        this.scribeService.resume();
+      } else if (this.recognition) {
+        this.startListening();
+      }
+      this.voiceOrb?.setState('listening');
+      this.showFeedback('Speech unmuted', '#45E6B0');
+    }
   }
 
   private showFallbackWarning() {
@@ -4250,6 +4301,9 @@ export class HordeScene extends Phaser.Scene {
     // ═══ LEFT COMMAND LOG PANEL ═══
     this.setupCmdLogPanel(gc);
 
+    // ═══ QUEST CARDS ═══
+    this.setupQuestPanel(gc);
+
     // ═══ BOTTOM-RIGHT MINIMAP ═══
     this.setupMinimap(gc);
 
@@ -4289,8 +4343,8 @@ export class HordeScene extends Phaser.Scene {
       const active = s.id === this.selectedHoard;
       html += `<div class="ctrl-card${active ? ' active' : ''}" data-hoard="${s.id}">
         <div class="hotkey">${s.key}</div>
-        <div style="display:flex;align-items:center;justify-content:center;min-height:36px;">
-          ${avatarImg(s.id === 'all' ? '' : s.id, 36) || `<span style="font-size:24px;">${s.emoji}</span>`}
+        <div style="display:flex;align-items:center;justify-content:center;min-height:56px;">
+          ${avatarImg(s.id === 'all' ? '' : s.id, 56) || `<span style="font-size:36px;">${s.emoji}</span>`}
         </div>
         <div style="font-size:11px;font-weight:800;color:#4a3520;letter-spacing:0.5px;">${s.name}</div>
         <div style="font-size:14px;font-weight:700;color:#2a1a0a;">${s.count}</div>
@@ -4340,6 +4394,99 @@ export class HordeScene extends Phaser.Scene {
   }
 
   // ─── SETUP: QUEST CARDS ───────────────────────────────────────
+  private setupQuestPanel(gc: HTMLElement) {
+    const panel = document.createElement('div');
+    panel.id = 'horde-quest-panel';
+    // Position below resource panel
+    panel.style.top = '140px';
+    gc.appendChild(panel);
+    this.questPanelEl = panel;
+    this.questManager = new QuestManager(this.myTeam);
+  }
+
+  private buildQuestState(): QState {
+    const team = this.myTeam;
+    const enemyTeam: 1 | 2 = team === 1 ? 2 : 1;
+    const aliveUnits = this.units.filter(u => u.team === team && !u.dead);
+    const typeCounts: Record<string, number> = {};
+    let equipped = 0;
+    for (const u of aliveUnits) {
+      typeCounts[u.type] = (typeCounts[u.type] || 0) + 1;
+      if (u.equipment) equipped++;
+    }
+    const rd = this.matchStats.resourcesDelivered[team];
+    const st = this.baseStockpile[team];
+    const totalStockpiled = st.carrot + st.meat + st.crystal + st.metal;
+    const activeBuffCount = this.teamBuffs.filter(b => b.team === team && b.remaining > 0).length
+      + this.eventBuffs.filter(b => b.team === team && b.timer > 0).length;
+    // Build minimal unit list for tier checks
+    const unitSnap = this.units.filter(u => !u.dead).map(u => ({
+      id: u.id, type: u.type, team: u.team, dead: u.dead,
+      equipment: u.equipment, equipLevel: u.equipLevel,
+      tier: ANIMALS[u.type]?.tier || 1,
+    }));
+    // Unlocked equipment as simple Map<string, number>
+    const eqMap = new Map<string, number>();
+    this.unlockedEquipment[team].forEach((lvl, eqType) => eqMap.set(eqType, lvl));
+
+    return {
+      alive: aliveUnits.length,
+      typeCount: Object.keys(typeCounts).length,
+      typeCounts,
+      equipped,
+      units: unitSnap,
+      camps: this.camps.map(c => ({ owner: c.owner })),
+      myCamps: this.camps.filter(c => c.owner === team).length,
+      towers: this.towers.map(t => ({ team: t.team, alive: t.alive, hp: t.hp, maxHp: t.maxHp })),
+      nexuses: this.nexuses.map(n => ({ team: n.team, hp: n.hp, maxHp: n.maxHp })),
+      currentEra: this.currentEra,
+      gameTime: this.gameTime,
+      totalKills: this.matchStats.totalKills[team],
+      campsCaptured: this.matchStats.campsCaptured[team],
+      resourcesDelivered: { ...rd },
+      totalResourcesStockpiled: totalStockpiled,
+      stockpile: { ...st },
+      peakArmySize: this.matchStats.peakArmySize[team],
+      unlockedEquipment: eqMap,
+      towersDestroyed: this._questTowersDestroyed[team],
+      eventsWon: this._questEventsWon[team],
+      teamBuffs: activeBuffCount,
+      myTeam: team,
+      enemyTeam,
+    };
+  }
+
+  private updateQuestPanel(): void {
+    if (!this.questManager || !this.questPanelEl) return;
+    const quests = this.questManager.getActiveQuests();
+    const total = this.questManager.totalCount;
+    const done = this.questManager.completedCount;
+    let html = `<div style="font-size:11px;font-weight:800;color:#4a3520;letter-spacing:1.5px;margin-bottom:4px;font-family:'Fredoka',sans-serif;display:flex;justify-content:space-between;">
+      <span>QUESTS</span><span style="color:#6a5a4a;font-weight:600;">${done}/${total}</span>
+    </div>`;
+    for (const { def, progress } of quests) {
+      const pct = Math.round(progress * 100);
+      const cur = def.target ? Math.min(def.target, Math.round(progress * def.target)) : (progress >= 1 ? 1 : 0);
+      const counter = def.target ? `${cur}/${def.target}` : '';
+      const barColor = pct >= 100 ? '#45E6B0' : '#c4a96a';
+      html += `<div style="background:rgba(245,235,220,0.92);border:1px solid rgba(139,115,85,0.35);border-radius:8px;padding:6px 8px;display:flex;align-items:center;gap:6px;">
+        <span style="font-size:18px;line-height:1;">${def.icon}</span>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:11px;font-weight:700;color:#2a1a0a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${def.title}</div>
+          <div style="font-size:9px;color:#6a5a4a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${def.desc}</div>
+          <div style="margin-top:3px;height:5px;background:rgba(0,0,0,0.1);border-radius:3px;overflow:hidden;">
+            <div style="height:100%;width:${pct}%;background:${barColor};border-radius:3px;transition:width 0.3s;"></div>
+          </div>
+        </div>
+        ${counter ? `<span style="font-size:10px;font-weight:700;color:#4a3520;white-space:nowrap;">${counter}</span>` : ''}
+      </div>`;
+    }
+    if (html !== this._prevQuestHTML) {
+      this.questPanelEl.innerHTML = html;
+      this._prevQuestHTML = html;
+    }
+  }
+
   // ─── SETUP: MINIMAP ───────────────────────────────────────────
   private setupMinimap(gc: HTMLElement) {
     const wrapper = document.createElement('div');
@@ -4480,7 +4627,7 @@ export class HordeScene extends Phaser.Scene {
       html += `<div style="background:rgba(255,248,230,0.5);border:1px solid rgba(139,115,85,0.35);border-radius:8px;padding:6px 8px;margin-bottom:6px;">`;
       // Header
       html += `<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
-        ${avatarImg(hType, 24) || `<span style="font-size:16px;">${def.emoji}</span>`}
+        ${avatarImg(hType, 40) || `<span style="font-size:28px;">${def.emoji}</span>`}
         <span style="font-size:12px;font-weight:700;color:#2a1a0a;">${cap(hType)}</span>
         <span style="font-size:11px;color:#6a5a4a;margin-left:auto;">\u00D7${count}</span>
       </div>`;
@@ -4639,21 +4786,18 @@ export class HordeScene extends Phaser.Scene {
     el.style.cssText = 'width:900px;padding:70px 80px;background:linear-gradient(135deg,rgba(212,196,160,0.95),rgba(196,180,148,0.97) 50%,rgba(212,196,160,0.93));backdrop-filter:blur(14px);border-radius:18px;border:3px solid rgba(120,90,50,0.35);box-shadow:0 12px 60px rgba(0,0,0,0.6),inset 0 1px 0 rgba(255,255,255,0.3),inset 0 -1px 0 rgba(0,0,0,0.1);text-align:center;animation:notif-start-in 700ms cubic-bezier(0.22,1,0.36,1) forwards;';
     el.innerHTML = '<div style="font-family:Fredoka,sans-serif;font-size:18px;letter-spacing:5px;color:rgba(100,70,30,0.6);margin-bottom:6px;opacity:0;animation:notif-era-child 400ms ease-out 200ms forwards;">PROMPT BATTLE</div>'
       + '<div style="font-family:Fredoka,sans-serif;font-size:54px;font-weight:700;color:#5a3a1a;text-shadow:0 2px 4px rgba(0,0,0,0.1);margin-bottom:10px;white-space:nowrap;opacity:0;animation:notif-era-child 400ms ease-out 400ms forwards,notif-start-pulse 2.5s ease-in-out 1s infinite;">COMMAND YOUR HORDES</div>'
-      + '<div style="font-family:Nunito,sans-serif;font-size:22px;color:#6a5a4a;margin-bottom:14px;white-space:nowrap;opacity:0;animation:notif-era-child 400ms ease-out 550ms forwards;">Hold <span style="font-family:Fredoka,sans-serif;font-weight:600;font-size:22px;color:#5a3a1a;background:rgba(120,90,50,0.12);border:1px solid rgba(120,90,50,0.2);border-radius:4px;padding:2px 10px;">SPACE</span> to talk \u2014 press <span style="font-family:Fredoka,sans-serif;font-weight:600;font-size:22px;color:#5a3a1a;background:rgba(120,90,50,0.12);border:1px solid rgba(120,90,50,0.2);border-radius:4px;padding:2px 10px;">Q</span> / <span style="font-family:Fredoka,sans-serif;font-weight:600;font-size:22px;color:#5a3a1a;background:rgba(120,90,50,0.12);border:1px solid rgba(120,90,50,0.2);border-radius:4px;padding:2px 10px;">E</span> to switch hordes</div>'
+      + '<div style="font-family:Nunito,sans-serif;font-size:22px;color:#6a5a4a;margin-bottom:14px;white-space:nowrap;opacity:0;animation:notif-era-child 400ms ease-out 550ms forwards;">Use <span style="font-family:Fredoka,sans-serif;font-weight:600;font-size:22px;color:#5a3a1a;background:rgba(120,90,50,0.12);border:1px solid rgba(120,90,50,0.2);border-radius:4px;padding:2px 10px;">1</span>\u2013<span style="font-family:Fredoka,sans-serif;font-weight:600;font-size:22px;color:#5a3a1a;background:rgba(120,90,50,0.12);border:1px solid rgba(120,90,50,0.2);border-radius:4px;padding:2px 10px;">5</span> to select a horde \u2014 press <span style="font-family:Fredoka,sans-serif;font-weight:600;font-size:22px;color:#5a3a1a;background:rgba(120,90,50,0.12);border:1px solid rgba(120,90,50,0.2);border-radius:4px;padding:2px 10px;">SPACE</span> to mute speech</div>'
       + '<div style="width:60%;height:2px;background:linear-gradient(90deg,transparent,rgba(120,90,50,0.4),transparent);margin:0 auto 28px;opacity:0;animation:notif-era-child 400ms ease-out 650ms forwards;"></div>'
       + '<div style="font-family:Nunito,sans-serif;font-size:28px;color:#3a2a1a;line-height:1.5;opacity:0;animation:notif-era-child 400ms ease-out 750ms forwards;">Just tell them what to do, they will figure it out.</div>'
       + '<div style="display:flex;gap:24px;justify-content:center;margin-top:28px;opacity:0;animation:notif-era-child 400ms ease-out 900ms forwards;">'
       + '<div style="font-family:Fredoka,sans-serif;font-size:24px;font-weight:600;color:#5a3a1a;background:rgba(120,90,50,0.08);border:1px solid rgba(120,90,50,0.2);border-radius:10px;padding:14px 24px;">\u201CGo gather carrots\u201D</div>'
       + '<div style="font-family:Fredoka,sans-serif;font-size:24px;font-weight:600;color:#5a3a1a;background:rgba(120,90,50,0.08);border:1px solid rgba(120,90,50,0.2);border-radius:10px;padding:14px 24px;">\u201CMake turtles\u201D</div>'
       + '</div>'
-      + '<div style="font-family:Nunito,sans-serif;font-size:17px;color:rgba(90,58,26,0.5);margin-top:34px;opacity:0;animation:notif-era-child 400ms ease-out 1100ms forwards;">Click or press SPACE to continue</div>';
+      + '<div style="font-family:Nunito,sans-serif;font-size:17px;color:rgba(90,58,26,0.5);margin-top:34px;opacity:0;animation:notif-era-child 400ms ease-out 1100ms forwards;">Click anywhere to continue</div>';
     wrapper.appendChild(el);
-    // Click or space to dismiss
+    // Click to dismiss
     const dismiss = () => { this.dismissIntroNotif(); };
     wrapper.addEventListener('click', dismiss);
-    const spaceHandler = (e: KeyboardEvent) => { if (e.code === 'Space') { e.preventDefault(); dismiss(); document.removeEventListener('keydown', spaceHandler); } };
-    document.addEventListener('keydown', spaceHandler);
-    (wrapper as any)._spaceHandler = spaceHandler;
     return wrapper;
   }
 
@@ -4679,14 +4823,11 @@ export class HordeScene extends Phaser.Scene {
       + '<div style="display:flex;flex-direction:column;gap:18px;text-align:left;">'
       + phrases.map((p, i) => '<div style="opacity:0;animation:notif-start-row 400ms ease-out ' + (600 + i * 180) + 'ms forwards;"><div style="font-family:Fredoka,sans-serif;font-size:19px;font-weight:600;color:#5a3a1a;background:rgba(120,90,50,0.08);border:1px solid rgba(120,90,50,0.2);border-radius:8px;padding:10px 16px;margin-bottom:4px;">\u201C' + p.cmd + '\u201D</div><div style="font-family:Nunito,sans-serif;font-size:15px;color:#7a6a5a;padding-left:16px;">' + p.desc + '</div></div>').join('')
       + '</div>'
-      + '<div style="font-family:Nunito,sans-serif;font-size:17px;color:rgba(90,58,26,0.5);margin-top:34px;opacity:0;animation:notif-era-child 400ms ease-out 1300ms forwards;">Click or press SPACE to start</div>';
+      + '<div style="font-family:Nunito,sans-serif;font-size:17px;color:rgba(90,58,26,0.5);margin-top:34px;opacity:0;animation:notif-era-child 400ms ease-out 1300ms forwards;">Click anywhere to start</div>';
     wrapper.appendChild(el);
-    // Click or space to dismiss
+    // Click to dismiss
     const dismiss = () => { this.dismissIntroNotif(); };
     wrapper.addEventListener('click', dismiss);
-    const spaceHandler = (e: KeyboardEvent) => { if (e.code === 'Space') { e.preventDefault(); dismiss(); document.removeEventListener('keydown', spaceHandler); } };
-    document.addEventListener('keydown', spaceHandler);
-    (wrapper as any)._spaceHandler = spaceHandler;
     return wrapper;
   }
 
@@ -5101,6 +5242,16 @@ export class HordeScene extends Phaser.Scene {
     // Fix A: throttle HUD from every 4 frames to every 20 frames
     if (this._frameCount % 20 === 0) this.updateHUD();
     if (this.isDebug && this._frameCount % 20 === 0) this.updateDebugResourceDisplay();
+    // Quest system: check every 30 frames (~500ms at 60fps)
+    if (this.questManager && this._frameCount % 30 === 0) {
+      const qs = this.buildQuestState();
+      this.questManager.update(qs);
+      const completed = this.questManager.popCompleted();
+      for (const q of completed) {
+        this.showFeedback(`✅ Quest: ${q.title}`, '#45E6B0');
+      }
+      this.updateQuestPanel();
+    }
     this.updateThoughtBubbles(delta);
     this.checkWin();
 
@@ -9168,6 +9319,11 @@ export class HordeScene extends Phaser.Scene {
   /** Called when the local player issues a voice/text command */
   private issueCommand(text: string) {
     this.voiceOrb?.setState('processing');
+    // Immediately mute mic so it doesn't pick up noise while we process
+    this.scribeService?.pause();
+    if (this.recognition && this.isListening) {
+      try { this.recognition.stop(); } catch (_e) { /* */ }
+    }
     this.pendingCommandText = text;
     // Track last command per hoard for display on hoard bar
     if (this.selectedHoard === 'all') {
@@ -9444,11 +9600,12 @@ export class HordeScene extends Phaser.Scene {
   private async handleCommand(text: string, team: 1 | 2) {
     // Micro-filter: reject obvious non-commands before Gemini call
     const trimmed = text.trim();
-    if (trimmed.length < 2 || /^(.)\1{3,}$/.test(trimmed)) return; // noise
+    if (trimmed.length < 2 || /^(.)\1{3,}$/.test(trimmed)) { this.resumeMicIfNeeded(); return; } // noise
     const lo = trimmed.toLowerCase();
-    if (['um','uh','hmm','ok','okay','so','well','like','yeah','hey','hello','hi'].includes(lo)) return; // filler
+    if (['um','uh','hmm','ok','okay','so','well','like','yeah','hey','hello','hi'].includes(lo)) { this.resumeMicIfNeeded(); return; } // filler
     if (/^(pause|save|quit|exit|restart|settings|options|menu|volume|mute|undo|skip)$/i.test(lo)) {
       this.showFeedback("Voice commands only! Try: 'attack' or 'make gnomes'", '#FFD93D');
+      this.resumeMicIfNeeded();
       return;
     }
 
@@ -9459,9 +9616,10 @@ export class HordeScene extends Phaser.Scene {
     if (this.isProcessingCommand) {
       this.pendingLocalCommands.push({ text, team });
       this.showFeedback('Queued — processing previous command...', '#FFD93D');
-      return;
+      return; // mic stays paused — will resume when current command finishes
     }
     this.isProcessingCommand = true;
+    this.voiceOrb?.setState('processing');
 
     this.pendingCommandText = text;
     console.log(`[Command] Heard: "${text}" | Gemini cooldown: ${Math.round((_geminiCooldownMs - (Date.now() - _lastGeminiCall)) / 1000)}s left`);
@@ -9558,8 +9716,11 @@ export class HordeScene extends Phaser.Scene {
 
         // Handle non-action responses from Gemini
         if (gCmd.responseType === 'unrecognized' && !gCmd.workflow?.length && gCmd.targetType !== 'workflow') {
-          this.showFeedback(gCmd.narration || this.getContextualHint(team), '#FFD93D');
-          this.voiceOrb?.showResponse(gCmd.narration || 'Hmm?');
+          const quip = gCmd.narration || this.getContextualHint(team);
+          this.showFeedback(quip, '#FFD93D');
+          this.voiceOrb?.showResponse(quip);
+          const voiceHoard = this.selectedHoard !== 'all' ? this.selectedHoard : 'all';
+          this.ttsService?.speak(voiceHoard, quip);
           const confSel = this.units.filter(u => u.team === team && !u.dead);
           this.unitReact('confused', confSel);
           geminiHandled = true;
@@ -9607,10 +9768,8 @@ export class HordeScene extends Phaser.Scene {
 
     } finally {
       this.isProcessingCommand = false;
-      // Return orb to listening (unless TTS is playing, which manages its own state)
-      if (!this.ttsService?.isPlaying) {
-        this.voiceOrb?.setState('listening');
-      }
+      // Resume mic and orb (unless TTS is playing, which manages its own state via onPlayStart/onPlayEnd)
+      this.resumeMicIfNeeded();
     }
   }
 
@@ -10788,13 +10947,13 @@ export class HordeScene extends Phaser.Scene {
       if (h === 'all') {
         this.cmdAvatarEl.innerHTML = '<span style="font-size:32px;">\u2694\uFE0F</span>';
       } else {
-        this.cmdAvatarEl.innerHTML = avatarImg(h, 44) || `<span style="font-size:32px;">${ANIMALS[h]?.emoji || '?'}</span>`;
+        this.cmdAvatarEl.innerHTML = avatarImg(h, 64) || `<span style="font-size:44px;">${ANIMALS[h]?.emoji || '?'}</span>`;
       }
     }
     // Update voice orb avatar badge
     if (this.voiceOrb) {
       const h = this.selectedHoard;
-      const html = h === 'all' ? undefined : (avatarImg(h, 20) || undefined);
+      const html = h === 'all' ? undefined : (avatarImg(h, 36) || undefined);
       this.voiceOrb.showAvatar(h, html);
     }
     // Top bar is updated directly by updateTopBar() in the HUD cycle
@@ -12137,6 +12296,8 @@ export class HordeScene extends Phaser.Scene {
     if (ev.state !== 'active') return;
     ev.state = 'claimed';
     ev.claimedBy = winner;
+    // Quest: track event wins
+    if (winner) this._questEventsWon[winner]++;
     const era = this.currentEra;
     switch (ev.type) {
       case 'fungal_bloom': {
@@ -12405,7 +12566,7 @@ export class HordeScene extends Phaser.Scene {
       if (ev.type === 'warchest') {
         progressStr = `<span style="color:#ff6666">\u2764\uFE0F ${Math.max(0, Math.round(ev.data.hp))}/${ev.data.maxHp}</span>`;
       } else if (ev.type === 'kill_bounty') {
-        const bountyIcon = avatarImg(ev.data.targetType, 14) || (ANIMALS[ev.data.targetType]?.emoji || '');
+        const bountyIcon = avatarImg(ev.data.targetType, 28) || (ANIMALS[ev.data.targetType]?.emoji || '');
         progressStr = `${bountyIcon} <span style="color:#6af">${p1}</span> vs <span style="color:#f66">${p2}</span> / ${ev.data.targetCount}`;
       } else if (ev.type === 'mercenary_outpost') {
         progressStr = `<span style="color:#6af">${p1}</span> vs <span style="color:#f66">${p2}</span> / ${ev.data.cost.amount} ${ev.data.cost.type}`;
