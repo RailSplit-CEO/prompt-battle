@@ -23,7 +23,7 @@ import bundledHordeMaps from '../map/maps/horde-maps.json';
 
 const _GEMINI_ENV_KEY = (import.meta as any).env?.VITE_GEMINI_API_KEY || '';
 const getGeminiKey = () => localStorage.getItem('pb_gemini_key') || _GEMINI_ENV_KEY;
-const GEMINI_MODEL = 'gemini-2.5-flash';
+const GEMINI_MODEL = 'gemini-3.1-flash-lite-preview';
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=`;
 const GEMINI_MAX_RETRIES = 3;
 
@@ -4356,15 +4356,23 @@ export class HordeScene extends Phaser.Scene {
     // Pre-render terrain
     this.preRenderMinimapTerrain();
 
-    // Click to move camera
-    wrapper.addEventListener('click', (e) => {
+    // Click & drag to pan camera (standard RTS minimap)
+    let dragging = false;
+    const panTo = (e: MouseEvent) => {
       const rect = canvas.getBoundingClientRect();
-      const mx = (e.clientX - rect.left) / rect.width;
-      const my = (e.clientY - rect.top) / rect.height;
-      const worldX = mx * WORLD_W;
-      const worldY = my * WORLD_H;
-      this.cameras.main.centerOn(worldX, worldY);
+      const mx = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const my = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+      this.cameras.main.centerOn(mx * WORLD_W, my * WORLD_H);
+    };
+    wrapper.addEventListener('mousedown', (e) => {
+      dragging = true;
+      panTo(e);
+      e.preventDefault();
     });
+    window.addEventListener('mousemove', (e) => {
+      if (dragging) panTo(e);
+    });
+    window.addEventListener('mouseup', () => { dragging = false; });
   }
 
   private preRenderMinimapTerrain() {
@@ -9559,7 +9567,9 @@ export class HordeScene extends Phaser.Scene {
           const report = gCmd.statusReport || gCmd.narration || 'All good, Commander!';
           this.showFeedback(report, '#6CC4FF');
           this.voiceOrb?.showResponse(report);
-          this.ttsService?.speak(this.selectedHoard, report);
+          // Use selectedHoard for status queries — the "narrator" for that group
+          const statusVoice = this.selectedHoard !== 'all' ? this.selectedHoard : 'all';
+          this.ttsService?.speak(statusVoice, report);
           this.sfx.playGlobal('voice_recognized');
           geminiHandled = true;
         } else if (this.executeGeminiCommand(gCmd, team)) {
@@ -9577,10 +9587,12 @@ export class HordeScene extends Phaser.Scene {
               this.lastHoardReaction[this.selectedHoard] = gCmd.unitReaction;
             }
           }
-          // TTS + orb response for action narration
+          // TTS voice = selected hoard (who's responding), not target animal
           if (gCmd.narration) {
             this.voiceOrb?.showResponse(gCmd.narration);
-            this.ttsService?.speak(this.selectedHoard, gCmd.narration);
+            const ttsVoice = this.selectedHoard !== 'all' ? this.selectedHoard : 'all';
+            console.log(`[TTS] Voice: selectedHoard=${this.selectedHoard} → "${ttsVoice}"`);
+            this.ttsService?.speak(ttsVoice, gCmd.narration);
           }
           geminiHandled = true;
         }
