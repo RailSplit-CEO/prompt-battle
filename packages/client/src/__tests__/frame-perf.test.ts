@@ -66,10 +66,10 @@ describe('Spatial grid rebuild', () => {
   for (const count of unitCounts) {
     it(`benchmarks buildSpatialGrid at ${count} units`, () => {
       const units = createUnitBatch(count);
-      let existing: Map<string, unknown[]> | undefined;
+      let existing: Map<number, any[]> | undefined;
 
       const timing = benchmark(() => {
-        existing = buildSpatialGrid(units, CELL_SIZE, existing) as Map<string, unknown[]>;
+        existing = buildSpatialGrid(units, CELL_SIZE, existing) as Map<number, any[]>;
       }, ITERATIONS);
 
       results.push({
@@ -193,11 +193,11 @@ describe('Frame budget analysis', () => {
     const FRAME_BUDGET_MS = 16.67; // 60 fps
     const count = 400;
     const units = createUnitBatch(count, { withWorkflows: true, withPaths: true });
-    let existing: Map<string, unknown[]> | undefined;
+    let existing: Map<number, any[]> | undefined;
 
     // Spatial grid rebuild
     const spatialTiming = benchmark(() => {
-      existing = buildSpatialGrid(units, CELL_SIZE, existing) as Map<string, unknown[]>;
+      existing = buildSpatialGrid(units, CELL_SIZE, existing) as Map<number, any[]>;
     }, 50);
 
     // ID map rebuild (×2 maps)

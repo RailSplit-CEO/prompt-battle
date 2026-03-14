@@ -68,31 +68,44 @@ export function isPointInWildZones(
   return false;
 }
 
+/** Numeric spatial grid key stride — must be larger than max cells per dimension */
+export const SPATIAL_KEY_STRIDE = 256;
+
 /**
  * Build a spatial hash grid from an array of units.
  * Only alive units (dead === false) are inserted.
- * Key format: `${col}_${row}` where col = floor(x/cellSize), row = floor(y/cellSize).
+ * Uses numeric keys: cellY * SPATIAL_KEY_STRIDE + cellX (no string allocation).
+ * Optionally pools bucket arrays to reduce GC pressure.
  */
 export function buildSpatialGrid<T extends GridUnit>(
   units: T[],
   cellSize: number,
-  existing?: Map<string, T[]>,
-): Map<string, T[]> {
-  let grid: Map<string, T[]>;
+  existing?: Map<number, T[]>,
+  bucketPool?: T[][],
+): Map<number, T[]> {
+  let grid: Map<number, T[]>;
   if (existing) {
+    if (bucketPool) {
+      for (const bucket of existing.values()) {
+        bucket.length = 0;
+        bucketPool.push(bucket);
+      }
+    }
     existing.clear();
     grid = existing;
   } else {
-    grid = new Map<string, T[]>();
+    grid = new Map<number, T[]>();
   }
   for (const u of units) {
     if (u.dead) continue;
-    const key = `${Math.floor(u.x / cellSize)}_${Math.floor(u.y / cellSize)}`;
+    const key = Math.floor(u.y / cellSize) * SPATIAL_KEY_STRIDE + Math.floor(u.x / cellSize);
     const bucket = grid.get(key);
     if (bucket) {
       bucket.push(u);
     } else {
-      grid.set(key, [u]);
+      const newBucket: T[] = bucketPool && bucketPool.length > 0 ? bucketPool.pop()! : [];
+      newBucket.push(u);
+      grid.set(key, newBucket);
     }
   }
   return grid;
@@ -101,22 +114,25 @@ export function buildSpatialGrid<T extends GridUnit>(
 /**
  * Query the 9 cells surrounding (x, y) in a spatial grid,
  * then filter by actual Euclidean distance <= radius.
+ * Optionally accepts a reusable output array to avoid allocation.
  */
 export function getNearbyFromGrid<T extends GridUnit>(
-  grid: Map<string, T[]>,
+  grid: Map<number, T[]>,
   x: number,
   y: number,
   radius: number,
   cellSize: number,
+  out?: T[],
 ): T[] {
   const cx = Math.floor(x / cellSize);
   const cy = Math.floor(y / cellSize);
   const r2 = radius * radius;
-  const result: T[] = [];
+  const result: T[] = out || [];
+  if (out) out.length = 0;
 
   for (let dx = -1; dx <= 1; dx++) {
     for (let dy = -1; dy <= 1; dy++) {
-      const bucket = grid.get(`${cx + dx}_${cy + dy}`);
+      const bucket = grid.get((cy + dy) * SPATIAL_KEY_STRIDE + (cx + dx));
       if (!bucket) continue;
       for (const u of bucket) {
         const ux = u.x - x;

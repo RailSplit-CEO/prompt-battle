@@ -9,9 +9,10 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@elevenlabs/client": "^0.15.1",
     "@prompt-battle/shared": "*",
-    "phaser": "^3.80.0",
-    "firebase": "^10.12.0"
+    "firebase": "^10.12.0",
+    "phaser": "^3.80.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

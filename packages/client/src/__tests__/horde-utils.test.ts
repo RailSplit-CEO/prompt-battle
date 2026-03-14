@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildSpatialGrid,
   getNearbyFromGrid,
+  SPATIAL_KEY_STRIDE,
   detectStuck,
   isPointInWildZones,
   clampWanderTarget,
@@ -28,22 +29,26 @@ describe('buildSpatialGrid', () => {
   it('inserts a unit into the correct cell based on its position', () => {
     const units = [mkUnit(150, 250, 'u1')];
     const grid = buildSpatialGrid(units, 200);
-    // cell key = floor(150/200)_floor(250/200) = 0_1
-    expect(grid.has('0_1')).toBe(true);
-    expect(grid.get('0_1')).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'u1' })]));
+    // cell key = floor(250/200) * STRIDE + floor(150/200) = 1 * 256 + 0 = 256
+    const key = 1 * SPATIAL_KEY_STRIDE + 0;
+    expect(grid.has(key)).toBe(true);
+    expect(grid.get(key)).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'u1' })]));
   });
 
   it('places multiple units into distinct cells', () => {
     const units = [mkUnit(50, 50, 'a'), mkUnit(450, 450, 'b')];
     const grid = buildSpatialGrid(units, 200);
-    expect(grid.get('0_0')).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'a' })]));
-    expect(grid.get('2_2')).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'b' })]));
+    const keyA = 0 * SPATIAL_KEY_STRIDE + 0; // cell (0,0)
+    const keyB = 2 * SPATIAL_KEY_STRIDE + 2; // cell (2,2)
+    expect(grid.get(keyA)).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'a' })]));
+    expect(grid.get(keyB)).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'b' })]));
   });
 
   it('skips dead units', () => {
     const units = [mkUnit(50, 50, 'alive'), mkUnit(60, 60, 'dead', true)];
     const grid = buildSpatialGrid(units, 200);
-    const bucket = grid.get('0_0') ?? [];
+    const key = 0 * SPATIAL_KEY_STRIDE + 0;
+    const bucket = grid.get(key) ?? [];
     expect(bucket.length).toBe(1);
     expect(bucket[0].id).toBe('alive');
   });
