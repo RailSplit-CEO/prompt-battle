@@ -444,45 +444,205 @@
       50% { box-shadow: 0 0 8px 2px rgba(201, 143, 255, 0.25); }
     }
 
-    /* ─── HORDE MODE RESPONSIVE PANELS ──────────────────── */
-    #game-container {
-      --horde-sidebar-w: clamp(200px, 17vw, 300px);
-      --horde-rpanel-w: clamp(260px, 23vw, 400px);
+    /* ─── HORDE MODE FLOATING OVERLAY PANELS ──────────────── */
+
+    /* Top control group bar */
+    #horde-top-bar {
+      position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 4px; z-index: 101; pointer-events: all;
+      font-family: 'Nunito', sans-serif;
+    }
+    #horde-top-bar .ctrl-card {
+      background: rgba(212,196,160,0.88); backdrop-filter: blur(8px);
+      border: 2px solid rgba(139,115,85,0.6); border-radius: 10px;
+      padding: 6px 12px; text-align: center; min-width: 90px;
+      cursor: pointer; transition: all 0.15s ease; position: relative;
+    }
+    #horde-top-bar .ctrl-card:hover { border-color: #8B7355; }
+    #horde-top-bar .ctrl-card.active {
+      border-color: #FFD93D;
+      background: linear-gradient(180deg, rgba(255,217,61,0.15) 0%, rgba(188,168,120,0.95) 100%);
+      box-shadow: 0 0 8px rgba(255,217,61,0.35);
+      transform: scale(1.08);
+    }
+    #horde-top-bar .ctrl-card.active::after {
+      content: ''; position: absolute; bottom: -3px; left: 15%; right: 15%;
+      height: 2px; background: #FFD93D; border-radius: 2px;
+      opacity: 0.7;
+    }
+    #horde-top-bar .ctrl-card.active .hotkey {
+      background: linear-gradient(135deg, #FFD93D, #E6A800);
+    }
+    #horde-top-bar .ctrl-card.just-selected {
+      animation: just-selected-pop 0.25s ease-out;
+    }
+    @keyframes just-selected-pop {
+      0% { transform: scale(1.05); }
+      50% { transform: scale(1.14); }
+      100% { transform: scale(1.08); }
+    }
+    #horde-top-bar .ctrl-card .hotkey {
+      position: absolute; top: -6px; left: -6px; width: 20px; height: 20px;
+      background: linear-gradient(135deg, #8B7355, #6B5335); color: #fff;
+      font-size: 11px; font-weight: 800; border-radius: 5px;
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Fredoka', sans-serif;
     }
 
-    #horde-sidebar,
-    #horde-char-panel {
-      transition: width 0.25s ease;
+    /* Right resource panel */
+    #horde-resource-panel {
+      position: absolute; top: 8px; right: 8px; width: 200px;
+      background: rgba(212,196,160,0.9); backdrop-filter: blur(10px);
+      border: 2px solid rgba(139,115,85,0.6); border-radius: 12px;
+      padding: 10px 12px; z-index: 101; pointer-events: all;
+      font-family: 'Nunito', sans-serif;
     }
 
-    #horde-sidebar::-webkit-scrollbar,
-    #horde-char-panel::-webkit-scrollbar {
-      width: 5px;
+    /* Left command log panel */
+    #horde-cmd-log {
+      position: absolute; top: 8px; left: 8px; width: 280px;
+      max-height: calc(100vh - 100px); overflow-y: auto;
+      background: rgba(212,196,160,0.88); backdrop-filter: blur(10px);
+      border: 2px solid rgba(139,115,85,0.5); border-radius: 12px;
+      padding: 10px 12px; z-index: 101; pointer-events: all;
+      font-family: 'Nunito', sans-serif;
+      scrollbar-width: thin; scrollbar-color: rgba(139,115,85,0.5) rgba(212,196,160,0.4);
     }
-    #horde-sidebar::-webkit-scrollbar-track,
-    #horde-char-panel::-webkit-scrollbar-track {
-      background: rgba(139,115,85,0.15);
-      border-radius: 3px;
+    #horde-cmd-log::-webkit-scrollbar { width: 5px; }
+    #horde-cmd-log::-webkit-scrollbar-track { background: rgba(139,115,85,0.15); border-radius: 3px; }
+    #horde-cmd-log::-webkit-scrollbar-thumb { background: rgba(139,115,85,0.4); border-radius: 3px; }
+
+    /* Right event cards — positioned dynamically below resource panel */
+    #horde-quest-panel {
+      position: absolute; right: 8px; width: 220px;
+      max-height: calc(100vh - 200px); overflow-y: auto;
+      z-index: 101; pointer-events: all;
+      display: flex; flex-direction: column; gap: 6px;
+      font-family: 'Nunito', sans-serif;
+      scrollbar-width: thin; scrollbar-color: rgba(139,115,85,0.5) transparent;
     }
-    #horde-sidebar::-webkit-scrollbar-thumb,
-    #horde-char-panel::-webkit-scrollbar-thumb {
-      background: rgba(139,115,85,0.4);
-      border-radius: 3px;
-    }
-    #horde-sidebar::-webkit-scrollbar-thumb:hover,
-    #horde-char-panel::-webkit-scrollbar-thumb:hover {
-      background: rgba(139,115,85,0.6);
+    #horde-quest-panel::-webkit-scrollbar { width: 5px; }
+    #horde-quest-panel::-webkit-scrollbar-track { background: rgba(139,115,85,0.15); border-radius: 3px; }
+    #horde-quest-panel::-webkit-scrollbar-thumb { background: rgba(139,115,85,0.4); border-radius: 3px; }
+
+    /* Bottom-right minimap */
+    #horde-minimap {
+      position: absolute; bottom: 8px; right: 8px;
+      width: 200px; height: 200px;
+      background: rgba(0,0,0,0.6); border: 2px solid rgba(139,115,85,0.7);
+      border-radius: 8px; z-index: 101; pointer-events: all;
+      cursor: pointer; overflow: hidden;
     }
 
-    /* On small screens, shrink font sizes inside panels */
-    @media (max-width: 1200px) {
-      #horde-sidebar { font-size: 12px; }
-      #horde-char-panel { font-size: 12px; }
+    /* Always-on voice pulsing */
+    @keyframes voice-always-pulse {
+      0%, 100% { box-shadow: 0 0 4px rgba(255,107,107,0.2); }
+      50% { box-shadow: 0 0 12px rgba(255,107,107,0.5); }
     }
-    @media (max-width: 900px) {
-      #horde-sidebar { font-size: 11px; }
-      #horde-char-panel { font-size: 11px; }
+
+    /* ─── VOICE ORB ──────────────────────────────────────── */
+    #voice-orb-container {
+      position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+      z-index: 102; pointer-events: all;
     }
+    #voice-transcript-area {
+      text-align: center; max-width: 400px; min-height: 20px;
+      pointer-events: none;
+    }
+    #voice-response-text {
+      font-size: 14px; font-weight: 700; color: #f0e8d0;
+      text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+      opacity: 0; transition: opacity 0.5s ease;
+      line-height: 1.4; margin-bottom: 4px;
+      font-family: 'Fredoka', sans-serif;
+    }
+    #voice-response-text.typing { opacity: 1; }
+    #voice-partial-text {
+      font-size: 13px; font-style: italic; color: rgba(212,196,160,0.7);
+      opacity: 0; transition: opacity 0.3s ease;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.5);
+    }
+    #voice-orb {
+      width: 64px; height: 64px; border-radius: 50%;
+      background: linear-gradient(180deg, rgba(232,220,196,0.95) 0%, rgba(188,168,120,0.95) 100%);
+      border: 3px solid rgba(139,115,85,0.7);
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; position: relative;
+      color: #6B5335;
+      transition: all 0.3s ease;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+    }
+    #voice-orb:hover { transform: scale(1.08); }
+
+    /* Orb states */
+    #voice-orb.idle {
+      animation: orb-float 3s ease-in-out infinite;
+    }
+    @keyframes orb-float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-4px); }
+    }
+    #voice-orb.listening {
+      border-color: #45E6B0;
+      box-shadow: 0 0 16px rgba(69,230,176,0.5), 0 0 32px rgba(69,230,176,0.2);
+      animation: orb-pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes orb-pulse {
+      0%, 100% { box-shadow: 0 0 12px rgba(69,230,176,0.3), 0 0 24px rgba(69,230,176,0.1); }
+      50% { box-shadow: 0 0 20px rgba(69,230,176,0.6), 0 0 40px rgba(69,230,176,0.3); }
+    }
+    #voice-orb.processing {
+      border-color: #FFD93D;
+      box-shadow: 0 0 16px rgba(255,217,61,0.5);
+      animation: orb-spin 1s linear infinite;
+    }
+    @keyframes orb-spin {
+      0% { box-shadow: 0 0 12px rgba(255,217,61,0.3), 4px 0 8px rgba(255,217,61,0.4); }
+      25% { box-shadow: 0 0 12px rgba(255,217,61,0.3), 0 4px 8px rgba(255,217,61,0.4); }
+      50% { box-shadow: 0 0 12px rgba(255,217,61,0.3), -4px 0 8px rgba(255,217,61,0.4); }
+      75% { box-shadow: 0 0 12px rgba(255,217,61,0.3), 0 -4px 8px rgba(255,217,61,0.4); }
+      100% { box-shadow: 0 0 12px rgba(255,217,61,0.3), 4px 0 8px rgba(255,217,61,0.4); }
+    }
+    #voice-orb.speaking {
+      border-color: #9B7FD4;
+      background: linear-gradient(180deg, rgba(155,127,212,0.25) 0%, rgba(188,168,120,0.95) 100%);
+      box-shadow: 0 0 16px rgba(155,127,212,0.5), 0 0 32px rgba(155,127,212,0.2);
+      animation: orb-speak 0.6s ease-in-out infinite;
+    }
+    @keyframes orb-speak {
+      0%, 100% { transform: scale(1); }
+      25% { transform: scale(1.06); }
+      50% { transform: scale(0.96); }
+      75% { transform: scale(1.04); }
+    }
+    #voice-orb.error {
+      border-color: #FF6B6B;
+      box-shadow: 0 0 20px rgba(255,107,107,0.6);
+    }
+
+    /* Avatar badge on orb */
+    #voice-orb-avatar {
+      position: absolute; top: -6px; right: -6px;
+      width: 24px; height: 24px; border-radius: 50%;
+      background: rgba(212,196,160,0.95);
+      border: 2px solid rgba(139,115,85,0.7);
+      display: flex; align-items: center; justify-content: center;
+      overflow: hidden;
+    }
+
+    /* Text input beside orb */
+    #voice-text-input {
+      padding: 10px 16px; font-size: 14px;
+      background: linear-gradient(180deg, rgba(232,220,196,0.95) 0%, rgba(212,196,160,0.95) 100%);
+      color: #2a1a0a;
+      border: 2px solid rgba(139,115,85,0.7); border-radius: 10px; outline: none;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.3);
+      font-family: 'Fredoka', sans-serif; font-weight: 600;
+      width: min(400px, 80vw);
+      transition: border-color 0.2s ease;
+    }
+    #voice-text-input:focus { border-color: #8B7355; }
   </style>
 </head>
 <body>

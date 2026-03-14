@@ -8,6 +8,9 @@ import { SoundManager } from '../audio/SoundManager';
 import { buildSpatialGrid, getNearbyFromGrid } from './horde-utils';
 import { MemoryOverlay } from '../profiling/MemoryOverlay';
 import type { ProfilingData } from '../profiling/MemoryOverlay';
+import { TtsService } from '../systems/TtsService';
+import { ScribeService } from '../systems/ScribeService';
+import { VoiceOrb } from '../systems/VoiceOrb';
 import bundledHordeMaps from '../map/maps/horde-maps.json';
 
 // ═══════════════════════════════════════════════════════════════
@@ -67,7 +70,9 @@ interface HordeCommand {
 }
 
 let _lastGeminiCall = 0;
-const GEMINI_COOLDOWN_MS = 2000; // min 2s between Gemini calls
+let _geminiCooldownMs = 4000; // starts at 4s, grows on 429
+const GEMINI_BASE_COOLDOWN = 4000;
+const GEMINI_MAX_COOLDOWN = 60000; // max 60s backoff
 
 async function parseWithGemini(
   rawText: string,
@@ -75,7 +80,7 @@ async function parseWithGemini(
 ): Promise<HordeCommand[] | null> {
   if (!getGeminiKey()) return null;
   const now = Date.now();
-  if (now - _lastGeminiCall < GEMINI_COOLDOWN_MS) return null;
+  if (now - _lastGeminiCall < _geminiCooldownMs) return null;
   _lastGeminiCall = now;
 
   const campList = ctx.camps.map(c =>
@@ -535,8 +540,9 @@ JSON ONLY (no markdown):
       });
 
       if (response.status === 429) {
-        // Rate limited — fall back to local parser immediately (retrying just burns more quota)
-        console.warn('[Gemini] 429 rate limited, falling back to local parser');
+        // Rate limited — exponential backoff, don't retry
+        _geminiCooldownMs = Math.min(_geminiCooldownMs * 2, GEMINI_MAX_COOLDOWN);
+        console.warn(`[Gemini] 429 rate limited, backing off to ${_geminiCooldownMs / 1000}s`);
         return null;
       }
 
@@ -544,6 +550,9 @@ JSON ONLY (no markdown):
         console.warn('[Gemini] API error:', response.status);
         return null;
       }
+
+      // Successful call — reset cooldown to base
+      _geminiCooldownMs = GEMINI_BASE_COOLDOWN;
 
       const data = await response.json();
       // With thinking enabled, parts[0] may be the thinking part — find the last text part
@@ -1481,7 +1490,6 @@ export class HordeScene extends Phaser.Scene {
 
   // Command history tracking
   private commandHistory: { command: string; outcome: string; color: string; time: number }[] = [];
-  private cmdHistoryEl: HTMLDivElement | null = null;
   private pendingCommandText: string | null = null;
   private pendingRemoteCommands: { text: string; team: 1 | 2; selectedHoard: string }[] = [];
   private pendingLocalCommands: { text: string; team: 1 | 2 }[] = [];
@@ -1520,6 +1528,11 @@ export class HordeScene extends Phaser.Scene {
   private spaceKey!: Phaser.Input.Keyboard.Key;
   private recognition: any = null;
   private isListening = false;
+
+  // Voice conversation system
+  private ttsService: TtsService | null = null;
+  private scribeService: ScribeService | null = null;
+  private voiceOrb: VoiceOrb | null = null;
 
   private isDragging = false;
   private dragPrevX = 0;
@@ -1562,6 +1575,14 @@ export class HordeScene extends Phaser.Scene {
   private charPanelEl: HTMLDivElement | null = null;
   private charPanelTab: 'horde' | 'armory' | 'commands' = 'horde';
   private _resizeHandler: (() => void) | null = null;
+
+  // ─── NEW FLOATING OVERLAY PANELS ─────────────────────────────
+  private topBarEl: HTMLDivElement | null = null;
+  private resourcePanelEl: HTMLDivElement | null = null;
+  private cmdLogPanelEl: HTMLDivElement | null = null;
+  private minimapEl: HTMLCanvasElement | null = null;
+  private minimapCtx: CanvasRenderingContext2D | null = null;
+  private minimapTerrainCanvas: HTMLCanvasElement | null = null;
 
   // ─── NOTIFICATION SYSTEM ─────────────────────────────────────
   private notifContainerEl: HTMLDivElement | null = null;
@@ -1659,10 +1680,6 @@ export class HordeScene extends Phaser.Scene {
   private _prevBuffsHTML = '';
   private _hudTimerEl: HTMLElement | null = null;
   private _hudEraEl: HTMLElement | null = null;
-  private _hudNexusMineEl: HTMLElement | null = null;
-  private _hudNexusMineBarEl: HTMLElement | null = null;
-  private _hudNexusEnemyEl: HTMLElement | null = null;
-  private _hudNexusEnemyBarEl: HTMLElement | null = null;
   private _hudResourcesEl: HTMLElement | null = null;
   private _hudHoardTotalEl: HTMLElement | null = null;
   private _hudHoardListEl: HTMLElement | null = null;
@@ -3419,19 +3436,12 @@ export class HordeScene extends Phaser.Scene {
 
   // ─── CAMERA ──────────────────────────────────────────────────
 
-  /** Recalculates camera viewport & CSS vars to fit current browser size. */
+  /** Recalculates camera viewport to fill entire browser window. */
   private updateLayout() {
-    const container = document.getElementById('game-container');
-    if (!container) return;
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    const sidebarW = Math.round(Math.min(300, Math.max(200, vw * 0.17)));
-    const rpanelW  = Math.round(Math.min(400, Math.max(260, vw * 0.23)));
-    container.style.setProperty('--horde-sidebar-w', sidebarW + 'px');
-    container.style.setProperty('--horde-rpanel-w', rpanelW + 'px');
-
     const cam = this.cameras.main;
-    cam.setViewport(sidebarW, 0, vw - sidebarW - rpanelW, vh);
+    cam.setViewport(0, 0, vw, vh);
   }
 
   private setupCamera() {
@@ -3559,95 +3569,56 @@ export class HordeScene extends Phaser.Scene {
     };
     this.spaceKey = this.input.keyboard!.addKey('SPACE');
 
-    // Command input wrapper with selected hoard avatar
-    const cmdWrap = document.createElement('div');
-    cmdWrap.id = 'horde-cmd-wrap';
-    cmdWrap.style.cssText = `
-      position:absolute;bottom:10px;
-      left:var(--horde-sidebar-w, 280px);right:var(--horde-rpanel-w, 380px);
-      margin:0 auto;
-      width:min(660px, calc(100% - var(--horde-sidebar-w, 280px) - var(--horde-rpanel-w, 380px) - 40px));
-      display:flex;align-items:center;gap:0;z-index:100;
-    `;
+    // Voice Orb replaces old bottom command bar
+    const gc = document.getElementById('game-container')!;
+    this.voiceOrb = new VoiceOrb(gc);
+    this.voiceOrb.onTextSubmit = (text) => this.issueCommand(text);
+    // Store ref for keyboard guard compatibility
+    this.textInput = this.voiceOrb.getTextInput();
+    // Expose Phaser keyboard for VoiceOrb focus/blur guards
+    (window as any).__phaserKeyboard = this.input.keyboard;
 
-    const cmdAvatar = document.createElement('div');
-    cmdAvatar.id = 'horde-cmd-avatar';
-    cmdAvatar.style.cssText = `
-      flex-shrink:0;width:clamp(44px,3.5vw,56px);height:clamp(44px,3.5vw,56px);
-      background:linear-gradient(180deg, rgba(232,220,196,0.95) 0%, rgba(212,196,160,0.95) 100%);
-      backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
-      border:2px solid rgba(139,115,85,0.7);border-right:none;border-radius:10px 0 0 10px;
-      display:flex;align-items:center;justify-content:center;overflow:hidden;
-    `;
-    cmdAvatar.innerHTML = '<span style="font-size:32px;">⚔️</span>';
-    cmdWrap.appendChild(cmdAvatar);
-    this.cmdAvatarEl = cmdAvatar;
+    // Always-on voice — no push-to-talk, auto-starts
+    this.voiceStatusEl = null;
+    this.setupVoice();
 
-    const input = document.createElement('input');
-    input.id = 'horde-cmd-input';
-    input.type = 'text';
-    input.placeholder = 'Type command... (e.g. "gnomes attack skull camp")';
-    input.style.cssText = `
-      flex:1;padding:clamp(10px,1vw,14px) clamp(14px,1.5vw,22px);font-size:clamp(14px,1.2vw,18px);
-      background:linear-gradient(180deg, rgba(232,220,196,0.95) 0%, rgba(212,196,160,0.95) 100%);color:#2a1a0a;
-      backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
-      border:2px solid rgba(139,115,85,0.7);border-radius:0 10px 10px 0;outline:none;
-      box-shadow:0 2px 8px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.3);
-      font-family:'Fredoka',sans-serif;font-weight:600;
-      transition:border-color 0.2s ease, box-shadow 0.2s ease;
-    `;
-    input.addEventListener('keydown', (e) => {
-      e.stopPropagation();
-      if (e.key === 'Enter' && input.value.trim()) {
-        this.issueCommand(input.value.trim());
-        input.value = '';
-      }
-    });
-    input.addEventListener('focus', () => { this.input.keyboard!.enabled = false; });
-    input.addEventListener('blur', () => { this.input.keyboard!.enabled = true; });
-    cmdWrap.appendChild(input);
-    document.getElementById('game-container')!.appendChild(cmdWrap);
-    this.textInput = input;
-
-    const voiceDiv = document.createElement('div');
-    voiceDiv.id = 'horde-voice-status';
-    voiceDiv.style.cssText = `
-      position:absolute;bottom:72px;left:var(--horde-sidebar-w, 280px);right:var(--horde-rpanel-w, 380px);margin:0 auto;width:fit-content;
-      padding:6px 14px;background:linear-gradient(180deg, #d4c4a0 0%, #c8b890 100%);border:2px solid #8B7355;
-      border-radius:8px;z-index:100;font-family:'Nunito',sans-serif;
-      font-size:12px;color:#5a4a3a;font-weight:600;display:flex;align-items:center;gap:8px;
-      box-shadow:0 2px 6px rgba(0,0,0,0.3);
-    `;
-    const voiceLabel = document.createElement('span');
-    voiceLabel.textContent = '🎤 Hold SPACE to speak';
-    voiceDiv.appendChild(voiceLabel);
-    document.getElementById('game-container')!.appendChild(voiceDiv);
-    this.voiceStatusEl = voiceDiv;
-
-    this.setupVoice(voiceLabel);
-    this.spaceKey.on('down', () => this.startListening());
-    this.spaceKey.on('up', () => this.stopListening());
-
-    // Number-key hoard selection (1-0)
-    for (const [key, hoard] of Object.entries(this.hoardKeys)) {
-      const k = this.input.keyboard!.addKey(key);
+    // Number keys 1-5: dynamic control group selection
+    // 1=all, 2-5=dynamic from available unit types
+    const numKeyCodes = [
+      Phaser.Input.Keyboard.KeyCodes.ONE,
+      Phaser.Input.Keyboard.KeyCodes.TWO,
+      Phaser.Input.Keyboard.KeyCodes.THREE,
+      Phaser.Input.Keyboard.KeyCodes.FOUR,
+      Phaser.Input.Keyboard.KeyCodes.FIVE,
+    ];
+    for (let n = 0; n < numKeyCodes.length; n++) {
+      const k = this.input.keyboard!.addKey(numKeyCodes[n]);
+      const slotIdx = n; // 0=all, 1-4=dynamic
       k.on('down', () => {
         if (document.activeElement === this.textInput) return;
-        this.selectedHoard = hoard;
+        if (slotIdx === 0) {
+          this.selectedHoard = 'all';
+        } else {
+          const available = this.getAvailableHoards().filter(h => h !== 'all');
+          const idx = slotIdx - 1;
+          if (idx < available.length) this.selectedHoard = available[idx];
+          else return; // slot empty, ignore
+        }
         this.updateSelectionLabel();
+        this.updateTopBar();
+        // Quick feedback
+        const count = this.selectedHoard === 'all'
+          ? this.units.filter(u => u.team === this.myTeam && !u.dead).length
+          : this.units.filter(u => u.team === this.myTeam && !u.dead && u.type === this.selectedHoard).length;
+        const emoji = this.selectedHoard === 'all' ? '' : (ANIMALS[this.selectedHoard]?.emoji + ' ' || '');
+        const name = this.selectedHoard === 'all' ? 'All units' : cap(this.selectedHoard);
+        this.showFeedback(`${emoji}${name} selected (${count})`, '#FFD93D');
       });
     }
 
-    // TAB / Q / E to cycle through hoards you actually have
-    const tabKey = this.input.keyboard!.addKey('TAB');
+    // Q / E to cycle through hoards
     const qKey = this.input.keyboard!.addKey('Q');
     const eKey = this.input.keyboard!.addKey('E');
-
-    tabKey.on('down', (event: KeyboardEvent) => {
-      if (document.activeElement === this.textInput) return;
-      event.preventDefault(); // prevent browser tab-focus
-      this.cycleHoard(event.shiftKey ? -1 : 1);
-    });
     qKey.on('down', () => {
       if (document.activeElement === this.textInput) return;
       this.cycleHoard(-1);
@@ -3657,46 +3628,12 @@ export class HordeScene extends Phaser.Scene {
       this.cycleHoard(1);
     });
 
-    // [ ] — cycle character panel tabs
-    const lbKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.OPEN_BRACKET);
-    lbKey.on('down', () => {
+    // TAB still cycles
+    const tabKey = this.input.keyboard!.addKey('TAB');
+    tabKey.on('down', (event: KeyboardEvent) => {
       if (document.activeElement === this.textInput) return;
-      if (this.charPanelEl && this.charPanelEl.style.display === 'none') {
-        this.charPanelEl.style.display = 'block';
-        const tog = document.getElementById('horde-char-toggle');
-        if (tog) tog.style.right = 'calc(var(--horde-rpanel-w, 380px) + 4px)';
-      }
-      this.cycleCharPanelTab(-1);
-    });
-    const rbKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.CLOSED_BRACKET);
-    rbKey.on('down', () => {
-      if (document.activeElement === this.textInput) return;
-      if (this.charPanelEl && this.charPanelEl.style.display === 'none') {
-        this.charPanelEl.style.display = 'block';
-        const tog = document.getElementById('horde-char-toggle');
-        if (tog) tog.style.right = 'calc(var(--horde-rpanel-w, 380px) + 4px)';
-      }
-      this.cycleCharPanelTab(1);
-    });
-
-    // A / D — cycle character panel tabs
-    this.adKeys['A'].on('down', () => {
-      if (document.activeElement === this.textInput) return;
-      if (this.charPanelEl && this.charPanelEl.style.display === 'none') {
-        this.charPanelEl.style.display = 'block';
-        const tog = document.getElementById('horde-char-toggle');
-        if (tog) tog.style.right = 'calc(var(--horde-rpanel-w, 380px) + 4px)';
-      }
-      this.cycleCharPanelTab(-1);
-    });
-    this.adKeys['D'].on('down', () => {
-      if (document.activeElement === this.textInput) return;
-      if (this.charPanelEl && this.charPanelEl.style.display === 'none') {
-        this.charPanelEl.style.display = 'block';
-        const tog = document.getElementById('horde-char-toggle');
-        if (tog) tog.style.right = 'calc(var(--horde-rpanel-w, 380px) + 4px)';
-      }
-      this.cycleCharPanelTab(1);
+      event.preventDefault();
+      this.cycleHoard(event.shiftKey ? -1 : 1);
     });
 
     // F2 — toggle in-game map editor
@@ -3712,6 +3649,13 @@ export class HordeScene extends Phaser.Scene {
       if (document.activeElement === this.textInput) return;
       this.fogDisabled = !this.fogDisabled;
       this.showFeedback(this.fogDisabled ? 'Fog of War: OFF' : 'Fog of War: ON', '#FFD93D');
+    });
+
+    // T — toggle text input on voice orb
+    const tKey = this.input.keyboard!.addKey('T');
+    tKey.on('down', () => {
+      if (document.activeElement === this.textInput) return;
+      this.voiceOrb?.showTextInput();
     });
   }
 
@@ -3747,391 +3691,403 @@ export class HordeScene extends Phaser.Scene {
     return available;
   }
 
-  private setupVoice(label: HTMLSpanElement) {
+  private setupVoice() {
+    // 1. Create TTS service with coordination callbacks
+    this.ttsService = new TtsService();
+    this.ttsService.onPlayStart = () => {
+      this.scribeService?.pause();
+      this.voiceOrb?.setState('speaking');
+      // Also pause Web Speech API fallback
+      if (this.recognition && this.isListening) {
+        try { this.recognition.stop(); } catch (_e) { /* */ }
+      }
+    };
+    this.ttsService.onPlayEnd = () => {
+      this.scribeService?.resume();
+      this.voiceOrb?.setState('listening');
+      // Resume Web Speech API fallback
+      if (this.recognition && !this.ttsService?.isPlaying) {
+        this.startListening();
+      }
+    };
+
+    // 2. Create ScribeService (ElevenLabs Scribe v2 Realtime STT)
+    this.scribeService = new ScribeService({
+      onPartialTranscript: (text) => {
+        this.voiceOrb?.setPartialTranscript(text);
+      },
+      onFinalTranscript: (text) => {
+        if (text.trim()) {
+          this.voiceOrb?.setPartialTranscript('');
+          this.issueCommand(text.trim());
+        }
+      },
+      onStateChange: (state) => {
+        if (state === 'listening') this.voiceOrb?.setState('listening');
+        else if (state === 'error') this.voiceOrb?.setState('error');
+        else if (state === 'connecting') this.voiceOrb?.setState('idle');
+      },
+    });
+
+    // 3. If Scribe is available, use it; otherwise fall back to Web Speech API
+    if (this.scribeService.isAvailable()) {
+      console.log('[Voice] ✓ Using ElevenLabs Scribe v2 Realtime STT');
+      this.scribeService.start();
+    } else {
+      console.log('[Voice] ✗ No ElevenLabs key — falling back to Web Speech API');
+      this.setupWebSpeechFallback();
+    }
+
+    // Test TTS on startup — you should hear "Ready for battle, commander."
+    console.log('[Voice] Firing test TTS...');
+    this.ttsService!.test();
+  }
+
+  /** Web Speech API fallback — routed through VoiceOrb */
+  private setupWebSpeechFallback() {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) { label.textContent = 'No speech support'; return; }
+    if (!SR) return;
     const rec = new SR();
-    rec.continuous = false;
+    rec.continuous = true;
     rec.interimResults = true;
     rec.lang = 'en-US';
     rec.onresult = (e: any) => {
-      let text = '';
-      for (let i = 0; i < e.results.length; i++) text += e.results[i][0].transcript;
-      if (this.textInput) this.textInput.value = text;
-      if (e.results[e.results.length - 1].isFinal && text.trim()) {
+      // Only look at the latest result (not accumulated history)
+      const lastResult = e.results[e.results.length - 1];
+      const text = lastResult[0].transcript;
+      // Show live transcript on voice orb
+      this.voiceOrb?.setPartialTranscript(text);
+      if (lastResult.isFinal && text.trim()) {
+        this.voiceOrb?.setPartialTranscript('');
         this.issueCommand(text.trim());
-        this.stopListening();
       }
     };
-    rec.onerror = () => this.stopListening();
-    rec.onend = () => this.stopListening();
+    rec.onerror = () => this.restartVoice();
+    rec.onend = () => this.restartVoice();
     this.recognition = rec;
+    this.startListening();
+    this.voiceOrb?.setState('listening');
   }
 
   private startListening() {
-    if (this.isListening || !this.recognition || document.activeElement === this.textInput) return;
+    if (this.isListening || !this.recognition) return;
     this.isListening = true;
-    if (this.voiceStatusEl) this.voiceStatusEl.style.borderColor = '#FF6B6B';
-    if (this.textInput) this.textInput.value = '';
     try { this.recognition.start(); } catch (_e) { /* */ }
   }
 
   private stopListening() {
     if (!this.isListening) return;
     this.isListening = false;
-    if (this.voiceStatusEl) this.voiceStatusEl.style.borderColor = '#8B7355';
     try { this.recognition?.stop(); } catch (_e) { /* */ }
-    setTimeout(() => { if (!this.isListening && this.textInput) this.textInput.value = ''; }, 3000);
+  }
+
+  private restartVoice() {
+    this.isListening = false;
+    // Auto-restart after a small delay to avoid rapid restart loops
+    setTimeout(() => {
+      if (!this.gameOver) this.startListening();
+    }, 500);
   }
 
   // ─── HUD ─────────────────────────────────────────────────────
 
   private setupHUD() {
     const cam = this.cameras.main;
+    const gc = document.getElementById('game-container') ?? document.body;
 
-    // Left panel — HTML Command Console overlay
-    {
-      const container = document.getElementById('game-container') ?? document.body;
-      const sidebar = document.createElement('div');
-      sidebar.id = 'horde-sidebar';
-      sidebar.style.cssText = `
-        position:absolute;top:0;left:0;width:var(--horde-sidebar-w, 280px);height:100%;
-        background:linear-gradient(180deg, rgba(212,196,160,0.95) 0%, rgba(200,184,144,0.95) 50%, rgba(188,168,120,0.95) 100%);
-        backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
-        border-right:2px solid rgba(139,115,85,0.7);
-        box-shadow:4px 0 16px rgba(0,0,0,0.3);
-        z-index:101;overflow-y:auto;padding:clamp(8px, 1vw, 14px);
-        font-family:'Nunito',sans-serif;
-        scrollbar-width:thin;
-        scrollbar-color:rgba(139,115,85,0.5) rgba(212,196,160,0.4);
-      `;
-      const sectionStyle = 'background:rgba(255,248,230,0.45);border:1px solid rgba(139,115,85,0.35);border-radius:10px;padding:clamp(6px,0.8vw,10px);margin-bottom:8px;';
-      sidebar.innerHTML = `
-        <div id="hud-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-          <span style="font-size:20px;font-weight:800;color:#4a3520;font-family:'Fredoka',sans-serif;letter-spacing:2px;">HORDE</span>
-          <span id="hud-timer" style="font-size:16px;font-weight:700;color:#8B5E34;font-family:'Fredoka',sans-serif;background:rgba(255,217,61,0.3);padding:3px 10px;border-radius:5px;">0:00</span>
-        </div>
-        <div id="hud-era" style="font-size:12px;color:#6a5a4a;text-align:center;margin-bottom:8px;letter-spacing:1px;"></div>
-
-        <div style="${sectionStyle}">
-          <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:700;margin-bottom:4px;">
-            <span style="color:#4a3520;">YOUR BASE</span>
-            <span id="hud-nexus-mine" style="color:#2a1a0a;">50000</span>
-          </div>
-          <div style="height:10px;background:#a89870;border:1px solid #8B7355;border-radius:5px;overflow:hidden;margin-bottom:8px;">
-            <div id="hud-nexus-mine-bar" style="height:100%;width:100%;background:linear-gradient(90deg,#5a9e3a,#7bc25a);border-radius:5px;transition:width 0.5s ease;"></div>
-          </div>
-          <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:700;margin-bottom:4px;">
-            <span style="color:#FF5555;">ENEMY BASE</span>
-            <span id="hud-nexus-enemy" style="color:#FF5555;">50000</span>
-          </div>
-          <div style="height:10px;background:#a89870;border:1px solid #8B7355;border-radius:5px;overflow:hidden;">
-            <div id="hud-nexus-enemy-bar" style="height:100%;width:100%;background:linear-gradient(90deg,#FF5555,#CC3333);border-radius:5px;transition:width 0.5s ease;"></div>
-          </div>
-        </div>
-
-        <div style="${sectionStyle}">
-          <div style="font-size:14px;font-weight:800;color:#4a3520;letter-spacing:1.5px;margin-bottom:6px;font-family:'Fredoka',sans-serif;border-bottom:1px solid rgba(139,115,85,0.3);padding-bottom:4px;">RESOURCES</div>
-          <div id="hud-resources"></div>
-        </div>
-
-        <div style="${sectionStyle}">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;border-bottom:1px solid rgba(139,115,85,0.3);padding-bottom:3px;">
-            <span style="font-size:14px;font-weight:800;color:#4499FF;letter-spacing:1.5px;font-family:'Fredoka',sans-serif;">HOARD</span>
-            <span id="hud-hoard-total" style="font-size:14px;font-weight:700;color:#4499FF;"></span>
-          </div>
-          <div id="hud-hoard-list"></div>
-        </div>
-
-        <div style="${sectionStyle}">
-          <div style="font-size:14px;font-weight:800;color:#4a3520;letter-spacing:1.5px;margin-bottom:6px;font-family:'Fredoka',sans-serif;border-bottom:1px solid rgba(139,115,85,0.3);padding-bottom:4px;">PRODUCTION</div>
-          <div id="hud-production"></div>
-        </div>
-
-        <div style="${sectionStyle}">
-          <div style="font-size:14px;font-weight:800;color:#4a3520;letter-spacing:1.5px;margin-bottom:6px;font-family:'Fredoka',sans-serif;border-bottom:1px solid rgba(139,115,85,0.3);padding-bottom:4px;">CAMPS</div>
-          <div id="hud-camps"></div>
-        </div>
-
-        <div style="${sectionStyle}">
-          <div style="font-size:14px;font-weight:800;color:#4a3520;letter-spacing:1.5px;margin-bottom:6px;font-family:'Fredoka',sans-serif;border-bottom:1px solid rgba(139,115,85,0.3);padding-bottom:4px;">COMMAND LOG</div>
-          <div id="cmd-history-entries" style="font-size:10px;color:#6a5a4a;max-height:120px;overflow-y:auto;"></div>
-        </div>
-
-        <div style="${sectionStyle}">
-          <div style="font-size:14px;font-weight:800;color:#4a3520;letter-spacing:1.5px;margin-bottom:6px;font-family:'Fredoka',sans-serif;border-bottom:1px solid rgba(139,115,85,0.3);padding-bottom:4px;">MODIFIERS</div>
-          <div id="hud-modifiers" style="display:flex;flex-wrap:wrap;gap:4px;"></div>
-        </div>
-
-        <div id="hud-buffs"></div>
-      `;
-      container.appendChild(sidebar);
-      this.sidebarEl = sidebar;
-    }
-
-    // Feedback (bottom center, above voice/command input)
+    // Feedback (bottom center, above command input)
     this.hudTexts['feedback'] = this.add.text(cam.width / 2, cam.height - 105, '', {
       fontSize: '16px', color: '#45E6B0', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
     }).setOrigin(0.5).setScrollFactor(0).setDepth(100).setAlpha(0);
 
-    // Phaser selection label — hidden (hoard bar replaces it)
+    // Phaser selection label — hidden (top bar replaces it)
     this.selectionLabel = this.add.text(0, 0, '', {
       fontSize: '1px', color: '#6a5a4a',
     }).setAlpha(0).setScrollFactor(0).setDepth(0);
 
-    // HTML Hoard Bar — big visible cards for each animal type
-    const hoardBar = document.createElement('div');
-    hoardBar.id = 'horde-hoard-bar';
-    hoardBar.style.cssText = `
-      position:absolute;top:10px;left:var(--horde-sidebar-w, 280px);right:var(--horde-rpanel-w, 380px);margin:0 auto;width:fit-content;
-      display:flex;gap:4px;z-index:101;pointer-events:none;
-      font-family:'Nunito',sans-serif;
-    `;
-    document.getElementById('game-container')!.appendChild(hoardBar);
-    this.hoardBarEl = hoardBar;
-    this.updateSelectionLabel();
 
-    // Command History is now inside the left sidebar (cmd-history-entries div)
-    this.cmdHistoryEl = null;
-
-    // Help hint (hidden — controls shown in intro popups and hoard bar Q/E arrows)
-    this.hudTexts['help'] = this.add.text(0, 0, '', {
-      fontSize: '9px', color: '#8B7355', fontFamily: '"Nunito", sans-serif',
-    }).setScrollFactor(0).setDepth(0).setAlpha(0);
-
-    // Armory panel (hidden, used internally)
+    // Armory panel (hidden, used internally for equipment tracking)
     const equipPanel = document.createElement('div');
     equipPanel.id = 'horde-equip-panel';
     equipPanel.style.cssText = 'display:none;';
     this.equipPanelEl = equipPanel;
 
-    // ─── Character Details Panel (3-tab: Horde / Armory / Commands) ─────
-    const charToggle = document.createElement('button');
-    charToggle.id = 'horde-char-toggle';
-    charToggle.textContent = '\u{1F4D6}';
-    charToggle.style.cssText = `
-      position:absolute;top:10px;right:calc(var(--horde-rpanel-w, 380px) + 4px);width:36px;height:36px;
-      z-index:100;border:2px solid rgba(139,115,85,0.7);border-radius:8px;
-      background:linear-gradient(180deg, rgba(200,184,144,0.9) 0%, rgba(168,152,112,0.9) 100%);
-      backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
-      color:#2a1a0a;font-size:18px;
-      box-shadow:0 2px 6px rgba(0,0,0,0.25);
-      cursor:pointer;display:flex;align-items:center;justify-content:center;
-      font-family:'Nunito',sans-serif;padding:0;
-      transition:right 0.25s ease, background 0.2s ease;
-    `;
-    charToggle.addEventListener('click', () => {
-      this.cycleCharPanelTab(1);
-    });
-    document.getElementById('game-container')!.appendChild(charToggle);
+    // ═══ TOP CONTROL GROUP BAR (keys 1-5) ═══
+    this.setupTopBar(gc);
 
-    // AI Settings button — lets users paste their own Gemini API key
-    const aiBtn = document.createElement('button');
-    aiBtn.id = 'horde-ai-settings';
-    aiBtn.textContent = '\u{1F9E0}';
-    aiBtn.title = 'AI Settings';
-    aiBtn.style.cssText = `
-      position:absolute;top:52px;right:calc(var(--horde-rpanel-w, 380px) + 4px);width:36px;height:36px;
-      z-index:100;border:2px solid rgba(139,115,85,0.7);border-radius:8px;
-      background:linear-gradient(180deg, rgba(200,184,144,0.9) 0%, rgba(168,152,112,0.9) 100%);
-      backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
-      color:#2a1a0a;font-size:18px;
-      box-shadow:0 2px 6px rgba(0,0,0,0.25);
-      cursor:pointer;display:flex;align-items:center;justify-content:center;
-      font-family:'Nunito',sans-serif;padding:0;
-      transition:right 0.25s ease, background 0.2s ease;
-    `;
-    aiBtn.addEventListener('click', () => {
-      const current = localStorage.getItem('pb_gemini_key') || '';
-      const key = prompt(
-        'Enter your Gemini API key for AI-powered command parsing.\n' +
-        'Leave blank to use regex fallback (works fine without AI).\n\n' +
-        'Get a free key at: https://aistudio.google.com/app/apikey',
-        current,
-      );
-      if (key !== null) {
-        if (key.trim()) {
-          localStorage.setItem('pb_gemini_key', key.trim());
-        } else {
-          localStorage.removeItem('pb_gemini_key');
-        }
-        aiBtn.style.borderColor = key.trim() ? '#5a9e3a' : 'rgba(139,115,85,0.7)';
-      }
-    });
-    if (localStorage.getItem('pb_gemini_key')) aiBtn.style.borderColor = '#5a9e3a';
-    document.getElementById('game-container')!.appendChild(aiBtn);
+    // ═══ RIGHT RESOURCE PANEL ═══
+    this.setupResourcePanel(gc);
 
-    const charPanel = document.createElement('div');
-    charPanel.id = 'horde-char-panel';
-    charPanel.style.cssText = `
-      display:block;
-      position:absolute;top:0;right:0;bottom:0;width:var(--horde-rpanel-w, 380px);
-      overflow-y:auto;z-index:99;
-      background:linear-gradient(180deg, rgba(212,196,160,0.95) 0%, rgba(200,184,144,0.95) 50%, rgba(188,168,120,0.95) 100%);
-      backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
-      border-left:2px solid rgba(139,115,85,0.7);
-      padding:clamp(8px, 1vw, 14px);font-family:'Nunito',sans-serif;
-      box-shadow:-4px 0 16px rgba(0,0,0,0.3);
-      scrollbar-width:thin;scrollbar-color:rgba(139,115,85,0.5) rgba(212,196,160,0.4);
-    `;
+    // ═══ LEFT COMMAND LOG PANEL ═══
+    this.setupCmdLogPanel(gc);
 
-    const tierColors: Record<number, string> = { 1: '#2E8B2E', 2: '#2266BB', 3: '#CC6A00', 4: '#BB2222', 5: '#B8860B' };
-    const mineLabels: Record<string, string> = {
-      gnome: '2.0x', turtle: '1.5x', rogue: '1.0x', skull: '0.8x', hyena: '0.8x',
-      lizard: '0.7x', spider: '0.6x', panda: '0.5x', shaman: '0.5x', minotaur: '0.4x', troll: '0.3x',
-    };
-    const counterEmojis: Record<string, string> = {
-      gnome: '\u{1F9DD}', turtle: '\u{1F422}', skull: '\u{1F480}', spider: '\u{1F577}\uFE0F',
-      hyena: '\u{1F43A}', panda: '\u{1F43C}', lizard: '\u{1F98E}', minotaur: '\u{1F402}',
-      shaman: '\u{1F52E}', troll: '\u{1F479}', rogue: '\u{1F5E1}\uFE0F',
-    };
-    const roleMap: Record<string, string> = {
-      gnome: 'Gatherer', turtle: 'Tank / Hauler', skull: 'Bruiser', spider: 'Assassin',
-      hyena: 'Ranged DPS', rogue: 'Assassin', panda: 'Tank', lizard: 'Executioner',
-      minotaur: 'Commander', shaman: 'Mage', troll: 'Juggernaut',
-    };
-    const unitData = [
-      { key: 'gnome',    emoji: '\u{1F9DD}',       name: 'Gnome',    hp: 15,    atk: 3,   spd: 210, tier: 1, cost: '2\u{1F955}',
-        ability1: 'Nimble Hands', desc1: '2x pickup range, fastest gatherer',
-        ability2: 'Plucky', desc2: 'Survives 1 lethal hit no matter the damage',
-        strengths: ['Fastest unit — outruns everything', 'Best economy builder', 'Cheap and expendable scouts'],
-        weaknesses: ['Lowest HP and attack in the game', 'Useless in a real fight', 'Dies to splash damage quickly'] },
-      { key: 'turtle',   emoji: '\u{1F422}',       name: 'Turtle',   hp: 65,    atk: 3,   spd: 55,  tier: 1, cost: '5\u{1F955}',
-        ability1: 'Shell Stance', desc1: '60% DR when stationary + taunts nearby foes',
-        ability2: 'Beast of Burden', desc2: 'Carries 10x resources per trip',
-        strengths: ['Incredible hauler — 10x carry capacity', 'Taunts enemies off your fragile units', 'Very tanky for T1 when stationary'],
-        weaknesses: ['Slowest unit in the game', 'Nearly zero damage output', 'Easy to kite and ignore'] },
-      { key: 'skull',    emoji: '\u{1F480}',       name: 'Skull',    hp: 80,    atk: 14,  spd: 155, tier: 2, cost: '5\u{1F356}',
-        ability1: 'Undying', desc1: 'Cheats death once — survives at 1 HP',
-        ability2: 'Dread Aura', desc2: 'Enemies nearby attack 15% slower',
-        strengths: ['Guaranteed second life buys time', 'Debuffs enemy attack speed', 'Good speed for a combat unit'],
-        weaknesses: ['Low HP — dies fast after rebirth', 'Mediocre damage for T2', 'Only one rebirth per life'] },
-      { key: 'spider',   emoji: '\u{1F577}\uFE0F', name: 'Spider',   hp: 120,   atk: 18,  spd: 85,  tier: 2, cost: '5\u{1F356}',
-        ability1: 'Venom Bite', desc1: '+5% target max HP damage per hit',
-        ability2: 'Web Trap', desc2: 'First attack slows target by 40% for 3s',
-        strengths: ['Shreds tanks — % HP damage scales', 'Web opener cripples fast units', 'Great vs Panda, Turtle, Troll'],
-        weaknesses: ['Slow movement — easy to avoid', 'Fragile for a "tank killer"', 'Bad vs swarms of small units'] },
-      { key: 'hyena',    emoji: '\u{1F43A}',       name: 'Hyena',    hp: 55,    atk: 28,  spd: 175, tier: 2, cost: '5\u{1F356}',
-        ability1: 'Bone Toss', desc1: 'Extended attack range (120 vs 80)',
-        ability2: 'Pack Frenzy', desc2: '+10% attack per nearby allied hyena (max +50%)',
-        strengths: ['Outranges every other unit', 'Pack bonus makes hyena balls deadly', 'Fast — good for hit-and-run raids'],
-        weaknesses: ['Glass cannon — lowest T2 HP', 'Useless alone without pack bonus', 'Gets destroyed by splash damage'] },
-      { key: 'rogue',    emoji: '\u{1F5E1}\uFE0F', name: 'Rogue',    hp: 60,    atk: 45,  spd: 200, tier: 2, cost: '5\u{1F356}',
-        ability1: 'Backstab', desc1: '3x damage on first hit vs a new target',
-        ability2: 'Shadow Step', desc2: 'Invisible to neutral enemies, can sneak past camp defenders',
-        strengths: ['Massive burst on first hit', 'Fastest combat unit — great assassin', 'Sneaks past defenders for captures'],
-        weaknesses: ['Paper thin HP — dies instantly', 'Backstab only works once per target', 'Terrible in prolonged fights'] },
-      { key: 'panda',    emoji: '\u{1F43C}',       name: 'Panda',    hp: 900,   atk: 35,  spd: 80,  tier: 3, cost: '8\u{1F356}',
-        ability1: 'Thick Hide', desc1: 'Regenerates 1% max HP per second',
-        ability2: 'Bamboo Wall', desc2: 'Blocks projectiles for units directly behind it',
-        strengths: ['Insane regen — wins wars of attrition', 'Huge HP pool soaks damage', 'Shields backline from ranged attacks'],
-        weaknesses: ['Very slow — easy to run from', 'Low DPS for its cost', 'Gets shredded by Spider venom'] },
-      { key: 'lizard',   emoji: '\u{1F98E}',       name: 'Lizard',   hp: 450,   atk: 70,  spd: 110, tier: 3, cost: '8\u{1F955}',
-        ability1: 'Cold Blood', desc1: '3x damage to targets below 40% HP',
-        ability2: 'Tail Whip', desc2: 'Attacks hit all enemies in a 50px arc behind target',
-        strengths: ['Execute damage deletes wounded units', 'Cleave hits clustered enemies', 'Strong balanced stats for T3'],
-        weaknesses: ['Needs targets softened first', 'Expensive — 8 carrots', 'Countered by spread formations'] },
-      { key: 'minotaur', emoji: '\u{1F402}',       name: 'Minotaur', hp: 2200,  atk: 110, spd: 120, tier: 4, cost: '12\u{1F48E}',
-        ability1: 'War Cry', desc1: 'Nearby allies gain +25% attack',
-        ability2: 'Bull Rush', desc2: 'Charges at targets over 200px away, dealing 2x damage on impact',
-        strengths: ['Massive team-wide damage buff', 'Charge obliterates backlines', 'Tanky enough to lead from the front'],
-        weaknesses: ['Very expensive — 12 crystals', 'Charge can pull it out of position', 'Gets executed by Lizard Cold Blood'] },
-      { key: 'shaman',   emoji: '\u{1F52E}',       name: 'Shaman',   hp: 1400,  atk: 180, spd: 100, tier: 4, cost: '12\u{1F48E}',
-        ability1: 'Arcane Blast', desc1: 'All attacks splash in a 60px radius',
-        ability2: 'Hex Ward', desc2: 'Nearby allies take 20% less splash damage',
-        strengths: ['AoE damage melts groups', 'Splash reduction protects your army', 'Highest DPS in the game per hit'],
-        weaknesses: ['Expensive and slow to build', 'Splash hits your own pushes too close', 'Gets one-shot by Rogue backstab'] },
-      { key: 'troll',    emoji: '\u{1F479}',       name: 'Troll',    hp: 14000, atk: 350, spd: 50,  tier: 5, cost: '20\u{1F48E}',
-        ability1: 'Club Slam', desc1: 'Massive 90px splash + slows enemies',
-        ability2: 'Regeneration', desc2: 'Regenerates 0.5% max HP/sec. Doubles below 30% HP',
-        strengths: ['Unkillable wall of HP + regen', 'Splash slam wipes entire armies', 'Slow effect prevents escape'],
-        weaknesses: ['Slowest combat unit by far', 'Costs 20 crystals — huge investment', 'Gets kited and whittled by ranged'] },
-    ];
+    // ═══ BOTTOM-RIGHT MINIMAP ═══
+    this.setupMinimap(gc);
 
-    let panelHTML = `<div style="font-size:18px;color:#4a3520;font-weight:800;letter-spacing:2px;margin-bottom:12px;text-align:center;font-family:'Fredoka',sans-serif;">BESTIARY</div>`;
-    for (const u of unitData) {
-      const tc = tierColors[u.tier];
-      const counters = HARD_COUNTERS[u.key] || [];
-      const counterStr = counters.length > 0
-        ? counters.map(c => (avatarImg(c, 32) || counterEmojis[c] || c)).join(' ')
-        : '<span style="color:#555;">none</span>';
-      const role = roleMap[u.key] || '';
-      const mine = mineLabels[u.key] || '1.0x';
-      const strengthsHTML = u.strengths.map(s => `<div style="font-size:11px;color:#1a5a1a;padding:1px 0;">\u2705 ${s}</div>`).join('');
-      const weaknessesHTML = u.weaknesses.map(w => `<div style="font-size:11px;color:#882222;padding:1px 0;">\u274C ${w}</div>`).join('');
-      panelHTML += `
-        <div style="background:rgba(255,252,245,0.6);border:2px solid #8B7355;border-radius:12px;padding:12px;margin-bottom:10px;">
-          <div style="display:flex;gap:12px;margin-bottom:8px;">
-            <div style="flex-shrink:0;width:clamp(64px,6vw,88px);height:clamp(64px,6vw,88px);background:rgba(0,0,0,0.12);border:2px solid ${tc};border-radius:12px;display:flex;align-items:center;justify-content:center;overflow:hidden;">
-              ${avatarImg(u.key, 110) || `<span style="font-size:48px;">${u.emoji}</span>`}
-            </div>
-            <div style="flex:1;min-width:0;">
-              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-                <span style="font-size:22px;font-weight:800;color:#1a0a00;font-family:'Fredoka',sans-serif;">${u.name}</span>
-                <span style="font-size:13px;font-weight:700;color:#fff;background:${tc};padding:2px 8px;border-radius:5px;margin-left:auto;">T${u.tier}</span>
-              </div>
-              <div style="font-size:14px;color:#3a2a1a;font-weight:600;margin-bottom:2px;">${role}</div>
-              <div style="display:flex;gap:10px;font-size:12px;color:#2a1a0a;font-weight:600;flex-wrap:wrap;">
-                <span>\u2764\uFE0F ${u.hp}</span>
-                <span>\u2694\uFE0F ${u.atk}</span>
-                <span>\u{1F3C3} ${u.spd}</span>
-                <span>\u26CF\uFE0F ${mine}</span>
-              </div>
-              <div style="font-size:13px;color:#B8860B;font-weight:700;margin-top:2px;">${u.cost}</div>
-            </div>
-          </div>
-          <div style="background:rgba(120,60,180,0.12);border:1px solid rgba(120,60,180,0.25);border-radius:8px;padding:6px 8px;margin-bottom:6px;">
-            <div style="font-size:13px;color:#7B2FBE;font-weight:700;">${u.ability1}</div>
-            <div style="font-size:12px;color:#2a1a0a;font-style:italic;">${u.desc1}</div>
-          </div>
-          <div style="background:rgba(40,100,200,0.12);border:1px solid rgba(40,100,200,0.25);border-radius:8px;padding:6px 8px;margin-bottom:6px;">
-            <div style="font-size:13px;color:#1a60CC;font-weight:700;">${u.ability2}</div>
-            <div style="font-size:12px;color:#2a1a0a;font-style:italic;">${u.desc2}</div>
-          </div>
-          <div style="display:flex;gap:8px;align-items:center;font-size:12px;margin-bottom:6px;">
-            <span style="color:#3a2a1a;font-weight:600;">Counters:</span> <span style="display:flex;gap:4px;align-items:center;">${counterStr}</span>
-          </div>
-          <div style="display:flex;gap:8px;">
-            <div style="flex:1;">
-              <div style="font-size:11px;font-weight:700;color:#1a5a1a;margin-bottom:2px;">STRENGTHS</div>
-              ${strengthsHTML}
-            </div>
-            <div style="flex:1;">
-              <div style="font-size:11px;font-weight:700;color:#882222;margin-bottom:2px;">WEAKNESSES</div>
-              ${weaknessesHTML}
-            </div>
-          </div>
-        </div>`;
-    }
-    // Build 3-tab panel: Horde (bestiary) | Armory | Commands
-    charPanel.innerHTML = this.buildCharPanelTabs()
-      + `<div id="horde-content">${panelHTML}</div>`
-      + `<div id="armory-content-wrap" style="display:none;"></div>`
-      + `<div id="commands-content-wrap" style="display:none;"></div>`;
-    charPanel.addEventListener('click', (e) => {
-      const target = e.target as HTMLElement;
-      const tid = target.id;
-      if (tid === 'tab-horde' || tid === 'tab-armory' || tid === 'tab-commands') {
-        this.charPanelTab = tid.replace('tab-', '') as 'horde' | 'armory' | 'commands';
-        this.refreshCharPanelVisibility();
-      }
-      // Handle armory unlock button clicks
-      const unlockBtn = target.closest('[data-unlock-eq]') as HTMLElement;
-      if (unlockBtn) {
-        const eqType = unlockBtn.getAttribute('data-unlock-eq') as EquipmentType;
-        if (eqType) {
-          const success = this.unlockEquipment(this.myTeam, eqType);
-          if (success) {
-            this.showFeedback(`Unlocked ${eqType}!`, '#FFD93D');
-          }
-        }
-      }
-    });
-    document.getElementById('game-container')!.appendChild(charPanel);
-    this.charPanelEl = charPanel;
+    // Update top bar with initial state
+    this.updateTopBar();
 
     this.setupNotificationSystem();
   }
+
+  // ─── SETUP: TOP CONTROL GROUP BAR ─────────────────────────────
+  private setupTopBar(gc: HTMLElement) {
+    const bar = document.createElement('div');
+    bar.id = 'horde-top-bar';
+    gc.appendChild(bar);
+    this.topBarEl = bar;
+  }
+
+  private updateTopBar() {
+    if (!this.topBarEl) return;
+    const available = this.getAvailableHoards().filter(h => h !== 'all');
+    // Slot 1 = all, slots 2-5 = dynamic unit types
+    const slots: { key: number; id: string; emoji: string; name: string; count: number }[] = [
+      { key: 1, id: 'all', emoji: '\u2694\uFE0F', name: 'ALL',
+        count: this.units.filter(u => u.team === this.myTeam && !u.dead).length },
+    ];
+    for (let i = 0; i < Math.min(4, available.length); i++) {
+      const t = available[i];
+      const def = ANIMALS[t];
+      if (!def) continue;
+      slots.push({
+        key: i + 2, id: t, emoji: def.emoji, name: cap(t).toUpperCase(),
+        count: this.units.filter(u => u.team === this.myTeam && !u.dead && u.type === t).length,
+      });
+    }
+    let html = '';
+    for (const s of slots) {
+      const active = s.id === this.selectedHoard;
+      html += `<div class="ctrl-card${active ? ' active' : ''}" data-hoard="${s.id}">
+        <div class="hotkey">${s.key}</div>
+        <div style="display:flex;align-items:center;justify-content:center;min-height:36px;">
+          ${avatarImg(s.id === 'all' ? '' : s.id, 36) || `<span style="font-size:24px;">${s.emoji}</span>`}
+        </div>
+        <div style="font-size:11px;font-weight:800;color:#4a3520;letter-spacing:0.5px;">${s.name}</div>
+        <div style="font-size:14px;font-weight:700;color:#2a1a0a;">${s.count}</div>
+      </div>`;
+    }
+    this.topBarEl.innerHTML = html;
+    // Click handlers + just-selected pop animation
+    this.topBarEl.querySelectorAll('.ctrl-card').forEach(card => {
+      const el = card as HTMLElement;
+      el.addEventListener('click', () => {
+        const hoard = el.getAttribute('data-hoard');
+        if (hoard) { this.selectedHoard = hoard; this.updateSelectionLabel(); }
+      });
+      // Apply pop animation on active card if selection just changed
+      if (el.classList.contains('active')) {
+        el.classList.add('just-selected');
+        setTimeout(() => el.classList.remove('just-selected'), 300);
+      }
+    });
+  }
+
+  // ─── SETUP: RIGHT RESOURCE PANEL ──────────────────────────────
+  private setupResourcePanel(gc: HTMLElement) {
+    const panel = document.createElement('div');
+    panel.id = 'horde-resource-panel';
+    panel.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <span id="hud-timer" style="font-size:15px;font-weight:700;color:#8B5E34;font-family:'Fredoka',sans-serif;">0:00</span>
+        <span id="hud-era" style="font-size:11px;color:#6a5a4a;letter-spacing:1px;"></span>
+      </div>
+      <div id="hud-resources"></div>
+    `;
+    gc.appendChild(panel);
+    this.resourcePanelEl = panel;
+  }
+
+  // ─── SETUP: LEFT COMMAND LOG PANEL ────────────────────────────
+  private setupCmdLogPanel(gc: HTMLElement) {
+    const panel = document.createElement('div');
+    panel.id = 'horde-cmd-log';
+    panel.innerHTML = `
+      <div style="font-size:13px;font-weight:800;color:#4a3520;letter-spacing:1.5px;margin-bottom:6px;font-family:'Fredoka',sans-serif;">ACTIVE COMMANDS</div>
+      <div id="horde-cmd-log-entries"></div>
+    `;
+    gc.appendChild(panel);
+    this.cmdLogPanelEl = panel;
+  }
+
+  // ─── SETUP: QUEST CARDS ───────────────────────────────────────
+  // ─── SETUP: MINIMAP ───────────────────────────────────────────
+  private setupMinimap(gc: HTMLElement) {
+    const wrapper = document.createElement('div');
+    wrapper.id = 'horde-minimap';
+    const canvas = document.createElement('canvas');
+    canvas.width = 200;
+    canvas.height = 200;
+    canvas.style.cssText = 'width:100%;height:100%;display:block;';
+    wrapper.appendChild(canvas);
+    gc.appendChild(wrapper);
+    this.minimapEl = canvas;
+    this.minimapCtx = canvas.getContext('2d');
+
+    // Pre-render terrain
+    this.preRenderMinimapTerrain();
+
+    // Click to move camera
+    wrapper.addEventListener('click', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const mx = (e.clientX - rect.left) / rect.width;
+      const my = (e.clientY - rect.top) / rect.height;
+      const worldX = mx * WORLD_W;
+      const worldY = my * WORLD_H;
+      this.cameras.main.centerOn(worldX, worldY);
+    });
+  }
+
+  private preRenderMinimapTerrain() {
+    const tc = document.createElement('canvas');
+    tc.width = 200;
+    tc.height = 200;
+    const ctx = tc.getContext('2d')!;
+    const tiles = this.mapDef?.tiles;
+    if (tiles) {
+      const cols = tiles[0]?.length || 0;
+      const rows = tiles.length;
+      const sx = 200 / (cols * TILE_SIZE);
+      const sy = 200 / (rows * TILE_SIZE);
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const t = tiles[r][c];
+          let color = '#4a7a3a'; // grass (0)
+          if (t === 2) color = '#2a5a8a'; // water
+          else if (t === 1) color = '#3a6a2a'; // high_ground
+          else if (t === 3) color = '#777'; // rock
+          ctx.fillStyle = color;
+          ctx.fillRect(c * TILE_SIZE * sx, r * TILE_SIZE * sy, Math.ceil(TILE_SIZE * sx), Math.ceil(TILE_SIZE * sy));
+        }
+      }
+    } else {
+      ctx.fillStyle = '#4a7a3a';
+      ctx.fillRect(0, 0, 200, 200);
+    }
+    this.minimapTerrainCanvas = tc;
+  }
+
+  private updateMinimap() {
+    const ctx = this.minimapCtx;
+    if (!ctx || !this.minimapTerrainCanvas) return;
+    // Restore terrain
+    ctx.drawImage(this.minimapTerrainCanvas, 0, 0);
+    const scaleX = 200 / WORLD_W;
+    const scaleY = 200 / WORLD_H;
+
+    // Draw camps as triangles
+    for (const c of this.camps) {
+      ctx.fillStyle = c.owner === this.myTeam ? '#4488ff' : c.owner === 0 ? '#888' : '#ff4444';
+      const cx = c.x * scaleX, cy = c.y * scaleY;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - 4);
+      ctx.lineTo(cx - 3, cy + 3);
+      ctx.lineTo(cx + 3, cy + 3);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // Draw nexuses as squares
+    for (const n of this.nexuses) {
+      ctx.fillStyle = n.team === this.myTeam ? '#4488ff' : '#ff4444';
+      ctx.fillRect(n.x * scaleX - 4, n.y * scaleY - 4, 8, 8);
+    }
+
+    // Draw unit dots
+    for (const u of this.units) {
+      if (u.dead) continue;
+      ctx.fillStyle = u.team === this.myTeam ? '#6699ff' : '#ff6666';
+      ctx.fillRect(u.x * scaleX - 1, u.y * scaleY - 1, 2, 2);
+    }
+
+    // Camera viewport rect
+    const cam = this.cameras.main;
+    const left = cam.scrollX * scaleX;
+    const top = cam.scrollY * scaleY;
+    const w = (cam.width / cam.zoom) * scaleX;
+    const h = (cam.height / cam.zoom) * scaleY;
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(left, top, w, h);
+  }
+
+  // ─── UPDATE: COMMAND LOG PANEL ────────────────────────────────
+  private updateCmdLogPanel() {
+    const entriesEl = document.getElementById('horde-cmd-log-entries');
+    if (!entriesEl) return;
+    const myT = this.myTeam;
+    const available = this.selectedHoard === 'all'
+      ? this.getAvailableHoards().filter(h => h !== 'all')
+      : [this.selectedHoard];
+
+    const modColors: Record<string, { bg: string; fg: string; label: string }> = {
+      spread: { bg: 'rgba(30,100,220,0.2)', fg: '#1a60CC', label: '\u{1F4A0} Spread' },
+      tight: { bg: 'rgba(200,100,20,0.2)', fg: '#B06000', label: '\u{1F91D} Tight' },
+      safe: { bg: 'rgba(30,140,30,0.2)', fg: '#1a6a1a', label: '\u{1F6E1}\uFE0F Safe' },
+      aggressive: { bg: 'rgba(200,50,50,0.2)', fg: '#BB2222', label: '\u{1F525} Aggressive' },
+      rush: { bg: 'rgba(180,140,20,0.2)', fg: '#8B6914', label: '\u26A1 Rush' },
+      efficient: { bg: 'rgba(120,60,180,0.2)', fg: '#7B2FBE', label: '\u{1F9E0} Efficient' },
+    };
+
+    let html = '';
+    for (const hType of available) {
+      const def = ANIMALS[hType];
+      if (!def) continue;
+      const wfKey = `${hType}_${myT}`;
+      const wf = this.groupWorkflows[wfKey] as HWorkflow | undefined;
+      const mods = this.groupModifiers[wfKey] as BehaviorMods | undefined;
+      const lastCmd = this.lastHoardCommand[hType] || '';
+      const displayCmd = (wf && wf.voiceCommand) ? wf.voiceCommand : lastCmd;
+      const count = this.units.filter(u => u.team === myT && !u.dead && u.type === hType).length;
+
+      html += `<div style="background:rgba(255,248,230,0.5);border:1px solid rgba(139,115,85,0.35);border-radius:8px;padding:6px 8px;margin-bottom:6px;">`;
+      // Header
+      html += `<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+        ${avatarImg(hType, 24) || `<span style="font-size:16px;">${def.emoji}</span>`}
+        <span style="font-size:12px;font-weight:700;color:#2a1a0a;">${cap(hType)}</span>
+        <span style="font-size:11px;color:#6a5a4a;margin-left:auto;">\u00D7${count}</span>
+      </div>`;
+      // Voice command
+      if (displayCmd) {
+        html += `<div style="font-size:10px;color:#2a1a0a;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:rgba(0,0,0,0.06);padding:2px 6px;border-radius:4px;margin-bottom:4px;" title="${displayCmd.replace(/"/g, '&quot;')}">\u{1F3A4} "${displayCmd}"</div>`;
+      }
+      // Workflow steps
+      if (wf && wf.steps.length > 0) {
+        for (let si = 0; si < wf.steps.length; si++) {
+          const step = wf.steps[si];
+          const label = this.formatWorkflowStep(step);
+          const isLoop = si === wf.loopFrom && si > 0;
+          html += `<div style="display:flex;align-items:center;gap:4px;font-size:10px;font-weight:600;padding:2px 6px;color:#3a2a1a;">
+            <span style="color:#6a5a4a;font-size:9px;">${si + 1}.</span>
+            ${isLoop ? '<span style="font-size:8px;color:#7B2FBE;">\u{1F504}</span>' : ''}
+            <span>${label}</span>
+          </div>`;
+        }
+      } else {
+        html += `<div style="font-size:10px;color:#888;font-style:italic;">No orders</div>`;
+      }
+      // Modifiers
+      if (mods) {
+        let modsHTML = '';
+        for (const val of [mods.formation, mods.caution, mods.pacing]) {
+          if (val && val !== 'normal') {
+            const mc = modColors[val];
+            if (mc) modsHTML += `<span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;background:${mc.bg};color:${mc.fg};">${mc.label}</span>`;
+          }
+        }
+        if (modsHTML) html += `<div style="display:flex;gap:3px;flex-wrap:wrap;margin-top:3px;">${modsHTML}</div>`;
+      }
+      html += `</div>`;
+    }
+    if (!html) html = '<div style="font-size:11px;color:#888;text-align:center;padding:10px;">No units yet</div>';
+    if (html !== this._prevCmdHTML) { entriesEl.innerHTML = html; this._prevCmdHTML = html; }
+  }
+
+  // ─── UPDATE: QUEST PANEL ──────────────────────────────────────
+  // ─── CHAR PANEL STUBS (removed — no longer used) ──────────────
+  private cycleCharPanelTab(_direction: 1 | -1) { /* removed */ }
+  private refreshCharPanelVisibility() { /* removed */ }
+  private buildCharPanelTabs(): string { return ''; }
 
   // ─── NOTIFICATION SYSTEM ────────────────────────────────────
 
@@ -4202,7 +4158,7 @@ export class HordeScene extends Phaser.Scene {
     const container = document.createElement('div');
     container.id = 'notif-container';
     container.style.cssText = `
-      position:absolute;top:0;left:var(--horde-sidebar-w, 280px);right:var(--horde-rpanel-w, 380px);
+      position:absolute;top:0;left:0;right:0;
       height:100%;z-index:300;pointer-events:none;overflow:hidden;
     `;
     c.appendChild(container);
@@ -4278,12 +4234,12 @@ export class HordeScene extends Phaser.Scene {
       { cmd: 'Attack the enemy turret in the southeast', desc: 'Target specific structures by direction' },
     ];
     const controls = [
+      { key: '1-5', desc: 'Control groups' },
       { key: 'Q / E', desc: 'Cycle hoards' },
-      { key: 'A / D', desc: 'Menu tabs' },
       { key: 'Arrows / Drag', desc: 'Pan map' },
       { key: 'Scroll', desc: 'Zoom' },
     ];
-    el.innerHTML = '<div style="font-family:Fredoka,sans-serif;font-size:16px;letter-spacing:4px;color:rgba(100,70,30,0.6);margin-bottom:4px;opacity:0;animation:notif-era-child 400ms ease-out 200ms forwards;">HOLD SPACE AND SAY</div>'
+    el.innerHTML = '<div style="font-family:Fredoka,sans-serif;font-size:16px;letter-spacing:4px;color:rgba(100,70,30,0.6);margin-bottom:4px;opacity:0;animation:notif-era-child 400ms ease-out 200ms forwards;">SPEAK OR TYPE</div>'
       + '<div style="font-family:Fredoka,sans-serif;font-size:46px;font-weight:700;color:#5a3a1a;text-shadow:0 2px 4px rgba(0,0,0,0.1);margin-bottom:12px;opacity:0;animation:notif-era-child 400ms ease-out 400ms forwards;">\u{1F399}\uFE0F VOICE COMMANDS</div>'
       + '<div style="width:60%;height:2px;background:linear-gradient(90deg,transparent,rgba(120,90,50,0.4),transparent);margin:0 auto 22px;opacity:0;animation:notif-era-child 400ms ease-out 500ms forwards;"></div>'
       + '<div style="display:flex;flex-direction:column;gap:18px;text-align:left;">'
@@ -4453,67 +4409,6 @@ export class HordeScene extends Phaser.Scene {
     // Removed: dark event resolve notifications from top
   }
 
-  private cycleCharPanelTab(direction: 1 | -1) {
-    const tabs: ('horde' | 'armory' | 'commands')[] = ['horde', 'armory', 'commands'];
-    let idx = tabs.indexOf(this.charPanelTab);
-    idx += direction;
-    if (idx < 0) idx = tabs.length - 1;
-    if (idx >= tabs.length) idx = 0;
-    this.charPanelTab = tabs[idx];
-    this.refreshCharPanelVisibility();
-  }
-
-  private refreshCharPanelVisibility() {
-    if (!this.charPanelEl) return;
-    const hc = this.charPanelEl.querySelector('#horde-content') as HTMLElement;
-    const ac = this.charPanelEl.querySelector('#armory-content-wrap') as HTMLElement;
-    const cc = this.charPanelEl.querySelector('#commands-content-wrap') as HTMLElement;
-    if (hc) hc.style.display = this.charPanelTab === 'horde' ? 'block' : 'none';
-    if (ac) ac.style.display = this.charPanelTab === 'armory' ? 'block' : 'none';
-    if (cc) cc.style.display = this.charPanelTab === 'commands' ? 'block' : 'none';
-    // Rebuild tab bar
-    const tabBar = this.charPanelEl.querySelector('#char-panel-tabs') as HTMLElement;
-    if (tabBar) tabBar.outerHTML = this.buildCharPanelTabs();
-    // Update toggle button icon
-    const tog = document.getElementById('horde-char-toggle');
-    if (tog) {
-      const icons: Record<string, string> = { horde: '\u{1F4D6}', armory: '\u{1F3DB}\uFE0F', commands: '\u{1F4CB}' };
-      tog.textContent = icons[this.charPanelTab] || '\u{1F4D6}';
-    }
-  }
-
-  private buildCharPanelTabs(): string {
-    const tabs: { id: 'horde' | 'armory' | 'commands'; label: string }[] = [
-      { id: 'horde', label: 'HORDE' },
-      { id: 'armory', label: 'ARMORY' },
-      { id: 'commands', label: 'COMMANDS' },
-    ];
-    let html = `<div id="char-panel-tabs" style="margin-bottom:8px;">`;
-    html += `<div style="display:flex;gap:0;">`;
-    for (let i = 0; i < tabs.length; i++) {
-      const t = tabs[i];
-      const active = this.charPanelTab === t.id;
-      const radius = i === 0 ? 'border-radius:6px 0 0 6px;' : i === tabs.length - 1 ? 'border-radius:0 6px 6px 0;' : 'border-radius:0;';
-      const borderLeft = i > 0 ? 'border-left:none;' : '';
-      html += `<button id="tab-${t.id}" style="flex:1;padding:6px 0;font-size:11px;font-weight:700;font-family:'Fredoka',sans-serif;` +
-        `border:2px solid #8B7355;cursor:pointer;${radius}${borderLeft}` +
-        `background:${active ? 'linear-gradient(180deg,#e8dcc4,#d4c4a0)' : 'linear-gradient(180deg,#a89870,#8B7355)'};` +
-        `color:${active ? '#2a1a0a' : '#d4c4a0'};">${t.label}</button>`;
-    }
-    html += `</div>`;
-    // Dot indicators
-    html += `<div style="display:flex;justify-content:center;gap:6px;margin-top:5px;">`;
-    for (const t of tabs) {
-      const active = this.charPanelTab === t.id;
-      html += `<span style="width:8px;height:8px;border-radius:50%;background:${active ? '#FFD93D' : '#8B7355'};display:inline-block;"></span>`;
-    }
-    html += `</div>`;
-    // A/D key hint
-    html += `<div style="text-align:center;font-size:9px;color:#6a5a4a;margin-top:3px;font-family:'Nunito',sans-serif;">\u25C0 <b>A</b> / <b>D</b> \u25B6</div>`;
-    html += `</div>`;
-    return html;
-  }
-
   private formatWorkflowStep(step: WorkflowStep): string {
     const RESOURCE_ICONS: Record<string, string> = { carrot: '\u{1F955}', meat: '\u{1F356}', crystal: '\u{1F48E}', metal: '\u2699\uFE0F' };
     const EQUIP_ICONS: Record<string, string> = { pickaxe: '\u26CF\uFE0F', sword: '\u2694\uFE0F', shield: '\u{1F6E1}\uFE0F', boots: '\u{1F462}', banner: '\u{1F6A9}' };
@@ -4539,37 +4434,14 @@ export class HordeScene extends Phaser.Scene {
   private updateHUD() {
     const myT = this.myTeam;
     const enemyT = myT === 1 ? 2 : 1;
-    const p1 = this.units.filter(u => u.team === myT && !u.dead);
-    const p2 = this.units.filter(u => u.team === enemyT && !u.dead);
-    const countBy = (us: HUnit[]) => {
-      const c: Record<string, number> = {};
-      for (const u of us) c[u.type] = (c[u.type] || 0) + 1;
-      return c;
-    };
-    const p1c = countBy(p1), p2c = countBy(p2);
 
-    // Timer + Era
+    // Timer + Era (in resource panel)
     const secs = Math.floor(this.gameTime / 1000);
     const eraName = HordeScene.ERA_NAMES[this.currentEra] || '';
     const timerEl = this._hudTimerEl || (this._hudTimerEl = document.getElementById('hud-timer'));
     if (timerEl) timerEl.textContent = Math.floor(secs / 60) + ':' + (secs % 60).toString().padStart(2, '0');
     const eraEl = this._hudEraEl || (this._hudEraEl = document.getElementById('hud-era'));
     if (eraEl) eraEl.textContent = `Era ${this.currentEra}: ${eraName}`;
-
-    // Nexus HP bars
-    const maxNexus = 50000;
-    const myNexus = this.nexuses.find(n => n.team === myT);
-    const enemyNexus = this.nexuses.find(n => n.team === enemyT);
-    const myHp = myNexus ? myNexus.hp : maxNexus;
-    const enemyHp = enemyNexus ? enemyNexus.hp : maxNexus;
-    const mineHpEl = this._hudNexusMineEl || (this._hudNexusMineEl = document.getElementById('hud-nexus-mine'));
-    const mineBarEl = this._hudNexusMineBarEl || (this._hudNexusMineBarEl = document.getElementById('hud-nexus-mine-bar'));
-    const enemyHpEl = this._hudNexusEnemyEl || (this._hudNexusEnemyEl = document.getElementById('hud-nexus-enemy'));
-    const enemyBarEl = this._hudNexusEnemyBarEl || (this._hudNexusEnemyBarEl = document.getElementById('hud-nexus-enemy-bar'));
-    if (mineHpEl) mineHpEl.textContent = String(Math.ceil(myHp));
-    if (mineBarEl) mineBarEl.style.width = `${(myHp / maxNexus) * 100}%`;
-    if (enemyHpEl) enemyHpEl.textContent = String(Math.ceil(enemyHp));
-    if (enemyBarEl) enemyBarEl.style.width = `${(enemyHp / maxNexus) * 100}%`;
 
     // Resources
     const stock = this.baseStockpile[myT as 1 | 2];
@@ -4585,15 +4457,15 @@ export class HordeScene extends Phaser.Scene {
       let html = '';
       for (const r of resources) {
         const pct = Math.min(100, (r.amount / maxRes) * 100);
-        html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-          <span style="font-size:18px;">${r.emoji}</span>
+        html += `<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+          <span style="font-size:14px;">${r.emoji}</span>
           <div style="flex:1;">
-            <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:700;">
+            <div style="display:flex;justify-content:space-between;font-size:12px;font-weight:700;">
               <span style="color:#6a5a4a;">${r.name}</span>
               <span style="color:${r.color};">${r.amount}</span>
             </div>
-            <div style="height:6px;background:#a89870;border:1px solid #8B7355;border-radius:3px;overflow:hidden;margin-top:3px;">
-              <div style="height:100%;width:${pct}%;background:${r.gradient};border-radius:3px;transition:width 0.3s ease;"></div>
+            <div style="height:4px;background:#a89870;border-radius:2px;overflow:hidden;margin-top:2px;">
+              <div style="height:100%;width:${pct}%;background:${r.gradient};border-radius:2px;transition:width 0.3s ease;"></div>
             </div>
           </div>
         </div>`;
@@ -4601,480 +4473,13 @@ export class HordeScene extends Phaser.Scene {
       if (html !== this._prevResHTML) { resEl.innerHTML = html; this._prevResHTML = html; }
     }
 
-    // Hoard
-    const tierColors: Record<number, string> = { 1: '#2E8B2E', 2: '#2266BB', 3: '#CC6A00', 4: '#BB2222', 5: '#B8860B' };
-    const totalEl = this._hudHoardTotalEl || (this._hudHoardTotalEl = document.getElementById('hud-hoard-total'));
-    if (totalEl) totalEl.textContent = `${p1.length} units`;
-    const hoardEl = this._hudHoardListEl || (this._hudHoardListEl = document.getElementById('hud-hoard-list'));
-    if (hoardEl) {
-      let html = '';
-      for (const [type, def] of Object.entries(ANIMALS)) {
-        const count = p1c[type] || 0;
-        if (count === 0) continue;
-        const tc = tierColors[def.tier] || '#aaa';
-        html += `<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;margin-bottom:4px;background:rgba(188,168,120,0.3);border-radius:8px;border-left:4px solid ${tc};">
-          ${avatarImg(type, 32) || `<span style="font-size:20px;">${def.emoji}</span>`}
-          <span style="font-size:15px;font-weight:700;color:#2a1a0a;flex:1;">${cap(type)}</span>
-          <span style="font-size:16px;font-weight:800;color:${tc};">${count}</span>
-        </div>`;
-      }
-      if (!html) html = '<div style="font-size:13px;color:#555;padding:4px;">No units yet</div>';
-      if (html !== this._prevHoardHTML) { hoardEl.innerHTML = html; this._prevHoardHTML = html; }
-    }
-
-    // Production
-    const prodEl = this._hudProductionEl || (this._hudProductionEl = document.getElementById('hud-production'));
-    if (prodEl) {
-      let html = '';
-      const gnomeCountdown = Math.max(0, Math.ceil((FREE_GNOME_MS - this.freeGnomeTimer) / 1000));
-      html += `<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;margin-bottom:4px;background:rgba(188,168,120,0.3);border-radius:8px;">
-        ${avatarImg('gnome', 28) || `<span style="font-size:16px;">\u{1F9DD}</span>`}
-        <span style="font-size:14px;color:#6a5a4a;flex:1;">Free gnome</span>
-        <span style="font-size:14px;font-weight:700;color:#4a3520;">${gnomeCountdown}s</span>
-      </div>`;
-      const myCamps = this.camps.filter(c => c.owner === myT);
-      for (const c of myCamps) {
-        const cost = SPAWN_COSTS[c.animalType];
-        if (!cost) continue;
-        const tc = tierColors[ANIMALS[c.animalType]?.tier] || '#aaa';
-        html += `<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;margin-bottom:4px;background:rgba(188,168,120,0.3);border-radius:8px;border-left:4px solid ${tc};">
-          ${avatarImg(c.animalType, 28) || `<span style="font-size:16px;">${ANIMALS[c.animalType]?.emoji || ''}</span>`}
-          <span style="font-size:14px;color:#6a5a4a;flex:1;">${cap(c.animalType)}</span>
-          <span style="font-size:13px;color:#6a5a4a;">${c.storedFood}/${cost.amount}${RESOURCE_EMOJI[cost.type]}</span>
-        </div>`;
-      }
-      if (myCamps.length === 0) html += '<div style="font-size:10px;color:#555;padding:4px;">No camps owned</div>';
-      if (html !== this._prevProdHTML) { prodEl.innerHTML = html; this._prevProdHTML = html; }
-    }
-
-    // ─── EQUIPMENT PANEL (hidden, internal) ───
-    if (this.equipPanelEl) {
-      const unlocked = this.unlockedEquipment[myT as 1 | 2];
-      const stock = this.baseStockpile[myT as 1 | 2];
-      let eqHTML = `<div style="font-size:12px;color:#4a3520;font-weight:800;letter-spacing:1.5px;margin-bottom:8px;text-align:center;">ARMORY</div>`;
-      for (const eq of EQUIPMENT) {
-        const eqLvl = unlocked.get(eq.id) || 0;
-        const owned = eqLvl > 0;
-        const costStr = Object.entries(eq.cost).map(([r, a]) => `${a}${RESOURCE_EMOJI[r as ResourceType]}`).join('+');
-        const canAfford = Object.entries(eq.cost).every(([r, a]) => (stock[r as ResourceType] || 0) >= a!);
-        const borderColor = owned ? '#8B7355' : canAfford ? '#FFD700' : '#555';
-        const equipped = this.units.filter(u => u.team === myT && !u.dead && u.equipment === eq.id).length;
-        const lvlStr = eqLvl > 0 ? `LVL ${eqLvl}` : '';
-        eqHTML += `
-          <div style="background:rgba(30,50,30,0.6);border:1px solid ${borderColor};border-radius:8px;padding:7px 8px;margin-bottom:6px;">
-            <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
-              <span style="font-size:18px;">${eq.emoji}</span>
-              <span style="font-size:12px;font-weight:800;color:#2a1a0a;">${eq.name}</span>
-              ${owned ? `<span style="font-size:10px;color:#4a3520;margin-left:auto;">${lvlStr}</span>` : `<span style="font-size:10px;color:${canAfford ? '#FFD700' : '#FF6B6B'};margin-left:auto;">${costStr}</span>`}
-            </div>
-            <div style="font-size:9px;color:#6a5a4a;font-style:italic;">${eq.effect}</div>
-            ${owned && equipped > 0 ? `<div style="font-size:9px;color:#4a3520;margin-top:2px;">${equipped} unit${equipped > 1 ? 's' : ''} equipped</div>` : ''}
-            ${owned ? `<div style="font-size:9px;color:#6a5a4a;margin-top:2px;">Say: "get a ${eq.name.toLowerCase()} then go..."</div>` : ''}
-          </div>`;
-      }
-      if (eqHTML !== this._prevEquipHTML) { this.equipPanelEl.innerHTML = eqHTML; this._prevEquipHTML = eqHTML; }
-    }
-
-    // ─── HORDE TAB (live bestiary with game state) ───
-    if (this.charPanelTab === 'horde') {
-      const hordeWrap = this.charPanelEl?.querySelector('#horde-content') as HTMLElement;
-      if (hordeWrap) {
-        const tierColors2: Record<number, string> = { 1: '#2E8B2E', 2: '#2266BB', 3: '#CC6A00', 4: '#BB2222', 5: '#B8860B' };
-        const roleMap2: Record<string, string> = {
-          gnome: 'Gatherer', turtle: 'Tank / Hauler', skull: 'Bruiser', spider: 'Assassin',
-          hyena: 'Ranged DPS', rogue: 'Assassin', panda: 'Tank', lizard: 'Executioner',
-          minotaur: 'Commander', shaman: 'Mage', troll: 'Juggernaut',
-        };
-        // Count units and activity per type for my team
-        const myUnits = this.units.filter(u => u.team === myT && !u.dead);
-        const typeCounts: Record<string, number> = {};
-        const typeCarrying: Record<string, number> = {};
-        const typeWorking: Record<string, number> = {};
-        const typeIdle: Record<string, number> = {};
-        for (const u of myUnits) {
-          typeCounts[u.type] = (typeCounts[u.type] || 0) + 1;
-          if (u.carrying) typeCarrying[u.type] = (typeCarrying[u.type] || 0) + 1;
-          else if (u.loop) typeWorking[u.type] = (typeWorking[u.type] || 0) + 1;
-          else typeIdle[u.type] = (typeIdle[u.type] || 0) + 1;
-        }
-        // Count owned camps per type
-        const myCamps2: Record<string, number> = {};
-        for (const c of this.camps) {
-          if (c.owner === myT) myCamps2[c.animalType] = (myCamps2[c.animalType] || 0) + 1;
-        }
-
-        let hHTML = `<div style="font-size:18px;color:#4a3520;font-weight:800;letter-spacing:2px;margin-bottom:8px;text-align:center;font-family:'Fredoka',sans-serif;">BESTIARY</div>`;
-        hHTML += `<div style="font-size:12px;color:#6a5a4a;text-align:center;margin-bottom:12px;">${myUnits.length} units alive</div>`;
-
-        const unitOrder = ['gnome','turtle','skull','spider','hyena','rogue','panda','lizard','minotaur','shaman','troll'];
-        for (const type of unitOrder) {
-          const def = ANIMALS[type];
-          if (!def) continue;
-          const count = typeCounts[type] || 0;
-          const camps = myCamps2[type] || 0;
-          const tc = tierColors2[def.tier] || '#aaa';
-          const carrying = typeCarrying[type] || 0;
-          const working = typeWorking[type] || 0;
-          const idle = typeIdle[type] || 0;
-
-          // Status chips
-          let statusChips = '';
-          if (count > 0) {
-            if (carrying > 0) statusChips += `<span style="font-size:10px;background:rgba(255,180,40,0.3);color:#8B6914;padding:1px 6px;border-radius:4px;font-weight:700;">${carrying} hauling</span> `;
-            if (working > 0) statusChips += `<span style="font-size:10px;background:rgba(80,160,80,0.3);color:#2a6a2a;padding:1px 6px;border-radius:4px;font-weight:700;">${working} working</span> `;
-            if (idle > 0) statusChips += `<span style="font-size:10px;background:rgba(120,120,120,0.3);color:#555;padding:1px 6px;border-radius:4px;font-weight:700;">${idle} idle</span> `;
-          }
-
-          const dimmed = count === 0 && camps === 0;
-          const opacity = dimmed ? '0.45' : '1';
-          const border = count > 0 ? tc : 'rgba(139,115,85,0.4)';
-
-          hHTML += `<div style="background:rgba(255,252,245,0.6);border:2px solid ${border};border-radius:12px;padding:10px;margin-bottom:8px;opacity:${opacity};">
-            <div style="display:flex;gap:10px;align-items:center;">
-              <div style="flex-shrink:0;width:48px;height:48px;background:rgba(0,0,0,0.1);border:2px solid ${tc};border-radius:10px;display:flex;align-items:center;justify-content:center;overflow:hidden;">
-                ${avatarImg(type, 44) || `<span style="font-size:28px;">${def.emoji}</span>`}
-              </div>
-              <div style="flex:1;min-width:0;">
-                <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">
-                  <span style="font-size:16px;font-weight:800;color:#1a0a00;font-family:'Fredoka',sans-serif;">${cap(type)}</span>
-                  <span style="font-size:11px;font-weight:700;color:#fff;background:${tc};padding:1px 6px;border-radius:4px;">T${def.tier}</span>
-                  <span style="font-size:12px;color:#6a5a4a;font-style:italic;margin-left:auto;">${roleMap2[type] || ''}</span>
-                </div>
-                <div style="display:flex;gap:8px;font-size:11px;color:#4a3520;font-weight:600;flex-wrap:wrap;">
-                  <span>\u2764\uFE0F${def.hp}</span> <span>\u2694\uFE0F${def.attack}</span> <span>\u{1F3C3}${def.speed}</span>
-                </div>
-              </div>
-              <div style="text-align:right;">
-                <div style="font-size:22px;font-weight:800;color:${count > 0 ? tc : '#999'};">${count}</div>
-                ${camps > 0 ? `<div style="font-size:10px;color:#6a5a4a;">${camps} camp${camps > 1 ? 's' : ''}</div>` : ''}
-              </div>
-            </div>
-            ${statusChips ? `<div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;">${statusChips}</div>` : ''}
-            <div style="background:rgba(120,60,180,0.12);border:1px solid rgba(120,60,180,0.25);border-radius:8px;padding:5px 7px;margin-top:6px;">
-              <div style="font-size:12px;color:#7B2FBE;font-weight:700;">${def.ability}</div>
-              <div style="font-size:11px;color:#2a1a0a;font-style:italic;">${def.desc}</div>
-            </div>
-            <div style="background:rgba(40,100,200,0.12);border:1px solid rgba(40,100,200,0.25);border-radius:8px;padding:5px 7px;margin-top:4px;">
-              <div style="font-size:12px;color:#1a60CC;font-weight:700;">${def.ability2}</div>
-              <div style="font-size:11px;color:#2a1a0a;font-style:italic;">${def.desc2}</div>
-            </div>
-            <div style="display:flex;gap:6px;align-items:center;font-size:11px;margin-top:5px;">
-              <span style="color:#3a2a1a;font-weight:600;">Counters:</span>
-              <span style="display:flex;gap:3px;align-items:center;">${(HARD_COUNTERS[type] || []).map(c => avatarImg(c, 24) || `<span style="font-size:16px;">${ANIMALS[c]?.emoji || c}</span>`).join(' ') || '<span style="color:#555;">none</span>'}</span>
-            </div>
-            <div style="display:flex;gap:6px;margin-top:5px;">
-              <div style="flex:1;">
-                <div style="font-size:10px;font-weight:700;color:#1a5a1a;margin-bottom:2px;">STRENGTHS</div>
-                ${(UNIT_STRENGTHS[type] || []).map(s => `<div style="font-size:10px;color:#1a5a1a;padding:1px 0;">\u2705 ${s}</div>`).join('')}
-              </div>
-              <div style="flex:1;">
-                <div style="font-size:10px;font-weight:700;color:#882222;margin-bottom:2px;">WEAKNESSES</div>
-                ${(UNIT_WEAKNESSES[type] || []).map(w => `<div style="font-size:10px;color:#882222;padding:1px 0;">\u274C ${w}</div>`).join('')}
-              </div>
-            </div>
-          </div>`;
-        }
-        if (hHTML !== this._prevHordeTabHTML) { hordeWrap.innerHTML = hHTML; this._prevHordeTabHTML = hHTML; }
-      }
-    }
-
-    // ─── ARMORY TAB (interactive unlock buttons) ───
-    if (this.charPanelTab === 'armory') {
-      const armoryWrap = this.charPanelEl?.querySelector('#armory-content-wrap') as HTMLElement;
-      if (armoryWrap) {
-        const unlocked = this.unlockedEquipment[myT as 1 | 2];
-        const stock = this.baseStockpile[myT as 1 | 2];
-        let aHTML = `<div style="font-size:18px;color:#1a0a00;font-weight:800;letter-spacing:2px;margin-bottom:8px;text-align:center;font-family:'Fredoka',sans-serif;">ARMORY</div>`;
-        aHTML += `<div style="background:rgba(0,0,0,0.08);border:1px solid rgba(139,115,85,0.4);border-radius:8px;padding:8px 10px;margin-bottom:12px;font-size:11px;color:#2a1a0a;line-height:1.6;">
-          <div>\u2022 <b>Unlock</b> equipment below by spending resources</div>
-          <div>\u2022 Units <b>pick up</b> gear by visiting your armory building</div>
-          <div>\u2022 Say <i>"get a sword then attack"</i> to auto-equip + command</div>
-          <div>\u2022 Each unit can carry <b>one</b> piece of equipment at a time</div>
-        </div>`;
-        for (const eq of EQUIPMENT) {
-          const level = unlocked.get(eq.id) || 0;
-          const owned = level > 0;
-          const maxed = level >= MAX_EQUIP_LEVEL;
-          const nextLevel = level + 1;
-          const nextCostMult = maxed ? 0 : EQUIP_LEVEL_COST_MULT[nextLevel];
-          const canAfford = !maxed && Object.entries(eq.cost).every(([r, a]) => (stock[r as ResourceType] || 0) >= Math.ceil(a! * nextCostMult));
-          const nextCostParts = maxed ? [] : Object.entries(eq.cost).map(([r, a]) => `${Math.ceil(a! * nextCostMult)}${RESOURCE_EMOJI[r as ResourceType]}`);
-          const equipped = this.units.filter(u => u.team === myT && !u.dead && u.equipment === eq.id).length;
-          const levelStars = level > 0 ? ' ' + '\u2B50'.repeat(level) : '';
-          const borderColor = maxed ? '#DAA520' : owned ? '#1a6a1a' : canAfford ? '#B8860B' : '#777';
-          aHTML += `<div style="background:rgba(255,252,245,0.6);border:2px solid ${borderColor};border-radius:12px;padding:12px;margin-bottom:10px;">
-            <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px;">
-              <div style="width:52px;height:52px;background:rgba(0,0,0,0.12);border:2px solid ${borderColor};border-radius:10px;display:flex;align-items:center;justify-content:center;">
-                <span style="font-size:28px;">${eq.emoji}</span>
-              </div>
-              <div style="flex:1;min-width:0;">
-                <div style="font-size:16px;font-weight:800;color:#1a0a00;font-family:'Fredoka',sans-serif;">${eq.name}${levelStars}</div>
-                <div style="font-size:12px;color:#2a1a0a;">${eq.effect}${level > 1 ? ` (x${EQUIP_LEVEL_STAT_MULT[level].toFixed(1)})` : ''}</div>
-              </div>
-            </div>`;
-          if (owned && maxed) {
-            aHTML += `<div style="display:flex;align-items:center;gap:8px;padding:8px;background:rgba(218,168,32,0.2);border:1px solid #DAA520;border-radius:8px;">
-              <span style="font-size:14px;font-weight:800;color:#DAA520;">MAX LEVEL \u2B50\u2B50\u2B50</span>
-              ${equipped > 0 ? `<span style="font-size:11px;color:#1a0a00;margin-left:auto;font-weight:600;">${equipped} equipped</span>` : ''}
-            </div>`;
-          } else if (owned) {
-            aHTML += `<div style="display:flex;align-items:center;gap:8px;padding:8px;background:rgba(26,106,26,0.15);border:1px solid #1a6a1a;border-radius:8px;">
-              <span style="font-size:14px;font-weight:800;color:#1a6a1a;">LVL ${level}</span>
-              ${equipped > 0 ? `<span style="font-size:11px;color:#1a0a00;margin-left:auto;font-weight:600;">${equipped} equipped</span>` : ''}
-            </div>`;
-            const upgBg = canAfford
-              ? 'linear-gradient(180deg,#7DD87D,#2a8a2a);box-shadow:0 0 8px rgba(42,138,42,0.4);'
-              : 'linear-gradient(180deg,#888,#666);';
-            const upgColor = canAfford ? '#fff' : '#ccc';
-            aHTML += `<button data-unlock-eq="${eq.id}" style="width:100%;padding:8px;border:2px solid ${canAfford ? '#2a8a2a' : '#555'};border-radius:8px;
-              background:${upgBg}color:${upgColor};font-size:13px;font-weight:800;font-family:'Fredoka',sans-serif;
-              cursor:${canAfford ? 'pointer' : 'not-allowed'};margin-top:4px;">
-              UPGRADE TO LVL ${nextLevel} \u2014 ${nextCostParts.join(' + ')}
-            </button>`;
-          } else {
-            const btnBg = canAfford
-              ? 'linear-gradient(180deg,#FFD93D,#DAA520);box-shadow:0 0 8px rgba(255,217,61,0.5);'
-              : 'linear-gradient(180deg,#888,#666);';
-            const btnColor = canAfford ? '#2a1a0a' : '#ccc';
-            aHTML += `<button data-unlock-eq="${eq.id}" style="width:100%;padding:8px;border:2px solid ${canAfford ? '#DAA520' : '#555'};border-radius:8px;
-              background:${btnBg}color:${btnColor};font-size:13px;font-weight:800;font-family:'Fredoka',sans-serif;
-              cursor:${canAfford ? 'pointer' : 'not-allowed'};margin-top:4px;">
-              UNLOCK \u2014 ${nextCostParts.join(' + ')}
-            </button>`;
-          }
-          aHTML += `</div>`;
-        }
-        armoryWrap.innerHTML = aHTML;
-      }
-    }
-
-    // ─── COMMANDS TAB (live workflow visualization) ───
-    if (this.charPanelTab === 'commands') {
-      const cmdWrap = this.charPanelEl?.querySelector('#commands-content-wrap') as HTMLElement;
-      if (cmdWrap) {
-        const available = this.getAvailableHoards().filter(h => h !== 'all');
-        const totalUnits = p1.length;
-        let cHTML = `<div style="font-size:18px;color:#1a0a00;font-weight:800;letter-spacing:2px;margin-bottom:8px;text-align:center;font-family:'Fredoka',sans-serif;">COMMANDS</div>`;
-
-        // "All" summary card
-        cHTML += `<div style="background:rgba(255,252,245,0.6);border:2px solid ${this.selectedHoard === 'all' ? '#FFD93D' : '#8B7355'};border-radius:12px;padding:10px 12px;margin-bottom:8px;${this.selectedHoard === 'all' ? 'box-shadow:0 0 8px rgba(255,217,61,0.3);' : ''}">
-          <div style="display:flex;align-items:center;gap:8px;">
-            <span style="font-size:22px;">\u{1F451}</span>
-            <div style="flex:1;">
-              <div style="font-size:15px;font-weight:700;color:#1a0a00;font-family:'Fredoka',sans-serif;">All Units</div>
-              <div style="font-size:10px;color:#3a2a1a;">${available.length} type${available.length !== 1 ? 's' : ''} active</div>
-            </div>
-            <span style="font-size:18px;font-weight:800;color:#1a0a00;">${totalUnits}</span>
-          </div>
-        </div>`;
-
-        // Hoard cycling hint
-        const selName = this.selectedHoard === 'all' ? 'ALL' : cap(this.selectedHoard).toUpperCase();
-        cHTML += `<div style="display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:12px;padding:6px 10px;background:rgba(0,0,0,0.1);border-radius:8px;">
-          <span style="font-size:12px;color:#3a2a1a;font-weight:700;background:rgba(139,115,85,0.4);padding:2px 7px;border-radius:4px;font-family:monospace;">Q</span>
-          <span style="font-size:11px;color:#3a2a1a;">\u25C0</span>
-          <span style="font-size:13px;color:#1a0a00;font-weight:800;">${selName}</span>
-          <span style="font-size:11px;color:#3a2a1a;">\u25B6</span>
-          <span style="font-size:12px;color:#3a2a1a;font-weight:700;background:rgba(139,115,85,0.4);padding:2px 7px;border-radius:4px;font-family:monospace;">E</span>
-        </div>`;
-
-        if (available.length === 0) {
-          cHTML += `<div style="text-align:center;color:#5a4a3a;padding:20px 0;font-size:13px;">No units yet</div>`;
-        } else {
-          const modColors: Record<string, { bg: string; fg: string; label: string }> = {
-            spread: { bg: 'rgba(30,100,220,0.2)', fg: '#1a60CC', label: '\u{1F4A0} Spread' },
-            tight: { bg: 'rgba(200,100,20,0.2)', fg: '#B06000', label: '\u{1F91D} Tight' },
-            safe: { bg: 'rgba(30,140,30,0.2)', fg: '#1a6a1a', label: '\u{1F6E1}\uFE0F Safe' },
-            aggressive: { bg: 'rgba(200,50,50,0.2)', fg: '#BB2222', label: '\u{1F525} Aggressive' },
-            rush: { bg: 'rgba(180,140,20,0.2)', fg: '#8B6914', label: '\u26A1 Rush' },
-            efficient: { bg: 'rgba(120,60,180,0.2)', fg: '#7B2FBE', label: '\u{1F9E0} Efficient' },
-          };
-          for (const hType of available) {
-            const def = ANIMALS[hType];
-            if (!def) continue;
-            const hUnits = this.units.filter(u => u.team === myT && !u.dead && u.type === hType);
-            const count = hUnits.length;
-            const wfKey = `${hType}_${myT}`;
-            const wf = this.groupWorkflows[wfKey] as HWorkflow | undefined;
-            const mods = this.groupModifiers[wfKey] as BehaviorMods | undefined;
-            const lastCmd = this.lastHoardCommand[hType] || '';
-
-            // Activity breakdown
-            const working = hUnits.filter(u => u.loop).length;
-            const idle = count - working;
-            const carrying = hUnits.filter(u => u.carrying).length;
-            const equipped = hUnits.filter(u => u.equipment).length;
-
-            const isSelected = this.selectedHoard === hType;
-            const cardBorder = isSelected ? '2px solid #FFD93D' : '2px solid #8B7355';
-            const cardGlow = isSelected ? 'box-shadow:0 0 8px rgba(255,217,61,0.3);' : '';
-
-            cHTML += `<div style="background:rgba(255,252,245,0.6);border:${cardBorder};border-radius:12px;padding:12px;margin-bottom:8px;${cardGlow}">`;
-            // Header: icon + name + count
-            cHTML += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-              ${avatarImg(hType, 32) || `<span style="font-size:22px;">${def.emoji}</span>`}
-              <div style="flex:1;">
-                <div style="font-size:15px;font-weight:700;color:#1a0a00;font-family:'Fredoka',sans-serif;">${cap(hType)}</div>
-                <div style="font-size:10px;color:#3a2a1a;">T${def.tier} \u2022 ${def.ability}</div>
-              </div>
-              <span style="font-size:16px;font-weight:800;color:#1a0a00;">\u00D7${count}</span>
-            </div>`;
-
-            // Activity stats bar
-            cHTML += `<div style="display:flex;gap:8px;font-size:10px;color:#3a2a1a;font-weight:600;margin-bottom:6px;padding:3px 0;border-top:1px solid rgba(139,115,85,0.3);border-bottom:1px solid rgba(139,115,85,0.3);">`;
-            if (working > 0) cHTML += `<span title="Working">\u2699\uFE0F ${working} active</span>`;
-            if (idle > 0) cHTML += `<span title="Idle" style="color:#996600;">\u{1F4A4} ${idle} idle</span>`;
-            if (carrying > 0) cHTML += `<span title="Carrying">\u{1F4E6} ${carrying} carrying</span>`;
-            if (equipped > 0) cHTML += `<span title="Equipped">\u2694\uFE0F ${equipped} equipped</span>`;
-            if (count === 0) cHTML += `<span>No units</span>`;
-            cHTML += `</div>`;
-
-            // Voice command — prefer workflow's stored command, fall back to lastHoardCommand
-            const displayCmd = (wf && wf.voiceCommand) ? wf.voiceCommand : lastCmd;
-            if (displayCmd) {
-              cHTML += `<div style="font-size:11px;color:#2a1a0a;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:rgba(0,0,0,0.08);padding:3px 8px;border-radius:6px;" title="${displayCmd.replace(/"/g, '&quot;')}">
-                \u{1F3A4} "${displayCmd}"
-              </div>`;
-            }
-            // Unit reaction
-            const reaction = this.lastHoardReaction[hType] || '';
-            if (reaction) {
-              cHTML += `<div style="font-size:11px;color:#6B5335;font-style:italic;margin-top:2px;margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:3px 8px;border-radius:6px;background:rgba(139,115,85,0.1);">
-                \u{1F4AC} "${reaction}"
-              </div>`;
-            }
-            if (!displayCmd && !reaction) cHTML += '<div style="margin-bottom:6px;"></div>';
-
-            // Workflow steps — numbered vertical list for clarity
-            if (wf && wf.steps.length > 0) {
-              cHTML += `<div style="display:flex;flex-direction:column;gap:3px;margin-bottom:6px;">`;
-              for (let si = 0; si < wf.steps.length; si++) {
-                const step = wf.steps[si];
-                const isLoopStart = si === wf.loopFrom;
-                const label = this.formatWorkflowStep(step);
-                cHTML += `<div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;padding:4px 8px;border-radius:8px;background:rgba(0,0,0,0.06);border:1px solid rgba(139,115,85,0.25);color:#3a2a1a;">`;
-                cHTML += `<span style="color:#6a5a4a;font-size:10px;flex-shrink:0;">\u25CB</span>`;
-                if (isLoopStart && si > 0) cHTML += `<span style="font-size:9px;color:#7B2FBE;flex-shrink:0;" title="Loop restarts here">\u{1F504}</span>`;
-                cHTML += `<span style="flex:1;">${label}</span>`;
-                cHTML += `<span style="font-size:9px;color:#6a5a4a;flex-shrink:0;">${si + 1}/${wf.steps.length}</span>`;
-                cHTML += `</div>`;
-              }
-              cHTML += `</div>`;
-            } else {
-              cHTML += `<div style="font-size:12px;color:#5a4a3a;font-style:italic;margin-bottom:6px;text-align:center;padding:8px 0;">No orders \u2014 use voice or text to command</div>`;
-            }
-
-            // Active plan indicator
-            const activePlan = this.activePlans.find(p => p.team === myT && (p.subject === hType || p.subject === 'all'));
-            if (activePlan) {
-              const phase = activePlan.phases[activePlan.currentPhase];
-              const phaseLabel = phase ? phase.label : 'completing...';
-              cHTML += `<div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;padding:5px 8px;border-radius:8px;background:rgba(69,230,176,0.2);border:1px solid #45E6B0;color:#1a6a3a;margin-bottom:6px;">
-                <span style="font-size:12px;">📋</span>
-                <span style="flex:1;">Plan: ${activePlan.goalLabel} — Phase ${activePlan.currentPhase + 1}/${activePlan.phases.length}: ${phaseLabel}</span>
-              </div>`;
-            }
-
-            // Modifiers
-            if (mods) {
-              let modsHTML = '';
-              for (const val of [mods.formation, mods.caution, mods.pacing]) {
-                if (val && val !== 'normal') {
-                  const mc = modColors[val];
-                  if (mc) {
-                    modsHTML += `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:${mc.bg};color:${mc.fg};">${mc.label}</span>`;
-                  }
-                }
-              }
-              if (modsHTML) {
-                cHTML += `<div style="display:flex;gap:4px;flex-wrap:wrap;">${modsHTML}</div>`;
-              }
-            }
-
-            cHTML += `</div>`;
-          }
-        }
-        if (cHTML !== this._prevCmdHTML) { cmdWrap.innerHTML = cHTML; this._prevCmdHTML = cHTML; }
-      }
-    }
-
-    // Camps
-    const campsEl = this._hudCampsEl || (this._hudCampsEl = document.getElementById('hud-camps'));
-    if (campsEl) {
-      const knownCamps = this.camps.filter(c =>
-        c.owner === myT || c.scouted || this.isInVision(c.x, c.y)
-      );
-      const yourCamps = knownCamps.filter(c => c.owner === myT).length;
-      const enemyCampsN = knownCamps.filter(c => {
-        const o = this.isInVision(c.x, c.y) ? c.owner : c.lastSeenOwner;
-        return o === enemyT;
-      }).length;
-      const neutralCamps = knownCamps.filter(c => {
-        const o = this.isInVision(c.x, c.y) ? c.owner : c.lastSeenOwner;
-        return o === 0;
-      }).length;
-      const unknownCamps = this.camps.length - knownCamps.length;
-      let html = `<div style="display:flex;gap:10px;font-size:13px;font-weight:700;margin-bottom:8px;">
-        <span style="color:#4a3520;">\u{1F535} ${yourCamps}</span>
-        <span style="color:#FF5555;">\u{1F534} ${enemyCampsN}</span>
-        <span style="color:#888;">\u26AA ${neutralCamps}</span>
-        ${unknownCamps > 0 ? `<span style="color:#555;">? ${unknownCamps}</span>` : ''}
-      </div>`;
-      for (const c of knownCamps) {
-        const inVision = this.isInVision(c.x, c.y);
-        const displayOwner = inVision ? c.owner : c.lastSeenOwner;
-        const color = displayOwner === 0 ? '#666' : displayOwner === myT ? '#4a3520' : '#FF5555';
-        const dot = displayOwner === 0 ? '\u26AA' : displayOwner === myT ? '\u{1F535}' : '\u{1F534}';
-        const campIcon = avatarImg(c.animalType, 22) || (ANIMALS[c.animalType]?.emoji || '');
-        const stale = !inVision && c.scouted ? ' *' : '';
-        html += `<div style="display:flex;align-items:center;gap:5px;font-size:12px;color:${color};padding:3px 0;${!inVision ? 'opacity:0.6;' : ''}">${dot} ${campIcon} ${c.name}${stale}</div>`;
-      }
-      if (knownCamps.length === 0) html += '<div style="font-size:10px;color:#555;padding:4px;">No camps discovered</div>';
-      if (html !== this._prevCampsHTML) { campsEl.innerHTML = html; this._prevCampsHTML = html; }
-    }
-
-    // Modifiers
-    const modsEl = this._hudModifiersEl || (this._hudModifiersEl = document.getElementById('hud-modifiers'));
-    if (modsEl) {
-      const modColors: Record<string, { bg: string; fg: string }> = {
-        spread: { bg: 'rgba(69,153,255,0.2)', fg: '#4499FF' },
-        tight: { bg: 'rgba(255,153,51,0.2)', fg: '#FF9933' },
-        safe: { bg: 'rgba(68,204,68,0.2)', fg: '#44CC44' },
-        aggressive: { bg: 'rgba(255,85,85,0.2)', fg: '#FF5555' },
-        rush: { bg: 'rgba(255,217,61,0.2)', fg: '#FFD93D' },
-        efficient: { bg: 'rgba(201,143,255,0.2)', fg: '#C98FFF' },
-      };
-      let html = '';
-      const activeMods = new Set<string>();
-      for (const [key, m] of Object.entries(this.groupModifiers)) {
-        if (!key.endsWith(`_${myT}`)) continue;
-        const bm = m as BehaviorMods;
-        if (bm.formation && bm.formation !== 'normal') activeMods.add(bm.formation);
-        if (bm.caution && bm.caution !== 'normal') activeMods.add(bm.caution);
-        if (bm.pacing && bm.pacing !== 'normal') activeMods.add(bm.pacing);
-      }
-      for (const mod of activeMods) {
-        const mc = modColors[mod] || { bg: 'rgba(255,255,255,0.1)', fg: '#aaa' };
-        html += `<span style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:10px;background:${mc.bg};color:${mc.fg};text-transform:uppercase;">${mod}</span>`;
-      }
-      if (!html) html = '<span style="font-size:9px;color:#555;">None active</span>';
-      if (html !== this._prevModsHTML) { modsEl.innerHTML = html; this._prevModsHTML = html; }
-    }
-
-    // Buffs
-    const buffsEl = this._hudBuffsEl || (this._hudBuffsEl = document.getElementById('hud-buffs'));
-    if (buffsEl) {
-      const b = this.getBuffs(myT as 1 | 2);
-      let html = '';
-      if (b.speed > 0) html += `<div style="font-size:10px;color:#FFD93D;font-weight:700;">\u26A1 Speed +${Math.round(b.speed * 100)}%</div>`;
-      if (b.attack > 0) html += `<div style="font-size:10px;color:#FF5555;font-weight:700;">\u2694\uFE0F Attack +${Math.round(b.attack * 100)}%</div>`;
-      if (b.hp > 0) html += `<div style="font-size:10px;color:#4a3520;font-weight:700;">\u2764\uFE0F HP +${Math.round(b.hp * 100)}%</div>`;
-      if (html !== this._prevBuffsHTML) { buffsEl.innerHTML = html; this._prevBuffsHTML = html; }
-    }
-
-    // Update hoard selector counts
+    // ─── NEW FLOATING PANELS ───
+    this.updateTopBar();
+    this.updateCmdLogPanel();
+    this.updateMinimap();
     this.updateSelectionLabel();
   }
+
 
   // ─── MAIN UPDATE ────────────────────────────────────────────
 
@@ -9180,6 +8585,7 @@ export class HordeScene extends Phaser.Scene {
 
   /** Called when the local player issues a voice/text command */
   private issueCommand(text: string) {
+    this.voiceOrb?.setState('processing');
     this.pendingCommandText = text;
     // Track last command per hoard for display on hoard bar
     if (this.selectedHoard === 'all') {
@@ -9473,7 +8879,8 @@ export class HordeScene extends Phaser.Scene {
     this.isProcessingCommand = true;
 
     this.pendingCommandText = text;
-    this.showFeedback('Processing command...', '#FFD93D');
+    console.log(`[Command] Heard: "${text}" | Gemini cooldown: ${Math.round((_geminiCooldownMs - (Date.now() - _lastGeminiCall)) / 1000)}s left`);
+    this.showFeedback(`"${text.length > 40 ? text.slice(0, 37) + '...' : text}"`, '#FFD93D');
 
     try {
     // Build rich context for Gemini — full game state
@@ -9566,12 +8973,15 @@ export class HordeScene extends Phaser.Scene {
         // Handle non-action responses from Gemini
         if (gCmd.responseType === 'unrecognized' && !gCmd.workflow?.length && gCmd.targetType !== 'workflow') {
           this.showFeedback(gCmd.narration || this.getContextualHint(team), '#FFD93D');
+          this.voiceOrb?.showResponse(gCmd.narration || 'Hmm?');
           const confSel = this.units.filter(u => u.team === team && !u.dead);
           this.unitReact('confused', confSel);
           geminiHandled = true;
         } else if (gCmd.responseType === 'status_query' || gCmd.targetType === 'query') {
           const report = gCmd.statusReport || gCmd.narration || 'All good, Commander!';
           this.showFeedback(report, '#6CC4FF');
+          this.voiceOrb?.showResponse(report);
+          this.ttsService?.speak(this.selectedHoard, report);
           this.sfx.playGlobal('voice_recognized');
           geminiHandled = true;
         } else if (this.executeGeminiCommand(gCmd, team)) {
@@ -9589,6 +8999,11 @@ export class HordeScene extends Phaser.Scene {
               this.lastHoardReaction[this.selectedHoard] = gCmd.unitReaction;
             }
           }
+          // TTS + orb response for action narration
+          if (gCmd.narration) {
+            this.voiceOrb?.showResponse(gCmd.narration);
+            this.ttsService?.speak(this.selectedHoard, gCmd.narration);
+          }
           geminiHandled = true;
         }
       }
@@ -9596,22 +9011,16 @@ export class HordeScene extends Phaser.Scene {
       console.warn('[Command] Gemini failed, falling back to local:', err);
     }
 
-    // Fallback to local regex parsing
     if (!geminiHandled) {
-      this.executeLocalCommand(text, team);
-      // Store a canned reaction for local commands
-      const localReaction = this.getCannedReaction('yes', this.selectedHoard === 'all' ? 'gnome' : this.selectedHoard);
-      if (this.selectedHoard === 'all') {
-        for (const h of this.getAvailableHoards()) {
-          if (h !== 'all') this.lastHoardReaction[h] = localReaction;
-        }
-      } else {
-        this.lastHoardReaction[this.selectedHoard] = localReaction;
-      }
+      this.showFeedback('Gemini unavailable — try again', '#FF6B6B');
     }
 
     } finally {
       this.isProcessingCommand = false;
+      // Return orb to listening (unless TTS is playing, which manages its own state)
+      if (!this.ttsService?.isPlaying) {
+        this.voiceOrb?.setState('listening');
+      }
     }
   }
 
@@ -10712,7 +10121,9 @@ export class HordeScene extends Phaser.Scene {
     });
   }
 
+  private _lastFeedbackText: string | null = null;
   private showFeedback(msg: string, color: string) {
+    this._lastFeedbackText = msg;
     const t = this.hudTexts['feedback'];
     if (!t) return;
     t.setText(msg).setColor(color).setAlpha(1);
@@ -10732,28 +10143,6 @@ export class HordeScene extends Phaser.Scene {
     // Keep last 20 entries
     if (this.commandHistory.length > 20) this.commandHistory.shift();
 
-    const el = document.getElementById('cmd-history-entries');
-    if (!el) return;
-
-    let html = '';
-    for (let i = this.commandHistory.length - 1; i >= 0; i--) {
-      const entry = this.commandHistory[i];
-      const t = `${Math.floor(entry.time / 60)}:${(entry.time % 60).toString().padStart(2, '0')}`;
-      const isLatest = i === this.commandHistory.length - 1;
-      const opacity = isLatest ? '1' : '0.6';
-      const bg = isLatest ? 'rgba(139,115,85,0.15)' : 'transparent';
-      html += `<div style="opacity:${opacity};background:${bg};padding:4px 6px;border-radius:6px;margin-bottom:3px;border-left:3px solid ${entry.color};">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <span style="color:#FFD93D;font-weight:700;font-size:11px;">&gt; ${entry.command}</span>
-          <span style="color:#8B7355;font-size:9px;">${t}</span>
-        </div>
-        <div style="color:${entry.color};font-size:10px;font-weight:600;margin-top:1px;">${entry.outcome}</div>
-      </div>`;
-    }
-    el.innerHTML = html;
-
-    // Auto-scroll to top (latest entry is at top)
-    if (this.cmdHistoryEl) this.cmdHistoryEl.scrollTop = 0;
   }
 
   private updateSelectionLabel() {
@@ -10761,45 +10150,18 @@ export class HordeScene extends Phaser.Scene {
     if (this.cmdAvatarEl) {
       const h = this.selectedHoard;
       if (h === 'all') {
-        this.cmdAvatarEl.innerHTML = '<span style="font-size:32px;">⚔️</span>';
+        this.cmdAvatarEl.innerHTML = '<span style="font-size:32px;">\u2694\uFE0F</span>';
       } else {
         this.cmdAvatarEl.innerHTML = avatarImg(h, 44) || `<span style="font-size:32px;">${ANIMALS[h]?.emoji || '?'}</span>`;
       }
     }
-    // Update Phaser hint text
-    if (this.selectionLabel) {
-      this.selectionLabel.setText('Q ◀ cycle ▶ E');
+    // Update voice orb avatar badge
+    if (this.voiceOrb) {
+      const h = this.selectedHoard;
+      const html = h === 'all' ? undefined : (avatarImg(h, 20) || undefined);
+      this.voiceOrb.showAvatar(h, html);
     }
-
-    // Update HTML hoard bar
-    if (!this.hoardBarEl) return;
-    const available = this.getAvailableHoards();
-
-    const _qeStyle = 'background:rgba(212,196,160,0.85);border:1px solid #8B7355;border-radius:8px;padding:6px 10px;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:36px;';
-    let html = '<div style="' + _qeStyle + '"><div style="font-size:18px;color:#5a3a1a;line-height:1;">◀</div><div style="font-family:Fredoka,sans-serif;font-size:11px;font-weight:700;color:#5a3a1a;margin-top:2px;">Q</div></div>';
-    for (const h of available) {
-      const isActive = h === this.selectedHoard;
-      const iconHtml = h === 'all' ? '<span style="font-size:52px;">\u2694\uFE0F</span>' : (avatarImg(h, 72) || '<span style="font-size:52px;">' + (ANIMALS[h]?.emoji || '?') + '</span>');
-      const name = h === 'all' ? 'ALL' : cap(h).toUpperCase();
-      const count = h === 'all'
-        ? this.units.filter(u => u.team === this.myTeam && !u.dead).length
-        : this.units.filter(u => u.team === this.myTeam && !u.dead && u.type === h).length;
-
-      const bg = isActive ? 'rgba(188,168,120,0.6)' : 'rgba(212,196,160,0.85)';
-      const border = isActive ? '#6B5335' : '#8B7355';
-      const borderW = isActive ? '3px' : '1px';
-      const glow = isActive ? 'box-shadow:0 0 10px rgba(139,115,85,0.5);' : '';
-      const scale = isActive ? 'transform:scale(1.08);' : '';
-
-      html += '<div style="background:' + bg + ';border:' + borderW + ' solid ' + border + ';border-radius:10px;padding:6px 8px;text-align:center;min-width:88px;' + glow + scale + 'transition:all 0.15s ease;">'
-        + '<div style="display:flex;align-items:center;justify-content:center;min-height:72px;">' + iconHtml + '</div>'
-        + '<div style="display:flex;align-items:center;justify-content:center;gap:6px;margin-top:2px;">'
-        + '<span style="font-size:12px;color:' + (isActive ? '#4a3520' : '#6a5a4a') + ';font-weight:800;letter-spacing:0.5px;">' + name + '</span>'
-        + '<span style="font-size:15px;color:#2a1a0a;font-weight:700;">' + count + '</span>'
-        + '</div></div>';
-    }
-    html += '<div style="' + _qeStyle + '"><div style="font-size:18px;color:#5a3a1a;line-height:1;">▶</div><div style="font-family:Fredoka,sans-serif;font-size:11px;font-weight:700;color:#5a3a1a;margin-top:2px;">E</div></div>';
-    this.hoardBarEl.innerHTML = html;
+    // Top bar is updated directly by updateTopBar() in the HUD cycle
   }
 
   // ─── BUFFS ──────────────────────────────────────────────────
@@ -11086,7 +10448,6 @@ export class HordeScene extends Phaser.Scene {
       const cmdWrapEl = document.getElementById('horde-cmd-wrap');
       if (cmdWrapEl) cmdWrapEl.style.display = 'none';
       if (this.voiceStatusEl) this.voiceStatusEl.style.display = 'none';
-      if (this.cmdHistoryEl) this.cmdHistoryEl.style.display = 'none';
       if (this.equipPanelEl) this.equipPanelEl.style.display = 'none';
       if (this.charPanelEl) this.charPanelEl.style.display = 'none';
       this.showFeedback('Editor Mode (F2 to exit)', '#00ff88');
@@ -11101,7 +10462,6 @@ export class HordeScene extends Phaser.Scene {
       const cmdWrapEl2 = document.getElementById('horde-cmd-wrap');
       if (cmdWrapEl2) cmdWrapEl2.style.display = '';
       if (this.voiceStatusEl) this.voiceStatusEl.style.display = '';
-      if (this.cmdHistoryEl) this.cmdHistoryEl.style.display = '';
       if (this.equipPanelEl) this.equipPanelEl.style.display = '';
       if (this.charPanelEl) this.charPanelEl.style.display = '';
       this.showFeedback('Game Resumed', '#45E6B0');
@@ -12366,19 +11726,16 @@ export class HordeScene extends Phaser.Scene {
     if (!this.eventHudEl) {
       const c = document.getElementById('game-container') ?? document.body;
       const el = document.createElement('div');
-      el.id = 'event-hud-panel';
-      el.style.cssText = `
-        position:absolute;top:8px;
-        left:calc(var(--horde-sidebar-w, 280px) + 8px);
-        width:220px;max-height:calc(100vh - 20px);overflow-y:auto;
-        z-index:150;display:flex;flex-direction:column;gap:6px;
-        font-family:'Nunito',sans-serif;
-        scrollbar-width:thin;scrollbar-color:rgba(139,115,85,0.5) transparent;
-      `;
+      el.id = 'horde-quest-panel';
       c.appendChild(el);
       this.eventHudEl = el;
     }
     this.eventHudEl.style.display = 'flex';
+    // Position dynamically below resource panel
+    if (this.resourcePanelEl) {
+      const rpRect = this.resourcePanelEl.getBoundingClientRect();
+      this.eventHudEl.style.top = (rpRect.bottom + 8) + 'px';
+    }
 
     const glowColors: Record<string, string> = {
       fungal_bloom: '#66ff66', warchest: '#ffcc00', kill_bounty: '#ff4444',
@@ -12497,15 +11854,25 @@ export class HordeScene extends Phaser.Scene {
     this.cmdAvatarEl = null;
     this.textInput = null;
     this.voiceStatusEl?.remove(); this.voiceStatusEl = null;
+    // Destroy voice conversation system
+    this.voiceOrb?.destroy(); this.voiceOrb = null;
+    this.scribeService?.destroy(); this.scribeService = null;
+    this.ttsService?.destroy(); this.ttsService = null;
     this.introVeilEl?.remove(); this.introVeilEl = null;
     this.selectionLabel = null;
     this.sidebarEl?.remove(); this.sidebarEl = null;
     this.hoardBarEl?.remove(); this.hoardBarEl = null;
-    this.cmdHistoryEl?.remove(); this.cmdHistoryEl = null;
     this.charPanelEl?.remove(); this.charPanelEl = null;
     document.getElementById('horde-char-toggle')?.remove();
     this.equipPanelEl?.remove(); this.equipPanelEl = null;
     document.getElementById('horde-equip-toggle')?.remove();
+    // New floating overlay panels
+    this.topBarEl?.remove(); this.topBarEl = null;
+    this.resourcePanelEl?.remove(); this.resourcePanelEl = null;
+    this.cmdLogPanelEl?.remove(); this.cmdLogPanelEl = null;
+    document.getElementById('horde-minimap')?.remove();
+    this.minimapEl = null; this.minimapCtx = null; this.minimapTerrainCanvas = null;
+    document.getElementById('horde-ai-settings')?.remove();
     this.debugPanelEl?.remove(); this.debugPanelEl = null;
     this.memoryOverlay?.destroy(); this.memoryOverlay = null;
     this.eventHudEl?.remove(); this.eventHudEl = null;
