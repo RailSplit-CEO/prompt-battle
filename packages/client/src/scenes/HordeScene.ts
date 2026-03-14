@@ -9009,12 +9009,11 @@ export class HordeScene extends Phaser.Scene {
               this.lastHoardReaction[this.selectedHoard] = gCmd.unitReaction;
             }
           }
-          // TTS + orb response — pick voice from targetAnimal (top-level or first workflow step)
+          // TTS voice = selected hoard (who's responding), not target animal
           if (gCmd.narration) {
             this.voiceOrb?.showResponse(gCmd.narration);
-            const wfAnimal = gCmd.targetAnimal || gCmd.workflow?.find(s => s.targetAnimal)?.targetAnimal;
-            const ttsVoice = wfAnimal || (this.selectedHoard !== 'all' ? this.selectedHoard : 'all');
-            console.log(`[TTS] Voice pick: wfAnimal=${wfAnimal} selectedHoard=${this.selectedHoard} → "${ttsVoice}"`);
+            const ttsVoice = this.selectedHoard !== 'all' ? this.selectedHoard : 'all';
+            console.log(`[TTS] Voice: selectedHoard=${this.selectedHoard} → "${ttsVoice}"`);
             this.ttsService?.speak(ttsVoice, gCmd.narration);
           }
           geminiHandled = true;
