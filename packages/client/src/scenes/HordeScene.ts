@@ -1582,6 +1582,16 @@ const NEXUS_PROJ_SPEED = 400; // ranged projectile speed in pixels per second
 const PROJECTILE_HIT_DIST = 18; // distance at which projectile hits target
 const CAMP_RANGE = 120;
 const AI_TICK_MS = 2000; // AI thinks every 2 seconds
+
+// ─── DAY/NIGHT CYCLE ──────────────────────────────────────────
+const DAY_DURATION = 240000;   // 4 minutes
+const NIGHT_DURATION = 120000; // 2 minutes
+const CYCLE_TOTAL = DAY_DURATION + NIGHT_DURATION; // 6 min full cycle
+const DUSK_WARNING = 30000;    // warn 30s before night
+const NIGHT_SPEED_PENALTY = 0.85; // 15% slower in dark zones
+const NIGHT_DAMAGE_PENALTY = 0.90; // 10% less damage in dark zones
+const BLOOD_MOON_INTERVAL = 3; // every 3rd night
+const NIGHT_BUILDING_SAFE_RANGE = 300; // units within this range of buildings/towers are exempt from night penalties
 const TEAM_COLORS = { 1: 0x4499FF, 2: 0xFF5555 };
 const FOG_VISION_RANGE = 400; // radius of vision around each ally unit
 const FOG_STRUCTURE_VISION_RANGE = 650; // radius of vision around camps, towers, armories, nexus
@@ -1701,6 +1711,24 @@ const WILD_RESPAWN_MS = 20000;      // respawn wild animals every 20s
 const MINE_COUNT = 4; // 2 per side, mirrored
 const MINE_TICK_MS = 2000; // mine produces metal every 2s while a unit stands on it
 const MINE_RANGE = 180; // how close to be "mining" — big mine area
+
+// ─── CENTER SHRINE ("Hearthstone") ────────────────────────────
+const SHRINE_X = 3200;
+const SHRINE_Y = 3200;
+const SHRINE_CAPTURE_TIME = 15000; // 15s uncontested to capture
+const SHRINE_ACTIVATE_TIME = 90000; // becomes active at 1:30
+const SHRINE_TRICKLE_INTERVAL = 10000; // resource trickle every 10s
+const SHRINE_TRICKLE_CRYSTAL = 1;
+const SHRINE_TRICKLE_METAL = 1;
+const SHRINE_RADIUS = 200; // capture radius
+
+// ─── BOUNTY CAMPS (flanking center) ──────────────────────────
+const BOUNTY_CAMP_POSITIONS = [
+  { x: 2200, y: 4200 }, // southwest approach
+  { x: 4200, y: 2200 }, // northeast approach
+];
+const BOUNTY_RESPAWN_MS = 90000;
+const BOUNTY_CACHE_DESPAWN = 30000;
 
 function pdist(a: { x: number; y: number }, b: { x: number; y: number }): number {
   const dx = a.x - b.x, dy = a.y - b.y;
@@ -1888,6 +1916,27 @@ export class HordeScene extends Phaser.Scene {
   private hungryBearBonusTeam: { team: 1 | 2; timer: number } | null = null;
   private eventBuffs: { team: 1 | 2; stat: 'attack' | 'speed'; value: number; timer: number }[] = [];
 
+  // ─── CENTER SHRINE ──────────────────────────────────────────
+  private shrine: {
+    owner: 0 | 1 | 2;
+    captureProgress: { 1: number; 2: number };
+    active: boolean;
+    trickleTimer: number;
+    sprite?: Phaser.GameObjects.Arc;
+    glowCircle?: Phaser.GameObjects.Arc;
+    ownerText?: Phaser.GameObjects.Text;
+    pulseTimer: number;
+  } = { owner: 0, captureProgress: { 1: 0, 2: 0 }, active: false, trickleTimer: 0, pulseTimer: 0 };
+
+  // ─── BOUNTY CAMPS ──────────────────────────────────────────
+  private bountyCamps: {
+    x: number; y: number;
+    defenders: number[];
+    cleared: boolean;
+    respawnTimer: number;
+    cache?: { x: number; y: number; resources: Record<string, number>; timer: number; sprite?: Phaser.GameObjects.Arc };
+  }[] = [];
+
   // ─── THOUGHT BUBBLES ──────────────────────────────────────
   private thoughtBubbles: { container: Phaser.GameObjects.Container; unitId: number; timer: number }[] = [];
 
@@ -1919,6 +1968,17 @@ export class HordeScene extends Phaser.Scene {
   private _questTowersDestroyed = { 1: 0, 2: 0 } as Record<1|2, number>;
   private _questEventsWon = { 1: 0, 2: 0 } as Record<1|2, number>;
   private _prevQuestHTML = '';
+
+  // ─── DAY/NIGHT CYCLE ──────────────────────────────────────────
+  private dayNightTimer = 0;
+  private isNight = false;
+  private nightCount = 0;
+  private isBloodMoon = false;
+  private duskWarned = false;
+  private shadowBeasts: number[] = []; // unit IDs of spawned shadow beasts
+  private dayNightAlpha = 0; // 0 = full day, 1 = full night (for smooth transitions)
+  private nightOverlay: Phaser.GameObjects.Rectangle | null = null;
+  private dayNightEl: HTMLDivElement | null = null;
 
   // ─── MAP CONFIG ──────────────────────────────────────────────
   private mapDef: MapDef | null = null;
@@ -2225,8 +2285,18 @@ export class HordeScene extends Phaser.Scene {
     this.nextEventId = 0;
     this.hungryBearBonusTeam = null;
     this.eventBuffs = [];
+    this.shrine = { owner: 0, captureProgress: { 1: 0, 2: 0 }, active: false, trickleTimer: 0, pulseTimer: 0 };
+    this.bountyCamps = [];
     this.currentEra = 1;
     this.eliteKillCount = 0;
+    // Day/night cycle reset
+    this.dayNightTimer = 0;
+    this.isNight = false;
+    this.nightCount = 0;
+    this.isBloodMoon = false;
+    this.duskWarned = false;
+    this.shadowBeasts = [];
+    this.dayNightAlpha = 0;
     this.gameStartBannerShown = false;
     this.introComplete = false;
     // Create persistent dark veil that stays until intro is done
@@ -2253,6 +2323,8 @@ export class HordeScene extends Phaser.Scene {
     this.initArmories();
     this.setupNexuses();
     this.setupTowers();
+    this.setupShrine();
+    this.setupBountyCamps();
     this.setupFog();
     this.setupCamera();
     this.setupInput();
@@ -2262,6 +2334,13 @@ export class HordeScene extends Phaser.Scene {
       onTestVoice: () => this.ttsService?.test(),
     });
     this.setupHUD();
+    // ═══ DAY/NIGHT OVERLAY ═══
+    this.nightOverlay = this.add.rectangle(3200, 3200, 6400, 6400, 0x000022, 0);
+    this.nightOverlay.setDepth(85); // above sprites/fog, below HTML UI
+    this.nightOverlay.setScrollFactor(1);
+    // ═══ DAY/NIGHT HUD ═══
+    const gcDN = document.getElementById('game-container') ?? document.body;
+    this.setupDayNightHUD(gcDN);
     this.setupFpsCounter();
     this.setupColorblindFilters();
     this.setupFullscreenSync();
@@ -3297,8 +3376,9 @@ export class HordeScene extends Phaser.Scene {
       (camp as any).buildingSprite = campBuilding;
 
       // Spawn defenders only for camps whose tier is unlocked by the current era
+      // +2 so higher-tier camps (e.g. troll T5) spawn defenders earlier (Era 3)
       if (!this.isOnline || this.isHost) {
-        if (animalDef.tier <= this.eraMaxTier()) {
+        if (animalDef.tier <= this.eraMaxTier() + 2) {
           this.spawnCampDefenders(camp);
         }
       }
@@ -5685,6 +5765,9 @@ export class HordeScene extends Phaser.Scene {
 
     this.gameTime += delta;
 
+    // Day/night cycle
+    this.updateDayNight(delta);
+
     // Tick down camp loot buffs
     for (let i = this.teamBuffs.length - 1; i >= 0; i--) {
       this.teamBuffs[i].remaining -= delta;
@@ -5730,6 +5813,8 @@ export class HordeScene extends Phaser.Scene {
     if (this._frameCount % 4 === 0) this.updateEraProgression();
     this.updateNotifications();
     if (this._frameCount % 3 === 0) this.updateMapEvents(delta * 3);
+    if (this._frameCount % 4 === 0) this.updateShrine(delta * 4);
+    if (this._frameCount % 4 === 0) this.updateBountyCamps(delta * 4);
     if (this._frameCount % 2 === 0) this.updateSweeps();
     // Only run AI when solo (not online PvP)
     if (!this.isOnline && !this.isDebug) this.updateAI(delta);
@@ -6592,7 +6677,11 @@ export class HordeScene extends Phaser.Scene {
 
       const equipBuff = u.team !== 0 ? this.getUnitEquipBuffs(u) : null;
       const bannerAura = u.team !== 0 ? this.getBannerAura(u) : { speed: 0, attack: 0 };
-      const buffMult = u.team !== 0 ? (1 + this.getBuffs(u.team as 1 | 2).speed + (equipBuff?.speed || 0) + bannerAura.speed) : 1;
+      let buffMult = u.team !== 0 ? (1 + this.getBuffs(u.team as 1 | 2).speed + (equipBuff?.speed || 0) + bannerAura.speed) : 1;
+      // Night speed penalty: slower units not near friendly buildings
+      if (this.isNight && u.team !== 0 && !this.isNearFriendlyBuilding(u as any)) {
+        buffMult *= NIGHT_SPEED_PENALTY;
+      }
       const spd = u.speed * buffMult;
       const finalSpeed = spd * dt;
       const step = Math.min(finalSpeed, d);
@@ -7295,6 +7384,11 @@ export class HordeScene extends Phaser.Scene {
             this.sfx.playAt('turtle_guard', best.x, best.y);
             this.lastTurtleGuardSfx = now;
           }
+        }
+
+        // ─── NIGHT DAMAGE PENALTY: reduced damage for units not near friendly buildings ───
+        if (this.isNight && u.team !== 0 && !this.isNearFriendlyBuilding(u as any)) {
+          atk *= NIGHT_DAMAGE_PENALTY;
         }
 
         // Splash: Troll = 90px, Shaman = 60px (always), T4 = 50px, T3 = 40px, others = none
@@ -8195,7 +8289,9 @@ export class HordeScene extends Phaser.Scene {
           }
 
           // Team tint: subtle coloring to distinguish teams without overwhelming the sprite
-          if (u.isElite) {
+          if (u.team === 0 && this.shadowBeasts.includes(u.id)) {
+            u.sprite.setTint(0xAA77DD); // purple tint for shadow beasts
+          } else if (u.isElite) {
             u.sprite.setTint(0xEEDD88);
           } else if (u.team === 0) {
             u.sprite.setTint(0xDDDD99); // soft warm for neutral
@@ -9808,6 +9904,245 @@ export class HordeScene extends Phaser.Scene {
         u.targetX = nx; u.targetY = ny;
       }
     }
+  }
+
+  // ─── DAY/NIGHT CYCLE ────────────────────────────────────────
+
+  private setupDayNightHUD(gc: HTMLElement) {
+    const el = document.createElement('div');
+    el.id = 'horde-daynight';
+    el.innerHTML = `
+      <span class="dn-icon">\u2600\uFE0F</span>
+      <span class="dn-text">DAY</span>
+      <div class="dn-bar"><div class="dn-bar-fill" style="width:100%;background:#FFD93D;"></div></div>
+      <span class="dn-timer">4:00</span>
+    `;
+    gc.appendChild(el);
+    this.dayNightEl = el;
+  }
+
+  private updateDayNight(delta: number) {
+    this.dayNightTimer += delta;
+    const cyclePos = this.dayNightTimer % CYCLE_TOTAL;
+    const wasNight = this.isNight;
+    this.isNight = cyclePos >= DAY_DURATION;
+
+    // Smooth alpha transition via lerp
+    const lerpSpeed = 0.002 * delta; // smooth transition
+    let targetAlpha: number;
+    if (!this.isNight) {
+      // Day phase
+      if (cyclePos > DAY_DURATION - DUSK_WARNING) {
+        // Dusk: last 30s of day
+        targetAlpha = 0.3;
+      } else {
+        targetAlpha = 0;
+      }
+    } else {
+      // Night phase
+      targetAlpha = this.isBloodMoon ? 0.75 : 0.6;
+    }
+    this.dayNightAlpha += (targetAlpha - this.dayNightAlpha) * Math.min(1, lerpSpeed);
+
+    // Apply overlay alpha
+    if (this.nightOverlay) {
+      this.nightOverlay.setAlpha(this.dayNightAlpha);
+      // Blood moon tint
+      if (this.isBloodMoon) {
+        this.nightOverlay.setFillStyle(0x220000, 1);
+      } else {
+        this.nightOverlay.setFillStyle(0x000022, 1);
+      }
+    }
+
+    // Transition to night
+    if (!wasNight && this.isNight) {
+      this.nightCount++;
+      this.isBloodMoon = this.nightCount % BLOOD_MOON_INTERVAL === 0;
+      this.sfx.playGlobal('wave_start');
+      this.spawnShadowBeasts();
+      if (this.isBloodMoon) {
+        this.showFeedback('BLOOD MOON RISES!', '#FF4444');
+      } else {
+        this.showFeedback('Night has fallen!', '#6B5BFF');
+      }
+      this.duskWarned = false;
+    }
+
+    // Transition to day
+    if (wasNight && !this.isNight) {
+      this.isBloodMoon = false;
+      this.sfx.playGlobal('wave_start');
+      this.showFeedback('Dawn breaks!', '#FFD93D');
+      // Despawn remaining shadow beasts
+      for (const id of this.shadowBeasts) {
+        const u = this.units.find(u => u.id === id && !u.dead);
+        if (u) {
+          u.hp = 0;
+          u.dead = true;
+        }
+      }
+      this.shadowBeasts = [];
+    }
+
+    // Dusk warning
+    if (!this.isNight && cyclePos > DAY_DURATION - DUSK_WARNING && !this.duskWarned) {
+      this.showFeedback('Dusk approaches...', '#CC8800');
+      this.duskWarned = true;
+    }
+
+    // Update HUD (every few frames for performance)
+    if (this._frameCount % 6 === 0) this.updateDayNightHUD();
+  }
+
+  private updateDayNightHUD() {
+    if (!this.dayNightEl) return;
+    const cyclePos = this.dayNightTimer % CYCLE_TOTAL;
+    const el = this.dayNightEl;
+
+    const iconEl = el.querySelector('.dn-icon') as HTMLElement;
+    const textEl = el.querySelector('.dn-text') as HTMLElement;
+    const barFillEl = el.querySelector('.dn-bar-fill') as HTMLElement;
+    const timerEl = el.querySelector('.dn-timer') as HTMLElement;
+
+    if (!iconEl || !textEl || !barFillEl || !timerEl) return;
+
+    if (this.isBloodMoon) {
+      iconEl.textContent = '\u{1FA78}'; // drop of blood emoji
+      textEl.textContent = 'BLOOD MOON';
+      el.classList.add('blood-moon');
+      el.classList.remove('night');
+      const nightProgress = (cyclePos - DAY_DURATION) / NIGHT_DURATION;
+      barFillEl.style.width = `${Math.max(0, (1 - nightProgress) * 100)}%`;
+      barFillEl.style.background = '#FF4444';
+      const remaining = Math.max(0, NIGHT_DURATION - (cyclePos - DAY_DURATION));
+      const mins = Math.floor(remaining / 60000);
+      const secs = Math.floor((remaining % 60000) / 1000);
+      timerEl.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+    } else if (this.isNight) {
+      iconEl.textContent = '\u{1F319}'; // crescent moon emoji
+      textEl.textContent = 'NIGHT';
+      el.classList.add('night');
+      el.classList.remove('blood-moon');
+      const nightProgress = (cyclePos - DAY_DURATION) / NIGHT_DURATION;
+      barFillEl.style.width = `${Math.max(0, (1 - nightProgress) * 100)}%`;
+      barFillEl.style.background = '#6B5BFF';
+      const remaining = Math.max(0, NIGHT_DURATION - (cyclePos - DAY_DURATION));
+      const mins = Math.floor(remaining / 60000);
+      const secs = Math.floor((remaining % 60000) / 1000);
+      timerEl.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+    } else {
+      iconEl.textContent = '\u2600\uFE0F'; // sun emoji
+      textEl.textContent = 'DAY';
+      el.classList.remove('night');
+      el.classList.remove('blood-moon');
+      const dayProgress = cyclePos / DAY_DURATION;
+      barFillEl.style.width = `${Math.max(0, (1 - dayProgress) * 100)}%`;
+      barFillEl.style.background = '#FFD93D';
+      const remaining = Math.max(0, DAY_DURATION - cyclePos);
+      const mins = Math.floor(remaining / 60000);
+      const secs = Math.floor((remaining % 60000) / 1000);
+      timerEl.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+    }
+  }
+
+  private spawnShadowBeasts() {
+    // Determine spawn count based on era and blood moon
+    let baseCount: number;
+    if (this.currentEra <= 1) baseCount = 4;
+    else if (this.currentEra === 2) baseCount = 6;
+    else baseCount = 8;
+    const count = this.isBloodMoon ? baseCount * 2 : baseCount;
+
+    // Determine unit type based on era
+    let beastType: string;
+    if (this.currentEra <= 1) beastType = 'skull';
+    else if (this.currentEra === 2) beastType = 'spider';
+    else if (this.currentEra === 3) beastType = 'hyena';
+    else beastType = 'panda';
+
+    const def = ANIMALS[beastType];
+    if (!def) return;
+
+    this.shadowBeasts = [];
+
+    for (let i = 0; i < count; i++) {
+      // Random position in center area (2000-4400), avoiding bases
+      let x: number, y: number;
+      let tries = 0;
+      do {
+        x = 2000 + Math.random() * 2400;
+        y = 2000 + Math.random() * 2400;
+        tries++;
+      } while (tries < 20 && (
+        pdist2({ x, y }, P1_BASE) < 800 * 800 ||
+        pdist2({ x, y }, P2_BASE) < 800 * 800
+      ));
+
+      const safe = this.findWalkableSpawn(x, y);
+      x = safe.x; y = safe.y;
+
+      const hpMult = this.isBloodMoon ? 1.5 : 1.0;
+      this.units.push({
+        id: this.nextId++, type: beastType, team: 0,
+        hp: Math.round(def.hp * hpMult), maxHp: Math.round(def.hp * hpMult),
+        attack: Math.round(def.attack * 1.2), speed: def.speed * 0.6,
+        x, y, targetX: x + Math.random() * 80 - 40, targetY: y + Math.random() * 80 - 40,
+        attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
+        campId: null, lungeX: 0, lungeY: 0,
+        gnomeShield: 0, hasRebirth: beastType === 'skull', diveReady: false, diveTimer: 0,
+        lastAttackTarget: -1, attackFaceX: null, pathWaypoints: null, pathAge: 0, pathTargetX: 0, pathTargetY: 0,
+        lastCheckX: 0, lastCheckY: 0, stuckFrames: 0, stuckCooldown: 0, mods: { ...DEFAULT_MODS },
+        carrying: null, carrySprite: null, loop: null, isElite: true, idleTimer: 0, claimItemId: -1,
+        equipment: null, equipLevel: 0, equipSprite: null, equipDragSprite: null, equipVisualApplied: null,
+      });
+      this.shadowBeasts.push(this.nextId - 1);
+    }
+
+    // Blood moon boss: Nightmare at center
+    if (this.isBloodMoon) {
+      const bossDef = ANIMALS['minotaur'];
+      if (bossDef) {
+        const bx = 3200, by = 3200;
+        const safe = this.findWalkableSpawn(bx, by);
+        this.units.push({
+          id: this.nextId++, type: 'minotaur', team: 0,
+          hp: Math.round(bossDef.hp * 3), maxHp: Math.round(bossDef.hp * 3),
+          attack: Math.round(bossDef.attack * 2), speed: bossDef.speed * 0.5,
+          x: safe.x, y: safe.y, targetX: safe.x, targetY: safe.y,
+          attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
+          campId: null, lungeX: 0, lungeY: 0,
+          gnomeShield: 0, hasRebirth: false, diveReady: false, diveTimer: 0,
+          lastAttackTarget: -1, attackFaceX: null, pathWaypoints: null, pathAge: 0, pathTargetX: 0, pathTargetY: 0,
+          lastCheckX: 0, lastCheckY: 0, stuckFrames: 0, stuckCooldown: 0, mods: { ...DEFAULT_MODS },
+          carrying: null, carrySprite: null, loop: null, isElite: true, idleTimer: 0, claimItemId: -1,
+          equipment: null, equipLevel: 0, equipSprite: null, equipDragSprite: null, equipVisualApplied: null,
+        });
+        this.shadowBeasts.push(this.nextId - 1);
+      }
+    }
+  }
+
+  /** Check if a unit is near a friendly building (base, camp, tower, armory) — exempt from night penalties */
+  private isNearFriendlyBuilding(u: { x: number; y: number; team: 0 | 1 | 2 }): boolean {
+    if (u.team === 0) return false;
+    const range2 = NIGHT_BUILDING_SAFE_RANGE * NIGHT_BUILDING_SAFE_RANGE;
+    // Check base
+    const base = u.team === 1 ? P1_BASE : P2_BASE;
+    if (pdist2(u, base) < range2) return true;
+    // Check owned camps
+    for (const c of this.camps) {
+      if (c.owner === u.team && pdist2(u, c) < range2) return true;
+    }
+    // Check friendly towers
+    for (const tw of this.towers) {
+      if (tw.alive && tw.team === u.team && pdist2(u, tw) < range2) return true;
+    }
+    // Check armories
+    for (const a of this.armories) {
+      if (a.team === u.team && pdist2(u, a) < range2) return true;
+    }
+    return false;
   }
 
   private checkWin() {
@@ -13484,6 +13819,8 @@ export class HordeScene extends Phaser.Scene {
     document.getElementById('horde-char-toggle')?.remove();
     this.equipPanelEl?.remove(); this.equipPanelEl = null;
     document.getElementById('horde-equip-toggle')?.remove();
+    // Day/night HUD cleanup
+    this.dayNightEl?.remove(); this.dayNightEl = null;
     // New floating overlay panels
     this.topBarEl?.remove(); this.topBarEl = null;
     this.resourcePanelEl?.remove(); this.resourcePanelEl = null;
@@ -13835,6 +14172,291 @@ export class HordeScene extends Phaser.Scene {
       g.lineStyle(1, 0xFF3333, 0.25);
       const atkRange = u.type === 'hyena' ? 120 : u.type === 'shaman' ? 100 : COMBAT_RANGE;
       g.strokeCircle(u.x, u.y, atkRange);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // CENTER SHRINE ("Hearthstone")
+  // ═══════════════════════════════════════════════════════════════
+
+  private setupShrine() {
+    const footY = SHRINE_Y + 40;
+    const depth = 10 + Math.round(footY * 0.01);
+
+    // Decorative ground ring
+    const glowCircle = this.add.circle(SHRINE_X, SHRINE_Y, 80, 0xFFFFFF, 0.08)
+      .setStrokeStyle(3, 0xFFFFFF, 0.5)
+      .setDepth(depth);
+
+    // Inner shrine marker
+    const sprite = this.add.circle(SHRINE_X, SHRINE_Y, 24, 0xFFFFFF, 0.25)
+      .setStrokeStyle(2, 0xFFFFFF, 0.8)
+      .setDepth(depth + 1);
+
+    // Label
+    const ownerText = this.add.text(SHRINE_X, SHRINE_Y - 95, 'SHRINE', {
+      fontSize: '14px', color: '#FFFFFF',
+      fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
+      stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(depth + 2);
+
+    this.shrine.glowCircle = glowCircle;
+    this.shrine.sprite = sprite;
+    this.shrine.ownerText = ownerText;
+  }
+
+  private updateShrine(delta: number) {
+    if (this.gameOver) return;
+    if (this.isOnline && !this.isHost) return;
+
+    // Not active until SHRINE_ACTIVATE_TIME
+    if (this.gameTime < SHRINE_ACTIVATE_TIME) {
+      if (this.shrine.ownerText) {
+        const secsLeft = Math.ceil((SHRINE_ACTIVATE_TIME - this.gameTime) / 1000);
+        this.shrine.ownerText.setText(`SHRINE (${secsLeft}s)`);
+        this.shrine.ownerText.setColor('#888888');
+      }
+      return;
+    }
+    if (!this.shrine.active) {
+      this.shrine.active = true;
+      this.showFeedback('The Hearthstone Shrine is now active!', '#FFD700');
+    }
+
+    // Count units from each team within capture radius
+    const shrinePos = { x: SHRINE_X, y: SHRINE_Y };
+    const r2 = SHRINE_RADIUS * SHRINE_RADIUS;
+    let team1Count = 0;
+    let team2Count = 0;
+    const nearby = this.getNearbyUnits(SHRINE_X, SHRINE_Y, SHRINE_RADIUS);
+    for (const u of nearby) {
+      if (u.dead || u.team === 0) continue;
+      const d2 = pdist2(u, shrinePos);
+      if (d2 <= r2) {
+        if (u.team === 1) team1Count++;
+        else if (u.team === 2) team2Count++;
+      }
+    }
+
+    // Capture logic: only one team present = progress
+    const contested = team1Count > 0 && team2Count > 0;
+    if (!contested) {
+      if (team1Count > 0 && this.shrine.owner !== 1) {
+        this.shrine.captureProgress[1] += delta;
+        // Decay opponent progress
+        this.shrine.captureProgress[2] = Math.max(0, this.shrine.captureProgress[2] - delta * 0.5);
+        if (this.shrine.captureProgress[1] >= SHRINE_CAPTURE_TIME) {
+          this.shrine.owner = 1;
+          this.shrine.captureProgress = { 1: 0, 2: 0 };
+          this.shrine.trickleTimer = 0;
+          this.sfx.playAt('camp_captured', SHRINE_X, SHRINE_Y);
+          this.showFeedback('Team Blue captured the Hearthstone!', '#4499FF');
+        }
+      } else if (team2Count > 0 && this.shrine.owner !== 2) {
+        this.shrine.captureProgress[2] += delta;
+        this.shrine.captureProgress[1] = Math.max(0, this.shrine.captureProgress[1] - delta * 0.5);
+        if (this.shrine.captureProgress[2] >= SHRINE_CAPTURE_TIME) {
+          this.shrine.owner = 2;
+          this.shrine.captureProgress = { 1: 0, 2: 0 };
+          this.shrine.trickleTimer = 0;
+          this.sfx.playAt('camp_captured', SHRINE_X, SHRINE_Y);
+          this.showFeedback('Team Red captured the Hearthstone!', '#FF5555');
+        }
+      }
+    }
+
+    // Resource trickle for owner
+    if (this.shrine.owner === 1 || this.shrine.owner === 2) {
+      this.shrine.trickleTimer += delta;
+      if (this.shrine.trickleTimer >= SHRINE_TRICKLE_INTERVAL) {
+        this.shrine.trickleTimer -= SHRINE_TRICKLE_INTERVAL;
+        const team = this.shrine.owner as 1 | 2;
+        this.baseStockpile[team].crystal += SHRINE_TRICKLE_CRYSTAL;
+        this.baseStockpile[team].metal += SHRINE_TRICKLE_METAL;
+      }
+    }
+
+    // Update visuals
+    this.shrine.pulseTimer += delta;
+    const pulse = 0.8 + Math.sin(this.shrine.pulseTimer * 0.003) * 0.2;
+    const ownerColor = this.shrine.owner === 1 ? 0x4499FF : this.shrine.owner === 2 ? 0xFF5555 : 0xFFFFFF;
+    const ownerHex = this.shrine.owner === 1 ? '#4499FF' : this.shrine.owner === 2 ? '#FF5555' : '#FFD700';
+
+    if (this.shrine.glowCircle) {
+      this.shrine.glowCircle.setStrokeStyle(3, ownerColor, 0.5 * pulse);
+      this.shrine.glowCircle.setFillStyle(ownerColor, 0.06 * pulse);
+    }
+    if (this.shrine.sprite) {
+      this.shrine.sprite.setStrokeStyle(2, ownerColor, 0.8 * pulse);
+      this.shrine.sprite.setFillStyle(ownerColor, 0.2 * pulse);
+    }
+    if (this.shrine.ownerText) {
+      const label = this.shrine.owner === 0 ? 'SHRINE' :
+        this.shrine.owner === 1 ? 'SHRINE (Blue)' : 'SHRINE (Red)';
+
+      // Show capture progress if being contested
+      let progressText = '';
+      if (this.shrine.owner === 0 || contested) {
+        const p1 = Math.min(100, Math.round(this.shrine.captureProgress[1] / SHRINE_CAPTURE_TIME * 100));
+        const p2 = Math.min(100, Math.round(this.shrine.captureProgress[2] / SHRINE_CAPTURE_TIME * 100));
+        if (p1 > 0 || p2 > 0) progressText = `\n${p1}% / ${p2}%`;
+      }
+      this.shrine.ownerText.setText(label + progressText);
+      this.shrine.ownerText.setColor(ownerHex);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // BOUNTY CAMPS (flanking center)
+  // ═══════════════════════════════════════════════════════════════
+
+  private setupBountyCamps() {
+    this.bountyCamps = [];
+    for (const pos of BOUNTY_CAMP_POSITIONS) {
+      const camp: typeof this.bountyCamps[0] = {
+        x: pos.x, y: pos.y,
+        defenders: [],
+        cleared: false,
+        respawnTimer: 0,
+      };
+      this.bountyCamps.push(camp);
+    }
+    // Spawn initial defenders if host or solo
+    if (!this.isOnline || this.isHost) {
+      for (const camp of this.bountyCamps) {
+        this.spawnBountyDefenders(camp);
+      }
+    }
+  }
+
+  /** Spawn neutral defenders at a bounty camp, scaled to current era */
+  private spawnBountyDefenders(camp: typeof this.bountyCamps[0]) {
+    // Pick defender types based on era
+    const era = this.currentEra;
+    let types: string[];
+    if (era >= 4) types = ['minotaur'];
+    else if (era >= 3) types = ['panda'];
+    else if (era >= 2) types = ['spider', 'hyena'];
+    else types = ['skull'];
+
+    const count = era >= 3 ? 3 : 4;
+    camp.defenders = [];
+    camp.cleared = false;
+
+    for (let i = 0; i < count; i++) {
+      const type = types[Math.floor(Math.random() * types.length)];
+      const def = ANIMALS[type];
+      if (!def) continue;
+
+      const angle = (i / count) * Math.PI * 2;
+      let gx = camp.x + Math.cos(angle) * 40;
+      let gy = camp.y + Math.sin(angle) * 40;
+      const safe = this.findWalkableSpawn(gx, gy);
+      gx = safe.x; gy = safe.y;
+
+      const wanderAngle = Math.random() * Math.PI * 2;
+      const wanderR = 15 + Math.random() * 30;
+      const speedVar = 0.85 + Math.random() * 0.3;
+
+      const unitId = this.nextId++;
+      this.units.push({
+        id: unitId, type, team: 0,
+        hp: def.hp * 1.3, maxHp: def.hp * 1.3,
+        attack: def.attack * 1.1, speed: def.speed * 0.4 * speedVar,
+        x: gx, y: gy,
+        targetX: camp.x + Math.cos(wanderAngle) * wanderR,
+        targetY: camp.y + Math.sin(wanderAngle) * wanderR,
+        attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
+        campId: null, lungeX: 0, lungeY: 0,
+        gnomeShield: 0, hasRebirth: type === 'skull', diveReady: false, diveTimer: 0,
+        lastAttackTarget: -1, attackFaceX: null, pathWaypoints: null, pathAge: 0, pathTargetX: 0, pathTargetY: 0,
+        lastCheckX: 0, lastCheckY: 0, stuckFrames: 0, stuckCooldown: 0, mods: { ...DEFAULT_MODS },
+        carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
+        equipment: null, equipLevel: 0, equipSprite: null, equipDragSprite: null, equipVisualApplied: null,
+      });
+      camp.defenders.push(unitId);
+    }
+  }
+
+  private updateBountyCamps(delta: number) {
+    if (this.gameOver) return;
+    if (this.isOnline && !this.isHost) return;
+
+    for (const camp of this.bountyCamps) {
+      // Check if defenders are dead
+      if (!camp.cleared && camp.defenders.length > 0) {
+        const allDead = camp.defenders.every(id => {
+          const u = this._unitById.get(id);
+          return !u || u.dead;
+        });
+        if (allDead) {
+          camp.cleared = true;
+          camp.respawnTimer = BOUNTY_RESPAWN_MS;
+          // Spawn resource cache
+          const era = this.currentEra;
+          const crystalReward = 2 + era;
+          const metalReward = 1 + Math.floor(era / 2);
+          camp.cache = {
+            x: camp.x, y: camp.y,
+            resources: { crystal: crystalReward, metal: metalReward },
+            timer: BOUNTY_CACHE_DESPAWN,
+          };
+          // Visual: glowing orb at camp position
+          const depth = 10 + Math.round(camp.y * 0.01);
+          camp.cache.sprite = this.add.circle(camp.x, camp.y, 14, 0xFFD700, 0.7)
+            .setStrokeStyle(2, 0xFFFFFF, 0.9)
+            .setDepth(depth + 1);
+          this.showFeedback('Bounty camp cleared! Collect the cache!', '#FFD700');
+        }
+      }
+
+      // Cache pickup — any team's unit walks over it
+      if (camp.cache) {
+        camp.cache.timer -= delta;
+
+        // Pulse the cache sprite
+        if (camp.cache.sprite) {
+          const pulse = 0.6 + Math.sin(Date.now() * 0.005) * 0.3;
+          camp.cache.sprite.setAlpha(pulse);
+        }
+
+        // Check if any player unit is close enough to collect
+        let collected = false;
+        const cachePos = { x: camp.cache.x, y: camp.cache.y };
+        const nearby = this.getNearbyUnits(camp.cache.x, camp.cache.y, 60);
+        for (const u of nearby) {
+          if (u.dead || u.team === 0) continue;
+          const d = pdist(u, cachePos);
+          if (d < 60) {
+            // Award resources to collecting team
+            const team = u.team as 1 | 2;
+            for (const [res, amount] of Object.entries(camp.cache.resources)) {
+              if (res in this.baseStockpile[team]) {
+                (this.baseStockpile[team] as any)[res] += amount;
+              }
+            }
+            this.sfx.playAt('resource_pickup', camp.cache.x, camp.cache.y);
+            const teamName = team === 1 ? 'Blue' : 'Red';
+            this.showFeedback(`${teamName} collected bounty cache!`, team === 1 ? '#4499FF' : '#FF5555');
+            collected = true;
+            break;
+          }
+        }
+
+        // Despawn cache if collected or timer expired
+        if (collected || camp.cache.timer <= 0) {
+          camp.cache.sprite?.destroy();
+          camp.cache = undefined;
+        }
+      }
+
+      // Respawn defenders after cooldown
+      if (camp.cleared && !camp.cache) {
+        camp.respawnTimer -= delta;
+        if (camp.respawnTimer <= 0) {
+          this.spawnBountyDefenders(camp);
+        }
+      }
     }
   }
 

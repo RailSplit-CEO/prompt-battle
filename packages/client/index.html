@@ -444,6 +444,56 @@
       50% { box-shadow: 0 0 8px 2px rgba(201, 143, 255, 0.25); }
     }
 
+    /* ─── DAY/NIGHT CYCLE INDICATOR ────────────────────────── */
+    #horde-daynight {
+      position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+      margin-top: 70px; /* below the top bar */
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 14px;
+      background: rgba(20, 15, 40, 0.85);
+      backdrop-filter: blur(8px);
+      border: 2px solid rgba(139,115,85,0.4);
+      border-radius: 20px;
+      z-index: 101; pointer-events: none;
+      font-family: 'Nunito', sans-serif;
+      transition: background 1s ease, border-color 1s ease;
+    }
+    #horde-daynight.night {
+      background: rgba(10, 5, 30, 0.92);
+      border-color: rgba(100, 80, 160, 0.6);
+    }
+    #horde-daynight.blood-moon {
+      background: rgba(40, 5, 10, 0.92);
+      border-color: rgba(200, 50, 50, 0.7);
+      box-shadow: 0 0 20px rgba(200, 50, 50, 0.3);
+    }
+    #horde-daynight .dn-icon {
+      font-size: 18px;
+      transition: transform 0.5s ease;
+    }
+    #horde-daynight .dn-text {
+      font-size: 12px;
+      font-weight: 700;
+      color: rgba(255,255,255,0.7);
+      letter-spacing: 1px;
+    }
+    #horde-daynight .dn-timer {
+      font-size: 11px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.4);
+    }
+    #horde-daynight .dn-bar {
+      width: 60px; height: 4px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    #horde-daynight .dn-bar-fill {
+      height: 100%;
+      border-radius: 2px;
+      transition: width 1s linear, background 1s ease;
+    }
+
     /* ─── HORDE MODE FLOATING OVERLAY PANELS ──────────────── */
 
     /* Top control group bar */

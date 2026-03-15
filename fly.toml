@@ -1,4 +1,4 @@
-app = 'prompt-battle'
+app = 'horde-game'
 primary_region = 'iad'
 
 [build]
