@@ -4925,8 +4925,8 @@ export class HordeScene extends Phaser.Scene {
       + this.eventBuffs.filter(b => b.team === team && b.timer > 0).length;
     // Build minimal unit list for tier checks
     const unitSnap = this.units.filter(u => !u.dead).map(u => ({
-      id: u.id, type: u.type, team: u.team, dead: u.dead,
-      equipment: u.equipment, equipLevel: u.equipLevel,
+      id: u.id, type: u.type, team: u.team as 1 | 2, dead: u.dead,
+      equipment: u.equipment as string | undefined, equipLevel: u.equipLevel,
       tier: ANIMALS[u.type]?.tier || 1,
     }));
     // Unlocked equipment as simple Map<string, number>
