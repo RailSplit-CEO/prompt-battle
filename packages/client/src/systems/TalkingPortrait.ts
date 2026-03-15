@@ -36,6 +36,7 @@ export class TalkingPortrait {
   private rafId: number | null = null;
   private connectedAudio: HTMLAudioElement | null = null;
   private fallbackTimer: number | null = null;
+  private _bubbleTimer: number | null = null;
 
   constructor(parent: HTMLElement) {
     this.container = document.createElement('div');
@@ -73,13 +74,7 @@ export class TalkingPortrait {
     this.talkImg.src = `${AVATAR_BASE}/${charId}_talk_nobg.png`;
     this.container.classList.remove('speaking');
 
-    // Position below command log panel
-    const cmdLog = document.getElementById('horde-cmd-log');
-    if (cmdLog) {
-      const logRect = cmdLog.getBoundingClientRect();
-      const parentRect = this.container.parentElement!.getBoundingClientRect();
-      this.container.style.top = `${logRect.bottom - parentRect.top + 8}px`;
-    }
+    // Position top-right (CSS handles it via right:8px; top:8px)
 
     // Show
     this.container.classList.add('visible');
@@ -216,10 +211,31 @@ export class TalkingPortrait {
     }, 170); // ~6 toggles/sec feels natural for speech
   }
 
+  /** Show a speech-bubble message over the portrait */
+  showMessage(text: string, durationMs = 4000): void {
+    // Reuse or create the bubble element
+    let bubble = this.container.querySelector('.portrait-bubble') as HTMLDivElement | null;
+    if (!bubble) {
+      bubble = document.createElement('div');
+      bubble.className = 'portrait-bubble';
+      this.container.appendChild(bubble);
+    }
+    bubble.textContent = text;
+    bubble.classList.add('visible');
+
+    // Auto-hide after duration
+    if (this._bubbleTimer !== null) clearTimeout(this._bubbleTimer);
+    this._bubbleTimer = window.setTimeout(() => {
+      bubble!.classList.remove('visible');
+      this._bubbleTimer = null;
+    }, durationMs);
+  }
+
   destroy(): void {
     if (this.rafId !== null) cancelAnimationFrame(this.rafId);
     if (this.fallbackTimer !== null) clearInterval(this.fallbackTimer);
     if (this.hideTimer !== null) clearTimeout(this.hideTimer);
+    if (this._bubbleTimer !== null) clearTimeout(this._bubbleTimer);
     this.disconnectSource();
     try { this.audioCtx?.close(); } catch { /* */ }
     this.audioCtx = null;

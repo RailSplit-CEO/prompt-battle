@@ -2246,7 +2246,7 @@ export class HordeScene extends Phaser.Scene {
 
     this.syncTimer = 0;
 
-    this.cameras.main.setBackgroundColor('#1a1a2e');
+    this.cameras.main.setBackgroundColor('#0f1a0a');
     this.drawBackground();
     this.setupCamps();
     this.initMineNodes();
@@ -2402,6 +2402,21 @@ export class HordeScene extends Phaser.Scene {
     g.fillStyle(0xFF5555, 0.04);
     g.fillCircle(P2_BASE.x, P2_BASE.y, 500);
     g.setDepth(2);
+
+    // ─── MAP EDGE FRAME ─────────────────────────────────
+    // Solid border matching camera bg color hides any sprites/decorations
+    // that bleed past the map boundary. Cheap: just 4 rects, one draw call.
+    const EDGE = 1200; // covers camera pad + max zoom out
+    const edgeGfx = this.add.graphics();
+    edgeGfx.fillStyle(0x0f1a0a, 1); // matches camera background
+    edgeGfx.fillRect(-EDGE, -EDGE, WORLD_W + EDGE * 2, EDGE);        // top
+    edgeGfx.fillRect(-EDGE, WORLD_H, WORLD_W + EDGE * 2, EDGE);      // bottom
+    edgeGfx.fillRect(-EDGE, 0, EDGE, WORLD_H);                        // left
+    edgeGfx.fillRect(WORLD_W, 0, EDGE, WORLD_H);                      // right
+    // Subtle inset border so the map edge feels intentional
+    edgeGfx.lineStyle(2, 0x2a4a1e, 0.6);
+    edgeGfx.strokeRect(0, 0, WORLD_W, WORLD_H);
+    edgeGfx.setDepth(90);
   }
 
   // ─── TILE GRID STATE ──────────────────────────────────────
@@ -3905,7 +3920,8 @@ export class HordeScene extends Phaser.Scene {
 
   private setupCamera() {
     const cam = this.cameras.main;
-    cam.setBounds(0, 0, WORLD_W, WORLD_H);
+    const CAM_PAD = 600;
+    cam.setBounds(-CAM_PAD, -CAM_PAD, WORLD_W + CAM_PAD * 2, WORLD_H + CAM_PAD * 2);
 
     // Initial layout
     this.updateLayout();
@@ -4500,10 +4516,10 @@ export class HordeScene extends Phaser.Scene {
   private setupSettingsGear(gc: HTMLElement) {
     const gear = document.createElement('button');
     gear.id = 'horde-settings-gear';
-    gear.innerHTML = '\u2699';
+    gear.innerHTML = '⚙️';
     gear.title = 'Settings (ESC)';
     gear.style.cssText = `
-      position:absolute;top:8px;right:214px;z-index:102;pointer-events:all;
+      position:absolute;top:8px;right:8px;z-index:200;pointer-events:all;
       width:32px;height:32px;border-radius:8px;
       background:rgba(212,196,160,0.88);backdrop-filter:blur(8px);
       -webkit-backdrop-filter:blur(8px);

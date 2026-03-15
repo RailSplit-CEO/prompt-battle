@@ -1,5 +1,5 @@
 // ─── Settings Panel — DOM overlay with tabbed categories ────────
-// Medieval-themed, instant-apply, accessible.
+// Dark glassmorphism panel, instant-apply, accessible.
 // ESC or clicking backdrop closes it.
 
 import { GameSettings, SettingsData } from './GameSettings';
@@ -12,6 +12,50 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'display',       label: 'Display',       icon: '🖥️' },
   { id: 'accessibility', label: 'Accessibility', icon: '♿' },
 ];
+
+// ─── Color Tokens ──────────────────────────────────────────────
+const C = {
+  // Panel
+  overlay:      'rgba(5,8,3,0.82)',
+  panelBg:      'rgba(18,22,14,0.94)',
+  panelBorder:  'rgba(139,115,85,0.45)',
+  panelShadow:  '0 12px 48px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,217,61,0.06)',
+  panelBlur:    'blur(16px)',
+
+  // Surface (rows, cards)
+  surface:      'rgba(255,248,230,0.05)',
+  surfaceHover: 'rgba(255,248,230,0.08)',
+  surfaceActive:'rgba(255,217,61,0.08)',
+  divider:      'rgba(139,115,85,0.18)',
+
+  // Tab
+  tabBg:        'rgba(139,115,85,0.12)',
+  tabActive:    'rgba(255,217,61,0.14)',
+  tabBorder:    'rgba(255,217,61,0.5)',
+
+  // Accent
+  gold:         '#FFD93D',
+  goldDark:     '#E6A800',
+  goldDim:      'rgba(255,217,61,0.35)',
+  teal:         '#45E6B0',
+  red:          '#FF6B6B',
+  green:        '#5a9a4e',
+  greenDark:    '#3a6a2e',
+
+  // Text
+  textH1:       '#f0e8d0',
+  textPrimary:  '#d4c8a0',
+  textSecondary:'#a89870',
+  textMuted:    '#7a6e56',
+  textDark:     '#4a3520',
+
+  // Controls
+  sliderTrack:  'rgba(139,115,85,0.25)',
+  sliderFill:   'rgba(255,217,61,0.4)',
+  inputBg:      'rgba(139,115,85,0.15)',
+  inputBorder:  'rgba(139,115,85,0.35)',
+  inputBorderHi:'rgba(255,217,61,0.5)',
+} as const;
 
 export interface SettingsPanelCallbacks {
   onTestSfx?: () => void;
@@ -51,7 +95,7 @@ export class SettingsPanel {
     }
     if (this.root) {
       this.root.style.opacity = '0';
-      this.root.style.transform = 'scale(0.96)';
+      this.root.style.transform = 'scale(0.97)';
       setTimeout(() => { this.root?.remove(); this.root = null; }, 200);
     }
   }
@@ -62,69 +106,115 @@ export class SettingsPanel {
 
   // ────────────────────────────────────────────────────────────
   private build(): void {
+    this.injectStyles();
+
     const root = document.createElement('div');
     root.id = 'settings-overlay';
-    this.applyOverlayStyle(root);
+    root.style.cssText = `
+      position:fixed;inset:0;z-index:9999;
+      background:${C.overlay};backdrop-filter:${C.panelBlur};-webkit-backdrop-filter:${C.panelBlur};
+      display:flex;align-items:center;justify-content:center;
+      opacity:0;transition:opacity 0.25s ease;
+    `;
     this.root = root;
 
-    // Backdrop click to close
     root.addEventListener('mousedown', (e) => {
       if (e.target === root) this.close();
     });
 
     // Panel
     const panel = document.createElement('div');
-    this.applyPanelStyle(panel);
+    panel.style.cssText = `
+      width:min(560px,92vw);max-height:min(680px,88vh);
+      background:${C.panelBg};
+      border:2px solid ${C.panelBorder};border-radius:16px;
+      padding:0;box-shadow:${C.panelShadow};
+      display:flex;flex-direction:column;overflow:hidden;
+      transform:scale(0.96);transition:transform 0.3s cubic-bezier(0.16,1,0.3,1);
+      font-family:"Nunito",sans-serif;
+    `;
     root.appendChild(panel);
 
-    // Header
+    // ── Header ──
     const header = document.createElement('div');
-    header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;';
+    header.style.cssText = `
+      display:flex;align-items:center;justify-content:space-between;
+      padding:18px 22px 14px;
+      border-bottom:1px solid ${C.divider};
+    `;
     panel.appendChild(header);
+
+    const titleWrap = document.createElement('div');
+    titleWrap.style.cssText = 'display:flex;align-items:center;gap:10px;';
+
+    const titleIcon = document.createElement('span');
+    titleIcon.textContent = '⚙';
+    titleIcon.style.cssText = `font-size:20px;opacity:0.7;`;
+    titleWrap.appendChild(titleIcon);
 
     const title = document.createElement('h2');
     title.textContent = 'SETTINGS';
     title.style.cssText = `
-      margin:0;font-size:22px;font-family:"Fredoka",sans-serif;font-weight:700;
-      color:#FFD93D;letter-spacing:3px;text-shadow:0 2px 4px rgba(0,0,0,0.4);
+      margin:0;font-size:20px;font-family:"Fredoka",sans-serif;font-weight:700;
+      color:${C.gold};letter-spacing:3px;
     `;
-    header.appendChild(title);
+    titleWrap.appendChild(title);
+    header.appendChild(titleWrap);
 
     const closeBtn = document.createElement('button');
     closeBtn.textContent = '\u2715';
     closeBtn.style.cssText = `
-      background:none;border:2px solid rgba(139,115,85,0.5);color:#d4c8a0;
-      width:32px;height:32px;border-radius:8px;font-size:16px;cursor:pointer;
+      background:${C.inputBg};border:1px solid ${C.inputBorder};color:${C.textSecondary};
+      width:32px;height:32px;border-radius:8px;font-size:15px;cursor:pointer;
       font-family:"Fredoka",sans-serif;transition:all 0.15s;display:flex;
       align-items:center;justify-content:center;
     `;
-    closeBtn.onmouseenter = () => { closeBtn.style.borderColor = '#FF6B6B'; closeBtn.style.color = '#FF6B6B'; };
-    closeBtn.onmouseleave = () => { closeBtn.style.borderColor = 'rgba(139,115,85,0.5)'; closeBtn.style.color = '#d4c8a0'; };
+    closeBtn.onmouseenter = () => {
+      closeBtn.style.borderColor = C.red;
+      closeBtn.style.color = C.red;
+      closeBtn.style.background = 'rgba(255,107,107,0.1)';
+    };
+    closeBtn.onmouseleave = () => {
+      closeBtn.style.borderColor = C.inputBorder;
+      closeBtn.style.color = C.textSecondary;
+      closeBtn.style.background = C.inputBg;
+    };
     closeBtn.onclick = () => this.close();
     header.appendChild(closeBtn);
 
-    // Tab bar
+    // ── Tab Bar ──
     const tabBar = document.createElement('div');
-    tabBar.style.cssText = 'display:flex;gap:4px;margin-bottom:16px;border-bottom:2px solid rgba(139,115,85,0.3);padding-bottom:8px;';
+    tabBar.style.cssText = `
+      display:flex;gap:4px;padding:10px 22px 0;
+      border-bottom:1px solid ${C.divider};
+    `;
     panel.appendChild(tabBar);
 
-    // Content area
-    const content = document.createElement('div');
-    content.style.cssText = 'flex:1;overflow-y:auto;padding-right:4px;';
-    panel.appendChild(content);
-
-    // Build tabs
     const tabBtns: HTMLButtonElement[] = [];
     for (const tab of TABS) {
       const btn = document.createElement('button');
       btn.dataset.tab = tab.id;
-      btn.innerHTML = `<span style="font-size:14px">${tab.icon}</span> ${tab.label}`;
+      btn.innerHTML = `<span style="font-size:13px">${tab.icon}</span> ${tab.label}`;
       btn.style.cssText = `
-        flex:1;padding:8px 4px;border:2px solid transparent;border-radius:8px 8px 0 0;
-        background:none;color:#8B7355;font-size:12px;font-weight:700;cursor:pointer;
-        font-family:"Nunito",sans-serif;transition:all 0.15s;display:flex;
-        align-items:center;justify-content:center;gap:4px;
+        flex:1;padding:9px 4px 11px;
+        border:none;border-bottom:2px solid transparent;
+        border-radius:0;
+        background:none;color:${C.textMuted};
+        font-size:12px;font-weight:700;cursor:pointer;
+        font-family:"Nunito",sans-serif;transition:all 0.15s;
+        display:flex;align-items:center;justify-content:center;gap:5px;
+        margin-bottom:-1px;
       `;
+      btn.onmouseenter = () => {
+        if (btn.dataset.tab !== this.activeTab) {
+          btn.style.color = C.textSecondary;
+        }
+      };
+      btn.onmouseleave = () => {
+        if (btn.dataset.tab !== this.activeTab) {
+          btn.style.color = C.textMuted;
+        }
+      };
       btn.onclick = () => {
         this.activeTab = tab.id;
         this.renderTab(content, tabBtns);
@@ -133,20 +223,37 @@ export class SettingsPanel {
       tabBtns.push(btn);
     }
 
-    // Footer
+    // ── Content ──
+    const content = document.createElement('div');
+    content.className = 'settings-content';
+    content.style.cssText = `
+      flex:1;overflow-y:auto;padding:6px 22px 12px;
+    `;
+    panel.appendChild(content);
+
+    // ── Footer ──
     const footer = document.createElement('div');
-    footer.style.cssText = 'margin-top:12px;padding-top:10px;border-top:2px solid rgba(139,115,85,0.3);display:flex;justify-content:space-between;align-items:center;';
+    footer.style.cssText = `
+      padding:12px 22px;border-top:1px solid ${C.divider};
+      display:flex;justify-content:space-between;align-items:center;
+    `;
     panel.appendChild(footer);
 
     const resetBtn = document.createElement('button');
     resetBtn.textContent = 'Reset to Defaults';
     resetBtn.style.cssText = `
-      background:rgba(255,107,107,0.12);border:2px solid rgba(255,107,107,0.3);
-      color:#FF6B6B;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:700;
+      background:rgba(255,107,107,0.08);border:1px solid rgba(255,107,107,0.25);
+      color:${C.red};padding:7px 16px;border-radius:8px;font-size:12px;font-weight:700;
       cursor:pointer;font-family:"Nunito",sans-serif;transition:all 0.15s;
     `;
-    resetBtn.onmouseenter = () => { resetBtn.style.background = 'rgba(255,107,107,0.25)'; };
-    resetBtn.onmouseleave = () => { resetBtn.style.background = 'rgba(255,107,107,0.12)'; };
+    resetBtn.onmouseenter = () => {
+      resetBtn.style.background = 'rgba(255,107,107,0.18)';
+      resetBtn.style.borderColor = 'rgba(255,107,107,0.45)';
+    };
+    resetBtn.onmouseleave = () => {
+      resetBtn.style.background = 'rgba(255,107,107,0.08)';
+      resetBtn.style.borderColor = 'rgba(255,107,107,0.25)';
+    };
     resetBtn.onclick = () => {
       this.settings.reset();
       this.renderTab(content, tabBtns);
@@ -155,7 +262,7 @@ export class SettingsPanel {
 
     const hint = document.createElement('span');
     hint.textContent = 'ESC to close';
-    hint.style.cssText = 'font-size:11px;color:#6a5a4a;font-family:"Nunito",sans-serif;';
+    hint.style.cssText = `font-size:11px;color:${C.textMuted};font-family:"Nunito",sans-serif;letter-spacing:0.5px;`;
     footer.appendChild(hint);
 
     document.body.appendChild(root);
@@ -179,12 +286,11 @@ export class SettingsPanel {
 
   // ────────────────────────────────────────────────────────────
   private renderTab(container: HTMLElement, tabBtns: HTMLButtonElement[]): void {
-    // Update tab button styles
     for (const btn of tabBtns) {
       const isActive = btn.dataset.tab === this.activeTab;
-      btn.style.color = isActive ? '#FFD93D' : '#8B7355';
-      btn.style.borderColor = isActive ? 'rgba(255,217,61,0.5)' : 'transparent';
-      btn.style.background = isActive ? 'rgba(255,217,61,0.08)' : 'none';
+      btn.style.color = isActive ? C.gold : C.textMuted;
+      btn.style.borderBottomColor = isActive ? C.gold : 'transparent';
+      btn.style.background = isActive ? C.tabActive : 'none';
     }
 
     container.innerHTML = '';
@@ -338,10 +444,10 @@ export class SettingsPanel {
     const header = document.createElement('div');
     const isFirst = parent.children.length === 0;
     header.style.cssText = `
-      font-size:10px;text-transform:uppercase;letter-spacing:2px;
-      color:#8B7355;font-family:"Fredoka",sans-serif;font-weight:700;
-      padding:${isFirst ? '2px' : '12px'} 0 4px 0;
-      ${isFirst ? '' : 'border-top:1px solid rgba(139,115,85,0.2);margin-top:4px;'}
+      font-size:10px;text-transform:uppercase;letter-spacing:2.5px;
+      color:${C.textSecondary};font-family:"Fredoka",sans-serif;font-weight:700;
+      padding:${isFirst ? '10px' : '16px'} 0 6px 0;
+      ${isFirst ? '' : `border-top:1px solid ${C.divider};margin-top:4px;`}
     `;
     header.textContent = title;
     parent.appendChild(header);
@@ -355,7 +461,7 @@ export class SettingsPanel {
     const row = this.createRow(parent, label, hint);
 
     const valDisplay = document.createElement('span');
-    valDisplay.style.cssText = 'font-size:13px;font-weight:700;color:#FFD93D;min-width:36px;text-align:right;font-family:"Fredoka",sans-serif;';
+    valDisplay.style.cssText = `font-size:13px;font-weight:700;color:${C.gold};min-width:38px;text-align:right;font-family:"Fredoka",sans-serif;`;
     valDisplay.textContent = this.formatSliderValue(value, min, max);
 
     const input = document.createElement('input');
@@ -364,7 +470,11 @@ export class SettingsPanel {
     input.max = String(max);
     input.step = String(step);
     input.value = String(value);
-    this.styleSlider(input);
+    input.className = 'settings-slider';
+    input.style.cssText = `
+      flex:1;height:6px;-webkit-appearance:none;appearance:none;
+      background:${C.sliderTrack};border-radius:3px;outline:none;cursor:pointer;
+    `;
 
     input.oninput = () => {
       const v = parseFloat(input.value);
@@ -388,7 +498,7 @@ export class SettingsPanel {
     const row = this.createRow(parent, label, hint);
 
     const valDisplay = document.createElement('span');
-    valDisplay.style.cssText = 'font-size:13px;font-weight:700;color:#FFD93D;min-width:36px;text-align:right;font-family:"Fredoka",sans-serif;';
+    valDisplay.style.cssText = `font-size:13px;font-weight:700;color:${C.gold};min-width:38px;text-align:right;font-family:"Fredoka",sans-serif;`;
     valDisplay.textContent = this.formatSliderValue(value, min, max);
 
     const input = document.createElement('input');
@@ -397,7 +507,11 @@ export class SettingsPanel {
     input.max = String(max);
     input.step = String(step);
     input.value = String(value);
-    this.styleSlider(input);
+    input.className = 'settings-slider';
+    input.style.cssText = `
+      flex:1;height:6px;-webkit-appearance:none;appearance:none;
+      background:${C.sliderTrack};border-radius:3px;outline:none;cursor:pointer;
+    `;
 
     input.oninput = () => {
       const v = parseFloat(input.value);
@@ -408,17 +522,25 @@ export class SettingsPanel {
     const testBtn = document.createElement('button');
     testBtn.textContent = btnLabel;
     testBtn.style.cssText = `
-      background:rgba(139,115,85,0.15);border:1px solid rgba(139,115,85,0.4);
-      color:#d4c8a0;padding:2px 8px;border-radius:5px;font-size:10px;
+      background:${C.inputBg};border:1px solid ${C.inputBorder};
+      color:${C.textSecondary};padding:3px 10px;border-radius:6px;font-size:10px;
       font-family:"Nunito",sans-serif;font-weight:700;cursor:pointer;
       transition:all 0.15s;white-space:nowrap;
     `;
-    testBtn.onmouseenter = () => { testBtn.style.borderColor = '#FFD93D'; testBtn.style.color = '#FFD93D'; };
-    testBtn.onmouseleave = () => { testBtn.style.borderColor = 'rgba(139,115,85,0.4)'; testBtn.style.color = '#d4c8a0'; };
+    testBtn.onmouseenter = () => {
+      testBtn.style.borderColor = C.inputBorderHi;
+      testBtn.style.color = C.gold;
+      testBtn.style.background = C.surfaceActive;
+    };
+    testBtn.onmouseleave = () => {
+      testBtn.style.borderColor = C.inputBorder;
+      testBtn.style.color = C.textSecondary;
+      testBtn.style.background = C.inputBg;
+    };
     testBtn.onclick = onBtnClick;
 
     const controls = document.createElement('div');
-    controls.style.cssText = 'display:flex;align-items:center;gap:6px;flex:1;max-width:240px;';
+    controls.style.cssText = 'display:flex;align-items:center;gap:6px;flex:1;max-width:260px;';
     controls.appendChild(input);
     controls.appendChild(valDisplay);
     controls.appendChild(testBtn);
@@ -434,29 +556,33 @@ export class SettingsPanel {
     const toggle = document.createElement('button');
     toggle.setAttribute('role', 'switch');
     toggle.setAttribute('aria-checked', String(value));
+
+    const knob = document.createElement('span');
+    knob.style.cssText = `
+      position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;
+      transition:all 0.2s cubic-bezier(0.16,1,0.3,1);
+      box-shadow:0 1px 4px rgba(0,0,0,0.3);
+    `;
+
     const applyState = (on: boolean) => {
       toggle.setAttribute('aria-checked', String(on));
       toggle.style.background = on
-        ? 'linear-gradient(90deg, #3a6a2e, #5a9a4e)'
-        : 'rgba(139,115,85,0.3)';
-      toggle.style.borderColor = on ? '#5a9a4e' : 'rgba(139,115,85,0.4)';
-      knob.style.transform = on ? 'translateX(20px)' : 'translateX(0)';
-      knob.style.background = on ? '#FFD93D' : '#8B7355';
+        ? `linear-gradient(135deg, ${C.greenDark}, ${C.green})`
+        : C.sliderTrack;
+      toggle.style.borderColor = on ? C.green : C.inputBorder;
+      knob.style.transform = on ? 'translateX(18px)' : 'translateX(0)';
+      knob.style.background = on
+        ? `linear-gradient(180deg, ${C.gold}, ${C.goldDark})`
+        : C.textMuted;
     };
 
     toggle.style.cssText = `
       position:relative;width:46px;height:26px;border-radius:13px;border:2px solid;
       cursor:pointer;transition:all 0.2s;padding:0;flex-shrink:0;
     `;
-
-    const knob = document.createElement('span');
-    knob.style.cssText = `
-      position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;
-      transition:all 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.3);
-    `;
     toggle.appendChild(knob);
-
     applyState(value);
+
     toggle.onclick = () => {
       const next = toggle.getAttribute('aria-checked') !== 'true';
       applyState(next);
@@ -475,17 +601,19 @@ export class SettingsPanel {
 
     const select = document.createElement('select');
     select.style.cssText = `
-      background:rgba(42,26,10,0.6);border:2px solid rgba(139,115,85,0.5);
-      color:#d4c8a0;padding:5px 8px;border-radius:8px;font-size:12px;
+      background:${C.inputBg};border:1px solid ${C.inputBorder};
+      color:${C.textPrimary};padding:6px 10px;border-radius:8px;font-size:12px;
       font-family:"Nunito",sans-serif;font-weight:600;cursor:pointer;
-      min-width:140px;outline:none;
+      min-width:150px;outline:none;transition:border-color 0.15s;
     `;
+    select.onfocus = () => { select.style.borderColor = C.inputBorderHi; };
+    select.onblur = () => { select.style.borderColor = C.inputBorder; };
     for (const opt of options) {
       const o = document.createElement('option');
       o.value = opt.value;
       o.textContent = opt.label;
       o.selected = opt.value === value;
-      o.style.cssText = 'background:#2a1a0a;color:#d4c8a0;';
+      o.style.cssText = `background:#1a1e14;color:${C.textPrimary};`;
       select.appendChild(o);
     }
     select.onchange = () => onChange(select.value);
@@ -501,21 +629,27 @@ export class SettingsPanel {
 
     const btn = document.createElement('button');
     btn.style.cssText = `
-      width:100%;text-align:left;padding:8px 12px;border-radius:8px;cursor:pointer;
-      background:rgba(139,115,85,0.08);border:1px solid rgba(139,115,85,0.25);
+      width:100%;text-align:left;padding:10px 14px;border-radius:10px;cursor:pointer;
+      background:${C.surface};border:1px solid ${C.inputBorder};
       transition:all 0.15s;font-family:"Nunito",sans-serif;
     `;
-    btn.onmouseenter = () => { btn.style.background = 'rgba(255,217,61,0.1)'; btn.style.borderColor = 'rgba(255,217,61,0.4)'; };
-    btn.onmouseleave = () => { btn.style.background = 'rgba(139,115,85,0.08)'; btn.style.borderColor = 'rgba(139,115,85,0.25)'; };
+    btn.onmouseenter = () => {
+      btn.style.background = C.surfaceActive;
+      btn.style.borderColor = C.inputBorderHi;
+    };
+    btn.onmouseleave = () => {
+      btn.style.background = C.surface;
+      btn.style.borderColor = C.inputBorder;
+    };
 
     const labelEl = document.createElement('div');
     labelEl.textContent = label;
-    labelEl.style.cssText = 'font-size:13px;font-weight:700;color:#d4c8a0;';
+    labelEl.style.cssText = `font-size:13px;font-weight:700;color:${C.textPrimary};`;
     btn.appendChild(labelEl);
 
     const descEl = document.createElement('div');
     descEl.textContent = description;
-    descEl.style.cssText = 'font-size:10px;color:#8B7355;margin-top:1px;';
+    descEl.style.cssText = `font-size:10px;color:${C.textSecondary};margin-top:2px;`;
     btn.appendChild(descEl);
 
     btn.onclick = onClick;
@@ -529,22 +663,24 @@ export class SettingsPanel {
     const row = document.createElement('div');
     row.style.cssText = `
       display:flex;align-items:center;justify-content:space-between;
-      padding:7px 0;border-bottom:1px solid rgba(139,115,85,0.12);
-      gap:12px;
+      padding:8px 10px;margin:2px 0;border-radius:8px;gap:12px;
+      transition:background 0.12s;
     `;
+    row.onmouseenter = () => { row.style.background = C.surface; };
+    row.onmouseleave = () => { row.style.background = 'transparent'; };
 
     const labelWrap = document.createElement('div');
-    labelWrap.style.cssText = 'display:flex;flex-direction:column;gap:1px;min-width:0;';
+    labelWrap.style.cssText = 'display:flex;flex-direction:column;gap:2px;min-width:0;';
 
     const labelEl = document.createElement('span');
     labelEl.textContent = label;
-    labelEl.style.cssText = 'font-size:13px;font-weight:700;color:#d4c8a0;font-family:"Nunito",sans-serif;';
+    labelEl.style.cssText = `font-size:13px;font-weight:700;color:${C.textPrimary};font-family:"Nunito",sans-serif;`;
     labelWrap.appendChild(labelEl);
 
     if (hint) {
       const hintEl = document.createElement('span');
       hintEl.textContent = hint;
-      hintEl.style.cssText = 'font-size:10px;color:#6a5a4a;font-family:"Nunito",sans-serif;';
+      hintEl.style.cssText = `font-size:10px;color:${C.textMuted};font-family:"Nunito",sans-serif;line-height:1.3;`;
       labelWrap.appendChild(hintEl);
     }
 
@@ -560,56 +696,44 @@ export class SettingsPanel {
     return v.toFixed(2);
   }
 
-  private styleSlider(input: HTMLInputElement): void {
-    input.style.cssText = `
-      flex:1;height:6px;-webkit-appearance:none;appearance:none;
-      background:rgba(139,115,85,0.3);border-radius:3px;outline:none;
-      cursor:pointer;
+  private injectStyles(): void {
+    if (document.getElementById('settings-panel-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'settings-panel-styles';
+    style.textContent = `
+      /* Slider thumb */
+      #settings-overlay .settings-slider::-webkit-slider-thumb {
+        -webkit-appearance:none;width:16px;height:16px;border-radius:50%;
+        background:linear-gradient(180deg,${C.gold},${C.goldDark});
+        border:2px solid rgba(0,0,0,0.2);cursor:pointer;
+        box-shadow:0 1px 6px rgba(0,0,0,0.35);transition:transform 0.1s;
+      }
+      #settings-overlay .settings-slider::-webkit-slider-thumb:hover {
+        transform:scale(1.2);
+      }
+      #settings-overlay .settings-slider::-moz-range-thumb {
+        width:14px;height:14px;border-radius:50%;
+        background:linear-gradient(180deg,${C.gold},${C.goldDark});
+        border:2px solid rgba(0,0,0,0.2);cursor:pointer;
+      }
+      /* Scrollbar */
+      #settings-overlay .settings-content::-webkit-scrollbar { width:5px; }
+      #settings-overlay .settings-content::-webkit-scrollbar-track { background:transparent; }
+      #settings-overlay .settings-content::-webkit-scrollbar-thumb {
+        background:rgba(139,115,85,0.3);border-radius:3px;
+      }
+      #settings-overlay .settings-content::-webkit-scrollbar-thumb:hover {
+        background:rgba(139,115,85,0.5);
+      }
+      /* Select arrow */
+      #settings-overlay select {
+        background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23a89870'/%3E%3C/svg%3E");
+        background-repeat:no-repeat;
+        background-position:right 10px center;
+        padding-right:28px;
+        -webkit-appearance:none;appearance:none;
+      }
     `;
-    // Webkit thumb styling via class
-    if (!document.getElementById('settings-slider-style')) {
-      const style = document.createElement('style');
-      style.id = 'settings-slider-style';
-      style.textContent = `
-        #settings-overlay input[type=range]::-webkit-slider-thumb {
-          -webkit-appearance:none;width:16px;height:16px;border-radius:50%;
-          background:linear-gradient(180deg,#FFD93D,#E6A800);
-          border:2px solid rgba(139,115,85,0.6);cursor:pointer;
-          box-shadow:0 1px 4px rgba(0,0,0,0.3);transition:transform 0.1s;
-        }
-        #settings-overlay input[type=range]::-webkit-slider-thumb:hover {
-          transform:scale(1.15);
-        }
-        #settings-overlay input[type=range]::-moz-range-thumb {
-          width:14px;height:14px;border-radius:50%;
-          background:linear-gradient(180deg,#FFD93D,#E6A800);
-          border:2px solid rgba(139,115,85,0.6);cursor:pointer;
-        }
-      `;
-      document.head.appendChild(style);
-    }
-  }
-
-  // ─── STYLES ─────────────────────────────────────────────────
-
-  private applyOverlayStyle(el: HTMLDivElement): void {
-    el.style.cssText = `
-      position:fixed;inset:0;z-index:9999;
-      background:rgba(10,15,6,0.75);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
-      display:flex;align-items:center;justify-content:center;
-      opacity:0;transition:opacity 0.2s ease;
-    `;
-  }
-
-  private applyPanelStyle(el: HTMLElement): void {
-    el.style.cssText = `
-      width:min(540px,92vw);max-height:min(660px,88vh);
-      background:linear-gradient(180deg,rgba(232,220,196,0.97) 0%,rgba(200,184,150,0.97) 100%);
-      border:3px solid rgba(139,115,85,0.7);border-radius:16px;
-      padding:20px 24px;box-shadow:0 8px 40px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.2);
-      display:flex;flex-direction:column;
-      transform:scale(0.96);transition:transform 0.25s cubic-bezier(0.16,1,0.3,1);
-      font-family:"Nunito",sans-serif;
-    `;
+    document.head.appendChild(style);
   }
 }
