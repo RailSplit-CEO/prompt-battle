@@ -1537,7 +1537,7 @@ const NEXUS_COOLDOWN = 2000;
 const NEXUS_PROJ_SPEED = 400; // ranged projectile speed in pixels per second
 const PROJECTILE_HIT_DIST = 18; // distance at which projectile hits target
 const CAMP_RANGE = 120;
-const AI_TICK_MS = 4000;
+const AI_TICK_MS = 2000; // AI thinks every 2 seconds
 const TEAM_COLORS = { 1: 0x4499FF, 2: 0xFF5555 };
 const FOG_VISION_RANGE = 400; // radius of vision around each ally unit
 const FOG_STRUCTURE_VISION_RANGE = 650; // radius of vision around camps, towers, armories, nexus
@@ -5236,6 +5236,8 @@ export class HordeScene extends Phaser.Scene {
     if (this.fpsEl && this.fpsEl.style.display !== 'none' && this._frameCount % 10 === 0) {
       this.fpsEl.textContent = `${Math.round(1000 / delta)} FPS`;
     }
+    // Reset sound throttle per frame (before anything can play sounds)
+    this.sfx.resetFrame(delta);
     if (this.gameOver) return;
     // Clamp delta to prevent huge simulation spikes when tab is backgrounded
     // Browsers throttle rAF to ~1fps in background, causing delta of 1000ms+
@@ -7480,71 +7482,256 @@ export class HordeScene extends Phaser.Scene {
   }
 
   // ─── AI ──────────────────────────────────────────────────────
+  // Strategic AI for solo mode — manages economy, combat, equipment, and expansion.
+  private _aiPhase: 'expand' | 'build' | 'attack' | 'defend' = 'expand';
+  private _aiEquipQueue: EquipmentType[] = [];
 
   private updateAI(delta: number) {
     this.aiTimer += delta;
     if (this.aiTimer < AI_TICK_MS) return;
     this.aiTimer -= AI_TICK_MS;
 
-    // AI resource management: assign some idle units to gather
-    const aiUnits = this.units.filter(u => u.team === 2 && !u.dead);
-    const gatherers = aiUnits.filter(u => u.loop);
-    const nonGatherers = aiUnits.filter(u => !u.loop);
+    const team: 1 | 2 = 2;
+    const stock = this.baseStockpile[team];
+    const nex = this.nexuses.find(n => n.team === team)!;
+    const enemyNex = this.nexuses.find(n => n.team === 1)!;
 
-    // Keep ~30% of units gathering if we have few resources
-    const stock = this.baseStockpile[2];
-    const needGatherers = (stock.carrot < 5 || stock.meat < 3) && gatherers.length < Math.ceil(aiUnits.length * 0.3);
-    if (needGatherers) {
-      const idle = nonGatherers.filter(u => !u.carrying && pdist(u, { x: u.targetX, y: u.targetY }) < 30);
-      const toAssign = idle.slice(0, Math.max(1, Math.floor(idle.length * 0.3)));
-      const resType: ResourceType = stock.carrot < 3 ? 'carrot' : 'meat';
-      let deliverTo = 'base';
-      if (resType === 'meat') {
-        const mc = this.camps.filter(c => c.owner === 2 && SPAWN_COSTS[c.animalType]?.type === 'meat')
-          .sort((a, b) => pdist2(a, P2_BASE) - pdist2(b, P2_BASE));
-        if (mc.length > 0) deliverTo = mc[0].id;
+    // ─── Classify units (single pass, no .filter()) ───
+    const aiUnits: HUnit[] = [];
+    const idle: HUnit[] = [];
+    const gatherers: HUnit[] = [];
+    const combat: HUnit[] = [];
+    let enemyThreatNearNexus = 0;
+
+    for (const u of this.units) {
+      if (u.dead) continue;
+      if (u.team === team) {
+        aiUnits.push(u);
+        if (u.loop) {
+          gatherers.push(u);
+        } else if (pdist(u, { x: u.targetX, y: u.targetY }) < 30) {
+          idle.push(u);
+        } else {
+          combat.push(u);
+        }
+      } else if (u.team === 1 && pdist(u, nex) < 400) {
+        enemyThreatNearNexus += u.attack * u.hp;
       }
+    }
+
+    const myCamps = this.camps.filter(c => c.owner === team && this.isCampActive(c));
+    const neutralCamps = this.camps.filter(c => c.owner === 0 && this.isCampActive(c));
+    const enemyCamps = this.camps.filter(c => c.owner === 1 && this.isCampActive(c));
+    const totalPower = aiUnits.reduce((s, u) => s + u.attack * u.hp, 0);
+
+    // ─── Phase decision ───
+    if (enemyThreatNearNexus > totalPower * 0.3) {
+      this._aiPhase = 'defend';
+    } else if (neutralCamps.length > 0 && myCamps.length < 4) {
+      this._aiPhase = 'expand';
+    } else if (aiUnits.length < 15 || stock.carrot < 10) {
+      this._aiPhase = 'build';
+    } else {
+      this._aiPhase = 'attack';
+    }
+
+    // ─── 1. Economy: smart resource gathering ───
+    this.aiManageEconomy(team, stock, myCamps, aiUnits, idle, gatherers);
+
+    // ─── 2. Equipment: try to unlock upgrades ───
+    this.aiManageEquipment(team, stock);
+
+    // ─── 3. Equip idle units that don't have equipment ───
+    this.aiEquipUnits(team, idle);
+
+    // ─── 4. Phase-specific combat orders ───
+    switch (this._aiPhase) {
+      case 'defend':
+        this.aiDefend(team, nex, idle, combat, gatherers);
+        break;
+      case 'expand':
+        this.aiExpand(team, idle, neutralCamps);
+        break;
+      case 'build':
+        // During build phase, keep idle units near base for defense
+        if (idle.length > 3) {
+          const guards = idle.slice(0, Math.floor(idle.length * 0.5));
+          this.sendUnitsTo(guards, nex.x + 100, nex.y - 100);
+        }
+        break;
+      case 'attack':
+        this.aiAttack(team, idle, combat, enemyCamps, enemyNex);
+        break;
+    }
+  }
+
+  private aiManageEconomy(team: 1 | 2, stock: Record<ResourceType, number>, myCamps: HCamp[], allUnits: HUnit[], idle: HUnit[], gatherers: HUnit[]) {
+    // Figure out what resources we need most
+    const needCarrot = stock.carrot < 15;
+    const needMeat = stock.meat < 10;
+    const needCrystal = stock.crystal < 5 && this.currentEra >= 4;
+    const needMetal = stock.metal < 5 && this.getEquipLevel(team, 'pickaxe') > 0;
+
+    // Target gatherer ratio: 30-50% of army depending on economy
+    const targetGatherers = Math.ceil(allUnits.length * (needCarrot || needMeat ? 0.45 : 0.25));
+    const gatherersNeeded = targetGatherers - gatherers.length;
+
+    if (gatherersNeeded > 0 && idle.length > 0) {
+      const toAssign = idle.splice(0, Math.min(gatherersNeeded, idle.length));
+
       for (const u of toAssign) {
+        // Smart delivery: if we have camps that need food, deliver directly
+        let resType: ResourceType = 'carrot';
+        let deliverTo = 'base';
+
+        if (needMetal && u.equipment === 'pickaxe') {
+          // Miners deliver metal to base for equipment
+          u.loop = { steps: [{ action: 'mine' }, { action: 'deliver', target: 'base' }], currentStep: 0, label: 'mine metal', loopFrom: 0, playedOnce: false };
+          continue;
+        } else if (needMeat) {
+          resType = 'meat';
+          // Deliver meat to meat camps for spawning
+          const meatCamp = myCamps.find(c => SPAWN_COSTS[c.animalType]?.type === 'meat');
+          if (meatCamp) deliverTo = meatCamp.id;
+        } else if (needCrystal) {
+          resType = 'crystal';
+          const crystalCamp = myCamps.find(c => SPAWN_COSTS[c.animalType]?.type === 'crystal');
+          if (crystalCamp) deliverTo = crystalCamp.id;
+        } else {
+          // Default: gather carrots and deliver to carrot camps for gnome/turtle spawning
+          const carrotCamp = myCamps.find(c => SPAWN_COSTS[c.animalType]?.type === 'carrot');
+          if (carrotCamp) deliverTo = carrotCamp.id;
+        }
+
         u.loop = makeGatherWorkflow(resType, deliverTo);
       }
     }
 
-    const idle = nonGatherers.filter(u => pdist(u, { x: u.targetX, y: u.targetY }) < 20);
+    // If we have excess gatherers and need fighters, convert some back
+    if (gatherers.length > targetGatherers + 3 && this._aiPhase === 'attack') {
+      const excess = gatherers.slice(0, gatherers.length - targetGatherers);
+      for (const u of excess) { u.loop = null; }
+      idle.push(...excess);
+    }
+  }
+
+  private aiManageEquipment(team: 1 | 2, stock: Record<ResourceType, number>) {
+    // Priority: pickaxe first (enables metal), then sword (damage), then boots (speed)
+    if (this._aiEquipQueue.length === 0) {
+      this._aiEquipQueue = ['pickaxe', 'sword', 'boots', 'shield', 'banner'];
+    }
+
+    // Try to unlock the next equipment in queue
+    while (this._aiEquipQueue.length > 0) {
+      const next = this._aiEquipQueue[0];
+      const currentLevel = this.getEquipLevel(team, next);
+      if (currentLevel >= 1) {
+        // Already unlocked, try level 2 if we can afford it
+        if (currentLevel < 2 && this.currentEra >= 3) {
+          if (this.unlockEquipment(team, next)) continue;
+        }
+        this._aiEquipQueue.shift();
+        continue;
+      }
+      // Check prereqs
+      const prereqs = EQUIPMENT_PREREQS[next];
+      const prereqsMet = prereqs.every(p => this.getEquipLevel(team, p) >= 1);
+      if (!prereqsMet) {
+        this._aiEquipQueue.shift();
+        continue;
+      }
+      // Try to unlock
+      this.unlockEquipment(team, next);
+      break; // only try one per tick
+    }
+  }
+
+  private aiEquipUnits(team: 1 | 2, idle: HUnit[]) {
+    // Equip idle units with the best available equipment
+    const priorities: EquipmentType[] = ['sword', 'boots', 'shield', 'pickaxe', 'banner'];
+    for (const eqType of priorities) {
+      if (this.getEquipLevel(team, eqType) <= 0) continue;
+
+      // Find units without this equipment that could benefit
+      for (const u of idle) {
+        if (u.equipment) continue; // already equipped
+        // Don't equip gnomes with combat gear — they're gatherers
+        if (u.type === 'gnome' && eqType !== 'pickaxe') continue;
+        // Give combat units combat gear
+        if (eqType === 'pickaxe' && u.type !== 'gnome' && u.type !== 'turtle') continue;
+
+        u.loop = {
+          steps: [{ action: 'equip', equipmentType: eqType }],
+          currentStep: 0, label: `equip ${eqType}`, loopFrom: -1, playedOnce: false,
+        };
+        return; // one equip per tick to avoid flooding
+      }
+    }
+  }
+
+  private aiDefend(team: 1 | 2, nex: { x: number; y: number }, idle: HUnit[], combat: HUnit[], gatherers: HUnit[]) {
+    // Emergency defense — pull everyone back
+    const allAvailable = [...idle, ...combat];
+    // Also pull some gatherers in emergencies
+    const pullGatherers = gatherers.slice(0, Math.floor(gatherers.length * 0.5));
+    for (const u of pullGatherers) { u.loop = null; }
+    allAvailable.push(...pullGatherers);
+
+    if (allAvailable.length > 0) {
+      this.sendUnitsTo(allAvailable, nex.x, nex.y);
+    }
+  }
+
+  private aiExpand(team: 1 | 2, idle: HUnit[], neutralCamps: HCamp[]) {
     if (idle.length === 0) return;
 
-    // Find best target camp
-    const uncaptured = this.camps
-      .filter(c => c.owner !== 2)
+    // Sort neutral camps by: tier (lower first), then distance to our base
+    const sorted = neutralCamps
       .sort((a, b) => a.tier - b.tier || pdist2(a, P2_BASE) - pdist2(b, P2_BASE));
 
-    const power = idle.reduce((s, u) => s + u.attack * u.hp, 0);
-    let target: { x: number; y: number } | null = null;
+    for (const camp of sorted) {
+      // Estimate defenders
+      let defPower = 0;
+      for (const u of this.units) {
+        if (u.dead || u.team !== 0 || u.campId !== camp.id) continue;
+        defPower += u.attack * u.hp;
+      }
 
-    for (const c of uncaptured) {
-      if (c.owner === 0) {
-        const defenders = this.units.filter(u => u.campId === c.id && u.team === 0 && !u.dead);
-        const gp = defenders.reduce((s, u) => s + u.attack * u.hp, 0);
-        if (power > gp * 1.5) { target = c; break; }
-      } else {
-        target = c; break;
+      const idlePower = idle.reduce((s, u) => s + u.attack * u.hp, 0);
+      if (idlePower > defPower * 1.3) {
+        this.sendUnitsTo(idle, camp.x, camp.y);
+        return;
       }
     }
 
-    if (!target && idle.length > 20) {
-      target = this.nexuses.find(n => n.team === 1)!;
+    // Can't take any camp, wait and build up (send to rally near nearest neutral)
+    if (sorted.length > 0 && idle.length >= 3) {
+      const nearest = sorted[0];
+      const rallyX = nearest.x + (P2_BASE.x > nearest.x ? 100 : -100);
+      const rallyY = nearest.y + (P2_BASE.y > nearest.y ? 100 : -100);
+      this.sendUnitsTo(idle, rallyX, rallyY);
+    }
+  }
+
+  private aiAttack(team: 1 | 2, idle: HUnit[], combat: HUnit[], enemyCamps: HCamp[], enemyNex: { x: number; y: number }) {
+    if (idle.length === 0) return;
+
+    // Attack weakest enemy camp first
+    if (enemyCamps.length > 0) {
+      const weakest = enemyCamps
+        .sort((a, b) => a.tier - b.tier || pdist2(a, P2_BASE) - pdist2(b, P2_BASE))[0];
+      this.sendUnitsTo(idle, weakest.x, weakest.y);
+      return;
     }
 
-    if (target) this.sendUnitsTo(idle, target.x, target.y);
-
-    // Defend nexus
-    const nex = this.nexuses.find(n => n.team === 2)!;
-    const threats = this.units.filter(u => u.team === 1 && !u.dead && pdist(u, nex) < 300);
-    if (threats.length > 0) {
-      const defs = nonGatherers.filter(u => pdist(u, nex) < 600);
-      if (defs.length > 0) {
-        for (const u of defs) { u.loop = null; } // Cancel gather for defense
-        this.sendUnitsTo(defs, nex.x, nex.y);
+    // No enemy camps left — push nexus with everything
+    if (idle.length >= 5) {
+      // Pull idle + some combat units for final push
+      const allForce = [...idle];
+      if (combat.length > 3) {
+        allForce.push(...combat.slice(0, Math.floor(combat.length * 0.5)));
       }
+      this.sendUnitsTo(allForce, enemyNex.x, enemyNex.y);
     }
   }
 

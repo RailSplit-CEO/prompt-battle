@@ -38,8 +38,8 @@ export interface SettingsData {
 const STORAGE_KEY = 'pb_settings';
 
 const DEFAULTS: SettingsData = {
-  masterVolume: 0.5,
-  sfxVolume: 0.6,
+  masterVolume: 0.3,
+  sfxVolume: 0.4,
   voiceVolume: 0.3,
   muteAll: false,
   monoAudio: false,

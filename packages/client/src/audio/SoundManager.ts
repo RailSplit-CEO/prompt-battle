@@ -52,8 +52,11 @@ const PRELOAD_KEYS = new Set([
   'camp_captured', 'camp_lost', 'unit_spawn', 'move_command',
 ]);
 
-const WORLD_W = 6400;
-const WORLD_H = 6400;
+// Sound throttle: max concurrent sounds per frame and per second
+const MAX_SOUNDS_PER_FRAME = 6;
+const MAX_SOUNDS_PER_SECOND = 20;
+// Grace period after tab becomes visible again — skip combat sounds
+const TAB_RETURN_GRACE_MS = 500;
 
 export class SoundManager {
   private scene: Phaser.Scene;
@@ -65,6 +68,12 @@ export class SoundManager {
   private loading = new Set<string>(); // tracks in-flight lazy loads
   private unsubSettings?: () => void;
 
+  // Sound throttling state
+  private soundsThisFrame = 0;
+  private soundsThisSecond = 0;
+  private secondTimer = 0;
+  private suppressUntil = 0; // timestamp — skip non-critical sounds until this time
+
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
     const gs = GameSettings.getInstance();
@@ -75,7 +84,6 @@ export class SoundManager {
       this.muted = gs.get('muteAll');
       const effective = gs.effectiveSfxVolume;
       this.normalVolume = effective;
-      // If currently ducking, keep ducked volume proportional
       if (this.isDucking) {
         this.globalVolume = effective * gs.get('audioDuckAmount');
       } else {
@@ -90,6 +98,25 @@ export class SoundManager {
         }
       } catch { /* some browsers restrict this */ }
     });
+
+    // Detect tab return — suppress sound blast
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) {
+        this.suppressUntil = performance.now() + TAB_RETURN_GRACE_MS;
+        // Stop any currently playing sounds to prevent stacking
+        this.scene.sound.stopAll();
+      }
+    });
+  }
+
+  /** Call once per frame from update() to reset per-frame throttle */
+  resetFrame(delta: number) {
+    this.soundsThisFrame = 0;
+    this.secondTimer += delta;
+    if (this.secondTimer >= 1000) {
+      this.secondTimer -= 1000;
+      this.soundsThisSecond = 0;
+    }
   }
 
   /** Lower SFX volume while TTS plays */
@@ -137,34 +164,51 @@ export class SoundManager {
     this.scene.load.start(); // kick off the load queue
   }
 
+  /** Check if we can play another sound (throttle) */
+  private canPlay(critical = false): boolean {
+    if (this.muted) return false;
+    // During tab-return grace period, only allow critical sounds
+    if (!critical && performance.now() < this.suppressUntil) return false;
+    if (this.soundsThisFrame >= MAX_SOUNDS_PER_FRAME) return false;
+    if (this.soundsThisSecond >= MAX_SOUNDS_PER_SECOND) return false;
+    return true;
+  }
+
+  private countPlay() {
+    this.soundsThisFrame++;
+    this.soundsThisSecond++;
+  }
+
   hasSound(key: SfxKey): boolean {
-    // Remap unit type names for audio lookup
     const remapped = this.remapKey(key);
     return this.loaded.has(remapped) || this.scene.cache.audio.exists(remapped);
   }
 
   play(key: SfxKey) {
-    if (this.muted) return;
-    const remapped = this.remapKey(key);
-    if (!this.scene.cache.audio.exists(remapped)) {
-      this.lazyLoad(remapped);
-      return; // will play next time it's requested
-    }
-    this.scene.sound.play(remapped, { volume: this.globalVolume });
-  }
-
-  playGlobal(key: SfxKey) {
-    if (this.muted) return;
+    if (!this.canPlay()) return;
     const remapped = this.remapKey(key);
     if (!this.scene.cache.audio.exists(remapped)) {
       this.lazyLoad(remapped);
       return;
     }
+    this.countPlay();
+    this.scene.sound.play(remapped, { volume: this.globalVolume });
+  }
+
+  /** Play a critical sound (game state changes) — bypasses tab-return suppression */
+  playGlobal(key: SfxKey) {
+    if (!this.canPlay(true)) return;
+    const remapped = this.remapKey(key);
+    if (!this.scene.cache.audio.exists(remapped)) {
+      this.lazyLoad(remapped);
+      return;
+    }
+    this.countPlay();
     this.scene.sound.play(remapped, { volume: this.globalVolume });
   }
 
   playAt(key: SfxKey, x: number, y: number) {
-    if (this.muted) return;
+    if (!this.canPlay()) return;
     const remapped = this.remapKey(key);
     if (!this.scene.cache.audio.exists(remapped)) {
       this.lazyLoad(remapped);
@@ -186,6 +230,7 @@ export class SoundManager {
     // Stereo pan based on x position relative to camera
     const pan = Math.max(-1, Math.min(1, (dx / (cam.width / 2)) * 0.6));
 
+    this.countPlay();
     this.scene.sound.play(remapped, {
       volume: vol * this.globalVolume,
       pan,
@@ -193,7 +238,7 @@ export class SoundManager {
   }
 
   playReaction(reaction: 'yes' | 'charge' | 'confused', units?: { type: string }[]) {
-    if (this.muted || !units || units.length === 0) return;
+    if (!this.canPlay() || !units || units.length === 0) return;
     // Pick a representative unit type (most common in group)
     const counts: Record<string, number> = {};
     for (const u of units) {
@@ -205,6 +250,7 @@ export class SoundManager {
       this.lazyLoad(key);
       return;
     }
+    this.countPlay();
     this.scene.sound.play(key, { volume: this.globalVolume * 0.7 });
   }
 

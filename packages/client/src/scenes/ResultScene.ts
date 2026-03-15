@@ -31,7 +31,7 @@ export class ResultScene extends Phaser.Scene {
     // Victory/defeat fanfare
     if (!this.muted) {
       const sfxKey = won ? 'victory' : 'defeat';
-      if (this.cache.audio.exists(sfxKey)) this.sound.play(sfxKey, { volume: 0.6 });
+      if (this.cache.audio.exists(sfxKey)) this.sound.play(sfxKey, { volume: gs.effectiveSfxVolume });
     }
 
     const accentColor = won ? 0x45E6B0 : 0xFF6B6B;
@@ -212,7 +212,7 @@ export class ResultScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true });
 
     zone.on('pointerover', () => {
-      if (!this.muted && this.cache.audio.exists('button_click')) this.sound.play('button_click', { volume: 0.15 });
+      if (!this.muted && this.cache.audio.exists('button_click')) this.sound.play('button_click', { volume: gs.effectiveSfxVolume });
       this.tweens.add({ targets: btnContainer, scaleX: 1.08, scaleY: 1.08, duration: 200, ease: 'Back.easeOut' });
       btnBg.clear();
       btnBg.fillStyle(0xFF6B9D, 0.5);
@@ -231,7 +231,7 @@ export class ResultScene extends Phaser.Scene {
     });
 
     zone.on('pointerdown', () => {
-      if (!this.muted && this.cache.audio.exists('button_click')) this.sound.play('button_click', { volume: 0.4 });
+      if (!this.muted && this.cache.audio.exists('button_click')) this.sound.play('button_click', { volume: gs.effectiveSfxVolume });
       this.tweens.add({
         targets: btnContainer,
         scaleX: 0.92, scaleY: 0.92,
@@ -255,7 +255,7 @@ export class ResultScene extends Phaser.Scene {
     this.tweens.add({ targets: backText, alpha: 0.7, duration: 600, delay: 1200 });
 
     const returnToMenu = () => {
-      if (!this.muted && this.cache.audio.exists('button_click')) this.sound.play('button_click', { volume: 0.4 });
+      if (!this.muted && this.cache.audio.exists('button_click')) this.sound.play('button_click', { volume: gs.effectiveSfxVolume });
       this.cameras.main.fadeOut(400, 27, 16, 64);
       this.cameras.main.once('camerafadeoutcomplete', () => {
         this.scene.start('MenuScene');
