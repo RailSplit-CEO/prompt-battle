@@ -515,7 +515,7 @@
     #horde-cmd-log::-webkit-scrollbar-track { background: rgba(139,115,85,0.15); border-radius: 3px; }
     #horde-cmd-log::-webkit-scrollbar-thumb { background: rgba(139,115,85,0.4); border-radius: 3px; }
 
-    /* Right event cards — positioned dynamically below resource panel */
+    /* Right quest panel — positioned dynamically below resource panel */
     #horde-quest-panel {
       position: absolute; right: 8px; width: 200px;
       max-height: calc(100vh - 360px); overflow-y: auto;
@@ -531,6 +531,19 @@
     #horde-quest-panel::-webkit-scrollbar { width: 5px; }
     #horde-quest-panel::-webkit-scrollbar-track { background: rgba(139,115,85,0.15); border-radius: 3px; }
     #horde-quest-panel::-webkit-scrollbar-thumb { background: rgba(139,115,85,0.4); border-radius: 3px; }
+
+    /* Right event cards — positioned dynamically below quest panel */
+    #horde-event-panel {
+      position: absolute; right: 8px; width: 200px;
+      max-height: calc(100vh - 500px); overflow-y: auto;
+      z-index: 101; pointer-events: all;
+      display: flex; flex-direction: column; gap: 6px;
+      font-family: 'Nunito', sans-serif;
+      scrollbar-width: thin; scrollbar-color: rgba(139,115,85,0.5) transparent;
+    }
+    #horde-event-panel::-webkit-scrollbar { width: 5px; }
+    #horde-event-panel::-webkit-scrollbar-track { background: rgba(139,115,85,0.15); border-radius: 3px; }
+    #horde-event-panel::-webkit-scrollbar-thumb { background: rgba(139,115,85,0.4); border-radius: 3px; }
 
     /* Bottom-right minimap */
     #horde-minimap {
@@ -838,6 +851,9 @@
     }
     #horde-quest-panel {
       animation: hud-slide-right 0.5s cubic-bezier(0.16,1,0.3,1) 0.3s both;
+    }
+    #horde-event-panel {
+      animation: hud-slide-right 0.5s cubic-bezier(0.16,1,0.3,1) 0.35s both;
     }
     #horde-minimap {
       animation: hud-slide-up 0.5s cubic-bezier(0.16,1,0.3,1) 0.25s both;

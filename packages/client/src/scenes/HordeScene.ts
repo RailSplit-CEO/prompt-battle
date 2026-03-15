@@ -4672,8 +4672,6 @@ export class HordeScene extends Phaser.Scene {
   private setupQuestPanel(gc: HTMLElement) {
     const panel = document.createElement('div');
     panel.id = 'horde-quest-panel';
-    // Position below resource panel
-    panel.style.top = '140px';
     gc.appendChild(panel);
     this.questPanelEl = panel;
     this.questManager = new QuestManager(this.myTeam);
@@ -4792,6 +4790,11 @@ export class HordeScene extends Phaser.Scene {
 
   private updateQuestPanel(): void {
     if (!this.questManager || !this.questPanelEl) return;
+    // Position dynamically below resource panel
+    if (this.resourcePanelEl) {
+      const rpRect = this.resourcePanelEl.getBoundingClientRect();
+      this.questPanelEl.style.top = (rpRect.bottom + 8) + 'px';
+    }
     const quests = this.questManager.getActiveQuests();
     const total = this.questManager.totalCount;
     const done = this.questManager.completedCount;
@@ -13172,13 +13175,16 @@ export class HordeScene extends Phaser.Scene {
     if (!this.eventHudEl) {
       const c = document.getElementById('game-container') ?? document.body;
       const el = document.createElement('div');
-      el.id = 'horde-quest-panel';
+      el.id = 'horde-event-panel';
       c.appendChild(el);
       this.eventHudEl = el;
     }
     this.eventHudEl.style.display = 'flex';
-    // Position dynamically below resource panel
-    if (this.resourcePanelEl) {
+    // Position dynamically below quest panel (or resource panel if no quests)
+    if (this.questPanelEl && this.questPanelEl.children.length > 0) {
+      const qpRect = this.questPanelEl.getBoundingClientRect();
+      this.eventHudEl.style.top = (qpRect.bottom + 8) + 'px';
+    } else if (this.resourcePanelEl) {
       const rpRect = this.resourcePanelEl.getBoundingClientRect();
       this.eventHudEl.style.top = (rpRect.bottom + 8) + 'px';
     }

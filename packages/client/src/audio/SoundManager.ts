@@ -53,10 +53,10 @@ const PRELOAD_KEYS = new Set([
 ]);
 
 // Sound throttle: max concurrent sounds per frame and per second
-const MAX_SOUNDS_PER_FRAME = 6;
-const MAX_SOUNDS_PER_SECOND = 20;
-// Grace period after tab becomes visible again — skip combat sounds
-const TAB_RETURN_GRACE_MS = 500;
+const MAX_SOUNDS_PER_FRAME = 4;
+const MAX_SOUNDS_PER_SECOND = 12;
+// Grace period after tab becomes visible again — skip ALL sounds
+const TAB_RETURN_GRACE_MS = 2000;
 
 export class SoundManager {
   private scene: Phaser.Scene;
@@ -99,12 +99,16 @@ export class SoundManager {
       } catch { /* some browsers restrict this */ }
     });
 
-    // Detect tab return — suppress sound blast
+    // Detect tab hide/return — suppress sound blast
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) {
-        this.suppressUntil = performance.now() + TAB_RETURN_GRACE_MS;
-        // Stop any currently playing sounds to prevent stacking
+      if (document.hidden) {
+        // Immediately stop and suppress while hidden
         this.scene.sound.stopAll();
+        this.suppressUntil = Infinity;
+      } else {
+        // On return, keep suppressing for grace period
+        this.scene.sound.stopAll();
+        this.suppressUntil = performance.now() + TAB_RETURN_GRACE_MS;
       }
     });
   }
@@ -165,10 +169,10 @@ export class SoundManager {
   }
 
   /** Check if we can play another sound (throttle) */
-  private canPlay(critical = false): boolean {
+  private canPlay(_critical = false): boolean {
     if (this.muted) return false;
-    // During tab-return grace period, only allow critical sounds
-    if (!critical && performance.now() < this.suppressUntil) return false;
+    // During tab-hidden or tab-return grace period, suppress ALL sounds
+    if (performance.now() < this.suppressUntil) return false;
     if (this.soundsThisFrame >= MAX_SOUNDS_PER_FRAME) return false;
     if (this.soundsThisSecond >= MAX_SOUNDS_PER_SECOND) return false;
     return true;
