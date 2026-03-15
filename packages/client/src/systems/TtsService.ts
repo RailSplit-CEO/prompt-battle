@@ -64,7 +64,7 @@ export class TtsService {
   private enabled = true;
   private volume = 1.0;
 
-  onPlayStart?: (charId: string, audioEl: HTMLAudioElement) => void;
+  onPlayStart?: (charId: string, audioEl: HTMLAudioElement, voiceName: string) => void;
   onPlayEnd?: (charId: string) => void;
 
   get isPlaying(): boolean { return this.playing; }
@@ -156,7 +156,7 @@ export class TtsService {
 
       this.currentAudio = audio;
       console.log(`[TTS] ▶ Playing MP3 via <audio> element... vol=${audio.volume} muted=${audio.muted} readyState=${audio.readyState}`);
-      this.onPlayStart?.(entry.charId, audio);
+      this.onPlayStart?.(entry.charId, audio, voiceName);
 
       audio.onended = () => {
         console.log('[TTS] ✓ Playback ended');
