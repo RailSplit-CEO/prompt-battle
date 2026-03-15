@@ -2,6 +2,8 @@ import Phaser from 'phaser';
 import { FirebaseSync } from '../network/FirebaseSync';
 import { Matchmaking } from '../network/Matchmaking';
 import { getSoloMaps, MapDef } from '@prompt-battle/shared';
+import { SettingsPanel } from '../systems/SettingsPanel';
+import { GameSettings } from '../systems/GameSettings';
 
 export class MenuScene extends Phaser.Scene {
   private matchmaking!: Matchmaking;
@@ -9,7 +11,8 @@ export class MenuScene extends Phaser.Scene {
   private floatingShapes: { sprite: Phaser.GameObjects.Image; vx: number; vy: number; rot: number }[] = [];
   private mapPickerContainer: Phaser.GameObjects.Container | null = null;
   private mapPickerZones: Phaser.GameObjects.Zone[] = [];
-  private muted: boolean = localStorage.getItem('pb_sound_muted') === 'true';
+  private muted: boolean = GameSettings.getInstance().get('muteAll');
+  private settingsPanel = new SettingsPanel();
 
   constructor() {
     super({ key: 'MenuScene' });
@@ -219,6 +222,46 @@ export class MenuScene extends Phaser.Scene {
 
     howContainer.setAlpha(0);
     this.tweens.add({ targets: howContainer, alpha: 1, duration: 800, delay: 1300 });
+
+    // Settings gear button (top-right)
+    const gearContainer = this.add.container(width - 36, 36).setDepth(20);
+    const gearBg = this.add.graphics();
+    gearBg.fillStyle(0x243a18, 0.85);
+    gearBg.fillCircle(0, 0, 22);
+    gearBg.lineStyle(2, 0x5a9a4e, 0.6);
+    gearBg.strokeCircle(0, 0, 22);
+    gearContainer.add(gearBg);
+
+    const gearText = this.add.text(0, 0, '\u2699', {
+      fontSize: '22px', color: '#a89870',
+    }).setOrigin(0.5);
+    gearContainer.add(gearText);
+
+    const gearZone = this.add.zone(width - 36, 36, 48, 48)
+      .setInteractive({ useHandCursor: true }).setDepth(21);
+    gearZone.on('pointerover', () => {
+      gearText.setColor('#FFD93D');
+      gearBg.clear();
+      gearBg.fillStyle(0x3a5a28, 0.95);
+      gearBg.fillCircle(0, 0, 22);
+      gearBg.lineStyle(2, 0xFFD93D, 0.8);
+      gearBg.strokeCircle(0, 0, 22);
+    });
+    gearZone.on('pointerout', () => {
+      gearText.setColor('#a89870');
+      gearBg.clear();
+      gearBg.fillStyle(0x243a18, 0.85);
+      gearBg.fillCircle(0, 0, 22);
+      gearBg.lineStyle(2, 0x5a9a4e, 0.6);
+      gearBg.strokeCircle(0, 0, 22);
+    });
+    gearZone.on('pointerdown', () => {
+      this.playsfx('button_click', 0.4);
+      this.settingsPanel.toggle();
+    });
+
+    gearContainer.setAlpha(0);
+    this.tweens.add({ targets: gearContainer, alpha: 1, duration: 600, delay: 1400 });
 
     // Version
     this.add.text(width / 2, height - 18, 'v0.2.0  |  Mark My Hordes', {

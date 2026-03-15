@@ -1,3 +1,5 @@
+import { GameSettings } from '../systems/GameSettings';
+
 export type SfxKey = string;
 
 // Hyena is called "gnoll" in the audio files
@@ -57,12 +59,20 @@ export class SoundManager {
   private scene: Phaser.Scene;
   private loaded = new Set<string>();
   private muted: boolean;
-  private globalVolume = 0.08;
+  private globalVolume: number;
   private loading = new Set<string>(); // tracks in-flight lazy loads
+  private unsubSettings?: () => void;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
-    this.muted = localStorage.getItem('pb_sound_muted') === 'true';
+    const gs = GameSettings.getInstance();
+    this.muted = gs.get('muteAll');
+    this.globalVolume = gs.effectiveSfxVolume;
+    this.unsubSettings = gs.onChange(() => {
+      this.muted = gs.get('muteAll');
+      this.globalVolume = gs.effectiveSfxVolume;
+      if (this.muted) this.scene.sound.stopAll();
+    });
   }
 
   // Fix F: only preload essential sounds; rest load lazily on first play
@@ -171,8 +181,9 @@ export class SoundManager {
   }
 
   toggleMute(): boolean {
-    this.muted = !this.muted;
-    localStorage.setItem('pb_sound_muted', String(this.muted));
+    const gs = GameSettings.getInstance();
+    gs.set('muteAll', !gs.get('muteAll'));
+    this.muted = gs.get('muteAll');
     if (this.muted) this.scene.sound.stopAll();
     return this.muted;
   }

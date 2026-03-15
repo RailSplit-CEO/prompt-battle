@@ -16,6 +16,8 @@ import { TtsService } from '../systems/TtsService';
 import { ScribeService } from '../systems/ScribeService';
 import { VoiceOrb } from '../systems/VoiceOrb';
 import { TalkingPortrait } from '../systems/TalkingPortrait';
+import { SettingsPanel } from '../systems/SettingsPanel';
+import { GameSettings } from '../systems/GameSettings';
 import bundledHordeMaps from '../map/maps/horde-maps.json';
 
 // ═══════════════════════════════════════════════════════════════
@@ -1796,6 +1798,9 @@ export class HordeScene extends Phaser.Scene {
   private charPanelEl: HTMLDivElement | null = null;
   private charPanelTab: 'horde' | 'armory' | 'commands' = 'horde';
   private _resizeHandler: (() => void) | null = null;
+
+  // ─── SETTINGS ──────────────────────────────────────────────────
+  private settingsPanel = new SettingsPanel();
 
   // ─── NEW FLOATING OVERLAY PANELS ─────────────────────────────
   private topBarEl: HTMLDivElement | null = null;
@@ -4318,10 +4323,81 @@ export class HordeScene extends Phaser.Scene {
     // ═══ BOTTOM-RIGHT MINIMAP ═══
     this.setupMinimap(gc);
 
+    // ═══ SETTINGS GEAR (top-right, above resource panel) ═══
+    this.setupSettingsGear(gc);
+
+    // ESC to open settings
+    this.input.keyboard!.on('keydown-ESC', () => {
+      this.settingsPanel.toggle();
+    });
+
+    // Apply live settings changes to HUD
+    const gs = GameSettings.getInstance();
+    this.applyDisplaySettings(gs.getAll());
+    gs.onChange((s) => this.applyDisplaySettings(s));
+
     // Update top bar with initial state
     this.updateTopBar();
 
     this.setupNotificationSystem();
+  }
+
+  private setupSettingsGear(gc: HTMLElement) {
+    const gear = document.createElement('button');
+    gear.id = 'horde-settings-gear';
+    gear.innerHTML = '\u2699';
+    gear.title = 'Settings (ESC)';
+    gear.style.cssText = `
+      position:absolute;top:8px;right:214px;z-index:102;pointer-events:all;
+      width:32px;height:32px;border-radius:8px;
+      background:rgba(212,196,160,0.88);backdrop-filter:blur(8px);
+      -webkit-backdrop-filter:blur(8px);
+      border:2px solid rgba(139,115,85,0.6);
+      color:#8B5E34;font-size:18px;cursor:pointer;
+      display:flex;align-items:center;justify-content:center;
+      transition:all 0.15s;font-family:"Fredoka",sans-serif;
+    `;
+    gear.onmouseenter = () => {
+      gear.style.borderColor = '#FFD93D';
+      gear.style.color = '#FFD93D';
+      gear.style.transform = 'scale(1.08)';
+    };
+    gear.onmouseleave = () => {
+      gear.style.borderColor = 'rgba(139,115,85,0.6)';
+      gear.style.color = '#8B5E34';
+      gear.style.transform = 'scale(1)';
+    };
+    gear.onclick = () => this.settingsPanel.toggle();
+    gc.appendChild(gear);
+  }
+
+  private applyDisplaySettings(s: import('../systems/GameSettings').SettingsData) {
+    // Minimap size
+    const mm = document.getElementById('horde-minimap');
+    if (mm) {
+      mm.style.width = s.minimapSize + 'px';
+      mm.style.height = s.minimapSize + 'px';
+    }
+
+    // HUD scale
+    const hudEls = [this.topBarEl, this.resourcePanelEl, this.cmdLogPanelEl];
+    for (const el of hudEls) {
+      if (el) el.style.transform = s.hudScale !== 1 ? `scale(${s.hudScale})` : '';
+    }
+
+    // Command log visibility
+    if (this.cmdLogPanelEl) {
+      this.cmdLogPanelEl.style.display = s.showCommandLog ? '' : 'none';
+    }
+
+    // Reduced motion — disable Phaser tweens global time scale
+    this.tweens.timeScale = s.reducedMotion ? 0 : 1;
+
+    // Larger text
+    const root = document.getElementById('game-container');
+    if (root) {
+      root.style.fontSize = s.largerText ? '125%' : '';
+    }
   }
 
   // ─── SETUP: TOP CONTROL GROUP BAR ─────────────────────────────
@@ -12707,6 +12783,8 @@ export class HordeScene extends Phaser.Scene {
     this.cmdLogPanelEl?.remove(); this.cmdLogPanelEl = null;
     document.getElementById('horde-minimap')?.remove();
     this.minimapEl = null; this.minimapCtx = null; this.minimapTerrainCanvas = null;
+    document.getElementById('horde-settings-gear')?.remove();
+    this.settingsPanel.close();
     document.getElementById('horde-ai-settings')?.remove();
     this.debugPanelEl?.remove(); this.debugPanelEl = null;
     this.memoryOverlay?.destroy(); this.memoryOverlay = null;

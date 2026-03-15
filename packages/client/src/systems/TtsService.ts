@@ -1,4 +1,6 @@
 // ElevenLabs TTS — text-to-speech via streaming API
+import { GameSettings } from './GameSettings';
+
 const TTS_BASE = 'https://api.elevenlabs.io/v1/text-to-speech';
 const MODEL_ID = 'eleven_flash_v2_5';
 
@@ -33,6 +35,7 @@ export class TtsService {
   private currentAudio: HTMLAudioElement | null = null;
   private enabled = true;
   private volume = 0.3;
+  private unsubSettings?: () => void;
 
   onPlayStart?: (charId: string, audioEl: HTMLAudioElement) => void;
   onPlayEnd?: (charId: string) => void;
@@ -46,6 +49,15 @@ export class TtsService {
     } else {
       console.log(`[TTS] ✓ ElevenLabs TTS enabled (key: ${this.apiKey.slice(0, 8)}...)`);
     }
+    // Sync with GameSettings
+    const gs = GameSettings.getInstance();
+    this.volume = gs.effectiveVoiceVolume;
+    this.enabled = !gs.get('muteAll');
+    this.unsubSettings = gs.onChange(() => {
+      this.volume = gs.effectiveVoiceVolume;
+      this.enabled = !gs.get('muteAll');
+      if (this.currentAudio) this.currentAudio.volume = this.volume;
+    });
   }
 
   assignVoice(charId: string): string {
