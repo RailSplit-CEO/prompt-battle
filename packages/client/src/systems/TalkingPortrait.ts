@@ -9,8 +9,8 @@ const FADE_OUT_DELAY = 1500;
 
 // Adaptive mouth detection — self-calibrating noise floor + relative threshold
 const NOISE_ADAPT_RATE = 0.08; // How fast noise floor tracks silence (0=never, 1=instant)
-const OPEN_RATIO = 1.8;        // RMS must exceed noise floor by this factor to open mouth
-const HOLD_MS = 80;            // Minimum ms mouth stays open once triggered (prevents jitter)
+const OPEN_RATIO = 1.4;        // RMS must exceed noise floor by this factor to open mouth
+const HOLD_MS = 50;            // Minimum ms mouth stays open once triggered (prevents jitter)
 const MIN_NOISE_FLOOR = 0.001; // Floor clamp — prevents dead-silence edge cases
 
 const HAS_TALK_AVATAR = new Set([
@@ -37,6 +37,7 @@ export class TalkingPortrait {
   private connectedAudio: HTMLAudioElement | null = null;
   private fallbackTimer: number | null = null;
   private _bubbleTimer: number | null = null;
+  private voiceLabel: HTMLDivElement;
 
   constructor(parent: HTMLElement) {
     this.container = document.createElement('div');
@@ -54,7 +55,16 @@ export class TalkingPortrait {
     this.talkImg.className = 'portrait-frame portrait-talk';
     this.container.appendChild(this.talkImg);
 
+    // Voice name label below portrait
+    this.voiceLabel = document.createElement('div');
+    this.voiceLabel.className = 'portrait-voice-label';
+    this.container.appendChild(this.voiceLabel);
+
     parent.appendChild(this.container);
+  }
+
+  setVoiceName(name: string): void {
+    this.voiceLabel.textContent = name;
   }
 
   startTalking(charId: string, audioEl?: HTMLAudioElement): void {

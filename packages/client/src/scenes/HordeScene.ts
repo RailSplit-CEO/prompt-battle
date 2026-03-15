@@ -4183,10 +4183,11 @@ export class HordeScene extends Phaser.Scene {
   private setupVoice() {
     // 1. Create TTS service with coordination callbacks
     this.ttsService = new TtsService();
-    this.ttsService.onPlayStart = (charId: string, audioEl: HTMLAudioElement) => {
+    this.ttsService.onPlayStart = (charId: string, audioEl: HTMLAudioElement, voiceName: string) => {
       this.scribeService?.pause();
       this.voiceOrb?.setState('speaking');
       this.talkingPortrait?.startTalking(charId, audioEl);
+      this.talkingPortrait?.setVoiceName(voiceName);
       // Also pause Web Speech API fallback
       if (this.recognition && this.isListening) {
         try { this.recognition.stop(); } catch (_e) { /* */ }
