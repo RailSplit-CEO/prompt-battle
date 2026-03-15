@@ -261,7 +261,7 @@ function validateAndFixWorkflow(cmd: HordeCommand): HordeCommand {
 
   // Fix 7: reject unknown action names (don't silently default to carrot gathering)
   const knownActions = new Set(['seek_resource','deliver','hunt','attack_camp','move','defend',
-    'attack_enemies','scout','collect','kill_only','mine','equip','contest_event','withdraw_base']);
+    'attack_enemies','scout','collect','kill_only','mine','equip','contest_event','withdraw_base','upgrade']);
   cmd.workflow = steps.filter(s => {
     if (!knownActions.has(s.action)) {
       console.warn(`[Validate] Removed unknown action: ${s.action}`);
@@ -318,18 +318,22 @@ To produce a unit, you MUST own a camp of that type. Camps start neutral with de
 
 ARMORY: 🏛️ Each team has an Armory building on their side of the map. Players unlock equipment with resources ("unlock swords"), then units walk to the Armory to pick items up. Equipment is permanent (doesn't drop on death). Units can carry a resource AND have equipment. One equipment per unit.
 
-EQUIPMENT (unlock once, unlimited pickups):
-  ⛏️ Pickaxe (15🥕): Required to mine metal. +25% gather speed.
-  ⚔️ Sword (15🍖+5⚙️): +50% attack, +25% attack speed.
-  🛡️ Shield (15🍖+5⚙️): +60% HP, -25% damage taken, -15% speed.
-  👢 Boots (12🥕+4⚙️): +60% move speed, +50% pickup range.
-  🚩 Banner (20🍖+8⚙️): Aura — nearby allies +20% atk, +15% speed.
+EQUIPMENT (unlock/upgrade, unlimited pickups — costs scale by level: ×1.0/×2.5/×5.0):
+  ⛏️ Pickaxe (40🥕+10🍖): Required to mine metal. +25% gather speed.
+  ⚔️ Sword (40🍖+15⚙️+10💎): +50% attack, +25% attack speed.
+  🛡️ Shield (35🍖+15⚙️+10💎): +60% HP, -25% damage taken, -15% speed.
+  👢 Boots (35🥕+10⚙️+5💎): +60% move speed, +50% pickup range.
+  🚩 Banner (50🍖+20⚙️+15💎): Aura — nearby allies +20% atk, +15% speed.
+  Max level 3. Level multiplier stacks: Lvl2=×2.5, Lvl3=×5.0. E.g. Lvl3 Banner = 250🍖+100⚙️+75💎.
 
 MINES: ⛏️ Mine nodes on the map. Only units with a Pickaxe can mine metal. Metal is used to unlock equipment.
 
 To equip: include {"action":"equip","equipmentType":"pickaxe|sword|shield|boots|banner"} step BEFORE other steps. Unit walks to Armory, picks up item, then continues.
+To upgrade: include {"action":"upgrade","equipmentType":"pickaxe|sword|shield|boots|banner"} step. Deducts resources from base stockpile instantly. Use when player says "upgrade swords", "unlock shields", "research boots".
 Example: "get pickaxes then mine" → [{"action":"equip","equipmentType":"pickaxe"},{"action":"mine"},{"action":"deliver","target":"base"}]
 Example: "get swords and attack" → [{"action":"equip","equipmentType":"sword"},{"action":"attack_camp","targetAnimal":"hyena","qualifier":"nearest"}]
+Example: "upgrade swords then attack" → [{"action":"upgrade","equipmentType":"sword"},{"action":"equip","equipmentType":"sword"},{"action":"attack_enemies"}], loopFrom:2
+Example: "upgrade everything" → [{"action":"upgrade","equipmentType":"pickaxe"},{"action":"upgrade","equipmentType":"sword"},{"action":"upgrade","equipmentType":"shield"},{"action":"upgrade","equipmentType":"boots"},{"action":"upgrade","equipmentType":"banner"}], loopFrom:0
 
 ═══ CURRENT GAME STATE ═══
 Time: ${Math.floor(ctx.gameTime / 1000)}s
@@ -426,6 +430,7 @@ Available step types:
   {"action": "mine"} — go to nearest mine node and extract metal, then carry it back (requires Pickaxe equipment)
   {"action": "contest_event"} — move to nearest active map event and interact (gather, deliver, attack, sacrifice, feed). Use when player says "go to event", "contest the event", "help with the bear", etc.
   {"action": "equip", "equipmentType": "pickaxe|sword|shield|boots|banner"} — go to team Armory and equip item (must be unlocked first)
+  {"action": "upgrade", "equipmentType": "pickaxe|sword|shield|boots|banner"} — unlock or upgrade equipment. Deducts resources from base stockpile. Use when player says "upgrade swords", "unlock shields", "research boots". Can chain: upgrade then equip then action.
   {"action": "withdraw_base", "resourceType": "carrot|meat|crystal|metal"} — go to base and take 1 resource from stockpile (unit carries it, then deliver to camp)
 
 The workflow LOOPS automatically. Design the steps so they make a sensible repeating cycle.
@@ -688,7 +693,7 @@ NOISE, GIBBERISH & CASUAL CHAT — If there is clearly no game command in the in
 - Nonsensical words (e.g. "blorp fizzle wompus", "asdf") or single filler words ("the", "a", "is") → unrecognized
 - Casual chat, jokes, greetings, or off-topic remarks (e.g. "hello", "you're cute", "what's your favorite color", "I love you") → unrecognized
 - Return responseType:"unrecognized" — do NOT guess a random action
-- Still provide a narration: a fun, in-character quip, helpful hint, or confused comment from the units — MUST match selected unit personality! Examples by type: gnomes='Hehe, that's funny boss! But where do we go?', skulls='...the void speaks nonsense. Give us a real command.', spiders='*hisss* confusssing... tell usss what to hunt!', hyenas='HAHAHA WHAT?! Just tell us what to SMASH!', turtles='*sigh* We waited... and for that? Try a real order...', pandas='Hmm, that was nice. But maybe tell us where to walk?', lizards='Input not recognized. Awaiting valid directive.', minotaurs='WHAT?! STOP TALKING, START COMMANDING!!', shamans='The spirits heard you... but understood nothing.', rogues='Real clever. Wanna try an actual order this time?'
+- Still provide a narration: a fun, in-character quip, helpful hint, or confused comment from the units — MUST match selected unit personality! Examples by type: gnomes='Hehe, that's funny boss! But where do we go?', skulls='...the void speaks nonsense. Give us a real command.', spiders='*hisss* confusssing... tell usss what to hunt!', hyenas='HAHAHA WHAT?! Just tell us what to SMASH!', turtles='*sigh* We waited... and for that? Try a real order...', pandas='Hmm, that was nice. But maybe tell us where to walk?', lizards='Input not recognized. Awaiting valid directive.', minotaurs='WHAT?! STOP TALKING, START COMMANDING!!', shamans='The spirits heard you... but understood nothing.', rogues='Real clever. Wanna try an actual order this time?', trolls='Troll wait for order... but no order come. Troll confused.'
 
 STATUS QUERIES — If the player asks about their status ("how am I doing?", "what should I do?", "how many units?"):
 - Return targetType "query" with a statusReport containing a 1-2 sentence tactical answer using the game context above
@@ -724,7 +729,7 @@ JSON ONLY (no markdown):
   "qualifier": "<nearest|furthest|weakest|uncaptured|enemy or omit>",
   "workflow": [<array of step objects, only if targetType=workflow>],
   "loopFrom": <index where repeating loop starts, default 0>,
-  "narration": "<6-12 words, in-character response from the units receiving the order. STRICTLY match unit personality: gnomes=bubbly, excitable, childlike joy, love food and shiny things, say 'boss' a lot; skulls=grim, ominous, speak of death/darkness/doom, hollow echoing tone; spiders=creepy, hissy, stretch out S sounds ('sssspy', 'yesss'), sinister and skittery; hyenas=unhinged, manic, LOUD, love chaos and destruction, laugh a lot ('AHAHAHA'); turtles=melancholic, reluctant, slow, sad, always complaining or sighing, everything is too hard or too fast; pandas=gentle giants, warm, zen-like, talk about food and naps, peaceful but strong; lizards=cold, calculating, robotic precision, no emotion, clinical; minotaurs=RAGING, furious, primal screaming, all-caps energy, SMASH EVERYTHING; shamans=mystical, cryptic, speak in riddles and prophecy, ethereal; rogues=sarcastic, cocky, street-smart, too cool for this, snarky one-liners. Examples: gnomes='Ooh ooh carrots! We love carrots boss!', skulls='The grave awaits those we march toward...', spiders='*hisss* we ssscatter into the shadowsss', hyenas='AHAHAHA YEAH LETS WRECK EM!!', turtles='*sigh* Do we have to? ...fine, moving.', pandas='Mmm okay, nice walk, maybe snack after?', lizards='Acknowledged. Executing patrol route.', minotaurs='RAAAAGH!! CHARGE!! SMASH THEM ALL!!', shamans='The spirits whisper... this path is fated.', rogues='Yeah yeah, on it. Try to keep up.'>",
+  "narration": "<6-12 words, in-character response from the units receiving the order. STRICTLY match unit personality: gnomes=bubbly, excitable, childlike joy, love food and shiny things, say 'boss' a lot; skulls=grim, ominous, speak of death/darkness/doom, hollow echoing tone; spiders=creepy, hissy, stretch out S sounds ('sssspy', 'yesss'), sinister and skittery; hyenas=unhinged, manic, LOUD, love chaos and destruction, laugh a lot ('AHAHAHA'); turtles=melancholic, reluctant, slow, sad, always complaining or sighing, everything is too hard or too fast; pandas=gentle giants, warm, zen-like, talk about food and naps, peaceful but strong; lizards=cold, calculating, robotic precision, no emotion, clinical; minotaurs=RAGING, furious, primal screaming, all-caps energy, SMASH EVERYTHING; shamans=mystical, cryptic, speak in riddles and prophecy, ethereal; rogues=sarcastic, cocky, street-smart, too cool for this, snarky one-liners; trolls=dim-witted, brutish, broken grammar, third-person speech ('Troll smash!'), slow-thinking, lovably dumb, surprisingly loyal, confused by big words. Examples: gnomes='Ooh ooh carrots! We love carrots boss!', skulls='The grave awaits those we march toward...', spiders='*hisss* we ssscatter into the shadowsss', hyenas='AHAHAHA YEAH LETS WRECK EM!!', turtles='*sigh* Do we have to? ...fine, moving.', pandas='Mmm okay, nice walk, maybe snack after?', lizards='Acknowledged. Executing patrol route.', minotaurs='RAAAAGH!! CHARGE!! SMASH THEM ALL!!', shamans='The spirits whisper... this path is fated.', rogues='Yeah yeah, on it. Try to keep up.', trolls='Troll go now! Troll do the smashing thing!'>",
   "unitReaction": "<2-5 word in-character grunt reaction from the units, funny/cute personality. Examples: 'Aye aye!', 'SMASH TIME!', 'ooh shiny rocks!', 'hisssss yesss', '*rattles excitedly*', 'me hungry...', 'FOR GLORY!'>",
   "modifiers": {"formation": "spread|tight|null", "caution": "safe|aggressive|null", "pacing": "rush|efficient|null"},
   "planGoal": {"type": "unlock_equipment|stockpile_resource", "equipment": "<equipment id, only if type=unlock_equipment>", "resource": "<resource type, only if type=stockpile_resource>", "amount": "<number, only if stockpile_resource>", "thenAction": "<optional follow-up: defend, attack, etc>"},
@@ -840,7 +845,8 @@ type WorkflowStep =
   | { action: 'mine' }                                        // go to nearest mine, extract metal
   | { action: 'equip'; equipmentType: EquipmentType }         // go to armory, pick up equipment
   | { action: 'contest_event' }                                // move to nearest active map event
-  | { action: 'withdraw_base'; resourceType: ResourceType };   // take a resource from base stockpile
+  | { action: 'withdraw_base'; resourceType: ResourceType }    // take a resource from base stockpile
+  | { action: 'upgrade'; equipmentType: EquipmentType };       // unlock/upgrade equipment at base
 
 interface HWorkflow {
   steps: WorkflowStep[];
@@ -1575,14 +1581,14 @@ interface EquipmentDef {
 
 const MAX_EQUIP_LEVEL = 3;
 const EQUIP_LEVEL_STAT_MULT = [0, 1.0, 1.5, 2.0]; // index = level
-const EQUIP_LEVEL_COST_MULT = [0, 1.0, 2.0, 3.0]; // cost multiplier per level upgrade
+const EQUIP_LEVEL_COST_MULT = [0, 1.0, 2.5, 5.0]; // cost multiplier per level upgrade (steeper scaling)
 
 const EQUIPMENT: EquipmentDef[] = [
-  { id: 'pickaxe', name: 'Pickaxe', emoji: '⛏️', cost: { carrot: 15 }, effect: 'Can mine metal, +25% gather speed' },
-  { id: 'sword',   name: 'Sword',   emoji: '⚔️', cost: { meat: 15, metal: 5 }, effect: '+50% attack, +25% attack speed' },
-  { id: 'shield',  name: 'Shield',  emoji: '🛡️', cost: { meat: 15, metal: 5 }, effect: '+60% HP, -25% damage taken, -15% speed' },
-  { id: 'boots',   name: 'Boots',   emoji: '👢', cost: { carrot: 12, metal: 4 }, effect: '+60% move speed, +50% pickup range' },
-  { id: 'banner',  name: 'Banner',  emoji: '🚩', cost: { meat: 20, metal: 8 }, effect: 'Aura: nearby allies +20% atk, +15% speed' },
+  { id: 'pickaxe', name: 'Pickaxe', emoji: '⛏️', cost: { carrot: 40, meat: 10 }, effect: 'Can mine metal, +25% gather speed' },
+  { id: 'sword',   name: 'Sword',   emoji: '⚔️', cost: { meat: 40, metal: 15, crystal: 10 }, effect: '+50% attack, +25% attack speed' },
+  { id: 'shield',  name: 'Shield',  emoji: '🛡️', cost: { meat: 35, metal: 15, crystal: 10 }, effect: '+60% HP, -25% damage taken, -15% speed' },
+  { id: 'boots',   name: 'Boots',   emoji: '👢', cost: { carrot: 35, metal: 10, crystal: 5 }, effect: '+60% move speed, +50% pickup range' },
+  { id: 'banner',  name: 'Banner',  emoji: '🚩', cost: { meat: 50, metal: 20, crystal: 15 }, effect: 'Aura: nearby allies +20% atk, +15% speed' },
 ];
 
 // ─── ADVANCED PLANS: prerequisite resolution ──────────────
@@ -1711,6 +1717,11 @@ export class HordeScene extends Phaser.Scene {
   private pendingRemoteCommands: { text: string; team: 1 | 2; selectedHoard: string }[] = [];
   private pendingLocalCommands: { text: string; team: 1 | 2 }[] = [];
   private isProcessingCommand = false;
+
+  /** True while a command is processing or TTS is playing — blocks hoard switching */
+  private get isHoardSwitchLocked(): boolean {
+    return this.isProcessingCommand || !!this.ttsService?.isPlaying;
+  }
   // Last voice command per hoard type (shown on hoard bar cards)
   private lastHoardCommand: Record<string, string> = {};
   private lastHoardReaction: Record<string, string> = {};
@@ -1804,6 +1815,9 @@ export class HordeScene extends Phaser.Scene {
   private minimapEl: HTMLCanvasElement | null = null;
   private minimapCtx: CanvasRenderingContext2D | null = null;
   private minimapTerrainCanvas: HTMLCanvasElement | null = null;
+
+  // ─── UPGRADE PANEL ──────────────────────────────────────────
+  private upgradePanelEl: HTMLDivElement | null = null;
 
   // ─── NOTIFICATION SYSTEM ─────────────────────────────────────
   private notifContainerEl: HTMLDivElement | null = null;
@@ -2227,6 +2241,17 @@ export class HordeScene extends Phaser.Scene {
       for (let i = 0; i < 3; i++) {
         this.spawnUnit('gnome', 1, P1_BASE.x + 50 + i * 20, P1_BASE.y - 50);
         this.spawnUnit('gnome', 2, P2_BASE.x - 50 - i * 20, P2_BASE.y + 50);
+      }
+
+      // Debug mode: spawn 3 of every unit type for both teams
+      if (this.isDebug) {
+        const allTypes = ['turtle','skull','spider','hyena','panda','lizard','minotaur','shaman','troll','rogue'];
+        for (const uType of allTypes) {
+          for (let i = 0; i < 3; i++) {
+            this.spawnUnit(uType, 1, P1_BASE.x + 30 + i * 25, P1_BASE.y - 80 - allTypes.indexOf(uType) * 30);
+            this.spawnUnit(uType, 2, P2_BASE.x - 30 - i * 25, P2_BASE.y + 80 + allTypes.indexOf(uType) * 30);
+          }
+        }
       }
     }
 
@@ -3948,6 +3973,7 @@ export class HordeScene extends Phaser.Scene {
       const slotIdx = n; // 0=all, 1-4=dynamic
       k.on('down', () => {
         if (document.activeElement === this.textInput) return;
+        if (this.isHoardSwitchLocked) return;
         if (slotIdx === 0) {
           this.selectedHoard = 'all';
         } else {
@@ -3973,10 +3999,12 @@ export class HordeScene extends Phaser.Scene {
     const eKey = this.input.keyboard!.addKey('E');
     qKey.on('down', () => {
       if (document.activeElement === this.textInput) return;
+      if (this.isHoardSwitchLocked) return;
       this.cycleHoard(-1);
     });
     eKey.on('down', () => {
       if (document.activeElement === this.textInput) return;
+      if (this.isHoardSwitchLocked) return;
       this.cycleHoard(1);
     });
 
@@ -3984,6 +4012,7 @@ export class HordeScene extends Phaser.Scene {
     const tabKey = this.input.keyboard!.addKey('TAB');
     tabKey.on('down', (event: KeyboardEvent) => {
       if (document.activeElement === this.textInput) return;
+      if (this.isHoardSwitchLocked) return;
       event.preventDefault();
       this.cycleHoard(event.shiftKey ? -1 : 1);
     });
@@ -4307,6 +4336,9 @@ export class HordeScene extends Phaser.Scene {
     // ═══ BOTTOM-RIGHT MINIMAP ═══
     this.setupMinimap(gc);
 
+    // ═══ BOTTOM-LEFT UPGRADE PANEL ═══
+    this.setupUpgradePanel(gc);
+
     // Update top bar with initial state
     this.updateTopBar();
 
@@ -4355,6 +4387,7 @@ export class HordeScene extends Phaser.Scene {
     this.topBarEl.querySelectorAll('.ctrl-card').forEach(card => {
       const el = card as HTMLElement;
       el.addEventListener('click', () => {
+        if (this.isHoardSwitchLocked) return;
         const hoard = el.getAttribute('data-hoard');
         if (hoard) { this.selectedHoard = hoard; this.updateSelectionLabel(); }
       });
@@ -4397,8 +4430,6 @@ export class HordeScene extends Phaser.Scene {
   private setupQuestPanel(gc: HTMLElement) {
     const panel = document.createElement('div');
     panel.id = 'horde-quest-panel';
-    // Position below resource panel
-    panel.style.top = '140px';
     gc.appendChild(panel);
     this.questPanelEl = panel;
     this.questManager = new QuestManager(this.myTeam);
@@ -4484,6 +4515,72 @@ export class HordeScene extends Phaser.Scene {
     if (html !== this._prevQuestHTML) {
       this.questPanelEl.innerHTML = html;
       this._prevQuestHTML = html;
+    }
+  }
+
+  // ─── SETUP: UPGRADE PANEL (bottom-left) ──────────────────────
+  private setupUpgradePanel(gc: HTMLElement) {
+    const panel = document.createElement('div');
+    panel.id = 'horde-upgrade-panel';
+    gc.appendChild(panel);
+    this.upgradePanelEl = panel;
+  }
+
+  private _prevUpgradeHTML = '';
+  private updateUpgradePanel(): void {
+    if (!this.upgradePanelEl) return;
+    // Position upgrade panel below the quest panel
+    if (this.questPanelEl) {
+      const qRect = this.questPanelEl.getBoundingClientRect();
+      this.upgradePanelEl.style.top = `${qRect.bottom + 6}px`;
+    }
+    const team = this.myTeam;
+    const stock = this.baseStockpile[team];
+    const RESOURCE_EMOJI: Record<string, string> = { carrot: '🥕', meat: '🍖', crystal: '💎', metal: '⚙️' };
+    let html = `<div style="font-size:10px;font-weight:800;color:#4a3520;text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Equipment</div>`;
+
+    for (const eq of EQUIPMENT) {
+      const level = this.getEquipLevel(team, eq.id as EquipmentType);
+      const isMax = level >= MAX_EQUIP_LEVEL;
+      const nextLevel = level + 1;
+
+      // Stars for current level
+      const stars = level > 0 ? '⭐'.repeat(level) : '';
+
+      // Check prerequisites
+      const prereqs = EQUIPMENT_PREREQS[eq.id as EquipmentType] || [];
+      const prereqsMet = prereqs.every(p => this.getEquipLevel(team, p) > 0);
+
+      // Cost display
+      let costHtml = '';
+      if (isMax) {
+        costHtml = `<span style="font-size:9px;font-weight:700;color:#45E6B0;">MAX</span>`;
+      } else if (!prereqsMet) {
+        costHtml = `<span style="font-size:9px;color:#999;">🔒 Need ${prereqs.map(p => EQUIPMENT.find(e => e.id === p)?.name || p).join(', ')}</span>`;
+      } else {
+        const costMult = EQUIP_LEVEL_COST_MULT[nextLevel];
+        const costParts: string[] = [];
+        for (const [res, amt] of Object.entries(eq.cost)) {
+          const needed = Math.ceil(amt! * costMult);
+          const have = stock[res as ResourceType] || 0;
+          const color = have >= needed ? '#4a3520' : '#cc3333';
+          costParts.push(`<span style="color:${color};font-weight:700;">${needed}</span>${RESOURCE_EMOJI[res] || res}`);
+        }
+        costHtml = `<span style="font-size:9px;">Lvl ${nextLevel}: ${costParts.join(' ')}</span>`;
+      }
+
+      html += `<div style="display:flex;align-items:center;gap:4px;padding:3px 0;border-bottom:1px solid rgba(139,115,85,0.2);${isMax ? 'opacity:0.7;' : ''}">
+        <span style="font-size:14px;line-height:1;width:20px;text-align:center;">${eq.emoji}</span>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:10px;font-weight:700;color:#2a1a0a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${eq.name} ${stars}</div>
+          <div>${costHtml}</div>
+        </div>
+      </div>`;
+    }
+
+    if (html !== this._prevUpgradeHTML) {
+      this.upgradePanelEl.innerHTML = html;
+      this._prevUpgradeHTML = html;
     }
   }
 
@@ -4996,6 +5093,7 @@ export class HordeScene extends Phaser.Scene {
       case 'kill_only': return step.targetType ? `\u{1F480} Kill ${step.targetType}` : '\u{1F480} Kill wilds';
       case 'mine': return '\u26CF\uFE0F Mine metal';
       case 'equip': return `${EQUIP_ICONS[step.equipmentType] || '\u{1F3DB}\uFE0F'} Equip ${step.equipmentType}`;
+      case 'upgrade': return `\u2B06\uFE0F Upgrade ${step.equipmentType}`;
       case 'contest_event': return '\u26A1 Contest event';
       case 'withdraw_base': return `\u{1F3E6} Take ${RESOURCE_ICONS[step.resourceType] || ''} ${step.resourceType} from base`;
       default: return (step as any).action || '???';
@@ -5056,9 +5154,6 @@ export class HordeScene extends Phaser.Scene {
 
   update(_time: number, delta: number) {
     if (this.gameOver) return;
-    // Clamp delta to prevent huge simulation spikes when tab is backgrounded
-    // Browsers throttle rAF to ~1fps in background, causing delta of 1000ms+
-    if (delta > 100) delta = 100;
     const dt = delta / 1000;
     this.updateCamera(dt);
 
@@ -5252,6 +5347,7 @@ export class HordeScene extends Phaser.Scene {
       }
       this.updateQuestPanel();
     }
+    if (this._frameCount % 30 === 0) this.updateUpgradePanel();
     this.updateThoughtBubbles(delta);
     this.checkWin();
 
@@ -8780,6 +8876,21 @@ export class HordeScene extends Phaser.Scene {
           }
           break;
         }
+
+        case 'upgrade': {
+          const eqType = step.equipmentType;
+          if (!eqType) { this.advanceWorkflow(u); break; }
+          // Try to unlock/upgrade — if resources sufficient, do it instantly
+          const success = this.unlockEquipment(team, eqType);
+          if (success) {
+            const lvl = this.getEquipLevel(team, eqType);
+            const def = EQUIPMENT.find(e => e.id === eqType);
+            this.showFeedback(`${def?.emoji || ''} ${def?.name || eqType} upgraded to Lvl ${lvl}!`, '#45E6B0');
+          }
+          // Advance regardless — if can't afford, skip
+          this.advanceWorkflow(u);
+          break;
+        }
       }
     }
   }
@@ -9947,6 +10058,8 @@ export class HordeScene extends Phaser.Scene {
             return { action: 'contest_event' as const };
           case 'withdraw_base':
             return { action: 'withdraw_base' as const, resourceType: (s.resourceType || 'carrot') as ResourceType };
+          case 'upgrade':
+            return { action: 'upgrade' as const, equipmentType: (s.equipmentType || 'pickaxe') as EquipmentType };
           default:
             console.warn(`[Execute] Unknown action "${s.action}", skipping`);
             return null;
@@ -12535,16 +12648,11 @@ export class HordeScene extends Phaser.Scene {
     if (!this.eventHudEl) {
       const c = document.getElementById('game-container') ?? document.body;
       const el = document.createElement('div');
-      el.id = 'horde-quest-panel';
+      el.id = 'horde-event-panel';
       c.appendChild(el);
       this.eventHudEl = el;
     }
     this.eventHudEl.style.display = 'flex';
-    // Position dynamically below resource panel
-    if (this.resourcePanelEl) {
-      const rpRect = this.resourcePanelEl.getBoundingClientRect();
-      this.eventHudEl.style.top = (rpRect.bottom + 8) + 'px';
-    }
 
     const glowColors: Record<string, string> = {
       fungal_bloom: '#66ff66', warchest: '#ffcc00', kill_bounty: '#ff4444',
@@ -12684,6 +12792,7 @@ export class HordeScene extends Phaser.Scene {
     this.minimapEl = null; this.minimapCtx = null; this.minimapTerrainCanvas = null;
     document.getElementById('horde-ai-settings')?.remove();
     this.debugPanelEl?.remove(); this.debugPanelEl = null;
+    this.upgradePanelEl?.remove(); this.upgradePanelEl = null;
     this.memoryOverlay?.destroy(); this.memoryOverlay = null;
     this.profilingRecorder?.destroy(); this.profilingRecorder = null;
     this.eventHudEl?.remove(); this.eventHudEl = null;

@@ -1,34 +1,32 @@
 // Talking avatar portrait — BongoCat/PNGTuber-style audio-reactive mouth
 //
-// How real BongoCat/PNGTuber overlays work:
-//   1. Route audio through a Web Audio API AnalyserNode
-//   2. Sample amplitude each frame via getByteTimeDomainData
-//   3. When RMS volume exceeds a threshold → show mouth-open frame
-//   4. When below threshold → show mouth-closed (base) frame
-// This creates natural-looking lip sync that tracks the actual audio.
+// Uses two stacked <img> elements with CSS opacity toggling for flicker-free
+// frame swapping. Both images are preloaded and always in the DOM — toggling
+// the .speaking class on the container controls which is visible via CSS.
 
 const AVATAR_BASE = 'assets/enemies/avatars';
 const FADE_OUT_DELAY = 1500;
-const VOLUME_THRESHOLD = 0.08; // RMS threshold to trigger mouth open
+
+// Adaptive mouth detection — self-calibrating noise floor + relative threshold
+const NOISE_ADAPT_RATE = 0.05; // How fast noise floor tracks silence (0=never, 1=instant)
+const OPEN_RATIO = 2.5;        // RMS must exceed noise floor by this factor to open mouth
+const HOLD_MS = 150;           // Minimum ms mouth stays open once triggered (prevents jitter)
+const MIN_NOISE_FLOOR = 0.001; // Floor clamp — prevents dead-silence edge cases
 
 const HAS_TALK_AVATAR = new Set([
   'gnome', 'turtle', 'skull', 'spider', 'hyena', 'panda',
   'lizard', 'minotaur', 'shaman', 'troll', 'rogue',
 ]);
 
-interface FrameCache {
-  base: string;
-  talk: string;
-}
-
 export class TalkingPortrait {
   private container: HTMLDivElement;
-  private baseImg: HTMLImageElement;
+  private idleImg: HTMLImageElement;
   private talkImg: HTMLImageElement;
-  private cache: Map<string, FrameCache> = new Map();
   private currentChar: string | null = null;
   private mouthOpen = false;
   private hideTimer: number | null = null;
+  private lastOpenTime = 0; // timestamp of last mouth-open trigger
+  private noiseFloor = 0.01; // adaptive noise floor estimate — recalibrates each TTS playback
 
   // Audio analysis
   private audioCtx: AudioContext | null = null;
@@ -37,21 +35,22 @@ export class TalkingPortrait {
   private timeDomainData: Uint8Array<ArrayBuffer> | null = null;
   private rafId: number | null = null;
   private connectedAudio: HTMLAudioElement | null = null;
+  private fallbackTimer: number | null = null;
 
   constructor(parent: HTMLElement) {
     this.container = document.createElement('div');
     this.container.id = 'talking-portrait';
 
-    // Base image — always visible
-    this.baseImg = document.createElement('img');
-    this.baseImg.alt = '';
-    this.baseImg.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;image-rendering:pixelated;object-fit:contain;';
-    this.container.appendChild(this.baseImg);
+    // Idle frame — visible by default
+    this.idleImg = document.createElement('img');
+    this.idleImg.alt = '';
+    this.idleImg.className = 'portrait-frame portrait-idle';
+    this.container.appendChild(this.idleImg);
 
-    // Talk overlay — transparent bg mouth on top
+    // Talk frame — hidden by default, shown via .speaking class
     this.talkImg = document.createElement('img');
     this.talkImg.alt = '';
-    this.talkImg.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;image-rendering:pixelated;object-fit:contain;opacity:0;';
+    this.talkImg.className = 'portrait-frame portrait-talk';
     this.container.appendChild(this.talkImg);
 
     parent.appendChild(this.container);
@@ -66,21 +65,21 @@ export class TalkingPortrait {
       this.hideTimer = null;
     }
 
-    // Cache frames
-    if (!this.cache.has(charId)) {
-      const base = `${AVATAR_BASE}/${charId}.png`;
-      const talk = `${AVATAR_BASE}/${charId}_talk_nobg.png`;
-      const img1 = new Image(); img1.src = base;
-      const img2 = new Image(); img2.src = talk;
-      this.cache.set(charId, { base, talk });
-    }
-
-    const frames = this.cache.get(charId)!;
+    // Set image sources (browser caches after first load — no flicker)
     this.currentChar = charId;
     this.mouthOpen = false;
-    this.baseImg.src = frames.base;
-    this.talkImg.src = frames.talk;
-    this.talkImg.style.opacity = '0';
+    this.noiseFloor = 0.01; // reset so it recalibrates for this playback
+    this.idleImg.src = `${AVATAR_BASE}/${charId}.png`;
+    this.talkImg.src = `${AVATAR_BASE}/${charId}_talk_nobg.png`;
+    this.container.classList.remove('speaking');
+
+    // Position below command log panel
+    const cmdLog = document.getElementById('horde-cmd-log');
+    if (cmdLog) {
+      const logRect = cmdLog.getBoundingClientRect();
+      const parentRect = this.container.parentElement!.getBoundingClientRect();
+      this.container.style.top = `${logRect.bottom - parentRect.top + 8}px`;
+    }
 
     // Show
     this.container.classList.add('visible');
@@ -88,7 +87,11 @@ export class TalkingPortrait {
     // Connect audio analyser for amplitude-based mouth sync
     if (audioEl) {
       this.connectAudio(audioEl);
-      this.startAnalysisLoop(frames);
+      if (this.analyser) {
+        this.startAnalysisLoop();
+      } else {
+        this.startFallbackLoop();
+      }
     }
   }
 
@@ -98,12 +101,16 @@ export class TalkingPortrait {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
     }
+    if (this.fallbackTimer !== null) {
+      clearInterval(this.fallbackTimer);
+      this.fallbackTimer = null;
+    }
 
     // Disconnect audio source (but keep AudioContext for reuse)
     this.disconnectSource();
 
     // Close mouth
-    this.talkImg.style.opacity = '0';
+    this.container.classList.remove('speaking');
     this.mouthOpen = false;
 
     // Fade out after delay
@@ -112,6 +119,24 @@ export class TalkingPortrait {
       this.container.classList.remove('visible');
       this.hideTimer = null;
     }, FADE_OUT_DELAY);
+  }
+
+  private setMouthOpen(open: boolean): void {
+    const now = performance.now();
+
+    if (open) {
+      this.lastOpenTime = now;
+      if (!this.mouthOpen) {
+        this.mouthOpen = true;
+        this.container.classList.add('speaking');
+      }
+    } else {
+      // Hold mouth open for HOLD_MS to prevent jittery rapid closing
+      if (this.mouthOpen && (now - this.lastOpenTime) >= HOLD_MS) {
+        this.mouthOpen = false;
+        this.container.classList.remove('speaking');
+      }
+    }
   }
 
   private connectAudio(audioEl: HTMLAudioElement): void {
@@ -135,7 +160,6 @@ export class TalkingPortrait {
       this.connectedAudio = audioEl;
     } catch (_e) {
       // MediaElementSource can only be created once per element
-      // Fall back to timer-based animation
       console.warn('[TalkingPortrait] Could not create audio source, using fallback');
       this.analyser = null;
       this.timeDomainData = null;
@@ -150,48 +174,55 @@ export class TalkingPortrait {
     this.connectedAudio = null;
   }
 
-  private startAnalysisLoop(frames: FrameCache): void {
+  private startAnalysisLoop(): void {
     if (this.rafId !== null) cancelAnimationFrame(this.rafId);
 
     const tick = () => {
       this.rafId = requestAnimationFrame(tick);
+      if (!this.analyser || !this.timeDomainData) return;
 
-      if (!this.analyser || !this.timeDomainData) {
-        // Fallback: simple toggle at ~5fps if no analyser
-        this.mouthOpen = !this.mouthOpen;
-        this.talkImg.style.opacity = this.mouthOpen ? '1' : '0';
-        return;
-      }
-
-      // Sample audio amplitude (BongoCat technique)
       this.analyser.getByteTimeDomainData(this.timeDomainData);
 
-      // Calculate RMS volume (0-1)
       let sum = 0;
       for (let i = 0; i < this.timeDomainData.length; i++) {
-        const sample = (this.timeDomainData[i] - 128) / 128; // normalize to -1..1
-        sum += sample * sample;
+        const s = (this.timeDomainData[i] - 128) / 128;
+        sum += s * s;
       }
       const rms = Math.sqrt(sum / this.timeDomainData.length);
 
-      // Mouth open when volume exceeds threshold
-      const shouldOpen = rms > VOLUME_THRESHOLD;
-      if (shouldOpen !== this.mouthOpen) {
-        this.mouthOpen = shouldOpen;
-        this.talkImg.style.opacity = shouldOpen ? '1' : '0';
+      // Adapt noise floor only during silence (mouth closed) — speech would inflate it
+      if (!this.mouthOpen) {
+        this.noiseFloor += (rms - this.noiseFloor) * NOISE_ADAPT_RATE;
+        if (this.noiseFloor < MIN_NOISE_FLOOR) this.noiseFloor = MIN_NOISE_FLOOR;
       }
+
+      this.setMouthOpen(rms > this.noiseFloor * OPEN_RATIO);
     };
 
     this.rafId = requestAnimationFrame(tick);
   }
 
+  /** Fallback: toggle mouth at ~6Hz when audio analyser isn't available */
+  private startFallbackLoop(): void {
+    if (this.fallbackTimer !== null) clearInterval(this.fallbackTimer);
+    this.fallbackTimer = window.setInterval(() => {
+      if (this.mouthOpen) {
+        this.mouthOpen = false;
+        this.container.classList.remove('speaking');
+      } else {
+        this.mouthOpen = true;
+        this.container.classList.add('speaking');
+      }
+    }, 170); // ~6 toggles/sec feels natural for speech
+  }
+
   destroy(): void {
     if (this.rafId !== null) cancelAnimationFrame(this.rafId);
+    if (this.fallbackTimer !== null) clearInterval(this.fallbackTimer);
     if (this.hideTimer !== null) clearTimeout(this.hideTimer);
     this.disconnectSource();
     try { this.audioCtx?.close(); } catch { /* */ }
     this.audioCtx = null;
     this.container.remove();
-    this.cache.clear();
   }
 }
