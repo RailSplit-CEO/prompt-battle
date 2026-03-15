@@ -1,9 +1,6 @@
 import Phaser from 'phaser';
 import { BootScene } from './scenes/BootScene';
 import { MenuScene } from './scenes/MenuScene';
-import { DraftScene } from './scenes/DraftScene';
-import { BattleScene } from './scenes/BattleScene';
-import { ResultScene } from './scenes/ResultScene';
 import { HordeScene } from './scenes/HordeScene';
 import { CharactersScene } from './scenes/CharactersScene';
 
@@ -18,7 +15,7 @@ const config: Phaser.Types.Core.GameConfig = {
   scale: {
     mode: Phaser.Scale.RESIZE,
   },
-  scene: [BootScene, MenuScene, DraftScene, BattleScene, ResultScene, HordeScene, CharactersScene],
+  scene: [BootScene, MenuScene, HordeScene, CharactersScene],
   physics: {
     default: 'arcade',
     arcade: {

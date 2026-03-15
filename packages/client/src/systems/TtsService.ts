@@ -98,10 +98,10 @@ export class TtsService {
     this.processQueue();
   }
 
-  /** Fire a test TTS to verify the API works */
+  /** Fire a test TTS to verify the API works — gnome voice intro */
   test() {
     console.log('[TTS] === TEST CALL ===');
-    this.speak('gnome', 'Ready for battle, commander.');
+    this.speak('gnome', 'Ooh ooh! Boss is here! Hehehehe! Ready when you are boss!');
   }
 
   setEnabled(enabled: boolean) { this.enabled = enabled; }

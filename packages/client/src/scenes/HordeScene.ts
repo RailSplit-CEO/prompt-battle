@@ -18,7 +18,7 @@ import { VoiceOrb } from '../systems/VoiceOrb';
 import { TalkingPortrait } from '../systems/TalkingPortrait';
 import { SettingsPanel } from '../systems/SettingsPanel';
 import { GameSettings } from '../systems/GameSettings';
-import bundledHordeMaps from '../map/maps/horde-maps.json';
+// horde-maps.json loaded at runtime from public/ via fetch (not bundled)
 
 // ═══════════════════════════════════════════════════════════════
 // GEMINI INTEGRATION
@@ -724,18 +724,21 @@ RULES:
 The currently selected hoard is: **${ctx.selectedHoard}**
 Your "narration" and "unitReaction" fields MUST be written AS these units speaking. They are NOT a narrator — they are the creatures themselves responding to an order. Each type has a radically different voice. Do NOT make them all sound excited or enthusiastic. Lean HARD into the personality — exaggerate it. The player should immediately know which unit type is talking.
 
+IMPORTANT: Each unit type is ONE specific recurring character the player has a relationship with — not a random member of the group. The gnome is always THE SAME gnome who calls the player "boss" and remembers being sent on errands. The turtle is always THE SAME tired turtle who has been dragging himself around all game. Write as if this character has been with the player the whole match. They can reference past orders, complain about workload, or show familiarity. The player should feel like they're talking to the same friend every time they switch to that unit type.
+
 PERSONALITY REFERENCE (use ONLY the one matching "${ctx.selectedHoard}"):
-  gnome: Squeaky, hyper, childlike. Obsessed with food and shiny things. Say "boss" constantly. Giggle. Short attention span. "Ooh ooh! Yes boss yes boss! We go get the shinies boss!"
-  skull: Grim. Hollow. Monotone. Speak of death, graves, the void. No excitement EVER. Flat, ominous, unsettling. "...the dead do not rush. We will arrive... when the earth permits."
+CRITICAL RULE: NEVER describe sounds or actions — SPELL THEM OUT phonetically so TTS can voice them. No *giggles*, no *sighs*, no *cackles*. Instead write "hehehehe!", "huuuhhh...", "AHAHAHA!" etc. Everything you write will be read aloud by text-to-speech — if it can't be spoken, don't write it.
+  gnome: Squeaky, hyper, childlike. Obsessed with food and shiny things. Say "boss" constantly. Laugh with "hehehehe!" or "teeheehee!". Short attention span. "Ooh ooh! Yes boss yes boss! Hehehehe! We go get the shinies boss!"
+  skull: Grim. Hollow. Monotone. Speak of death, graves, the void. No excitement EVER. Flat, ominous, unsettling. Long pauses as "..." between phrases. "...the dead do not rush. We will arrive... when the earth permits."
   spider: Sinister, whispery, hissing. Stretch S sounds (sssslither, yesss, preciousss). Creepy and predatory. "Yesss... we ssscatter through the dark, sssilent and hungry..."
-  hyena: Absolutely unhinged. Manic cackling. CAPS and "AHAHAHA". Lives for chaos. Cannot be serious. "AHAHAHA YEAH YEAH YEAH!! LETS GO BREAK STUFF!!"
-  turtle: Depressed. Exhausted. Everything is too hard, too far, too fast. Heavy sighs. Reluctant compliance. Miserable. "...ugh. Fine. We'll drag ourselves over there. Again."
-  panda: Slow, warm, sleepy. Zen-like calm. Thinks about food and naps. Unhurried. Gentle. "Mmm... okay. Nice slow walk. Maybe bamboo on the way..."
+  hyena: Absolutely unhinged. Manic laughter spelled out: "AHAHAHA!!" or "HEHEHEHE!!". CAPS. Lives for chaos. Cannot be serious. "AHAHAHA YEAH YEAH YEAH!! LETS GO BREAK STUFF!! HEHEHEHE!!"
+  turtle: Depressed. Exhausted. Everything is too hard, too far, too fast. Spell out sighs as "huuuhhh..." or "uuugghh...". Reluctant compliance. Miserable. "Uuugghh... fine. We'll drag ourselves over there. Again."
+  panda: Slow, warm, sleepy. Zen-like calm. Thinks about food and naps. Yawns as "mmmyaaawn..." Unhurried. Gentle. "Mmm... okay. Nice slow walk. Mmmyaaawn... maybe bamboo on the way..."
   lizard: Cold. Clinical. Zero emotion. Military brevity. No personality flair, no humor. Robotic. "Affirmative. Route plotted. Executing."
-  minotaur: PURE RAGE. ALL CAPS. Screaming. Primal. Wants to smash everything. No subtlety. "RAAAAGH!! MOVE!! SMASH!! DESTROY EVERYTHING IN THE WAY!!"
-  shaman: Cryptic, mystical, speaks in riddles. References spirits, fate, the stars. Ethereal and otherworldly. "The spirits murmur of this path... fate curls like smoke..."
-  rogue: Sarcastic, dry, too-cool. Eye-rolling energy. Reluctant competence. Never impressed. "...sure. Whatever. Already three steps ahead of you."
-  troll: Dumb. Third-person speech. Broken grammar. Confused easily. Lovable but slow. "Troll go now. Troll not sure where... but Troll go."
+  minotaur: PURE RAGE. ALL CAPS. Roar spelled out: "RAAAAGH!!" or "GRRRAAAH!!". Primal. Wants to smash everything. No subtlety. "RAAAAGH!! MOVE!! SMASH!! GRRRAAAH!! DESTROY EVERYTHING!!"
+  shaman: Cryptic, mystical, speaks in riddles. References spirits, fate, the stars. Ethereal, drawn-out vowels: "oooohhh..." or "ahhhhh...". "Oooohhh... the spirits murmur of this path... fate curls like smoke..."
+  rogue: Sarcastic, dry, too-cool. Eye-rolling energy. Scoffs as "tch" or "pfft". Reluctant competence. Never impressed. "Tch... sure. Whatever. Already three steps ahead of you."
+  troll: Dumb. Third-person speech. Broken grammar. Confused easily. Grunts as "uhhh" or "hrmm". Lovable but slow. "Uhhh... Troll go now. Hrmm. Troll not sure where... but Troll go."
 
 PLAYER SAYS: "${rawText}"
 
@@ -750,7 +753,7 @@ JSON ONLY (no markdown):
   "workflow": [<array of step objects, only if targetType=workflow>],
   "loopFrom": <index where repeating loop starts, default 0>,
   "narration": "<6-15 words, spoken BY the ${ctx.selectedHoard} units in their personality voice. NOT a narrator. Must sound like a ${ctx.selectedHoard} — see personality reference above. No generic enthusiasm.>",
-  "unitReaction": "<2-5 word grunt/bark in ${ctx.selectedHoard} voice. Examples — gnome:'Yes boss!', skull:'...so it begins.', spider:'yesss...', hyena:'AHAHAHA!!', turtle:'*heavy sigh*', panda:'mmm okay', lizard:'Confirmed.', minotaur:'RAAAGH!!', shaman:'it is fated...', rogue:'whatever.', troll:'Troll go!'>",
+  "unitReaction": "<2-5 word grunt/bark in ${ctx.selectedHoard} voice — spell out ALL sounds phonetically, never describe them. Examples — gnome:'Yes boss! Hehe!', skull:'...so it begins.', spider:'yesss...', hyena:'AHAHAHA!!', turtle:'uuugghh... fine.', panda:'mmm okay', lizard:'Confirmed.', minotaur:'RAAAGH!!', shaman:'oohhh... it is fated.', rogue:'tch. whatever.', troll:'Uhhh Troll go!'>",
   "modifiers": {"formation": "spread|tight|null", "caution": "safe|aggressive|null", "pacing": "rush|efficient|null"},
   "planGoal": {"type": "unlock_equipment|stockpile_resource", "equipment": "<equipment id, only if type=unlock_equipment>", "resource": "<resource type, only if type=stockpile_resource>", "amount": "<number, only if stockpile_resource>", "thenAction": "<optional follow-up: defend, attack, etc>"},
   "modifierOnly": false
@@ -2188,18 +2191,28 @@ export class HordeScene extends Phaser.Scene {
     } catch (e) {
       console.warn('[Horde] Server file load failed:', e);
     }
-    // 3. Fallback: bundled horde-maps.json (baked into build)
-    if (bundledHordeMaps && Array.isArray(bundledHordeMaps) && bundledHordeMaps.length > 0) {
-      HordeScene.editorMaps = (bundledHordeMaps as any[]).map((m: any) => {
-        const clone = { ...m };
-        if (clone._tiles && !clone.tiles) clone.tiles = clone._tiles;
-        delete clone._tiles;
-        delete clone._terrain;
-        delete clone.terrain;
-        return clone;
-      });
-      console.log('[Horde] Loaded', bundledHordeMaps.length, 'maps from bundled JSON');
-      return;
+    // 3. Fallback: load from public/horde-maps.json at runtime
+    try {
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', '/horde-maps.json', false); // synchronous
+      xhr.send();
+      if (xhr.status === 200) {
+        const parsed = JSON.parse(xhr.responseText);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          HordeScene.editorMaps = parsed.map((m: any) => {
+            const clone = { ...m };
+            if (clone._tiles && !clone.tiles) clone.tiles = clone._tiles;
+            delete clone._tiles;
+            delete clone._terrain;
+            delete clone.terrain;
+            return clone;
+          });
+          console.log('[Horde] Loaded', parsed.length, 'maps from public/horde-maps.json');
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn('[Horde] public/horde-maps.json load failed:', e);
     }
     HordeScene.editorMaps = null;
   }
@@ -4011,10 +4024,17 @@ export class HordeScene extends Phaser.Scene {
     window.addEventListener('resize', this._resizeHandler);
     this.scale.on('resize', this._resizeHandler);
 
+    // Center camera on the nearest gnome camp to the player's base
     const myBase = this.myTeam === 1 ? P1_BASE : P2_BASE;
-    const camOffX = this.myTeam === 1 ? 400 : -400;
-    const camOffY = this.myTeam === 1 ? -400 : 400;
-    cam.centerOn(myBase.x + camOffX, myBase.y + camOffY);
+    let camX = myBase.x, camY = myBase.y;
+    let bestDist = Infinity;
+    for (const camp of this.camps) {
+      if (camp.animalType !== 'gnome') continue;
+      const dx = camp.x - myBase.x, dy = camp.y - myBase.y;
+      const dist = dx * dx + dy * dy;
+      if (dist < bestDist) { bestDist = dist; camX = camp.x; camY = camp.y; }
+    }
+    cam.centerOn(camX, camY);
     cam.setZoom(0.7);
     this.input.on('wheel', (ptr: Phaser.Input.Pointer, _over: any, _dx: number, deltaY: number) => {
       const vpW = cam.width;
@@ -4172,6 +4192,7 @@ export class HordeScene extends Phaser.Scene {
         }
         this.updateSelectionLabel();
         this.updateTopBar();
+        this.updateCharacterDisplay();
         // Quick feedback
         const count = this.selectedHoard === 'all'
           ? this.units.filter(u => u.team === this.myTeam && !u.dead).length
@@ -4237,6 +4258,7 @@ export class HordeScene extends Phaser.Scene {
     if (nextIdx >= available.length) nextIdx = 0;
     this.selectedHoard = available[nextIdx];
     this.updateSelectionLabel();
+    this.updateCharacterDisplay();
 
     // Quick feedback showing what's selected
     const count = this.selectedHoard === 'all'
@@ -4245,6 +4267,13 @@ export class HordeScene extends Phaser.Scene {
     const emoji = this.selectedHoard === 'all' ? '' : (ANIMALS[this.selectedHoard]?.emoji + ' ' || '');
     const name = this.selectedHoard === 'all' ? 'All units' : cap(this.selectedHoard);
     this.showFeedback(`${emoji}${name} selected (${count})`, '#FFD93D');
+  }
+
+  /** Sync portrait avatar + char stats card with current selectedHoard */
+  private updateCharacterDisplay(): void {
+    const hoard = this.selectedHoard === 'all' ? 'gnome' : this.selectedHoard;
+    this.talkingPortrait?.setIdleAvatar(hoard);
+    this.updateCharStatsPanel();
   }
 
   private getAvailableHoards(): string[] {
@@ -4559,24 +4588,28 @@ export class HordeScene extends Phaser.Scene {
     // ═══ TOP CONTROL GROUP BAR (keys 1-5) ═══
     this.setupTopBar(gc);
 
-    // ═══ RIGHT RESOURCE PANEL ═══
-    this.setupResourcePanel(gc);
-
-    // ═══ LEFT SIDEBAR (command log + quests) ═══
+    // ═══ LEFT SIDEBAR (portrait + stats + cmd log) ═══
     const leftSidebar = document.createElement('div');
     leftSidebar.id = 'horde-left-sidebar';
     gc.appendChild(leftSidebar);
+    // Reparent talking portrait into left sidebar
+    if (this.talkingPortrait) {
+      leftSidebar.appendChild(this.talkingPortrait.getContainer());
+    }
+    this.setupCharStatsPanel(leftSidebar);
     this.setupCmdLogPanel(leftSidebar);
-    this.setupQuestPanel(leftSidebar);
+
+    // ═══ RIGHT SIDEBAR (resources+equipment) ═══
+    const rightSidebar = document.createElement('div');
+    rightSidebar.id = 'horde-right-sidebar';
+    gc.appendChild(rightSidebar);
+    this.setupResourcePanel(rightSidebar);
 
     // ═══ BOTTOM-RIGHT MINIMAP ═══
     this.setupMinimap(gc);
 
-    // ═══ BOTTOM-LEFT UPGRADE PANEL ═══
-    this.setupUpgradePanel(gc);
-
-    // ═══ SETTINGS GEAR (top-right, above resource panel) ═══
-    this.setupSettingsGear(gc);
+    // ═══ BOTTOM-LEFT QUEST PANEL ═══
+    this.setupQuestPanel(gc);
 
     // ESC to open settings
     this.input.keyboard!.on('keydown-ESC', () => {
@@ -4594,34 +4627,7 @@ export class HordeScene extends Phaser.Scene {
     this.setupNotificationSystem();
   }
 
-  private setupSettingsGear(gc: HTMLElement) {
-    const gear = document.createElement('button');
-    gear.id = 'horde-settings-gear';
-    gear.innerHTML = '⚙️';
-    gear.title = 'Settings (ESC)';
-    gear.style.cssText = `
-      position:absolute;top:8px;right:8px;z-index:200;pointer-events:all;
-      width:32px;height:32px;border-radius:8px;
-      background:rgba(212,196,160,0.88);backdrop-filter:blur(8px);
-      -webkit-backdrop-filter:blur(8px);
-      border:2px solid rgba(139,115,85,0.6);
-      color:#8B5E34;font-size:18px;cursor:pointer;
-      display:flex;align-items:center;justify-content:center;
-      transition:all 0.15s;font-family:"Fredoka",sans-serif;
-    `;
-    gear.onmouseenter = () => {
-      gear.style.borderColor = '#FFD93D';
-      gear.style.color = '#FFD93D';
-      gear.style.transform = 'scale(1.08)';
-    };
-    gear.onmouseleave = () => {
-      gear.style.borderColor = 'rgba(139,115,85,0.6)';
-      gear.style.color = '#8B5E34';
-      gear.style.transform = 'scale(1)';
-    };
-    gear.onclick = () => this.settingsPanel.toggle();
-    gc.appendChild(gear);
-  }
+  // Settings gear is now inline in the resource panel header — see setupResourcePanel()
 
   private applyDisplaySettings(s: import('../systems/GameSettings').SettingsData) {
     // Minimap size
@@ -4632,7 +4638,7 @@ export class HordeScene extends Phaser.Scene {
     }
 
     // HUD scale
-    const hudEls = [this.topBarEl, this.resourcePanelEl, this.cmdLogPanelEl];
+    const hudEls = [this.topBarEl, this.resourcePanelEl, this.cmdLogPanelEl, this.charStatsPanelEl];
     for (const el of hudEls) {
       if (el) el.style.transform = s.hudScale !== 1 ? `scale(${s.hudScale})` : '';
     }
@@ -4763,11 +4769,10 @@ export class HordeScene extends Phaser.Scene {
       const active = s.id === this.selectedHoard;
       html += `<div class="ctrl-card${active ? ' active' : ''}" data-hoard="${s.id}">
         <div class="hotkey">${s.key}</div>
-        <div style="display:flex;align-items:center;justify-content:center;min-height:56px;">
-          ${avatarImg(s.id === 'all' ? '' : s.id, 56) || `<span style="font-size:36px;">${s.emoji}</span>`}
+        <div style="display:flex;align-items:center;justify-content:center;min-height:64px;">
+          ${avatarImg(s.id === 'all' ? '' : s.id, 64) || `<span style="font-size:42px;">${s.emoji}</span>`}
         </div>
-        <div style="font-size:11px;font-weight:800;color:#4a3520;letter-spacing:0.5px;">${s.name}</div>
-        <div style="font-size:14px;font-weight:700;color:#2a1a0a;">${s.count}</div>
+        <div style="font-size:11px;font-weight:800;color:#2a1a0a;letter-spacing:0.3px;white-space:nowrap;">${s.name} <span style="color:#8B5E34;">${s.count}</span></div>
       </div>`;
     }
 
@@ -4784,7 +4789,7 @@ export class HordeScene extends Phaser.Scene {
         const card = (e.target as HTMLElement).closest('.ctrl-card') as HTMLElement | null;
         if (!card) return;
         const hoard = card.getAttribute('data-hoard');
-        if (hoard) { this.selectedHoard = hoard; this.updateSelectionLabel(); }
+        if (hoard) { this.selectedHoard = hoard; this.updateSelectionLabel(); this.updateCharacterDisplay(); }
       });
     }
     // Pop animation on active card
@@ -4796,18 +4801,90 @@ export class HordeScene extends Phaser.Scene {
   }
 
   // ─── SETUP: RIGHT RESOURCE PANEL ──────────────────────────────
-  private setupResourcePanel(gc: HTMLElement) {
+  private setupResourcePanel(parent: HTMLElement) {
     const panel = document.createElement('div');
     panel.id = 'horde-resource-panel';
     panel.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+        <button id="horde-settings-gear-inline" title="Settings (ESC)" style="
+          background:none;border:1px solid rgba(139,115,85,0.4);color:#8B5E34;
+          width:24px;height:24px;border-radius:6px;font-size:14px;cursor:pointer;
+          display:flex;align-items:center;justify-content:center;
+          transition:all 0.15s;padding:0;flex-shrink:0;
+        ">⚙️</button>
         <span id="hud-timer" style="font-size:15px;font-weight:700;color:#8B5E34;font-family:'Fredoka',sans-serif;">0:00</span>
         <span id="hud-era" style="font-size:11px;color:#6a5a4a;letter-spacing:1px;"></span>
       </div>
       <div id="hud-resources"></div>
+      <div id="hud-equipment" style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(139,115,85,0.25);"></div>
     `;
-    gc.appendChild(panel);
+    parent.appendChild(panel);
     this.resourcePanelEl = panel;
+
+    // Wire up inline settings gear
+    const gearBtn = panel.querySelector('#horde-settings-gear-inline') as HTMLButtonElement;
+    if (gearBtn) {
+      gearBtn.onmouseenter = () => { gearBtn.style.borderColor = '#FFD93D'; gearBtn.style.color = '#FFD93D'; };
+      gearBtn.onmouseleave = () => { gearBtn.style.borderColor = 'rgba(139,115,85,0.4)'; gearBtn.style.color = '#8B5E34'; };
+      gearBtn.onclick = () => this.settingsPanel.toggle();
+    }
+  }
+
+  // ─── SETUP: CHARACTER STATS PANEL ────────────────────────────
+  private charStatsPanelEl: HTMLDivElement | null = null;
+  private _prevCharStatsHTML = '';
+
+  private setupCharStatsPanel(parent: HTMLElement) {
+    const panel = document.createElement('div');
+    panel.id = 'horde-char-stats';
+    parent.appendChild(panel);
+    this.charStatsPanelEl = panel;
+    this.updateCharStatsPanel();
+  }
+
+  private updateCharStatsPanel(): void {
+    if (!this.charStatsPanelEl) return;
+    const hoard = this.selectedHoard;
+
+    if (hoard === 'all') {
+      const html = `<div style="font-size:12px;font-weight:800;color:#4a3520;text-transform:uppercase;letter-spacing:1px;font-family:'Fredoka',sans-serif;">All Units</div>
+        <div style="font-size:11px;color:#6a5a4a;margin-top:2px;">Select a group (1-5) to see abilities</div>`;
+      if (html !== this._prevCharStatsHTML) {
+        this.charStatsPanelEl.innerHTML = html;
+        this._prevCharStatsHTML = html;
+      }
+      return;
+    }
+
+    const animal = ANIMALS[hoard];
+    if (!animal) return;
+    const strengths = UNIT_STRENGTHS[hoard] || [];
+
+    let html = `<div style="font-size:12px;font-weight:800;color:#4a3520;text-transform:uppercase;letter-spacing:1px;font-family:'Fredoka',sans-serif;">${animal.emoji} ${hoard}</div>`;
+    // Abilities
+    html += `<div style="margin-top:4px;">
+      <div style="display:flex;align-items:baseline;gap:4px;">
+        <span style="font-size:11px;color:#8B5E34;font-weight:700;">⚔ ${animal.ability}</span>
+        <span style="font-size:10px;color:#6a5a4a;">— ${animal.desc}</span>
+      </div>
+      <div style="display:flex;align-items:baseline;gap:4px;margin-top:2px;">
+        <span style="font-size:11px;color:#8B5E34;font-weight:700;">🛡 ${animal.ability2}</span>
+        <span style="font-size:10px;color:#6a5a4a;">— ${animal.desc2}</span>
+      </div>
+    </div>`;
+    // Strengths (first 2)
+    if (strengths.length > 0) {
+      html += `<div style="margin-top:4px;border-top:1px solid rgba(139,115,85,0.2);padding-top:4px;">`;
+      for (let i = 0; i < Math.min(2, strengths.length); i++) {
+        html += `<div style="font-size:10px;color:#45886a;font-weight:600;">💡 ${strengths[i]}</div>`;
+      }
+      html += `</div>`;
+    }
+
+    if (html !== this._prevCharStatsHTML) {
+      this.charStatsPanelEl.innerHTML = html;
+      this._prevCharStatsHTML = html;
+    }
   }
 
   // ─── SETUP: LEFT COMMAND LOG PANEL ────────────────────────────
@@ -4944,11 +5021,6 @@ export class HordeScene extends Phaser.Scene {
 
   private updateQuestPanel(): void {
     if (!this.questManager || !this.questPanelEl) return;
-    // Position dynamically below resource panel
-    if (this.resourcePanelEl) {
-      const rpRect = this.resourcePanelEl.getBoundingClientRect();
-      this.questPanelEl.style.top = (rpRect.bottom + 8) + 'px';
-    }
     const quests = this.questManager.getActiveQuests();
     const total = this.questManager.totalCount;
     const done = this.questManager.completedCount;
@@ -4979,27 +5051,17 @@ export class HordeScene extends Phaser.Scene {
     }
   }
 
-  // ─── SETUP: UPGRADE PANEL (bottom-left) ──────────────────────
-  private setupUpgradePanel(gc: HTMLElement) {
-    const panel = document.createElement('div');
-    panel.id = 'horde-upgrade-panel';
-    gc.appendChild(panel);
-    this.upgradePanelEl = panel;
-  }
+  // Equipment section is now inside #horde-resource-panel (#hud-equipment div)
 
   private _prevUpgradeHTML = '';
   private updateUpgradePanel(): void {
-    if (!this.upgradePanelEl) return;
-    // Position upgrade panel below the quest panel
-    if (this.questPanelEl) {
-      const qRect = this.questPanelEl.getBoundingClientRect();
-      this.upgradePanelEl.style.top = `${qRect.bottom + 6}px`;
-    }
+    const equipEl = document.getElementById('hud-equipment');
+    if (!equipEl) return;
     const team = this.myTeam;
     const stock = this.baseStockpile[team];
     const RESOURCE_EMOJI: Record<string, string> = { carrot: '🥕', meat: '🍖', crystal: '💎', metal: '⚙️' };
-    let html = `<div style="font-size:10px;font-weight:800;color:#4a3520;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Equipment</div>`;
-    html += '<div style="background:rgba(255,248,230,0.5);border:1px solid rgba(139,115,85,0.35);border-radius:8px;padding:6px 8px;">';
+    let html = `<div style="font-size:9px;font-weight:800;color:#4a3520;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px;">Equipment</div>`;
+    html += '<div style="background:rgba(255,248,230,0.5);border:1px solid rgba(139,115,85,0.35);border-radius:6px;padding:4px 6px;">';
 
     for (const eq of EQUIPMENT) {
       const level = this.getEquipLevel(team, eq.id as EquipmentType);
@@ -5031,18 +5093,19 @@ export class HordeScene extends Phaser.Scene {
         costHtml = `<span style="font-size:9px;">Lvl ${nextLevel}: ${costParts.join(' ')}</span>`;
       }
 
-      html += `<div style="display:flex;align-items:center;gap:4px;padding:3px 0;border-bottom:1px solid rgba(139,115,85,0.15);${isMax ? 'opacity:0.7;' : ''}">
-        <span style="font-size:14px;line-height:1;width:20px;text-align:center;">${eq.emoji}</span>
-        <div style="flex:1;min-width:0;">
-          <div style="font-size:10px;font-weight:700;color:#2a1a0a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${eq.name} ${stars}</div>
-          <div>${costHtml}</div>
+      html += `<div style="display:flex;align-items:center;gap:3px;padding:2px 0;border-bottom:1px solid rgba(139,115,85,0.12);${isMax ? 'opacity:0.7;' : ''}">
+        <span style="font-size:12px;line-height:1;width:16px;text-align:center;flex-shrink:0;">${eq.emoji}</span>
+        <div style="flex:1;min-width:0;overflow:hidden;">
+          <div style="font-size:9px;font-weight:700;color:#2a1a0a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${eq.name} ${stars}</div>
+          <div style="font-size:8px;color:#6a5a4a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:-1px;">${eq.effect}</div>
+          <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${costHtml}</div>
         </div>
       </div>`;
     }
     html += '</div>';
 
     if (html !== this._prevUpgradeHTML) {
-      this.upgradePanelEl.innerHTML = html;
+      equipEl.innerHTML = html;
       this._prevUpgradeHTML = html;
     }
   }
@@ -5087,72 +5150,205 @@ export class HordeScene extends Phaser.Scene {
     tc.width = 200;
     tc.height = 200;
     const ctx = tc.getContext('2d')!;
-    const tiles = this.mapDef?.tiles;
+    const map = this.mapDef;
+    const mmScaleX = 200 / WORLD_W;
+    const mmScaleY = 200 / WORLD_H;
+
+    // Base grass fill
+    ctx.fillStyle = '#3d6b3d';
+    ctx.fillRect(0, 0, 200, 200);
+
+    // Tile grid (handles water, high ground, rock if present)
+    const tiles = map?.tiles;
     if (tiles) {
       const cols = tiles[0]?.length || 0;
       const rows = tiles.length;
       const sx = 200 / (cols * TILE_SIZE);
       const sy = 200 / (rows * TILE_SIZE);
+      const tw = Math.ceil(TILE_SIZE * sx);
+      const th = Math.ceil(TILE_SIZE * sy);
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           const t = tiles[r][c];
-          let color = '#4a7a3a'; // grass (0)
-          if (t === 2) color = '#2a5a8a'; // water
-          else if (t === 1) color = '#3a6a2a'; // high_ground
-          else if (t === 3) color = '#777'; // rock
-          ctx.fillStyle = color;
-          ctx.fillRect(c * TILE_SIZE * sx, r * TILE_SIZE * sy, Math.ceil(TILE_SIZE * sx), Math.ceil(TILE_SIZE * sy));
+          if (t === 1) ctx.fillStyle = '#4a7a48';
+          else if (t === 2) ctx.fillStyle = '#2a5580';
+          else if (t === 3) ctx.fillStyle = '#555555';
+          else continue;
+          ctx.fillRect(c * TILE_SIZE * sx, r * TILE_SIZE * sy, tw, th);
         }
       }
-    } else {
-      ctx.fillStyle = '#4a7a3a';
-      ctx.fillRect(0, 0, 200, 200);
     }
+
+    // Grass tint overlay — gives terrain visual variety
+    const grassTint = (map as any)?.grassTint as number[][] | undefined;
+    if (grassTint && tiles) {
+      const cols = grassTint[0]?.length || 0;
+      const rows = grassTint.length;
+      const sx = 200 / (cols * TILE_SIZE);
+      const sy = 200 / (rows * TILE_SIZE);
+      const tw = Math.ceil(TILE_SIZE * sx);
+      const th = Math.ceil(TILE_SIZE * sy);
+      const tintColors: Record<number, string> = {
+        1: 'rgba(120,180,80,0.25)',   // light green
+        2: 'rgba(30,60,20,0.3)',      // dark green
+        3: 'rgba(160,140,60,0.25)',   // yellow/sandy
+        4: 'rgba(100,70,40,0.3)',     // brown/dirt
+        5: 'rgba(50,100,90,0.25)',    // damp/blue-green
+      };
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const tint = grassTint[r][c];
+          if (tint === 0) continue;
+          const color = tintColors[tint];
+          if (!color) continue;
+          ctx.fillStyle = color;
+          ctx.fillRect(c * TILE_SIZE * sx, r * TILE_SIZE * sy, tw, th);
+        }
+      }
+    }
+
+    // Boundary blocks (walls, river banks) — dark brown
+    const blocks = map?.boundaryBlocks;
+    if (blocks) {
+      ctx.fillStyle = '#2a2218';
+      for (const b of blocks) {
+        ctx.fillRect(b.x * mmScaleX, b.y * mmScaleY, Math.max(1, b.w * mmScaleX), Math.max(1, b.h * mmScaleY));
+      }
+    }
+
+    // Rock positions — small gray spots
+    const rocks = map?.rockPositions;
+    if (rocks) {
+      ctx.fillStyle = '#6a6a6a';
+      for (const r of rocks) {
+        ctx.beginPath();
+        ctx.arc(r.bluePos.x * mmScaleX, r.bluePos.y * mmScaleY, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(r.redPos.x * mmScaleX, r.redPos.y * mmScaleY, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Bush zones — dark green patches
+    const bushes = map?.bushZones;
+    if (bushes) {
+      ctx.fillStyle = 'rgba(40,90,40,0.5)';
+      for (const b of bushes) {
+        const bz = b.blueZone;
+        const rz = b.redZone;
+        ctx.fillRect(bz.x * mmScaleX, bz.y * mmScaleY, Math.max(1, bz.w * mmScaleX), Math.max(1, bz.h * mmScaleY));
+        ctx.fillRect(rz.x * mmScaleX, rz.y * mmScaleY, Math.max(1, rz.w * mmScaleX), Math.max(1, rz.h * mmScaleY));
+      }
+    }
+
     this.minimapTerrainCanvas = tc;
   }
 
   private updateMinimap() {
     const ctx = this.minimapCtx;
     if (!ctx || !this.minimapTerrainCanvas) return;
-    // Restore terrain
+
+    // Layer 1: cached terrain
     ctx.drawImage(this.minimapTerrainCanvas, 0, 0);
     const scaleX = 200 / WORLD_W;
     const scaleY = 200 / WORLD_H;
+    const myTeam = this.myTeam;
 
-    // Draw camps as triangles
+    // Layer 2: camps — only friendly/neutral, scouted enemy camps show last-seen state
     for (const c of this.camps) {
-      ctx.fillStyle = c.owner === this.myTeam ? '#4488ff' : c.owner === 0 ? '#888' : '#ff4444';
-      const cx = c.x * scaleX, cy = c.y * scaleY;
+      const cx = c.x * scaleX;
+      const cy = c.y * scaleY;
+      if (c.owner === myTeam) {
+        // Friendly camp — bright teal dot with glow
+        ctx.shadowColor = '#4af0e0';
+        ctx.shadowBlur = 6;
+        ctx.fillStyle = '#4af0e0';
+        ctx.beginPath();
+        ctx.arc(cx, cy, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      } else if (c.owner === 0) {
+        // Neutral camp — dim gray ring
+        ctx.strokeStyle = 'rgba(180,180,180,0.6)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+        ctx.stroke();
+      } else if (c.scouted) {
+        // Enemy camp (scouted) — dim red dot, no glow
+        ctx.fillStyle = 'rgba(255,80,80,0.4)';
+        ctx.beginPath();
+        ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Layer 3: towers
+    for (const t of this.towers) {
+      if (!t.alive) continue;
+      const tx = t.x * scaleX, ty = t.y * scaleY;
+      if (t.team === myTeam) {
+        ctx.shadowColor = '#4af0e0';
+        ctx.shadowBlur = 4;
+        ctx.fillStyle = '#4af0e0';
+      } else {
+        ctx.fillStyle = 'rgba(255,80,80,0.4)';
+      }
       ctx.beginPath();
-      ctx.moveTo(cx, cy - 4);
-      ctx.lineTo(cx - 3, cy + 3);
-      ctx.lineTo(cx + 3, cy + 3);
+      ctx.moveTo(tx, ty - 4);
+      ctx.lineTo(tx - 3, ty + 2);
+      ctx.lineTo(tx + 3, ty + 2);
       ctx.closePath();
       ctx.fill();
+      ctx.shadowBlur = 0;
     }
 
-    // Draw nexuses as squares
+    // Layer 4: nexuses
     for (const n of this.nexuses) {
-      ctx.fillStyle = n.team === this.myTeam ? '#4488ff' : '#ff4444';
-      ctx.fillRect(n.x * scaleX - 4, n.y * scaleY - 4, 8, 8);
+      const nx = n.x * scaleX;
+      const ny = n.y * scaleY;
+      if (n.team === myTeam) {
+        // Friendly nexus — bright gold diamond with glow
+        ctx.shadowColor = '#ffd700';
+        ctx.shadowBlur = 8;
+        ctx.fillStyle = '#ffd700';
+        ctx.save();
+        ctx.translate(nx, ny);
+        ctx.rotate(Math.PI / 4);
+        ctx.fillRect(-4, -4, 8, 8);
+        ctx.restore();
+        ctx.shadowBlur = 0;
+      } else {
+        // Enemy nexus — always visible (known position), dim red diamond
+        ctx.fillStyle = 'rgba(255,60,60,0.5)';
+        ctx.save();
+        ctx.translate(nx, ny);
+        ctx.rotate(Math.PI / 4);
+        ctx.fillRect(-4, -4, 8, 8);
+        ctx.restore();
+      }
     }
 
-    // Draw unit dots
+    // Layer 4: friendly units only — no enemy visibility
+    ctx.shadowColor = '#6ab4ff';
+    ctx.shadowBlur = 3;
+    ctx.fillStyle = '#6ab4ff';
     for (const u of this.units) {
-      if (u.dead) continue;
-      ctx.fillStyle = u.team === this.myTeam ? '#6699ff' : '#ff6666';
+      if (u.dead || u.team !== myTeam) continue;
       ctx.fillRect(u.x * scaleX - 1, u.y * scaleY - 1, 2, 2);
     }
+    ctx.shadowBlur = 0;
 
-    // Camera viewport rect
-    const cam = this.cameras.main;
-    const left = cam.scrollX * scaleX;
-    const top = cam.scrollY * scaleY;
-    const w = (cam.width / cam.zoom) * scaleX;
-    const h = (cam.height / cam.zoom) * scaleY;
-    ctx.strokeStyle = '#fff';
+    // Layer 6: camera viewport — use Phaser's worldView for accuracy
+    const wv = this.cameras.main.worldView;
+    const vLeft = Math.max(0, wv.x) * scaleX;
+    const vTop = Math.max(0, wv.y) * scaleY;
+    const vRight = Math.min(WORLD_W, wv.right) * scaleX;
+    const vBottom = Math.min(WORLD_H, wv.bottom) * scaleY;
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
     ctx.lineWidth = 1;
-    ctx.strokeRect(left, top, w, h);
+    ctx.strokeRect(vLeft, vTop, vRight - vLeft, vBottom - vTop);
   }
 
   // ─── UPDATE: COMMAND LOG PANEL ────────────────────────────────
@@ -13695,37 +13891,70 @@ export class HordeScene extends Phaser.Scene {
       mercenary_outpost: '#44aaff', bottomless_pit: '#aa44ff', hungry_bear: '#ff8844',
     };
 
-    let html = '';
+    // Group simultaneous events of the same type into one card
+    const grouped = new Map<string, MapEvent[]>();
     for (const ev of active) {
+      const key = ev.type;
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key)!.push(ev);
+    }
+
+    let html = '';
+    for (const [type, events] of grouped) {
+      const ev = events[0]; // primary event for display
       const def = MAP_EVENT_DEFS[ev.type];
       const secs = Math.max(0, Math.ceil(ev.timer / 1000));
       const pctTime = Math.max(0, ev.timer / ev.duration);
       const color = glowColors[ev.type] || '#FF9933';
       const howTo = this.getEventHowTo(ev);
       const reward = this.getEventReward(ev);
+      const isMulti = events.length > 1;
 
+      // Merge progress from all events of the same type
       let progressStr = '';
-      const p1 = ev.progress[1] || 0;
-      const p2 = ev.progress[2] || 0;
-      if (ev.type === 'warchest') {
-        progressStr = `<span style="color:#ff6666">\u2764\uFE0F ${Math.max(0, Math.round(ev.data.hp))}/${ev.data.maxHp}</span>`;
-      } else if (ev.type === 'kill_bounty') {
-        const bountyIcon = avatarImg(ev.data.targetType, 28) || (ANIMALS[ev.data.targetType]?.emoji || '');
-        progressStr = `${bountyIcon} <span style="color:#6af">${p1}</span> vs <span style="color:#f66">${p2}</span> / ${ev.data.targetCount}`;
-      } else if (ev.type === 'mercenary_outpost') {
-        progressStr = `<span style="color:#6af">${p1}</span> vs <span style="color:#f66">${p2}</span> / ${ev.data.cost.amount} ${ev.data.cost.type}`;
-      } else if (ev.type === 'bottomless_pit') {
-        progressStr = `<span style="color:#6af">${p1}</span> vs <span style="color:#f66">${p2}</span> / ${ev.data.sacrificesNeeded}`;
-      } else if (ev.type === 'hungry_bear') {
-        progressStr = `${(ev.data.bearSize || 1).toFixed(1)}x <span style="color:#6af">${p1}</span> vs <span style="color:#f66">${p2}</span>`;
+      if (isMulti) {
+        // Sum progress across all instances
+        let totalP1 = 0, totalP2 = 0;
+        for (const e of events) { totalP1 += e.progress[1] || 0; totalP2 += e.progress[2] || 0; }
+
+        if (ev.type === 'warchest') {
+          // Show each warchest HP on its own line
+          const hpLines = events.map((e, i) =>
+            `<span style="color:#ff6666">\u2764\uFE0F #${i + 1}: ${Math.max(0, Math.round(e.data.hp))}/${e.data.maxHp}</span>`
+          ).join('<br>');
+          progressStr = hpLines;
+        } else if (ev.type === 'kill_bounty') {
+          const bountyIcon = avatarImg(ev.data.targetType, 28) || (ANIMALS[ev.data.targetType]?.emoji || '');
+          progressStr = `${bountyIcon} <span style="color:#6af">${totalP1}</span> vs <span style="color:#f66">${totalP2}</span> / ${ev.data.targetCount}`;
+        } else {
+          progressStr = `<span style="color:#6af">${totalP1}</span> vs <span style="color:#f66">${totalP2}</span>`;
+        }
       } else {
-        progressStr = `<span style="color:#6af">${p1}</span> vs <span style="color:#f66">${p2}</span>`;
+        const p1 = ev.progress[1] || 0;
+        const p2 = ev.progress[2] || 0;
+        if (ev.type === 'warchest') {
+          progressStr = `<span style="color:#ff6666">\u2764\uFE0F ${Math.max(0, Math.round(ev.data.hp))}/${ev.data.maxHp}</span>`;
+        } else if (ev.type === 'kill_bounty') {
+          const bountyIcon = avatarImg(ev.data.targetType, 28) || (ANIMALS[ev.data.targetType]?.emoji || '');
+          progressStr = `${bountyIcon} <span style="color:#6af">${p1}</span> vs <span style="color:#f66">${p2}</span> / ${ev.data.targetCount}`;
+        } else if (ev.type === 'mercenary_outpost') {
+          progressStr = `<span style="color:#6af">${p1}</span> vs <span style="color:#f66">${p2}</span> / ${ev.data.cost.amount} ${ev.data.cost.type}`;
+        } else if (ev.type === 'bottomless_pit') {
+          progressStr = `<span style="color:#6af">${p1}</span> vs <span style="color:#f66">${p2}</span> / ${ev.data.sacrificesNeeded}`;
+        } else if (ev.type === 'hungry_bear') {
+          progressStr = `${(ev.data.bearSize || 1).toFixed(1)}x <span style="color:#6af">${p1}</span> vs <span style="color:#f66">${p2}</span>`;
+        } else {
+          progressStr = `<span style="color:#6af">${p1}</span> vs <span style="color:#f66">${p2}</span>`;
+        }
       }
 
       const timerColor = pctTime > 0.5 ? '#5a9e3a' : pctTime > 0.2 ? '#C98F00' : '#CC3333';
       const urgentPulse = pctTime <= 0.2 ? 'animation:eventPulse 1s ease-in-out infinite;' : '';
+      const multiLabel = isMulti ? ` x${events.length}` : '';
+      // Store first event id for click-to-pan; cycle through on repeated clicks
+      const eventIds = events.map(e => e.id).join(',');
 
-      html += `<div data-event-id="${ev.id}" style="
+      html += `<div data-event-ids="${eventIds}" data-event-id="${ev.id}" style="
         background:linear-gradient(180deg, rgba(255,248,230,0.95) 0%, rgba(240,228,200,0.95) 100%);
         border:2px solid rgba(139,115,85,0.5);border-radius:10px;
         padding:8px 10px;cursor:pointer;pointer-events:auto;
@@ -13736,7 +13965,7 @@ export class HordeScene extends Phaser.Scene {
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
           <div style="display:flex;align-items:center;gap:5px;">
             <span style="font-size:18px;">${def.emoji}</span>
-            <span style="font-size:12px;font-weight:800;color:#4a3520;font-family:'Fredoka',sans-serif;letter-spacing:0.5px;">${def.name.toUpperCase()}</span>
+            <span style="font-size:12px;font-weight:800;color:#4a3520;font-family:'Fredoka',sans-serif;letter-spacing:0.5px;">${def.name.toUpperCase()}${multiLabel}</span>
           </div>
           <span style="font-size:11px;font-weight:700;color:${timerColor};font-family:'Fredoka',sans-serif;">${secs}s</span>
         </div>
@@ -13751,7 +13980,7 @@ export class HordeScene extends Phaser.Scene {
         <div style="font-size:10px;color:#4a3520;font-weight:600;">${progressStr}</div>
 
         <div style="display:flex;align-items:center;gap:3px;margin-top:4px;opacity:0.6;">
-          <span style="font-size:8px;color:#8B7355;">\uD83D\uDCCD Click to view</span>
+          <span style="font-size:8px;color:#8B7355;">\uD83D\uDCCD Click to view${isMulti ? ' (cycles between spots)' : ''}</span>
         </div>
       </div>`;
     }
@@ -13775,13 +14004,19 @@ export class HordeScene extends Phaser.Scene {
 
     this.eventHudEl.innerHTML = html;
 
-    // Attach click handlers to pan camera
-    const cards = this.eventHudEl.querySelectorAll('[data-event-id]');
+    // Attach click handlers to pan camera (cycles through grouped events)
+    const cards = this.eventHudEl.querySelectorAll('[data-event-ids]');
     cards.forEach((card) => {
       card.addEventListener('click', () => {
-        const id = parseInt((card as HTMLElement).dataset.eventId || '0', 10);
-        const ev = this.mapEvents.find(e => e.id === id && e.state === 'active');
-        if (ev) this.panCameraToEvent(ev);
+        const idsStr = (card as HTMLElement).dataset.eventIds || '';
+        const ids = idsStr.split(',').map(Number);
+        const activeEvs = ids.map(id => this.mapEvents.find(e => e.id === id && e.state === 'active')).filter(Boolean) as MapEvent[];
+        if (activeEvs.length === 0) return;
+        // Cycle: find which one we last panned to, go to next
+        const lastPanned = (card as any)._lastPanIdx || 0;
+        const idx = lastPanned >= activeEvs.length ? 0 : lastPanned;
+        this.panCameraToEvent(activeEvs[idx]);
+        (card as any)._lastPanIdx = (idx + 1) % activeEvs.length;
       });
     });
   }
@@ -13827,9 +14062,10 @@ export class HordeScene extends Phaser.Scene {
     this.resourcePanelEl?.remove(); this.resourcePanelEl = null;
     this.cmdLogPanelEl?.remove(); this.cmdLogPanelEl = null;
     document.getElementById('horde-left-sidebar')?.remove();
+    document.getElementById('horde-right-sidebar')?.remove();
+    this.charStatsPanelEl?.remove(); this.charStatsPanelEl = null;
     document.getElementById('horde-minimap')?.remove();
     this.minimapEl = null; this.minimapCtx = null; this.minimapTerrainCanvas = null;
-    document.getElementById('horde-settings-gear')?.remove();
     this.settingsPanel.close();
     // Cleanup FPS counter and colorblind filters
     this.fpsEl?.remove(); this.fpsEl = null;
@@ -13839,7 +14075,7 @@ export class HordeScene extends Phaser.Scene {
     if (canvas) canvas.style.filter = '';
     document.getElementById('horde-ai-settings')?.remove();
     this.debugPanelEl?.remove(); this.debugPanelEl = null;
-    this.upgradePanelEl?.remove(); this.upgradePanelEl = null;
+    this.upgradePanelEl = null; // equipment now inside resource panel
     this.memoryOverlay?.destroy(); this.memoryOverlay = null;
     this.profilingRecorder?.destroy(); this.profilingRecorder = null;
     this.eventHudEl?.remove(); this.eventHudEl = null;

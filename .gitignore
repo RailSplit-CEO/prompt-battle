@@ -11,3 +11,8 @@ packages/shared/dist/
 packages/functions/dist/
 .firebase/
 reference-repos/
+
+# Asset packs & exports
+*.zip
+__MACOSX/
+Tiny Swords*/

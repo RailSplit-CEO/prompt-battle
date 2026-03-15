@@ -60,11 +60,26 @@ export class TalkingPortrait {
     this.voiceLabel.className = 'portrait-voice-label';
     this.container.appendChild(this.voiceLabel);
 
+    // Always visible — show default avatar immediately
+    this.container.classList.add('visible');
+    this.setIdleAvatar('gnome');
+
     parent.appendChild(this.container);
   }
 
+  /** Expose container for reparenting into sidebar */
+  getContainer(): HTMLDivElement { return this.container; }
+
   setVoiceName(name: string): void {
     this.voiceLabel.textContent = name;
+  }
+
+  /** Update portrait avatar without starting speech */
+  setIdleAvatar(charId: string): void {
+    if (!HAS_TALK_AVATAR.has(charId)) charId = 'gnome';
+    this.currentChar = charId;
+    this.idleImg.src = `${AVATAR_BASE}/${charId}.png`;
+    this.talkImg.src = `${AVATAR_BASE}/${charId}_talk_nobg.png`;
   }
 
   startTalking(charId: string, audioEl?: HTMLAudioElement): void {
@@ -83,11 +98,6 @@ export class TalkingPortrait {
     this.idleImg.src = `${AVATAR_BASE}/${charId}.png`;
     this.talkImg.src = `${AVATAR_BASE}/${charId}_talk_nobg.png`;
     this.container.classList.remove('speaking');
-
-    // Position top-right (CSS handles it via right:8px; top:8px)
-
-    // Show
-    this.container.classList.add('visible');
 
     // Connect audio analyser for amplitude-based mouth sync
     if (audioEl) {
@@ -114,16 +124,9 @@ export class TalkingPortrait {
     // Disconnect audio source (but keep AudioContext for reuse)
     this.disconnectSource();
 
-    // Close mouth
+    // Close mouth — portrait stays visible
     this.container.classList.remove('speaking');
     this.mouthOpen = false;
-
-    // Fade out after delay
-    if (this.hideTimer !== null) clearTimeout(this.hideTimer);
-    this.hideTimer = window.setTimeout(() => {
-      this.container.classList.remove('visible');
-      this.hideTimer = null;
-    }, FADE_OUT_DELAY);
   }
 
   private setMouthOpen(open: boolean): void {

@@ -541,13 +541,28 @@
       font-family: 'Fredoka', sans-serif;
     }
 
-    /* Bottom-right resource panel (left of minimap) */
+    /* ─── RIGHT SIDEBAR (resources + quests) ─────────────── */
+    #horde-right-sidebar {
+      position: absolute; top: 8px; right: 8px;
+      width: clamp(180px, 18vw, 240px);
+      display: flex; flex-direction: column; gap: 8px;
+      z-index: 101; pointer-events: none;
+      max-height: calc(100vh - clamp(170px, 16vw, 220px) - 24px);
+      overflow-y: auto; overflow-x: hidden;
+      box-sizing: border-box;
+      scrollbar-width: thin; scrollbar-color: rgba(139,115,85,0.4) transparent;
+    }
+    #horde-right-sidebar::-webkit-scrollbar { width: 5px; }
+    #horde-right-sidebar::-webkit-scrollbar-track { background: transparent; }
+    #horde-right-sidebar::-webkit-scrollbar-thumb { background: rgba(139,115,85,0.4); border-radius: 3px; }
+
+    /* Resource panel (right sidebar child — includes equipment) */
     #horde-resource-panel {
-      position: absolute; bottom: 8px; right: clamp(180px, 15vw, 216px);
-      width: clamp(140px, 13vw, 200px);
+      width: 100%; box-sizing: border-box;
+      max-height: min(55vh, 420px); overflow-y: auto; overflow-x: hidden;
       background: rgba(212,196,160,0.88); backdrop-filter: blur(10px);
       border: 2px solid rgba(139,115,85,0.5); border-radius: 12px;
-      padding: 10px 12px; z-index: 101; pointer-events: all;
+      padding: 10px 12px; pointer-events: all;
       font-family: 'Nunito', sans-serif;
       scrollbar-width: thin; scrollbar-color: rgba(139,115,85,0.5) rgba(212,196,160,0.4);
     }
@@ -555,19 +570,35 @@
     #horde-resource-panel::-webkit-scrollbar-track { background: rgba(139,115,85,0.15); border-radius: 3px; }
     #horde-resource-panel::-webkit-scrollbar-thumb { background: rgba(139,115,85,0.4); border-radius: 3px; }
 
-    /* Left sidebar wrapper for cmd log + quests */
+    /* ─── LEFT SIDEBAR (portrait + stats + cmd log) ────── */
     #horde-left-sidebar {
       position: absolute; top: 8px; left: 8px;
-      width: clamp(200px, 20vw, 280px);
+      width: clamp(180px, 18vw, 240px);
       display: flex; flex-direction: column; gap: 8px;
       z-index: 101; pointer-events: none;
       max-height: calc(100vh - 16px);
+      overflow-y: auto; overflow-x: hidden;
+      box-sizing: border-box;
+      scrollbar-width: thin; scrollbar-color: rgba(139,115,85,0.4) transparent;
+    }
+    #horde-left-sidebar::-webkit-scrollbar { width: 5px; }
+    #horde-left-sidebar::-webkit-scrollbar-track { background: transparent; }
+    #horde-left-sidebar::-webkit-scrollbar-thumb { background: rgba(139,115,85,0.4); border-radius: 3px; }
+
+    /* Character stats card */
+    #horde-char-stats {
+      width: 100%; box-sizing: border-box;
+      background: rgba(212,196,160,0.88); backdrop-filter: blur(10px);
+      border: 2px solid rgba(139,115,85,0.5); border-radius: 10px;
+      padding: 6px 10px; pointer-events: all;
+      font-family: 'Nunito', sans-serif;
+      overflow: hidden;
     }
 
-    /* Left command log panel */
+    /* Command log panel */
     #horde-cmd-log {
-      width: 100%;
-      max-height: min(calc(100vh - 100px), 500px); overflow-y: auto;
+      width: 100%; box-sizing: border-box;
+      max-height: min(calc(100vh - 100px), 400px); overflow-y: auto; overflow-x: hidden;
       background: rgba(212,196,160,0.88); backdrop-filter: blur(10px);
       border: 2px solid rgba(139,115,85,0.5); border-radius: 12px;
       padding: 10px 12px; pointer-events: all;
@@ -578,13 +609,15 @@
     #horde-cmd-log::-webkit-scrollbar-track { background: rgba(139,115,85,0.15); border-radius: 3px; }
     #horde-cmd-log::-webkit-scrollbar-thumb { background: rgba(139,115,85,0.4); border-radius: 3px; }
 
-    /* Quest cards — below command log */
+    /* Quest cards (bottom-left, absolute) */
     #horde-quest-panel {
-      width: 100%;
-      max-height: min(30vh, 220px); overflow-y: auto;
+      position: absolute; bottom: 8px; left: 8px;
+      width: clamp(180px, 18vw, 240px); box-sizing: border-box;
+      max-height: min(25vh, 180px); overflow-y: auto; overflow-x: hidden;
       background: rgba(212,196,160,0.88); backdrop-filter: blur(10px);
       border: 2px solid rgba(139,115,85,0.5); border-radius: 12px;
       padding: 10px 12px; pointer-events: all;
+      z-index: 101;
       display: flex; flex-direction: column; gap: 6px;
       font-family: 'Nunito', sans-serif;
       scrollbar-width: thin; scrollbar-color: rgba(139,115,85,0.5) rgba(212,196,160,0.4);
@@ -593,9 +626,9 @@
     #horde-quest-panel::-webkit-scrollbar-track { background: rgba(139,115,85,0.15); border-radius: 3px; }
     #horde-quest-panel::-webkit-scrollbar-thumb { background: rgba(139,115,85,0.4); border-radius: 3px; }
 
-    /* Bottom-left event cards */
+    /* Event cards (bottom-right, left of minimap) */
     #horde-event-panel {
-      position: absolute; bottom: 8px; left: 8px;
+      position: absolute; bottom: 8px; right: clamp(170px, 16vw, 220px);
       width: clamp(160px, 15vw, 220px);
       max-height: min(40vh, 300px); overflow-y: auto;
       z-index: 101; pointer-events: all;
@@ -607,29 +640,15 @@
     #horde-event-panel::-webkit-scrollbar-track { background: rgba(139,115,85,0.15); border-radius: 3px; }
     #horde-event-panel::-webkit-scrollbar-thumb { background: rgba(139,115,85,0.4); border-radius: 3px; }
 
-    /* Right upgrade panel (below quests) */
-    #horde-upgrade-panel {
-      position: absolute; right: 8px;
-      width: clamp(160px, 15vw, 220px);
-      max-height: min(35vh, 280px); overflow-y: auto;
-      background: rgba(212,196,160,0.88); backdrop-filter: blur(10px);
-      border: 2px solid rgba(139,115,85,0.5); border-radius: 12px;
-      padding: 10px 12px; z-index: 101; pointer-events: all;
-      display: flex; flex-direction: column; gap: 4px;
-      font-family: 'Nunito', sans-serif;
-      scrollbar-width: thin; scrollbar-color: rgba(139,115,85,0.5) rgba(212,196,160,0.4);
-    }
-    #horde-upgrade-panel::-webkit-scrollbar { width: 5px; }
-    #horde-upgrade-panel::-webkit-scrollbar-track { background: rgba(139,115,85,0.15); border-radius: 3px; }
-    #horde-upgrade-panel::-webkit-scrollbar-thumb { background: rgba(139,115,85,0.4); border-radius: 3px; }
-
     /* Bottom-right minimap */
     #horde-minimap {
       position: absolute; bottom: 8px; right: 8px;
       width: clamp(150px, 15vw, 200px); height: clamp(150px, 15vw, 200px);
-      background: rgba(0,0,0,0.6); border: 2px solid rgba(139,115,85,0.7);
-      border-radius: 8px; z-index: 101; pointer-events: all;
+      background: #0d1a0d;
+      border: 1px solid rgba(106,180,255,0.25);
+      border-radius: 10px; z-index: 101; pointer-events: all;
       cursor: pointer; overflow: hidden;
+      box-shadow: 0 0 12px rgba(0,0,0,0.6), inset 0 0 8px rgba(0,0,0,0.4);
     }
 
     /* Always-on voice pulsing */
@@ -775,22 +794,22 @@
     }
     #voice-text-input:focus { border-color: #8B7355; }
 
-    /* ─── TALKING PORTRAIT ────────────────────────────── */
+    /* ─── TALKING PORTRAIT (left sidebar child) ────────── */
     #talking-portrait {
-      position: absolute;
-      right: 8px;
-      top: 8px;
-      width: 250px;
-      height: 250px;
+      position: relative;
+      width: 75%; box-sizing: border-box;
+      aspect-ratio: 1;
       overflow: hidden;
-      z-index: 102;
-      opacity: 0;
+      border-radius: 12px;
+      border: 2px solid rgba(139,115,85,0.5);
+      background: rgba(212,196,160,0.88);
+      backdrop-filter: blur(10px);
+      opacity: 1;
       transition: opacity 0.3s ease;
       pointer-events: none;
     }
-    #talking-portrait.visible { opacity: 1; }
     #talking-portrait .portrait-frame {
-      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      position: absolute; top: -16%; left: -16%; width: 132%; height: 132%;
       image-rendering: pixelated; object-fit: contain;
     }
     #talking-portrait .portrait-idle { opacity: 1; }
@@ -798,10 +817,10 @@
     #talking-portrait.speaking .portrait-idle { opacity: 0; }
     #talking-portrait.speaking .portrait-talk { opacity: 1; }
 
-    /* Speech bubble */
+    /* Speech bubble (appears to the right of portrait) */
     #talking-portrait .portrait-bubble {
       position: absolute;
-      right: 110%;
+      left: 105%;
       top: 8px;
       width: 220px;
       padding: 8px 10px;

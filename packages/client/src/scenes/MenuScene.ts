@@ -1,7 +1,6 @@
 import Phaser from 'phaser';
 import { FirebaseSync } from '../network/FirebaseSync';
 import { Matchmaking } from '../network/Matchmaking';
-import { getSoloMaps, MapDef } from '@prompt-battle/shared';
 import { SettingsPanel } from '../systems/SettingsPanel';
 import { GameSettings } from '../systems/GameSettings';
 
@@ -9,16 +8,26 @@ export class MenuScene extends Phaser.Scene {
   private matchmaking!: Matchmaking;
   private statusText!: Phaser.GameObjects.Text;
   private floatingShapes: { sprite: Phaser.GameObjects.Image; vx: number; vy: number; rot: number }[] = [];
-  private mapPickerContainer: Phaser.GameObjects.Container | null = null;
-  private mapPickerZones: Phaser.GameObjects.Zone[] = [];
   private muted: boolean = GameSettings.getInstance().get('muteAll');
   private settingsPanel = new SettingsPanel();
+  private _resizeTimer: number | null = null;
+  private _resizeHandler: (() => void) | null = null;
 
   constructor() {
     super({ key: 'MenuScene' });
   }
 
   create() {
+    // Rebuild layout on window resize (debounced)
+    this._resizeHandler = () => {
+      if (this._resizeTimer !== null) clearTimeout(this._resizeTimer);
+      this._resizeTimer = window.setTimeout(() => { this.scene.restart(); }, 200);
+    };
+    this.scale.on('resize', this._resizeHandler);
+    this.events.once('shutdown', () => {
+      if (this._resizeHandler) this.scale.off('resize', this._resizeHandler);
+      if (this._resizeTimer !== null) clearTimeout(this._resizeTimer);
+    });
     const { width, height } = this.cameras.main;
 
     // === BACKGROUND: dark earthy gradient ===
@@ -429,244 +438,11 @@ export class MenuScene extends Phaser.Scene {
     return { container, zone };
   }
 
-  private async findMatch() {
-    this.statusText.setText('Connecting...');
-    this.tweens.add({ targets: this.statusText, alpha: { from: 0, to: 1 }, duration: 300 });
-
-    try {
-      const firebase = FirebaseSync.getInstance();
-      await firebase.initialize();
-      this.statusText.setText('Signed in. Searching for opponent...');
-
-      let dots = 0;
-      const dotTimer = this.time.addEvent({
-        delay: 500,
-        callback: () => {
-          dots = (dots + 1) % 4;
-          this.statusText.setText('Searching for opponent' + '.'.repeat(dots));
-        },
-        loop: true,
-      });
-
-      const pulseTween = this.tweens.add({
-        targets: this.statusText,
-        alpha: { from: 1, to: 0.5 },
-        duration: 800, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
-      });
-
-      this.matchmaking = new Matchmaking(firebase);
-      const matchResult = await this.matchmaking.joinQueue();
-
-      dotTimer.destroy();
-      pulseTween.stop();
-      this.statusText.setAlpha(1);
-
-      if (matchResult.gameId) {
-        this.playsfx('wave_start', 0.5);
-        this.statusText.setText('Match found!');
-        this.statusText.setColor('#6B9B5E');
-
-        this.cameras.main.flash(300, 107, 155, 94, false);
-
-        this.time.delayedCall(800, () => {
-          this.cameras.main.fadeOut(400, 15, 26, 10);
-          this.cameras.main.once('camerafadeoutcomplete', () => {
-            this.scene.start('DraftScene', {
-              gameId: matchResult.gameId,
-              playerId: firebase.getPlayerId(),
-              isLocal: false,
-              amPlayer1: matchResult.amPlayer1,
-            });
-          });
-        });
-      }
-    } catch (err) {
-      this.statusText.setText('Error: ' + (err as Error).message);
-      this.statusText.setColor('#BB4444');
-    }
-  }
-
-  private startJungleLane() {
-    this.cameras.main.fadeOut(400, 15, 26, 10);
-    this.cameras.main.once('camerafadeoutcomplete', () => {
-      this.scene.start('JungleLaneScene');
-    });
-  }
-
   private startHordeMode() {
     this.playsfx('wave_start', 0.4);
     this.cameras.main.fadeOut(400, 15, 26, 10);
     this.cameras.main.once('camerafadeoutcomplete', () => {
       this.scene.start('HordeScene', { mapId: 'default' });
-    });
-  }
-
-  private showMapPicker() {
-    if (this.mapPickerContainer) {
-      this.mapPickerContainer.destroy();
-      this.mapPickerZones.forEach(z => z.destroy());
-    }
-    this.mapPickerZones = [];
-
-    const { width, height } = this.cameras.main;
-    const maps = getSoloMaps();
-    const container = this.add.container(width / 2, height / 2).setDepth(200);
-    this.mapPickerContainer = container;
-
-    // Dim overlay
-    const overlay = this.add.graphics();
-    overlay.fillStyle(0x0a0a0a, 0.8);
-    overlay.fillRect(-width / 2, -height / 2, width, height);
-    container.add(overlay);
-
-    // Title
-    const titleBg = this.add.graphics();
-    titleBg.fillStyle(0x1a2e10, 0.95);
-    titleBg.fillRoundedRect(-160, -height * 0.35 - 22, 320, 44, 6);
-    titleBg.lineStyle(2, 0x3a5a28, 0.8);
-    titleBg.strokeRoundedRect(-160, -height * 0.35 - 22, 320, 44, 6);
-    container.add(titleBg);
-
-    const title = this.add.text(0, -height * 0.35, 'CHOOSE YOUR MAP', {
-      fontSize: '24px', color: '#FFD93D', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
-      letterSpacing: 2,
-    }).setOrigin(0.5);
-    container.add(title);
-
-    // Map cards
-    const cardW = 260, cardH = 140, gap = 20;
-    const totalW = maps.length * cardW + (maps.length - 1) * gap;
-    const startX = -totalW / 2 + cardW / 2;
-    const cardY = -20;
-
-    const cardColors = [
-      { fill: 0x2a4a1e, border: 0x4a7a3e, accent: '#6B9B5E' },
-      { fill: 0x1e3a5a, border: 0x3a6a9a, accent: '#5588BB' },
-      { fill: 0x5a4a1e, border: 0x8a7a3a, accent: '#BBA855' },
-      { fill: 0x4a2a2a, border: 0x7a4a4a, accent: '#BB6644' },
-    ];
-
-    maps.forEach((map, i) => {
-      const cx = startX + i * (cardW + gap);
-      const cc = cardColors[i % cardColors.length];
-
-      const cardShadow = this.add.graphics();
-      cardShadow.fillStyle(0x000000, 0.5);
-      cardShadow.fillRoundedRect(cx - cardW / 2 + 5, cardY - cardH / 2 + 5, cardW, cardH, 8);
-      container.add(cardShadow);
-
-      const bg = this.add.graphics();
-      bg.fillStyle(0x1a2e10, 0.92);
-      bg.fillRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, cardH, 8);
-      bg.fillStyle(cc.fill, 0.8);
-      bg.fillRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, 36, { tl: 8, tr: 8, bl: 0, br: 0 });
-      bg.lineStyle(2, cc.border, 1);
-      bg.strokeRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, cardH, 8);
-      container.add(bg);
-
-      const nameText = this.add.text(cx, cardY - cardH / 2 + 18, map.name, {
-        fontSize: '16px', color: '#d4c8a0', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
-        stroke: '#000000', strokeThickness: 2,
-      }).setOrigin(0.5);
-      container.add(nameText);
-
-      const descText = this.add.text(cx, cardY + 5, map.description, {
-        fontSize: '11px', color: '#a89870', fontFamily: '"Nunito", sans-serif',
-        wordWrap: { width: cardW - 24 }, align: 'center',
-      }).setOrigin(0.5, 0);
-      container.add(descText);
-
-      const slotsText = this.add.text(cx, cardY + cardH / 2 - 18, `${map.campSlots.length * 2 + (map.trollSlot ? 1 : 0)} camps`, {
-        fontSize: '10px', color: cc.accent, fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
-        stroke: '#000000', strokeThickness: 2,
-      }).setOrigin(0.5);
-      container.add(slotsText);
-
-      const zone = this.add.zone(width / 2 + cx, height / 2 + cardY, cardW, cardH)
-        .setInteractive({ useHandCursor: true }).setDepth(201);
-      this.mapPickerZones.push(zone);
-
-      zone.on('pointerover', () => {
-        this.playsfx('button_click', 0.15);
-        bg.clear();
-        bg.fillStyle(0x243a18, 0.95);
-        bg.fillRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, cardH, 8);
-        bg.fillStyle(cc.fill, 0.95);
-        bg.fillRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, 36, { tl: 8, tr: 8, bl: 0, br: 0 });
-        bg.lineStyle(2, 0xFFD93D, 1);
-        bg.strokeRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, cardH, 8);
-      });
-      zone.on('pointerout', () => {
-        bg.clear();
-        bg.fillStyle(0x1a2e10, 0.92);
-        bg.fillRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, cardH, 8);
-        bg.fillStyle(cc.fill, 0.8);
-        bg.fillRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, 36, { tl: 8, tr: 8, bl: 0, br: 0 });
-        bg.lineStyle(2, cc.border, 1);
-        bg.strokeRoundedRect(cx - cardW / 2, cardY - cardH / 2, cardW, cardH, 8);
-      });
-      zone.on('pointerdown', () => {
-        this.playsfx('button_click', 0.4);
-        this.selectMap(map.id);
-      });
-    });
-
-    // Back button
-    const backY = cardY + cardH / 2 + 55;
-    const backBg = this.add.graphics();
-    backBg.fillStyle(0x6B2222, 0.8);
-    backBg.fillRoundedRect(-50, backY - 15, 100, 30, 6);
-    backBg.lineStyle(2, 0x993333, 0.9);
-    backBg.strokeRoundedRect(-50, backY - 15, 100, 30, 6);
-    container.add(backBg);
-
-    const backText = this.add.text(0, backY, 'BACK', {
-      fontSize: '14px', color: '#d4c8a0', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
-      stroke: '#000000', strokeThickness: 2,
-    }).setOrigin(0.5);
-    container.add(backText);
-
-    const backZone = this.add.zone(width / 2, height / 2 + backY, 100, 30)
-      .setInteractive({ useHandCursor: true }).setDepth(201);
-    this.mapPickerZones.push(backZone);
-    backZone.on('pointerdown', () => {
-      this.playsfx('button_click', 0.4);
-      container.destroy();
-      this.mapPickerZones.forEach(z => z.destroy());
-      this.mapPickerZones = [];
-      this.mapPickerContainer = null;
-    });
-    backZone.on('pointerover', () => {
-      this.playsfx('button_click', 0.15);
-      backBg.clear();
-      backBg.fillStyle(0x993333, 0.9);
-      backBg.fillRoundedRect(-50, backY - 15, 100, 30, 6);
-      backBg.lineStyle(2, 0xFFD93D, 1);
-      backBg.strokeRoundedRect(-50, backY - 15, 100, 30, 6);
-    });
-    backZone.on('pointerout', () => {
-      backBg.clear();
-      backBg.fillStyle(0x6B2222, 0.8);
-      backBg.fillRoundedRect(-50, backY - 15, 100, 30, 6);
-      backBg.lineStyle(2, 0x993333, 0.9);
-      backBg.strokeRoundedRect(-50, backY - 15, 100, 30, 6);
-    });
-
-    container.setAlpha(0).setScale(0.9);
-    this.tweens.add({ targets: container, alpha: 1, scaleX: 1, scaleY: 1, duration: 300, ease: 'Back.easeOut' });
-  }
-
-  private selectMap(mapId: string) {
-    if (this.mapPickerContainer) {
-      this.mapPickerContainer.destroy();
-      this.mapPickerZones.forEach(z => z.destroy());
-      this.mapPickerZones = [];
-      this.mapPickerContainer = null;
-    }
-
-    this.cameras.main.fadeOut(400, 15, 26, 10);
-    this.cameras.main.once('camerafadeoutcomplete', () => {
-      this.scene.start('HordeScene', { mapId });
     });
   }
 
@@ -732,27 +508,4 @@ export class MenuScene extends Phaser.Scene {
     this.sound.play(key, { volume });
   }
 
-  private async startLocalTest() {
-    this.statusText.setText('Starting local test...');
-    this.tweens.add({ targets: this.statusText, alpha: { from: 0, to: 1 }, duration: 300 });
-
-    try {
-      const firebase = FirebaseSync.getInstance();
-      await firebase.initialize();
-
-      const gameId = await firebase.createLocalGame();
-
-      this.cameras.main.fadeOut(400, 15, 26, 10);
-      this.cameras.main.once('camerafadeoutcomplete', () => {
-        this.scene.start('DraftScene', {
-          gameId,
-          playerId: firebase.getPlayerId(),
-          isLocal: true,
-        });
-      });
-    } catch (err) {
-      this.statusText.setText('Error: ' + (err as Error).message);
-      this.statusText.setColor('#BB4444');
-    }
-  }
 }
