@@ -32,7 +32,7 @@ export class TtsService {
   private playing = false;
   private currentAudio: HTMLAudioElement | null = null;
   private enabled = true;
-  private volume = 1.0;
+  private volume = 0.3;
 
   onPlayStart?: (charId: string, audioEl: HTMLAudioElement) => void;
   onPlayEnd?: (charId: string) => void;

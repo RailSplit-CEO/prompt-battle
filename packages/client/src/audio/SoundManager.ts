@@ -57,7 +57,7 @@ export class SoundManager {
   private scene: Phaser.Scene;
   private loaded = new Set<string>();
   private muted: boolean;
-  private globalVolume = 0.5;
+  private globalVolume = 0.08;
   private loading = new Set<string>(); // tracks in-flight lazy loads
 
   constructor(scene: Phaser.Scene) {

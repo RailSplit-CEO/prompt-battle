@@ -2127,6 +2127,9 @@ export class HordeScene extends Phaser.Scene {
   }
 
   create() {
+    // Smooth fade-in from menu transition
+    this.cameras.main.fadeIn(600, 15, 26, 10);
+
     // ─── Init Sound Manager ──────────────────────────────────
     this.sfx = new SoundManager(this);
     this.sfx.init();
@@ -3644,6 +3647,8 @@ export class HordeScene extends Phaser.Scene {
       if (t.hp <= 0) {
         t.alive = false;
         t.hp = 0;
+        // Screen shake on tower destruction
+        this.cameras.main.shake(200, 0.012);
         // Quest: track tower kills (attacker is enemy of tower)
         const towerKillerTeam: 1 | 2 = t.team === 1 ? 2 : 1;
         this._questTowersDestroyed[towerKillerTeam]++;
@@ -4096,6 +4101,12 @@ export class HordeScene extends Phaser.Scene {
     // Test TTS on startup — you should hear "Ready for battle, commander."
     console.log('[Voice] Firing test TTS...');
     this.ttsService!.test();
+  }
+
+  /** Show AI response text on both voice orb and portrait speech bubble */
+  private showAIResponse(text: string, durationMs?: number): void {
+    this.voiceOrb?.showResponse(text, durationMs);
+    this.talkingPortrait?.showMessage(text);
   }
 
   private resumeMicIfNeeded() {
@@ -5028,12 +5039,19 @@ export class HordeScene extends Phaser.Scene {
       let html = '';
       for (const r of resources) {
         const pct = Math.min(100, (r.amount / maxRes) * 100);
+        // Detect value change for flash animation
+        const prevKey = `res_${r.name}`;
+        const prev = (this as any)._prevResAmounts?.[prevKey] ?? r.amount;
+        const flashClass = r.amount > prev ? 'res-gain' : r.amount < prev ? 'res-loss' : '';
+        if (!(this as any)._prevResAmounts) (this as any)._prevResAmounts = {};
+        (this as any)._prevResAmounts[prevKey] = r.amount;
+
         html += `<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
           <span style="font-size:14px;">${r.emoji}</span>
           <div style="flex:1;">
             <div style="display:flex;justify-content:space-between;font-size:12px;font-weight:700;">
               <span style="color:#6a5a4a;">${r.name}</span>
-              <span style="color:${r.color};">${r.amount}</span>
+              <span class="${flashClass}" style="color:${r.color};display:inline-block;">${r.amount}</span>
             </div>
             <div style="height:4px;background:#a89870;border-radius:2px;overflow:hidden;margin-top:2px;">
               <div style="height:100%;width:${pct}%;background:${r.gradient};border-radius:2px;transition:width 0.3s ease;"></div>
@@ -9038,6 +9056,7 @@ export class HordeScene extends Phaser.Scene {
       if (n.hp <= 0) {
         this.gameOver = true;
         this.winner = n.team === 1 ? 2 : 1;
+        this.cameras.main.shake(500, 0.02);
         this.sfx.playAt('nexus_destroyed', n.x, n.y);
         this.sfx.playGlobal(this.winner === this.myTeam ? 'victory' : 'defeat');
         this.profilingRecorder?.finalize();
@@ -9152,17 +9171,23 @@ export class HordeScene extends Phaser.Scene {
       fontSize: '18px', color: '#45E6B0', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
       backgroundColor: '#0d1a0d', padding: { x: 16, y: 8 },
     }).setOrigin(0.5).setScrollFactor(0).setDepth(201).setAlpha(0).setInteractive({ useHandCursor: true });
-    playAgainBtn.on('pointerdown', () => { this.cleanupHTML(); this.scene.restart(); });
-    playAgainBtn.on('pointerover', () => playAgainBtn.setColor('#FFD93D'));
-    playAgainBtn.on('pointerout', () => playAgainBtn.setColor('#45E6B0'));
+    playAgainBtn.on('pointerdown', () => {
+      this.cameras.main.fadeOut(400, 15, 26, 10);
+      this.cameras.main.once('camerafadeoutcomplete', () => { this.cleanupHTML(); this.scene.restart(); });
+    });
+    playAgainBtn.on('pointerover', () => { playAgainBtn.setColor('#FFD93D'); playAgainBtn.setScale(1.05); });
+    playAgainBtn.on('pointerout', () => { playAgainBtn.setColor('#45E6B0'); playAgainBtn.setScale(1); });
 
     const menuBtn = this.add.text(cx + 90, btnY, 'BACK TO MENU', {
       fontSize: '18px', color: '#45E6B0', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
       backgroundColor: '#0d1a0d', padding: { x: 16, y: 8 },
     }).setOrigin(0.5).setScrollFactor(0).setDepth(201).setAlpha(0).setInteractive({ useHandCursor: true });
-    menuBtn.on('pointerdown', () => { this.cleanupHTML(); this.scene.start('MenuScene'); });
-    menuBtn.on('pointerover', () => menuBtn.setColor('#FFD93D'));
-    menuBtn.on('pointerout', () => menuBtn.setColor('#45E6B0'));
+    menuBtn.on('pointerdown', () => {
+      this.cameras.main.fadeOut(400, 15, 26, 10);
+      this.cameras.main.once('camerafadeoutcomplete', () => { this.cleanupHTML(); this.scene.start('MenuScene'); });
+    });
+    menuBtn.on('pointerover', () => { menuBtn.setColor('#FFD93D'); menuBtn.setScale(1.05); });
+    menuBtn.on('pointerout', () => { menuBtn.setColor('#45E6B0'); menuBtn.setScale(1); });
 
     this.tweens.add({ targets: playAgainBtn, alpha: 1, duration: 400, delay: btnDelay });
     this.tweens.add({ targets: menuBtn, alpha: 1, duration: 400, delay: btnDelay + 100 });
@@ -9718,7 +9743,7 @@ export class HordeScene extends Phaser.Scene {
         if (gCmd.responseType === 'unrecognized' && !gCmd.workflow?.length && gCmd.targetType !== 'workflow') {
           const quip = gCmd.narration || this.getContextualHint(team);
           this.showFeedback(quip, '#FFD93D');
-          this.voiceOrb?.showResponse(quip);
+          this.showAIResponse(quip);
           const voiceHoard = this.selectedHoard !== 'all' ? this.selectedHoard : 'all';
           this.ttsService?.speak(voiceHoard, quip);
           const confSel = this.units.filter(u => u.team === team && !u.dead);
@@ -9727,7 +9752,7 @@ export class HordeScene extends Phaser.Scene {
         } else if (gCmd.responseType === 'status_query' || gCmd.targetType === 'query') {
           const report = gCmd.statusReport || gCmd.narration || 'All good, Commander!';
           this.showFeedback(report, '#6CC4FF');
-          this.voiceOrb?.showResponse(report);
+          this.showAIResponse(report);
           // Use selectedHoard for status queries — the "narrator" for that group
           const statusVoice = this.selectedHoard !== 'all' ? this.selectedHoard : 'all';
           this.ttsService?.speak(statusVoice, report);
@@ -9750,7 +9775,7 @@ export class HordeScene extends Phaser.Scene {
           }
           // TTS voice = selected hoard (who's responding), not target animal
           if (gCmd.narration) {
-            this.voiceOrb?.showResponse(gCmd.narration);
+            this.showAIResponse(gCmd.narration);
             const ttsVoice = this.selectedHoard !== 'all' ? this.selectedHoard : 'all';
             console.log(`[TTS] Voice: selectedHoard=${this.selectedHoard} → "${ttsVoice}"`);
             this.ttsService?.speak(ttsVoice, gCmd.narration);

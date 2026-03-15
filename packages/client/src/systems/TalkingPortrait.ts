@@ -8,8 +8,9 @@
 // This creates natural-looking lip sync that tracks the actual audio.
 
 const AVATAR_BASE = 'assets/enemies/avatars';
-const FADE_OUT_DELAY = 1500;
+const FADE_OUT_DELAY = 2000;
 const VOLUME_THRESHOLD = 0.08; // RMS threshold to trigger mouth open
+const SPEECH_BUBBLE_TIMEOUT = 6000; // auto-dismiss speech bubble
 
 const HAS_TALK_AVATAR = new Set([
   'gnome', 'turtle', 'skull', 'spider', 'hyena', 'panda',
@@ -23,12 +24,16 @@ interface FrameCache {
 
 export class TalkingPortrait {
   private container: HTMLDivElement;
+  private portraitFrame: HTMLDivElement;
   private baseImg: HTMLImageElement;
   private talkImg: HTMLImageElement;
+  private speechBubble: HTMLDivElement;
+  private speechText: HTMLSpanElement;
   private cache: Map<string, FrameCache> = new Map();
   private currentChar: string | null = null;
   private mouthOpen = false;
   private hideTimer: number | null = null;
+  private bubbleTimer: number | null = null;
 
   // Audio analysis
   private audioCtx: AudioContext | null = null;
@@ -39,20 +44,34 @@ export class TalkingPortrait {
   private connectedAudio: HTMLAudioElement | null = null;
 
   constructor(parent: HTMLElement) {
+    // Outer container — anchored bottom-left
     this.container = document.createElement('div');
     this.container.id = 'talking-portrait';
+
+    // Portrait frame with border ring
+    this.portraitFrame = document.createElement('div');
+    this.portraitFrame.className = 'portrait-frame';
 
     // Base image — always visible
     this.baseImg = document.createElement('img');
     this.baseImg.alt = '';
-    this.baseImg.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;image-rendering:pixelated;object-fit:contain;';
-    this.container.appendChild(this.baseImg);
+    this.baseImg.className = 'portrait-img';
+    this.portraitFrame.appendChild(this.baseImg);
 
     // Talk overlay — transparent bg mouth on top
     this.talkImg = document.createElement('img');
     this.talkImg.alt = '';
-    this.talkImg.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;image-rendering:pixelated;object-fit:contain;opacity:0;';
-    this.container.appendChild(this.talkImg);
+    this.talkImg.className = 'portrait-img portrait-talk';
+    this.portraitFrame.appendChild(this.talkImg);
+
+    this.container.appendChild(this.portraitFrame);
+
+    // Speech bubble — extends rightward from portrait
+    this.speechBubble = document.createElement('div');
+    this.speechBubble.className = 'portrait-speech-bubble';
+    this.speechText = document.createElement('span');
+    this.speechBubble.appendChild(this.speechText);
+    this.container.appendChild(this.speechBubble);
 
     parent.appendChild(this.container);
   }
@@ -82,14 +101,31 @@ export class TalkingPortrait {
     this.talkImg.src = frames.talk;
     this.talkImg.style.opacity = '0';
 
-    // Show
+    // Show with bounce entrance
     this.container.classList.add('visible');
+    this.portraitFrame.classList.add('speaking');
 
     // Connect audio analyser for amplitude-based mouth sync
     if (audioEl) {
       this.connectAudio(audioEl);
       this.startAnalysisLoop(frames);
     }
+  }
+
+  /** Show a speech bubble message next to the portrait */
+  showMessage(text: string, duration = SPEECH_BUBBLE_TIMEOUT): void {
+    if (this.bubbleTimer !== null) {
+      clearTimeout(this.bubbleTimer);
+      this.bubbleTimer = null;
+    }
+
+    this.speechText.textContent = text;
+    this.speechBubble.classList.add('visible');
+
+    this.bubbleTimer = window.setTimeout(() => {
+      this.speechBubble.classList.remove('visible');
+      this.bubbleTimer = null;
+    }, duration);
   }
 
   stopTalking(): void {
@@ -105,6 +141,9 @@ export class TalkingPortrait {
     // Close mouth
     this.talkImg.style.opacity = '0';
     this.mouthOpen = false;
+
+    // Remove speaking glow
+    this.portraitFrame.classList.remove('speaking');
 
     // Fade out after delay
     if (this.hideTimer !== null) clearTimeout(this.hideTimer);
@@ -188,6 +227,7 @@ export class TalkingPortrait {
   destroy(): void {
     if (this.rafId !== null) cancelAnimationFrame(this.rafId);
     if (this.hideTimer !== null) clearTimeout(this.hideTimer);
+    if (this.bubbleTimer !== null) clearTimeout(this.bubbleTimer);
     this.disconnectSource();
     try { this.audioCtx?.close(); } catch { /* */ }
     this.audioCtx = null;

@@ -349,7 +349,7 @@
       position: absolute;
       top: 80px;
       right: 8px;
-      width: 225px;
+      width: 200px;
       background: rgba(27, 16, 64, 0.94);
       border: 3px solid #3D2070;
       border-radius: 16px;
@@ -454,7 +454,8 @@
     }
     #horde-top-bar .ctrl-card {
       background: rgba(212,196,160,0.88); backdrop-filter: blur(8px);
-      border: 2px solid rgba(139,115,85,0.6); border-radius: 10px;
+      -webkit-backdrop-filter: blur(8px);
+      border: 2px solid rgba(139,115,85,0.6); border-radius: 12px;
       padding: 6px 12px; text-align: center; min-width: 90px;
       cursor: pointer; transition: all 0.15s ease; position: relative;
     }
@@ -492,7 +493,8 @@
     /* Right resource panel */
     #horde-resource-panel {
       position: absolute; top: 8px; right: 8px; width: 200px;
-      background: rgba(212,196,160,0.9); backdrop-filter: blur(10px);
+      background: rgba(212,196,160,0.88); backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
       border: 2px solid rgba(139,115,85,0.6); border-radius: 12px;
       padding: 10px 12px; z-index: 101; pointer-events: all;
       font-family: 'Nunito', sans-serif;
@@ -502,8 +504,9 @@
     #horde-cmd-log {
       position: absolute; top: 8px; left: 8px; width: 280px;
       max-height: calc(100vh - 100px); overflow-y: auto;
-      background: rgba(212,196,160,0.88); backdrop-filter: blur(10px);
-      border: 2px solid rgba(139,115,85,0.5); border-radius: 12px;
+      background: rgba(212,196,160,0.88); backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 2px solid rgba(139,115,85,0.6); border-radius: 12px;
       padding: 10px 12px; z-index: 101; pointer-events: all;
       font-family: 'Nunito', sans-serif;
       scrollbar-width: thin; scrollbar-color: rgba(139,115,85,0.5) rgba(212,196,160,0.4);
@@ -514,12 +517,16 @@
 
     /* Right event cards — positioned dynamically below resource panel */
     #horde-quest-panel {
-      position: absolute; right: 8px; width: 220px;
-      max-height: calc(100vh - 200px); overflow-y: auto;
+      position: absolute; right: 8px; width: 200px;
+      max-height: calc(100vh - 360px); overflow-y: auto;
       z-index: 101; pointer-events: all;
       display: flex; flex-direction: column; gap: 6px;
       font-family: 'Nunito', sans-serif;
       scrollbar-width: thin; scrollbar-color: rgba(139,115,85,0.5) transparent;
+      background: rgba(212,196,160,0.7); backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 2px solid rgba(139,115,85,0.6); border-radius: 12px;
+      padding: 8px;
     }
     #horde-quest-panel::-webkit-scrollbar { width: 5px; }
     #horde-quest-panel::-webkit-scrollbar-track { background: rgba(139,115,85,0.15); border-radius: 3px; }
@@ -529,8 +536,8 @@
     #horde-minimap {
       position: absolute; bottom: 8px; right: 8px;
       width: 200px; height: 200px;
-      background: rgba(0,0,0,0.6); border: 2px solid rgba(139,115,85,0.7);
-      border-radius: 8px; z-index: 101; pointer-events: all;
+      background: rgba(0,0,0,0.6); border: 2px solid rgba(139,115,85,0.6);
+      border-radius: 12px; z-index: 101; pointer-events: all;
       cursor: pointer; overflow: hidden;
     }
 
@@ -540,11 +547,24 @@
       50% { box-shadow: 0 0 12px rgba(255,107,107,0.5); }
     }
 
+    /* Resource value change flash */
+    @keyframes resource-gain {
+      0% { color: #45E6B0; transform: scale(1.2); }
+      100% { color: inherit; transform: scale(1); }
+    }
+    @keyframes resource-loss {
+      0% { color: #FF6B6B; transform: scale(1.2); }
+      100% { color: inherit; transform: scale(1); }
+    }
+    .res-gain { animation: resource-gain 0.4s ease-out; }
+    .res-loss { animation: resource-loss 0.4s ease-out; }
+
     /* ─── VOICE ORB ──────────────────────────────────────── */
     #voice-orb-container {
       position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
       display: flex; flex-direction: column; align-items: center; gap: 8px;
       z-index: 102; pointer-events: all;
+      /* Avoid overlapping the portrait (left 12px + 88px + gap) */
     }
     #voice-transcript-area {
       text-align: center; max-width: 400px; min-height: 20px;
@@ -669,28 +689,174 @@
       padding: 10px 16px; font-size: 14px;
       background: linear-gradient(180deg, rgba(232,220,196,0.95) 0%, rgba(212,196,160,0.95) 100%);
       color: #2a1a0a;
-      border: 2px solid rgba(139,115,85,0.7); border-radius: 10px; outline: none;
+      border: 2px solid rgba(139,115,85,0.7); border-radius: 12px; outline: none;
       box-shadow: 0 2px 8px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.3);
       font-family: 'Fredoka', sans-serif; font-weight: 600;
       width: min(400px, 80vw);
-      transition: border-color 0.2s ease;
+      transition: border-color 0.2s ease, opacity 0.25s ease, transform 0.25s cubic-bezier(0.16,1,0.3,1);
     }
     #voice-text-input:focus { border-color: #8B7355; }
+    #voice-text-input.hidden {
+      opacity: 0; transform: translateY(8px) scaleY(0.8); pointer-events: none;
+    }
+    #voice-text-input.shown {
+      opacity: 1; transform: translateY(0) scaleY(1); pointer-events: all;
+    }
 
     /* ─── TALKING PORTRAIT ────────────────────────────── */
     #talking-portrait {
       position: absolute;
-      bottom: 100px;
-      left: 8px;
-      width: 200px;
-      height: 200px;
-      overflow: hidden;
+      bottom: 12px;
+      left: 12px;
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
       z-index: 102;
-      opacity: 0;
-      transition: opacity 0.3s ease;
       pointer-events: none;
+      opacity: 0;
+      transform: translateY(12px) scale(0.92);
+      transition: opacity 0.35s cubic-bezier(0.16,1,0.3,1), transform 0.35s cubic-bezier(0.16,1,0.3,1);
     }
-    #talking-portrait.visible { opacity: 1; }
+    #talking-portrait.visible {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+
+    /* Portrait circular frame */
+    .portrait-frame {
+      position: relative;
+      width: 88px;
+      height: 88px;
+      border-radius: 50%;
+      overflow: hidden;
+      border: 3px solid rgba(139,115,85,0.7);
+      background: rgba(212,196,160,0.9);
+      box-shadow: 0 2px 12px rgba(0,0,0,0.35);
+      flex-shrink: 0;
+      transition: border-color 0.3s ease, box-shadow 0.3s ease;
+    }
+    .portrait-frame.speaking {
+      border-color: #9B7FD4;
+      box-shadow: 0 0 16px rgba(155,127,212,0.5), 0 0 32px rgba(155,127,212,0.2), 0 2px 12px rgba(0,0,0,0.35);
+      animation: portrait-speak-glow 1.5s ease-in-out infinite;
+    }
+    @keyframes portrait-speak-glow {
+      0%, 100% { box-shadow: 0 0 12px rgba(155,127,212,0.35), 0 2px 12px rgba(0,0,0,0.35); }
+      50% { box-shadow: 0 0 22px rgba(155,127,212,0.6), 0 0 40px rgba(155,127,212,0.2), 0 2px 12px rgba(0,0,0,0.35); }
+    }
+
+    .portrait-img {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      image-rendering: pixelated;
+      object-fit: contain;
+    }
+    .portrait-talk {
+      opacity: 0;
+      transition: opacity 0.05s ease;
+    }
+
+    /* Speech bubble */
+    .portrait-speech-bubble {
+      background: rgba(212,196,160,0.94);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 2px solid rgba(139,115,85,0.6);
+      border-radius: 12px;
+      padding: 8px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #4a3520;
+      font-family: 'Nunito', sans-serif;
+      max-width: 260px;
+      line-height: 1.35;
+      position: relative;
+      opacity: 0;
+      transform: scale(0.9) translateX(-8px);
+      transition: opacity 0.25s cubic-bezier(0.16,1,0.3,1), transform 0.25s cubic-bezier(0.16,1,0.3,1);
+      pointer-events: all;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+    .portrait-speech-bubble.visible {
+      opacity: 1;
+      transform: scale(1) translateX(0);
+    }
+    /* Speech bubble left arrow/tail */
+    .portrait-speech-bubble::before {
+      content: '';
+      position: absolute;
+      left: -8px;
+      bottom: 14px;
+      width: 0; height: 0;
+      border-top: 6px solid transparent;
+      border-bottom: 6px solid transparent;
+      border-right: 8px solid rgba(212,196,160,0.94);
+    }
+    .portrait-speech-bubble::after {
+      content: '';
+      position: absolute;
+      left: -11px;
+      bottom: 13px;
+      width: 0; height: 0;
+      border-top: 7px solid transparent;
+      border-bottom: 7px solid transparent;
+      border-right: 9px solid rgba(139,115,85,0.6);
+      z-index: -1;
+    }
+
+    /* ─── HUD ENTRANCE ANIMATIONS ──────────────────────── */
+    @keyframes hud-slide-left {
+      from { opacity: 0; transform: translateX(-24px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+    @keyframes hud-slide-right {
+      from { opacity: 0; transform: translateX(24px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+    @keyframes hud-slide-down {
+      from { opacity: 0; transform: translateX(-50%) translateY(-16px); }
+      to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+    @keyframes hud-slide-up {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes hud-scale-in {
+      from { opacity: 0; transform: translateX(-50%) scale(0.9); }
+      to   { opacity: 1; transform: translateX(-50%) scale(1); }
+    }
+
+    #horde-top-bar {
+      animation: hud-slide-down 0.5s cubic-bezier(0.16,1,0.3,1) 0.1s both;
+    }
+    #horde-resource-panel {
+      animation: hud-slide-right 0.5s cubic-bezier(0.16,1,0.3,1) 0.2s both;
+    }
+    #horde-cmd-log {
+      animation: hud-slide-left 0.5s cubic-bezier(0.16,1,0.3,1) 0.15s both;
+    }
+    #horde-quest-panel {
+      animation: hud-slide-right 0.5s cubic-bezier(0.16,1,0.3,1) 0.3s both;
+    }
+    #horde-minimap {
+      animation: hud-slide-up 0.5s cubic-bezier(0.16,1,0.3,1) 0.25s both;
+    }
+    #voice-orb-container {
+      animation: hud-scale-in 0.5s cubic-bezier(0.16,1,0.3,1) 0.35s both;
+    }
+
+    /* ─── UNIFIED PANEL HOVER LIFT ─────────────────────── */
+    #horde-resource-panel,
+    #horde-cmd-log,
+    #horde-minimap {
+      transition: box-shadow 0.2s ease, border-color 0.2s ease;
+    }
+    #horde-resource-panel:hover,
+    #horde-cmd-log:hover {
+      border-color: rgba(139,115,85,0.8);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    }
   </style>
 </head>
 <body>

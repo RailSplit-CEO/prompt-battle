@@ -82,7 +82,7 @@ export class VoiceOrb {
     this.textInputEl.id = 'voice-text-input';
     this.textInputEl.type = 'text';
     this.textInputEl.placeholder = 'Type a command...';
-    this.textInputEl.style.display = 'none';
+    this.textInputEl.className = 'hidden';
     this.container.appendChild(this.textInputEl);
 
     parent.appendChild(this.container);
@@ -209,13 +209,13 @@ export class VoiceOrb {
 
   showTextInput(): void {
     this.textInputVisible = true;
-    this.textInputEl.style.display = 'block';
+    this.textInputEl.className = 'shown';
     this.textInputEl.focus();
   }
 
   hideTextInput(): void {
     this.textInputVisible = false;
-    this.textInputEl.style.display = 'none';
+    this.textInputEl.className = 'hidden';
     this.textInputEl.blur();
   }
 
