@@ -319,12 +319,12 @@ To produce a unit, you MUST own a camp of that type. Camps start neutral with de
 ARMORY: 🏛️ Each team has an Armory building on their side of the map. Players unlock equipment with resources ("unlock swords"), then units walk to the Armory to pick items up. Equipment is permanent (doesn't drop on death). Units can carry a resource AND have equipment. One equipment per unit.
 
 EQUIPMENT (unlock/upgrade, unlimited pickups — costs scale by level: ×1.0/×2.5/×5.0):
-  ⛏️ Pickaxe (40🥕+10🍖): Required to mine metal. +25% gather speed.
+  ⛏️ Pickaxe (40🥕): Required to mine metal. +25% gather speed.
   ⚔️ Sword (40🍖+15⚙️+10💎): +50% attack, +25% attack speed.
   🛡️ Shield (35🍖+15⚙️+10💎): +60% HP, -25% damage taken, -15% speed.
   👢 Boots (35🥕+10⚙️+5💎): +60% move speed, +50% pickup range.
   🚩 Banner (50🍖+20⚙️+15💎): Aura — nearby allies +20% atk, +15% speed.
-  Max level 3. Level multiplier stacks: Lvl2=×2.5, Lvl3=×5.0. E.g. Lvl3 Banner = 250🍖+100⚙️+75💎.
+  Max level 3. Level multiplier stacks: Lvl2=×2.5, Lvl3=×5.0. E.g. Lvl2 Pickaxe = 100🥕, Lvl3 Banner = 250🍖+100⚙️+75💎.
 
 MINES: ⛏️ Mine nodes on the map. Only units with a Pickaxe can mine metal. Metal is used to unlock equipment.
 
@@ -531,8 +531,9 @@ D) GATHER/FARM: "gather/farm/harvest/stockpile [resource]"
 E) COMBAT: "attack/fight/kill/raid [target]"
    → attack_camp, attack_enemies, kill_only, or nexus
 
-F) MINING: "mine/mine metal/go mine"
+F) MINING: "mine/mine metal/go mine/go mining"
    → [equip pickaxe, mine, deliver base] — ALWAYS include equip pickaxe step for mining commands
+   → The game automatically handles unlocking pickaxe if needed (gathers carrots, unlocks, then mines)
    → If "safely"/"safe"/"careful" is mentioned: set caution:"safe"
 
 G) DEFEND: "defend/guard/protect [location]"
@@ -693,7 +694,7 @@ NOISE, GIBBERISH & CASUAL CHAT — If there is clearly no game command in the in
 - Nonsensical words (e.g. "blorp fizzle wompus", "asdf") or single filler words ("the", "a", "is") → unrecognized
 - Casual chat, jokes, greetings, or off-topic remarks (e.g. "hello", "you're cute", "what's your favorite color", "I love you") → unrecognized
 - Return responseType:"unrecognized" — do NOT guess a random action
-- Still provide a narration: a fun, in-character quip, helpful hint, or confused comment from the units — MUST match selected unit personality! Examples by type: gnomes='Hehe, that's funny boss! But where do we go?', skulls='...the void speaks nonsense. Give us a real command.', spiders='*hisss* confusssing... tell usss what to hunt!', hyenas='HAHAHA WHAT?! Just tell us what to SMASH!', turtles='*sigh* We waited... and for that? Try a real order...', pandas='Hmm, that was nice. But maybe tell us where to walk?', lizards='Input not recognized. Awaiting valid directive.', minotaurs='WHAT?! STOP TALKING, START COMMANDING!!', shamans='The spirits heard you... but understood nothing.', rogues='Real clever. Wanna try an actual order this time?', trolls='Troll wait for order... but no order come. Troll confused.'
+- Still provide a narration in the ${ctx.selectedHoard} unit voice (see UNIT PERSONALITY section below). Must sound confused/dismissive/bored in their unique way — NOT generically cheerful.
 
 STATUS QUERIES — If the player asks about their status ("how am I doing?", "what should I do?", "how many units?"):
 - Return targetType "query" with a statusReport containing a 1-2 sentence tactical answer using the game context above
@@ -717,6 +718,23 @@ RULES:
 - NEVER return responseType="acknowledgment". Either it's an action (produce a workflow) or it's unrecognized/status_query.
 - If the player says ANYTHING that implies an action (attack, defend, gather, make, get, go, move, retreat, scout, mine, hunt, etc.), you MUST return a workflow.
 
+═══ UNIT PERSONALITY (CRITICAL) ═══
+The currently selected hoard is: **${ctx.selectedHoard}**
+Your "narration" and "unitReaction" fields MUST be written AS these units speaking. They are NOT a narrator — they are the creatures themselves responding to an order. Each type has a radically different voice. Do NOT make them all sound excited or enthusiastic. Lean HARD into the personality — exaggerate it. The player should immediately know which unit type is talking.
+
+PERSONALITY REFERENCE (use ONLY the one matching "${ctx.selectedHoard}"):
+  gnome: Squeaky, hyper, childlike. Obsessed with food and shiny things. Say "boss" constantly. Giggle. Short attention span. "Ooh ooh! Yes boss yes boss! We go get the shinies boss!"
+  skull: Grim. Hollow. Monotone. Speak of death, graves, the void. No excitement EVER. Flat, ominous, unsettling. "...the dead do not rush. We will arrive... when the earth permits."
+  spider: Sinister, whispery, hissing. Stretch S sounds (sssslither, yesss, preciousss). Creepy and predatory. "Yesss... we ssscatter through the dark, sssilent and hungry..."
+  hyena: Absolutely unhinged. Manic cackling. CAPS and "AHAHAHA". Lives for chaos. Cannot be serious. "AHAHAHA YEAH YEAH YEAH!! LETS GO BREAK STUFF!!"
+  turtle: Depressed. Exhausted. Everything is too hard, too far, too fast. Heavy sighs. Reluctant compliance. Miserable. "...ugh. Fine. We'll drag ourselves over there. Again."
+  panda: Slow, warm, sleepy. Zen-like calm. Thinks about food and naps. Unhurried. Gentle. "Mmm... okay. Nice slow walk. Maybe bamboo on the way..."
+  lizard: Cold. Clinical. Zero emotion. Military brevity. No personality flair, no humor. Robotic. "Affirmative. Route plotted. Executing."
+  minotaur: PURE RAGE. ALL CAPS. Screaming. Primal. Wants to smash everything. No subtlety. "RAAAAGH!! MOVE!! SMASH!! DESTROY EVERYTHING IN THE WAY!!"
+  shaman: Cryptic, mystical, speaks in riddles. References spirits, fate, the stars. Ethereal and otherworldly. "The spirits murmur of this path... fate curls like smoke..."
+  rogue: Sarcastic, dry, too-cool. Eye-rolling energy. Reluctant competence. Never impressed. "...sure. Whatever. Already three steps ahead of you."
+  troll: Dumb. Third-person speech. Broken grammar. Confused easily. Lovable but slow. "Troll go now. Troll not sure where... but Troll go."
+
 PLAYER SAYS: "${rawText}"
 
 JSON ONLY (no markdown):
@@ -729,8 +747,8 @@ JSON ONLY (no markdown):
   "qualifier": "<nearest|furthest|weakest|uncaptured|enemy or omit>",
   "workflow": [<array of step objects, only if targetType=workflow>],
   "loopFrom": <index where repeating loop starts, default 0>,
-  "narration": "<6-12 words, in-character response from the units receiving the order. STRICTLY match unit personality: gnomes=bubbly, excitable, childlike joy, love food and shiny things, say 'boss' a lot; skulls=grim, ominous, speak of death/darkness/doom, hollow echoing tone; spiders=creepy, hissy, stretch out S sounds ('sssspy', 'yesss'), sinister and skittery; hyenas=unhinged, manic, LOUD, love chaos and destruction, laugh a lot ('AHAHAHA'); turtles=melancholic, reluctant, slow, sad, always complaining or sighing, everything is too hard or too fast; pandas=gentle giants, warm, zen-like, talk about food and naps, peaceful but strong; lizards=cold, calculating, robotic precision, no emotion, clinical; minotaurs=RAGING, furious, primal screaming, all-caps energy, SMASH EVERYTHING; shamans=mystical, cryptic, speak in riddles and prophecy, ethereal; rogues=sarcastic, cocky, street-smart, too cool for this, snarky one-liners; trolls=dim-witted, brutish, broken grammar, third-person speech ('Troll smash!'), slow-thinking, lovably dumb, surprisingly loyal, confused by big words. Examples: gnomes='Ooh ooh carrots! We love carrots boss!', skulls='The grave awaits those we march toward...', spiders='*hisss* we ssscatter into the shadowsss', hyenas='AHAHAHA YEAH LETS WRECK EM!!', turtles='*sigh* Do we have to? ...fine, moving.', pandas='Mmm okay, nice walk, maybe snack after?', lizards='Acknowledged. Executing patrol route.', minotaurs='RAAAAGH!! CHARGE!! SMASH THEM ALL!!', shamans='The spirits whisper... this path is fated.', rogues='Yeah yeah, on it. Try to keep up.', trolls='Troll go now! Troll do the smashing thing!'>",
-  "unitReaction": "<2-5 word in-character grunt reaction from the units, funny/cute personality. Examples: 'Aye aye!', 'SMASH TIME!', 'ooh shiny rocks!', 'hisssss yesss', '*rattles excitedly*', 'me hungry...', 'FOR GLORY!'>",
+  "narration": "<6-15 words, spoken BY the ${ctx.selectedHoard} units in their personality voice. NOT a narrator. Must sound like a ${ctx.selectedHoard} — see personality reference above. No generic enthusiasm.>",
+  "unitReaction": "<2-5 word grunt/bark in ${ctx.selectedHoard} voice. Examples — gnome:'Yes boss!', skull:'...so it begins.', spider:'yesss...', hyena:'AHAHAHA!!', turtle:'*heavy sigh*', panda:'mmm okay', lizard:'Confirmed.', minotaur:'RAAAGH!!', shaman:'it is fated...', rogue:'whatever.', troll:'Troll go!'>",
   "modifiers": {"formation": "spread|tight|null", "caution": "safe|aggressive|null", "pacing": "rush|efficient|null"},
   "planGoal": {"type": "unlock_equipment|stockpile_resource", "equipment": "<equipment id, only if type=unlock_equipment>", "resource": "<resource type, only if type=stockpile_resource>", "amount": "<number, only if stockpile_resource>", "thenAction": "<optional follow-up: defend, attack, etc>"},
   "modifierOnly": false
@@ -1584,7 +1602,7 @@ const EQUIP_LEVEL_STAT_MULT = [0, 1.0, 1.5, 2.0]; // index = level
 const EQUIP_LEVEL_COST_MULT = [0, 1.0, 2.5, 5.0]; // cost multiplier per level upgrade (steeper scaling)
 
 const EQUIPMENT: EquipmentDef[] = [
-  { id: 'pickaxe', name: 'Pickaxe', emoji: '⛏️', cost: { carrot: 40, meat: 10 }, effect: 'Can mine metal, +25% gather speed' },
+  { id: 'pickaxe', name: 'Pickaxe', emoji: '⛏️', cost: { carrot: 40 }, effect: 'Can mine metal, +25% gather speed' },
   { id: 'sword',   name: 'Sword',   emoji: '⚔️', cost: { meat: 40, metal: 15, crystal: 10 }, effect: '+50% attack, +25% attack speed' },
   { id: 'shield',  name: 'Shield',  emoji: '🛡️', cost: { meat: 35, metal: 15, crystal: 10 }, effect: '+60% HP, -25% damage taken, -15% speed' },
   { id: 'boots',   name: 'Boots',   emoji: '👢', cost: { carrot: 35, metal: 10, crystal: 5 }, effect: '+60% move speed, +50% pickup range' },
@@ -3959,18 +3977,23 @@ export class HordeScene extends Phaser.Scene {
     this.voiceStatusEl = null;
     this.setupVoice();
 
-    // Number keys 1-5: dynamic control group selection
-    // 1=all, 2-5=dynamic from available unit types
+    // Number keys 1-0: dynamic control group selection
+    // 1=all, 2-0=dynamic from available unit types (up to 10 slots)
     const numKeyCodes = [
       Phaser.Input.Keyboard.KeyCodes.ONE,
       Phaser.Input.Keyboard.KeyCodes.TWO,
       Phaser.Input.Keyboard.KeyCodes.THREE,
       Phaser.Input.Keyboard.KeyCodes.FOUR,
       Phaser.Input.Keyboard.KeyCodes.FIVE,
+      Phaser.Input.Keyboard.KeyCodes.SIX,
+      Phaser.Input.Keyboard.KeyCodes.SEVEN,
+      Phaser.Input.Keyboard.KeyCodes.EIGHT,
+      Phaser.Input.Keyboard.KeyCodes.NINE,
+      Phaser.Input.Keyboard.KeyCodes.ZERO,
     ];
     for (let n = 0; n < numKeyCodes.length; n++) {
       const k = this.input.keyboard!.addKey(numKeyCodes[n]);
-      const slotIdx = n; // 0=all, 1-4=dynamic
+      const slotIdx = n; // 0=all, 1-9=dynamic unit types
       k.on('down', () => {
         if (document.activeElement === this.textInput) return;
         if (this.isHoardSwitchLocked) return;
@@ -4356,17 +4379,17 @@ export class HordeScene extends Phaser.Scene {
   private updateTopBar() {
     if (!this.topBarEl) return;
     const available = this.getAvailableHoards().filter(h => h !== 'all');
-    // Slot 1 = all, slots 2-5 = dynamic unit types
-    const slots: { key: number; id: string; emoji: string; name: string; count: number }[] = [
-      { key: 1, id: 'all', emoji: '\u2694\uFE0F', name: 'ALL',
+    // Slot 1 = all, slots 2-0 = dynamic unit types (up to 10)
+    const slots: { key: string; id: string; emoji: string; name: string; count: number }[] = [
+      { key: '1', id: 'all', emoji: '\u2694\uFE0F', name: 'ALL',
         count: this.units.filter(u => u.team === this.myTeam && !u.dead).length },
     ];
-    for (let i = 0; i < Math.min(4, available.length); i++) {
+    for (let i = 0; i < available.length; i++) {
       const t = available[i];
       const def = ANIMALS[t];
       if (!def) continue;
       slots.push({
-        key: i + 2, id: t, emoji: def.emoji, name: cap(t).toUpperCase(),
+        key: i + 2 <= 9 ? String(i + 2) : '0', id: t, emoji: def.emoji, name: cap(t).toUpperCase(),
         count: this.units.filter(u => u.team === this.myTeam && !u.dead && u.type === t).length,
       });
     }
@@ -4537,7 +4560,8 @@ export class HordeScene extends Phaser.Scene {
     const team = this.myTeam;
     const stock = this.baseStockpile[team];
     const RESOURCE_EMOJI: Record<string, string> = { carrot: '🥕', meat: '🍖', crystal: '💎', metal: '⚙️' };
-    let html = `<div style="font-size:10px;font-weight:800;color:#4a3520;text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Equipment</div>`;
+    let html = `<div style="font-size:10px;font-weight:800;color:#4a3520;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Equipment</div>`;
+    html += '<div style="background:rgba(255,248,230,0.5);border:1px solid rgba(139,115,85,0.35);border-radius:8px;padding:6px 8px;">';
 
     for (const eq of EQUIPMENT) {
       const level = this.getEquipLevel(team, eq.id as EquipmentType);
@@ -4569,7 +4593,7 @@ export class HordeScene extends Phaser.Scene {
         costHtml = `<span style="font-size:9px;">Lvl ${nextLevel}: ${costParts.join(' ')}</span>`;
       }
 
-      html += `<div style="display:flex;align-items:center;gap:4px;padding:3px 0;border-bottom:1px solid rgba(139,115,85,0.2);${isMax ? 'opacity:0.7;' : ''}">
+      html += `<div style="display:flex;align-items:center;gap:4px;padding:3px 0;border-bottom:1px solid rgba(139,115,85,0.15);${isMax ? 'opacity:0.7;' : ''}">
         <span style="font-size:14px;line-height:1;width:20px;text-align:center;">${eq.emoji}</span>
         <div style="flex:1;min-width:0;">
           <div style="font-size:10px;font-weight:700;color:#2a1a0a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${eq.name} ${stars}</div>
@@ -4577,6 +4601,7 @@ export class HordeScene extends Phaser.Scene {
         </div>
       </div>`;
     }
+    html += '</div>';
 
     if (html !== this._prevUpgradeHTML) {
       this.upgradePanelEl.innerHTML = html;
@@ -5123,7 +5148,7 @@ export class HordeScene extends Phaser.Scene {
         { emoji: '\u{1F48E}', name: 'Crystals', amount: stock.crystal, color: '#C98FFF', gradient: 'linear-gradient(90deg,#C98FFF,#DDB3FF)' },
         { emoji: '\u2699\uFE0F', name: 'Metal', amount: stock.metal, color: '#88AACC', gradient: 'linear-gradient(90deg,#88AACC,#AACCDD)' },
       ];
-      let html = '';
+      let html = '<div style="background:rgba(255,248,230,0.5);border:1px solid rgba(139,115,85,0.35);border-radius:8px;padding:6px 8px;">';
       for (const r of resources) {
         const pct = Math.min(100, (r.amount / maxRes) * 100);
         html += `<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
@@ -5139,6 +5164,7 @@ export class HordeScene extends Phaser.Scene {
           </div>
         </div>`;
       }
+      html += '</div>';
       if (html !== this._prevResHTML) { resEl.innerHTML = html; this._prevResHTML = html; }
     }
 

@@ -8,9 +8,9 @@ const AVATAR_BASE = 'assets/enemies/avatars';
 const FADE_OUT_DELAY = 1500;
 
 // Adaptive mouth detection — self-calibrating noise floor + relative threshold
-const NOISE_ADAPT_RATE = 0.05; // How fast noise floor tracks silence (0=never, 1=instant)
-const OPEN_RATIO = 2.5;        // RMS must exceed noise floor by this factor to open mouth
-const HOLD_MS = 150;           // Minimum ms mouth stays open once triggered (prevents jitter)
+const NOISE_ADAPT_RATE = 0.08; // How fast noise floor tracks silence (0=never, 1=instant)
+const OPEN_RATIO = 1.8;        // RMS must exceed noise floor by this factor to open mouth
+const HOLD_MS = 80;            // Minimum ms mouth stays open once triggered (prevents jitter)
 const MIN_NOISE_FLOOR = 0.001; // Floor clamp — prevents dead-silence edge cases
 
 const HAS_TALK_AVATAR = new Set([
