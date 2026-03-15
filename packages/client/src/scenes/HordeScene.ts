@@ -1800,7 +1800,8 @@ export class HordeScene extends Phaser.Scene {
   private _resizeHandler: (() => void) | null = null;
 
   // ─── SETTINGS ──────────────────────────────────────────────────
-  private settingsPanel = new SettingsPanel();
+  private settingsPanel: SettingsPanel = null!;
+  private fpsEl: HTMLDivElement | null = null;
 
   // ─── NEW FLOATING OVERLAY PANELS ─────────────────────────────
   private topBarEl: HTMLDivElement | null = null;
@@ -2196,7 +2197,15 @@ export class HordeScene extends Phaser.Scene {
     this.setupFog();
     this.setupCamera();
     this.setupInput();
+    // Init settings panel with test sound callbacks
+    this.settingsPanel = new SettingsPanel({
+      onTestSfx: () => this.sfx.playGlobal('button_click'),
+      onTestVoice: () => this.ttsService?.test(),
+    });
     this.setupHUD();
+    this.setupFpsCounter();
+    this.setupColorblindFilters();
+    this.setupFullscreenSync();
     this.events.on('shutdown', () => this.cleanupHTML());
     if (this.isDebug) this.setupDebugModePanel();
 
@@ -3653,7 +3662,7 @@ export class HordeScene extends Phaser.Scene {
         t.alive = false;
         t.hp = 0;
         // Screen shake on tower destruction
-        this.cameras.main.shake(200, 0.012);
+        this.shakeCamera(200, 0.012);
         // Quest: track tower kills (attacker is enemy of tower)
         const towerKillerTeam: 1 | 2 = t.team === 1 ? 2 : 1;
         this._questTowersDestroyed[towerKillerTeam]++;
@@ -4064,6 +4073,11 @@ export class HordeScene extends Phaser.Scene {
       if (this.recognition && this.isListening) {
         try { this.recognition.stop(); } catch (_e) { /* */ }
       }
+      // Audio ducking — lower SFX while TTS plays
+      const gs = GameSettings.getInstance();
+      if (gs.get('audioDucking')) {
+        this.sfx.setDucking(true);
+      }
     };
     this.ttsService.onPlayEnd = (_charId: string) => {
       this.scribeService?.resume();
@@ -4073,6 +4087,8 @@ export class HordeScene extends Phaser.Scene {
       if (this.recognition && !this.ttsService?.isPlaying) {
         this.startListening();
       }
+      // Restore SFX volume
+      this.sfx.setDucking(false);
     };
 
     // 2. Create ScribeService (ElevenLabs Scribe v2 Realtime STT)
@@ -4398,6 +4414,73 @@ export class HordeScene extends Phaser.Scene {
     if (root) {
       root.style.fontSize = s.largerText ? '125%' : '';
     }
+
+    // FPS counter visibility
+    if (this.fpsEl) {
+      this.fpsEl.style.display = s.showFps ? 'block' : 'none';
+    }
+
+    // Colorblind mode
+    const canvas = document.querySelector('canvas');
+    if (canvas) {
+      switch (s.colorblindMode) {
+        case 'protanopia': canvas.style.filter = 'url(#cb-protanopia)'; break;
+        case 'deuteranopia': canvas.style.filter = 'url(#cb-deuteranopia)'; break;
+        case 'tritanopia': canvas.style.filter = 'url(#cb-tritanopia)'; break;
+        default: canvas.style.filter = ''; break;
+      }
+    }
+  }
+
+  /** Camera shake helper — respects intensity setting and reduced motion */
+  private shakeCamera(duration: number, baseIntensity: number): void {
+    const gs = GameSettings.getInstance();
+    const mult = gs.get('cameraShakeIntensity');
+    if (mult > 0 && !gs.get('reducedMotion')) {
+      this.cameras.main.shake(duration, baseIntensity * mult);
+    }
+  }
+
+  private setupFpsCounter() {
+    const el = document.createElement('div');
+    el.id = 'horde-fps';
+    el.style.cssText = `
+      position:fixed;top:4px;left:4px;z-index:200;
+      font-size:11px;font-family:monospace;color:#0f0;
+      background:rgba(0,0,0,0.5);padding:2px 6px;border-radius:4px;
+      pointer-events:none;display:none;
+    `;
+    document.body.appendChild(el);
+    this.fpsEl = el;
+    // Apply initial visibility
+    if (GameSettings.getInstance().get('showFps')) el.style.display = 'block';
+  }
+
+  private setupColorblindFilters() {
+    if (document.getElementById('cb-filters-svg')) return;
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.id = 'cb-filters-svg';
+    svg.setAttribute('style', 'position:absolute;width:0;height:0;overflow:hidden;');
+    svg.innerHTML = `
+      <defs>
+        <filter id="cb-protanopia">
+          <feColorMatrix type="matrix" values="0.567 0.433 0 0 0  0.558 0.442 0 0 0  0 0.242 0.758 0 0  0 0 0 1 0"/>
+        </filter>
+        <filter id="cb-deuteranopia">
+          <feColorMatrix type="matrix" values="0.625 0.375 0 0 0  0.7 0.3 0 0 0  0 0.3 0.7 0 0  0 0 0 1 0"/>
+        </filter>
+        <filter id="cb-tritanopia">
+          <feColorMatrix type="matrix" values="0.95 0.05 0 0 0  0 0.433 0.567 0 0  0 0.475 0.525 0 0  0 0 0 1 0"/>
+        </filter>
+      </defs>
+    `;
+    document.body.appendChild(svg);
+  }
+
+  private setupFullscreenSync() {
+    document.addEventListener('fullscreenchange', () => {
+      GameSettings.getInstance().set('fullscreen', !!document.fullscreenElement);
+    });
   }
 
   // ─── SETUP: TOP CONTROL GROUP BAR ─────────────────────────────
@@ -5149,6 +5232,10 @@ export class HordeScene extends Phaser.Scene {
   // ─── MAIN UPDATE ────────────────────────────────────────────
 
   update(_time: number, delta: number) {
+    // FPS counter (update every 10 frames to avoid flicker)
+    if (this.fpsEl && this.fpsEl.style.display !== 'none' && this._frameCount % 10 === 0) {
+      this.fpsEl.textContent = `${Math.round(1000 / delta)} FPS`;
+    }
     if (this.gameOver) return;
     // Clamp delta to prevent huge simulation spikes when tab is backgrounded
     // Browsers throttle rAF to ~1fps in background, causing delta of 1000ms+
@@ -9132,7 +9219,7 @@ export class HordeScene extends Phaser.Scene {
       if (n.hp <= 0) {
         this.gameOver = true;
         this.winner = n.team === 1 ? 2 : 1;
-        this.cameras.main.shake(500, 0.02);
+        this.shakeCamera(500, 0.02);
         this.sfx.playAt('nexus_destroyed', n.x, n.y);
         this.sfx.playGlobal(this.winner === this.myTeam ? 'victory' : 'defeat');
         this.profilingRecorder?.finalize();
@@ -12785,6 +12872,12 @@ export class HordeScene extends Phaser.Scene {
     this.minimapEl = null; this.minimapCtx = null; this.minimapTerrainCanvas = null;
     document.getElementById('horde-settings-gear')?.remove();
     this.settingsPanel.close();
+    // Cleanup FPS counter and colorblind filters
+    this.fpsEl?.remove(); this.fpsEl = null;
+    document.getElementById('cb-filters-svg')?.remove();
+    // Reset canvas filter
+    const canvas = document.querySelector('canvas');
+    if (canvas) canvas.style.filter = '';
     document.getElementById('horde-ai-settings')?.remove();
     this.debugPanelEl?.remove(); this.debugPanelEl = null;
     this.memoryOverlay?.destroy(); this.memoryOverlay = null;

@@ -113,7 +113,7 @@ export class TtsService {
           voice_settings: {
             stability: 0.5,
             similarity_boost: 0.75,
-            speed: 1.0,
+            speed: GameSettings.getInstance().get('ttsSpeed'),
           },
         }),
       });

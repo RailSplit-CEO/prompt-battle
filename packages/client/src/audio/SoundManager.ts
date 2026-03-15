@@ -60,6 +60,8 @@ export class SoundManager {
   private loaded = new Set<string>();
   private muted: boolean;
   private globalVolume: number;
+  private normalVolume: number;
+  private isDucking = false;
   private loading = new Set<string>(); // tracks in-flight lazy loads
   private unsubSettings?: () => void;
 
@@ -68,11 +70,37 @@ export class SoundManager {
     const gs = GameSettings.getInstance();
     this.muted = gs.get('muteAll');
     this.globalVolume = gs.effectiveSfxVolume;
+    this.normalVolume = this.globalVolume;
     this.unsubSettings = gs.onChange(() => {
       this.muted = gs.get('muteAll');
-      this.globalVolume = gs.effectiveSfxVolume;
+      const effective = gs.effectiveSfxVolume;
+      this.normalVolume = effective;
+      // If currently ducking, keep ducked volume proportional
+      if (this.isDucking) {
+        this.globalVolume = effective * gs.get('audioDuckAmount');
+      } else {
+        this.globalVolume = effective;
+      }
       if (this.muted) this.scene.sound.stopAll();
+      // Mono audio via Phaser's Web Audio context
+      try {
+        const ctx = (this.scene.sound as any).context as AudioContext | undefined;
+        if (ctx?.destination) {
+          ctx.destination.channelCount = gs.get('monoAudio') ? 1 : 2;
+        }
+      } catch { /* some browsers restrict this */ }
     });
+  }
+
+  /** Lower SFX volume while TTS plays */
+  setDucking(active: boolean) {
+    const gs = GameSettings.getInstance();
+    this.isDucking = active;
+    if (active) {
+      this.globalVolume = this.normalVolume * gs.get('audioDuckAmount');
+    } else {
+      this.globalVolume = this.normalVolume;
+    }
   }
 
   // Fix F: only preload essential sounds; rest load lazily on first play

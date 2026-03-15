@@ -1,12 +1,32 @@
 // Procedural sound effects using Web Audio API (no external assets)
 
+import { GameSettings } from './GameSettings';
+
 export class SoundManager {
   private static instance: SoundManager;
   private ctx: AudioContext | null = null;
+  private masterGain: GainNode | null = null;
   private muted = false;
+  private volume = 1.0;
+  private unsubSettings?: () => void;
 
   private constructor() {
-    this.muted = localStorage.getItem('pb_sound_muted') === 'true';
+    const gs = GameSettings.getInstance();
+    this.muted = gs.get('muteAll');
+    this.volume = gs.effectiveSfxVolume;
+    this.unsubSettings = gs.onChange(() => {
+      this.muted = gs.get('muteAll');
+      this.volume = gs.effectiveSfxVolume;
+      if (this.masterGain) {
+        this.masterGain.gain.value = this.muted ? 0 : this.volume;
+      }
+      // Mono audio
+      if (this.ctx) {
+        try {
+          this.ctx.destination.channelCount = gs.get('monoAudio') ? 1 : 2;
+        } catch { /* some browsers restrict this */ }
+      }
+    });
   }
 
   static getInstance(): SoundManager {
@@ -16,32 +36,48 @@ export class SoundManager {
 
   private ensureCtx(): AudioContext | null {
     if (!this.ctx) {
-      try { this.ctx = new AudioContext(); } catch { return null; }
+      try {
+        this.ctx = new AudioContext();
+        this.masterGain = this.ctx.createGain();
+        this.masterGain.gain.value = this.muted ? 0 : this.volume;
+        this.masterGain.connect(this.ctx.destination);
+        // Apply mono if needed
+        const gs = GameSettings.getInstance();
+        if (gs.get('monoAudio')) {
+          try { this.ctx.destination.channelCount = 1; } catch { /* */ }
+        }
+      } catch { return null; }
     }
     if (this.ctx.state === 'suspended') this.ctx.resume();
     return this.ctx;
   }
 
+  private getOutput(): AudioNode | null {
+    this.ensureCtx();
+    return this.masterGain;
+  }
+
   get isMuted() { return this.muted; }
 
   toggleMute() {
-    this.muted = !this.muted;
-    localStorage.setItem('pb_sound_muted', String(this.muted));
-    return this.muted;
+    const gs = GameSettings.getInstance();
+    gs.set('muteAll', !gs.get('muteAll'));
+    return gs.get('muteAll');
   }
 
   // Short oscillator tone helper
   private tone(freq: number, duration: number, type: OscillatorType = 'square', vol = 0.15) {
     if (this.muted) return;
     const ctx = this.ensureCtx();
-    if (!ctx) return;
+    const out = this.getOutput();
+    if (!ctx || !out) return;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = type;
     osc.frequency.value = freq;
     gain.gain.setValueAtTime(vol, ctx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
-    osc.connect(gain).connect(ctx.destination);
+    osc.connect(gain).connect(out);
     osc.start();
     osc.stop(ctx.currentTime + duration);
   }
@@ -50,7 +86,8 @@ export class SoundManager {
   private noise(duration: number, vol = 0.08) {
     if (this.muted) return;
     const ctx = this.ensureCtx();
-    if (!ctx) return;
+    const out = this.getOutput();
+    if (!ctx || !out) return;
     const bufferSize = Math.floor(ctx.sampleRate * duration);
     const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
     const data = buffer.getChannelData(0);
@@ -60,7 +97,7 @@ export class SoundManager {
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(vol, ctx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
-    src.connect(gain).connect(ctx.destination);
+    src.connect(gain).connect(out);
     src.start();
   }
 

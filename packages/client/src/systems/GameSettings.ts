@@ -8,17 +8,25 @@ export interface SettingsData {
   sfxVolume: number;      // 0–1
   voiceVolume: number;    // 0–1 (TTS output)
   muteAll: boolean;
+  monoAudio: boolean;
+  audioDucking: boolean;
+  audioDuckAmount: number; // 0–1 (how much to duck, e.g. 0.3 = 30%)
 
   // Voice Input
   voiceInputEnabled: boolean;
   voiceLanguage: string;  // BCP-47 e.g. 'en-US'
+  pushToTalk: boolean;
+  ttsSpeed: number;       // 0.5–2.0 (ElevenLabs speed param)
 
   // Display
   hudScale: number;       // 0.75–1.5
   minimapSize: number;    // 120–280 px
   showDamageNumbers: boolean;
-  cameraShake: boolean;
+  cameraShakeIntensity: number; // 0–1 (0 = off, 1 = full)
   showCommandLog: boolean;
+  fullscreen: boolean;
+  showFps: boolean;
+  colorblindMode: string; // 'none' | 'protanopia' | 'deuteranopia' | 'tritanopia'
 
   // Accessibility
   reducedMotion: boolean;
@@ -34,15 +42,23 @@ const DEFAULTS: SettingsData = {
   sfxVolume: 0.6,
   voiceVolume: 0.3,
   muteAll: false,
+  monoAudio: false,
+  audioDucking: true,
+  audioDuckAmount: 0.3,
 
   voiceInputEnabled: true,
   voiceLanguage: 'en-US',
+  pushToTalk: true,
+  ttsSpeed: 1.0,
 
   hudScale: 1.0,
   minimapSize: 200,
   showDamageNumbers: true,
-  cameraShake: true,
+  cameraShakeIntensity: 1.0,
   showCommandLog: true,
+  fullscreen: false,
+  showFps: false,
+  colorblindMode: 'none',
 
   reducedMotion: false,
   largerText: false,
@@ -109,6 +125,11 @@ export class GameSettings {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
+        // Migrate old cameraShake boolean → cameraShakeIntensity
+        if ('cameraShake' in parsed && !('cameraShakeIntensity' in parsed)) {
+          parsed.cameraShakeIntensity = parsed.cameraShake ? 1.0 : 0;
+        }
+        delete parsed.cameraShake;
         // Merge with defaults so new keys get default values
         return { ...DEFAULTS, ...parsed };
       }

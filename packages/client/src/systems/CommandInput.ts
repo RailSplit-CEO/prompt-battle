@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { GameSettings } from './GameSettings';
 
 type CommandCallback = (rawText: string) => void;
 
@@ -11,10 +12,36 @@ export class CommandInput {
   private voiceLabelEl: HTMLElement | null = null;
   private voiceSectionEl: HTMLElement | null = null;
   private spaceKey?: Phaser.Input.Keyboard.Key;
+  private pushToTalk: boolean;
+  private continuousRestart = false;
+  private unsubSettings?: () => void;
 
   constructor(scene: Phaser.Scene, _gameId: string, _playerId: string, _isLocal: boolean) {
     this.scene = scene;
+    this.pushToTalk = GameSettings.getInstance().get('pushToTalk');
     this.setupVoiceInput();
+
+    // React to settings changes
+    this.unsubSettings = GameSettings.getInstance().onChange((s) => {
+      const wasPTT = this.pushToTalk;
+      this.pushToTalk = s.pushToTalk;
+      // Mode changed — restart recognition
+      if (wasPTT !== this.pushToTalk && this.recognition) {
+        this.stopListening();
+        if (!this.pushToTalk) {
+          // Switch to always-listening
+          this.recognition.continuous = true;
+          this.startContinuousListening();
+        } else {
+          this.recognition.continuous = false;
+          this.continuousRestart = false;
+        }
+      }
+      // Update language
+      if (this.recognition) {
+        this.recognition.lang = s.voiceLanguage;
+      }
+    });
   }
 
   onCommand(callback: CommandCallback) {
@@ -33,10 +60,11 @@ export class CommandInput {
       return;
     }
 
+    const gs = GameSettings.getInstance();
     const recognition = new SpeechRecognition();
-    recognition.continuous = false;
+    recognition.continuous = !this.pushToTalk;
     recognition.interimResults = true;
-    recognition.lang = 'en-US';
+    recognition.lang = gs.get('voiceLanguage');
 
     recognition.onresult = (event: any) => {
       let transcript = '';
@@ -51,16 +79,29 @@ export class CommandInput {
         if (transcript.trim() && this.callback) {
           this.callback(transcript.trim());
         }
-        this.stopListening();
+        if (this.pushToTalk) {
+          this.stopListening();
+        }
       }
     };
 
     recognition.onerror = (e: any) => {
       console.warn('[Voice] error:', e.error);
-      this.stopListening();
+      if (e.error !== 'no-speech' && e.error !== 'aborted') {
+        this.stopListening();
+      }
     };
 
     recognition.onend = () => {
+      if (!this.pushToTalk && this.continuousRestart) {
+        // Always-listening mode: auto-restart after a small delay
+        setTimeout(() => {
+          if (this.continuousRestart) {
+            try { this.recognition?.start(); } catch { /* */ }
+          }
+        }, 300);
+        return;
+      }
       this.stopListening();
     };
 
@@ -69,13 +110,28 @@ export class CommandInput {
     // Use Phaser's keyboard system for Space (no conflicts)
     this.spaceKey = this.scene.input.keyboard!.addKey('SPACE');
     this.spaceKey.on('down', () => {
-      this.startListening();
+      if (this.pushToTalk) {
+        this.startListening();
+      }
     });
     this.spaceKey.on('up', () => {
-      if (this.isListening) {
+      if (this.pushToTalk && this.isListening) {
         this.recognition?.stop();
       }
     });
+
+    // Start continuous listening if not push-to-talk
+    if (!this.pushToTalk) {
+      this.startContinuousListening();
+    }
+  }
+
+  private startContinuousListening() {
+    this.continuousRestart = true;
+    this.isListening = true;
+    this.getElements();
+    if (this.voiceLabelEl) this.voiceLabelEl.textContent = '🔴 Listening...';
+    try { this.recognition?.start(); } catch { /* */ }
   }
 
   private getElements() {
@@ -109,7 +165,9 @@ export class CommandInput {
     this.isListening = false;
     this.getElements();
     if (this.voiceSectionEl) this.voiceSectionEl.classList.remove('listening');
-    if (this.voiceLabelEl) this.voiceLabelEl.textContent = 'Hold [Space] to speak';
+    if (this.voiceLabelEl) {
+      this.voiceLabelEl.textContent = this.pushToTalk ? 'Hold [Space] to speak' : 'Listening...';
+    }
     // Clear transcript after a short delay so user can see what was sent
     setTimeout(() => {
       if (!this.isListening && this.transcriptEl) {
@@ -126,11 +184,13 @@ export class CommandInput {
   }
 
   destroy() {
+    this.continuousRestart = false;
     if (this.recognition) {
       this.recognition.abort();
     }
     if (this.spaceKey) {
       this.spaceKey.removeAllListeners();
     }
+    this.unsubSettings?.();
   }
 }

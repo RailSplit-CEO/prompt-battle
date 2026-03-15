@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { GameSettings } from '../systems/GameSettings';
 
 interface ResultData {
   winner: string;
@@ -9,7 +10,7 @@ interface ResultData {
 
 export class ResultScene extends Phaser.Scene {
   private floatingShapes: { sprite: Phaser.GameObjects.Arc | Phaser.GameObjects.Star; vx: number; vy: number; rotSpeed: number }[] = [];
-  private muted: boolean = localStorage.getItem('pb_sound_muted') === 'true';
+  private muted: boolean = GameSettings.getInstance().get('muteAll');
 
   constructor() {
     super({ key: 'ResultScene' });
@@ -21,7 +22,11 @@ export class ResultScene extends Phaser.Scene {
 
     this.cameras.main.setBackgroundColor(won ? '#0D2818' : '#2A0D18');
     this.cameras.main.fadeIn(300, 0, 0, 0);
-    this.cameras.main.shake(500, won ? 0.015 : 0.025);
+    const gs = GameSettings.getInstance();
+    const shakeIntensity = gs.get('cameraShakeIntensity');
+    if (shakeIntensity > 0 && !gs.get('reducedMotion')) {
+      this.cameras.main.shake(500, (won ? 0.015 : 0.025) * shakeIntensity);
+    }
 
     // Victory/defeat fanfare
     if (!this.muted) {
