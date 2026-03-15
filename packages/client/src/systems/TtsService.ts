@@ -34,16 +34,16 @@ interface VoiceSettings {
 }
 
 const HOARD_VOICE_SETTINGS: Record<string, VoiceSettings> = {
-  gnome:    { stability: 0.05, similarity_boost: 0.85, style: 0.45, speed: 1.5,  use_speaker_boost: true },  // unhinged, maximum chaos energy, squealing excitement
+  gnome:    { stability: 0.05, similarity_boost: 0.85, style: 0.45, speed: 1.2,  use_speaker_boost: true },  // excitable, bubbly chaos energy
   turtle:   { stability: 0.85, similarity_boost: 0.85, style: 0.0,  speed: 0.70, use_speaker_boost: true },  // flat, minimum speed, truly plodding
   skull:    { stability: 0.70, similarity_boost: 0.85, style: 0.10, speed: 0.78, use_speaker_boost: true },  // ominous, dreadfully slow
-  spider:   { stability: 0.35, similarity_boost: 0.85, style: 0.10, speed: 0.85, use_speaker_boost: false }, // hissy, deliberate, sinister crawl
+  spider:   { stability: 0.35, similarity_boost: 0.85, style: 0.10, speed: 0.95, use_speaker_boost: false }, // hissy, deliberate, sinister
   hyena:    { stability: 0.20, similarity_boost: 0.85, style: 0.25, speed: 1.20, use_speaker_boost: true },  // manic, max speed, unhinged chaos
-  panda:    { stability: 0.65, similarity_boost: 0.85, style: 0.0,  speed: 0.78, use_speaker_boost: true },  // warm, unhurried zen pace
+  panda:    { stability: 0.65, similarity_boost: 0.85, style: 0.0,  speed: 0.90, use_speaker_boost: true },  // warm, unhurried zen pace
   lizard:   { stability: 0.90, similarity_boost: 0.85, style: 0.0,  speed: 1.05, use_speaker_boost: false }, // robotic, clipped efficiency
-  minotaur: { stability: 0.25, similarity_boost: 0.85, style: 0.20, speed: 1.15, use_speaker_boost: true },  // raging, fast furious intensity
+  minotaur: { stability: 0.25, similarity_boost: 0.85, style: 0.20, speed: 1.20, use_speaker_boost: true },  // raging, fast furious intensity
   shaman:   { stability: 0.40, similarity_boost: 0.85, style: 0.15, speed: 0.73, use_speaker_boost: true },  // ethereal, slow prophetic drawl
-  troll:    { stability: 0.60, similarity_boost: 0.85, style: 0.0,  speed: 0.70, use_speaker_boost: true },  // dim-witted, minimum speed brute
+  troll:    { stability: 0.60, similarity_boost: 0.85, style: 0.0,  speed: 0.85, use_speaker_boost: true },  // dim-witted, slow brute
   rogue:    { stability: 0.50, similarity_boost: 0.85, style: 0.05, speed: 1.10, use_speaker_boost: true },  // smooth, quick cocky delivery
 };
 

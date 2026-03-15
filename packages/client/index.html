@@ -505,14 +505,22 @@
     #horde-resource-panel::-webkit-scrollbar-track { background: rgba(139,115,85,0.15); border-radius: 3px; }
     #horde-resource-panel::-webkit-scrollbar-thumb { background: rgba(139,115,85,0.4); border-radius: 3px; }
 
-    /* Left command log panel */
-    #horde-cmd-log {
+    /* Left sidebar wrapper for cmd log + quests */
+    #horde-left-sidebar {
       position: absolute; top: 8px; left: 8px;
       width: clamp(200px, 20vw, 280px);
+      display: flex; flex-direction: column; gap: 8px;
+      z-index: 101; pointer-events: none;
+      max-height: calc(100vh - 16px);
+    }
+
+    /* Left command log panel */
+    #horde-cmd-log {
+      width: 100%;
       max-height: min(calc(100vh - 100px), 500px); overflow-y: auto;
       background: rgba(212,196,160,0.88); backdrop-filter: blur(10px);
       border: 2px solid rgba(139,115,85,0.5); border-radius: 12px;
-      padding: 10px 12px; z-index: 101; pointer-events: all;
+      padding: 10px 12px; pointer-events: all;
       font-family: 'Nunito', sans-serif;
       scrollbar-width: thin; scrollbar-color: rgba(139,115,85,0.5) rgba(212,196,160,0.4);
     }
@@ -520,15 +528,13 @@
     #horde-cmd-log::-webkit-scrollbar-track { background: rgba(139,115,85,0.15); border-radius: 3px; }
     #horde-cmd-log::-webkit-scrollbar-thumb { background: rgba(139,115,85,0.4); border-radius: 3px; }
 
-    /* Top-right quest cards */
+    /* Quest cards — below command log */
     #horde-quest-panel {
-      position: absolute; top: 8px; right: 8px;
-      width: clamp(160px, 15vw, 220px);
+      width: 100%;
       max-height: min(30vh, 220px); overflow-y: auto;
       background: rgba(212,196,160,0.88); backdrop-filter: blur(10px);
       border: 2px solid rgba(139,115,85,0.5); border-radius: 12px;
-      padding: 10px 12px;
-      z-index: 101; pointer-events: all;
+      padding: 10px 12px; pointer-events: all;
       display: flex; flex-direction: column; gap: 6px;
       font-family: 'Nunito', sans-serif;
       scrollbar-width: thin; scrollbar-color: rgba(139,115,85,0.5) rgba(212,196,160,0.4);

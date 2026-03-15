@@ -4350,11 +4350,12 @@ export class HordeScene extends Phaser.Scene {
     // ═══ RIGHT RESOURCE PANEL ═══
     this.setupResourcePanel(gc);
 
-    // ═══ LEFT COMMAND LOG PANEL ═══
-    this.setupCmdLogPanel(gc);
-
-    // ═══ QUEST CARDS ═══
-    this.setupQuestPanel(gc);
+    // ═══ LEFT SIDEBAR (command log + quests) ═══
+    const leftSidebar = document.createElement('div');
+    leftSidebar.id = 'horde-left-sidebar';
+    gc.appendChild(leftSidebar);
+    this.setupCmdLogPanel(leftSidebar);
+    this.setupQuestPanel(leftSidebar);
 
     // ═══ BOTTOM-RIGHT MINIMAP ═══
     this.setupMinimap(gc);
@@ -4757,12 +4758,31 @@ export class HordeScene extends Phaser.Scene {
       if (displayCmd) {
         html += `<div style="font-size:10px;color:#2a1a0a;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:rgba(0,0,0,0.06);padding:2px 6px;border-radius:4px;margin-bottom:4px;" title="${displayCmd.replace(/"/g, '&quot;')}">\u{1F3A4} "${displayCmd}"</div>`;
       }
-      // Workflow steps
+      // Workflow steps — with phase separators
       if (wf && wf.steps.length > 0) {
+        const phaseBreaks = new Set<number>(); // indices where a new phase starts
+        for (let si = 0; si < wf.steps.length; si++) {
+          const act = wf.steps[si].action;
+          // A phase break occurs when we hit an upgrade/equip step that isn't the very first step
+          if (si > 0 && (act === 'upgrade' || act === 'equip')) {
+            phaseBreaks.add(si);
+          }
+        }
         for (let si = 0; si < wf.steps.length; si++) {
           const step = wf.steps[si];
           const label = this.formatWorkflowStep(step);
           const isLoop = si === wf.loopFrom && si > 0;
+          // Insert phase separator before this step
+          if (phaseBreaks.has(si)) {
+            const sepLabel = step.action === 'upgrade'
+              ? `\u2B06\uFE0F Upgrading ${(step as any).equipmentType || ''}`
+              : `\u{1F3DB}\uFE0F Getting ${(step as any).equipmentType || ''}`;
+            html += `<div style="display:flex;align-items:center;gap:6px;margin:4px 0 2px;padding:0 6px;">
+              <div style="flex:1;height:1px;background:rgba(139,115,85,0.3);"></div>
+              <span style="font-size:8px;font-weight:700;color:#8B7355;text-transform:uppercase;letter-spacing:0.5px;white-space:nowrap;">${sepLabel}</span>
+              <div style="flex:1;height:1px;background:rgba(139,115,85,0.3);"></div>
+            </div>`;
+          }
           html += `<div style="display:flex;align-items:center;gap:4px;font-size:10px;font-weight:600;padding:2px 6px;color:#3a2a1a;">
             <span style="color:#6a5a4a;font-size:9px;">${si + 1}.</span>
             ${isLoop ? '<span style="font-size:8px;color:#7B2FBE;">\u{1F504}</span>' : ''}
@@ -11058,11 +11078,6 @@ export class HordeScene extends Phaser.Scene {
   private _lastFeedbackText: string | null = null;
   private showFeedback(msg: string, color: string) {
     this._lastFeedbackText = msg;
-    const t = this.hudTexts['feedback'];
-    if (!t) return;
-    t.setText(msg).setColor(color).setAlpha(1);
-    this.tweens.add({ targets: t, alpha: 0, duration: 3000, delay: 1000 });
-
     // Auto-log command outcome (skip intermediate "processing/sending" messages)
     if (this.pendingCommandText && msg !== 'Processing command...' && msg !== 'Sending command...') {
       this.logCommandHistory(this.pendingCommandText, msg, color);
@@ -12814,6 +12829,7 @@ export class HordeScene extends Phaser.Scene {
     this.topBarEl?.remove(); this.topBarEl = null;
     this.resourcePanelEl?.remove(); this.resourcePanelEl = null;
     this.cmdLogPanelEl?.remove(); this.cmdLogPanelEl = null;
+    document.getElementById('horde-left-sidebar')?.remove();
     document.getElementById('horde-minimap')?.remove();
     this.minimapEl = null; this.minimapCtx = null; this.minimapTerrainCanvas = null;
     document.getElementById('horde-ai-settings')?.remove();
