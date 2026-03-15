@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs grep -l \"Hero\\\\|heroId\")",
+      "Bash(xargs grep -l \"Hero\")"
+    ]
+  }
+}
