@@ -98,7 +98,19 @@ export class BootScene extends Phaser.Scene {
 
     this.cameras.main.fadeOut(400, 15, 26, 10);
     this.cameras.main.once('camerafadeoutcomplete', () => {
-      this.scene.start('MenuScene');
+      const reconnect = (window as any).__reconnectData;
+      if (reconnect) {
+        delete (window as any).__reconnectData;
+        this.scene.start('HordeScene', {
+          isOnline: true,
+          gameId: reconnect.gameId,
+          playerId: reconnect.playerId,
+          amPlayer1: reconnect.amPlayer1,
+          opponentUid: reconnect.opponentUid,
+        });
+      } else {
+        this.scene.start('MenuScene');
+      }
     });
   }
 

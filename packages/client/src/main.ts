@@ -6,6 +6,7 @@ import { CharactersScene } from './scenes/CharactersScene';
 import { AuthManager } from './auth/AuthManager';
 import { LoginOverlay } from './ui/LoginOverlay';
 import { ProfileSetupOverlay } from './ui/ProfileSetupOverlay';
+import { FirebaseSync } from './network/FirebaseSync';
 
 async function boot() {
   // Suppress the 10s "game not started" warning — we're in the auth flow
@@ -75,7 +76,30 @@ async function boot() {
     try { auth.setupPresence(); } catch { /* non-critical */ }
   }
 
-  // 6. Show game container BEFORE creating Phaser (needs non-zero dimensions for WebGL)
+  // 6. Check for active game to rejoin (multiplayer or solo)
+  const activeGameStr = localStorage.getItem('pb_active_game');
+  if (activeGameStr) {
+    try {
+      const activeGame = JSON.parse(activeGameStr);
+      if (Date.now() - activeGame.savedAt < 30 * 60 * 1000 &&
+          auth.currentUser && activeGame.playerId === auth.currentUser.uid) {
+        const firebase = FirebaseSync.getInstance();
+        await firebase.initialize();
+        const status = await firebase.getGameStatus(activeGame.gameId);
+        if (status === 'playing' || status === 'drafting') {
+          (window as any).__reconnectData = activeGame;
+        } else {
+          localStorage.removeItem('pb_active_game');
+        }
+      } else {
+        localStorage.removeItem('pb_active_game');
+      }
+    } catch {
+      localStorage.removeItem('pb_active_game');
+    }
+  }
+
+  // 7. Show game container BEFORE creating Phaser (needs non-zero dimensions for WebGL)
   const container = document.getElementById('game-container');
   if (container) {
     container.style.display = 'block';

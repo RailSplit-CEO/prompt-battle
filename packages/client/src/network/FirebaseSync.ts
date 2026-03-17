@@ -319,6 +319,37 @@ export class FirebaseSync {
     this.listeners.forEach(l => l.unsub());
     this.listeners = [];
   }
+
+  async getSyncState(gameId: string): Promise<any> {
+    const snap = await get(ref(this.db, `games/${gameId}/sync`));
+    return snap.val();
+  }
+
+  async getGameStatus(gameId: string): Promise<string | null> {
+    const snap = await get(ref(this.db, `games/${gameId}/meta/status`));
+    return snap.val();
+  }
+
+  async notifyGameReady(gameId: string): Promise<void> {
+    await update(ref(this.db, `games/${gameId}/meta`), { status: 'playing' });
+  }
+
+  async createSoloGame(): Promise<string> {
+    const gameRef = push(ref(this.db, 'games'));
+    const gameId = gameRef.key!;
+    await set(gameRef, {
+      meta: {
+        player1: this.getPlayerId(),
+        player2: 'bot',
+        mapSeed: Date.now(),
+        status: 'playing',
+        currentTurn: 0,
+        createdAt: Date.now(),
+        isSolo: true,
+      },
+    });
+    return gameId;
+  }
 }
 
 export interface SyncSnapshot {

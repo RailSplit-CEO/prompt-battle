@@ -1,5 +1,5 @@
 import { getDb } from './FirebaseAdmin';
-import type { GameSimulation } from '@prompt-battle/shared/simulation/GameSimulation';
+import type { GameSimulation } from '../../shared/src/simulation/GameSimulation';
 
 export class GameInstance {
   private gameId: string;

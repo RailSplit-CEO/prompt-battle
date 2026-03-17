@@ -1,7 +1,7 @@
 import { getDb } from './FirebaseAdmin';
 import { GameInstance } from './GameInstance';
-import { GameSimulation } from '@prompt-battle/shared/simulation/GameSimulation';
-import { getMapById } from '@prompt-battle/shared/data/maps';
+import { GameSimulation } from '../../shared/src/simulation/GameSimulation';
+import { getMapById } from '../../shared/src/data/maps';
 
 export class GameManager {
   private games: Map<string, GameInstance> = new Map();

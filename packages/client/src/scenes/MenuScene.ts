@@ -636,12 +636,31 @@ export class MenuScene extends Phaser.Scene {
     return { container, zone };
   }
 
-  private startHordeMode() {
+  private async startHordeMode() {
     this.playsfx('wave_start', 0.4);
-    this.cameras.main.fadeOut(400, 15, 26, 10);
-    this.cameras.main.once('camerafadeoutcomplete', () => {
-      this.scene.start('HordeScene', { mapId: 'default' });
-    });
+    try {
+      const firebase = FirebaseSync.getInstance();
+      await firebase.initialize();
+      const gameId = await firebase.createSoloGame();
+
+      this.cameras.main.fadeOut(400, 15, 26, 10);
+      this.cameras.main.once('camerafadeoutcomplete', () => {
+        this.cleanupSocialUI();
+        this.scene.start('HordeScene', {
+          isOnline: true,
+          gameId,
+          playerId: firebase.getPlayerId(),
+          amPlayer1: true,
+        });
+      });
+    } catch (err) {
+      console.error('[MenuScene] Failed to create solo game:', err);
+      // Fallback to local mode if server is unavailable
+      this.cameras.main.fadeOut(400, 15, 26, 10);
+      this.cameras.main.once('camerafadeoutcomplete', () => {
+        this.scene.start('HordeScene', { mapId: 'default' });
+      });
+    }
   }
 
   private async findHordeMatch() {

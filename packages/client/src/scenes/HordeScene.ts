@@ -2098,6 +2098,7 @@ export class HordeScene extends Phaser.Scene {
   private firebase: FirebaseSync | null = null;
   private syncTimer = 0;
   private readonly SYNC_INTERVAL_MS = 150; // push state 6-7 times/sec
+  private _beforeUnloadHandler: (() => void) | null = null;
 
   constructor() {
     super({ key: 'HordeScene' });
@@ -2362,6 +2363,32 @@ export class HordeScene extends Phaser.Scene {
     this.setupColorblindFilters();
     this.setupFullscreenSync();
     this.events.on('shutdown', () => this.cleanupHTML());
+
+    // Save active game ID for reconnection on page reload
+    if (this.isOnline && this.gameId) {
+      localStorage.setItem('pb_active_game', JSON.stringify({
+        gameId: this.gameId,
+        amPlayer1: this.isHost,
+        playerId: this.playerId,
+        opponentUid: this.opponentUid,
+        savedAt: Date.now(),
+      }));
+
+      this._beforeUnloadHandler = () => {
+        // Re-save on unload to update timestamp
+        if (!this.gameOver) {
+          localStorage.setItem('pb_active_game', JSON.stringify({
+            gameId: this.gameId,
+            amPlayer1: this.isHost,
+            playerId: this.playerId,
+            opponentUid: this.opponentUid,
+            savedAt: Date.now(),
+          }));
+        }
+      };
+      window.addEventListener('beforeunload', this._beforeUnloadHandler);
+    }
+
     if (this.isDebug) this.setupDebugModePanel();
 
     // Memory profiling overlay (Ctrl+M)
@@ -10607,6 +10634,7 @@ export class HordeScene extends Phaser.Scene {
     for (const n of this.nexuses) {
       if (n.hp <= 0) {
         this.gameOver = true;
+        localStorage.removeItem('pb_active_game');
         this.winner = n.team === 1 ? 2 : 1;
         this.shakeCamera(500, 0.02);
         this.sfx.playAt('nexus_destroyed', n.x, n.y);
@@ -10769,6 +10797,7 @@ export class HordeScene extends Phaser.Scene {
       backgroundColor: '#0d1a0d', padding: { x: 16, y: 8 },
     }).setOrigin(0.5).setScrollFactor(0).setDepth(201).setAlpha(0).setInteractive({ useHandCursor: true });
     menuBtn.on('pointerdown', () => {
+      localStorage.removeItem('pb_active_game');
       this.cameras.main.fadeOut(400, 15, 26, 10);
       this.cameras.main.once('camerafadeoutcomplete', () => { this.cleanupHTML(); this.scene.start('MenuScene'); });
     });
@@ -11202,6 +11231,7 @@ export class HordeScene extends Phaser.Scene {
     // Check game over (only trigger once)
     if (state.gameOver && !this.gameOver) {
       this.gameOver = true;
+      localStorage.removeItem('pb_active_game');
       this.winner = state.winner as 1 | 2 | null;
       this.sfx.playGlobal(this.winner === this.myTeam ? 'victory' : 'defeat');
       this.writeMatchHistory();
@@ -14330,6 +14360,10 @@ export class HordeScene extends Phaser.Scene {
   // ─── CLEANUP ────────────────────────────────────────────────
 
   private cleanupHTML() {
+    if (this._beforeUnloadHandler) {
+      window.removeEventListener('beforeunload', this._beforeUnloadHandler);
+      this._beforeUnloadHandler = null;
+    }
     if (this._resizeHandler) {
       window.removeEventListener('resize', this._resizeHandler);
       this._resizeHandler = null;
