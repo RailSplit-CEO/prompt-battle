@@ -10768,6 +10768,7 @@ export class HordeScene extends Phaser.Scene {
         this.profilingRecorder?.finalize();
         this.writeMatchHistory();
         this.grantEndOfMatchGlory();
+        this.grantEndOfMatchXp();
         this.updateRankedRating();
         this.showGameOver();
         return;
@@ -10777,6 +10778,8 @@ export class HordeScene extends Phaser.Scene {
 
   /** Grant Glory currency at end of match */
   private async grantEndOfMatchGlory(): Promise<void> {
+    const auth = AuthManager.getInstance();
+    if (auth.isGuest) return;
     try {
       const { PaymentService } = await import('../store/PaymentService');
       const ps = PaymentService.getInstance();
@@ -10791,6 +10794,46 @@ export class HordeScene extends Phaser.Scene {
     } catch (e) {
       // Non-critical — don't break game over screen
       console.warn('[Glory] Failed to grant:', e);
+    }
+  }
+
+  /** Grant player XP at end of match */
+  private async grantEndOfMatchXp(): Promise<void> {
+    try {
+      const { PaymentService } = await import('../store/PaymentService');
+      const ps = PaymentService.getInstance();
+      const myTeam = this.myTeam;
+      const stats = this.matchStats;
+      const isWin = this.winner === myTeam;
+
+      const token = await (await import('firebase/auth')).getAuth((await import('../auth/firebaseApp')).getFirebaseApp()).currentUser?.getIdToken();
+      if (!token) return;
+
+      const functionsUrl = (import.meta as any).env?.VITE_FUNCTIONS_URL || '';
+      const res = await fetch(`${functionsUrl}/api/store/grantXp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({
+          kills: stats.totalKills[myTeam] || 0,
+          damage: stats.totalDamage[myTeam] || 0,
+          campsCaptured: stats.campsCaptured[myTeam] || 0,
+          resourcesDelivered: Object.values(stats.resourcesDelivered[myTeam] || {}).reduce((a: number, b: number) => a + b, 0),
+          unitsSpawned: stats.unitsSpawned[myTeam] || 0,
+          peakArmy: stats.peakArmySize[myTeam] || 0,
+          isWin,
+          isOnline: this.isOnline,
+          gameTimeMs: this.gameTime,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.xpGranted > 0) {
+          this.showFeedback(`+${data.xpGranted} XP${data.leveledUp ? ` — LEVEL UP! Level ${data.newLevel}` : ''}`, '#FFD93D');
+        }
+      }
+    } catch (e) {
+      console.warn('[XP] Failed to grant:', e);
     }
   }
 
@@ -10829,6 +10872,8 @@ export class HordeScene extends Phaser.Scene {
 
   /** Update ranked rating after match */
   private async updateRankedRating(): Promise<void> {
+    const auth = AuthManager.getInstance();
+    if (auth.isGuest) return;
     if (!this.isRanked || !this.opponentUid || !this.winner) return;
     try {
       const { updateRatingAfterMatch } = await import('../systems/RankSystem');

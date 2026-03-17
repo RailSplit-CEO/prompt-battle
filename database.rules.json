@@ -33,6 +33,14 @@
         "dailyRewards": {
           ".read": "auth != null && auth.uid === $uid",
           ".write": false
+        },
+        "playerLevel": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": false
+        },
+        "activeBoosters": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": false
         }
       }
     },

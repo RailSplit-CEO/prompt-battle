@@ -12,6 +12,8 @@ import { PaymentService } from '../store/PaymentService';
 import { PaymentModal } from './PaymentModal';
 import { ItchRedeemModal } from './ItchRedeemModal';
 import { showPurchaseConfirm } from './PurchaseConfirmModal';
+import { showGuestLoginPrompt } from './LoginOverlay';
+import { AuthManager } from '../auth/AuthManager';
 
 // ── Category definitions ────────────────────────────────────────
 
@@ -414,6 +416,10 @@ export class StorePanel {
       card.style.boxShadow = glow;
     };
     card.onclick = () => {
+      if (AuthManager.getInstance().isGuest) {
+        showGuestLoginPrompt('make purchases');
+        return;
+      }
       const inv = InventoryManager.getInstance();
       if (inv.owns(item.id)) return; // already owned
       showPurchaseConfirm({
@@ -618,6 +624,10 @@ export class StorePanel {
     };
     buyBtn.onclick = async (e) => {
       e.stopPropagation();
+      if (AuthManager.getInstance().isGuest) {
+        showGuestLoginPrompt('buy crowns');
+        return;
+      }
       const platform = PaymentService.getInstance().getPlatform();
       if (platform === 'test') {
         // Dev mode: grant crowns directly
@@ -774,6 +784,10 @@ export class StorePanel {
       buyBtn.onmouseleave = () => { buyBtn.style.background = C.gold; };
       buyBtn.onclick = (e) => {
         e.stopPropagation();
+        if (AuthManager.getInstance().isGuest) {
+          showGuestLoginPrompt('buy bundles');
+          return;
+        }
         console.log('Buy bundle:', bundle.id);
       };
       card.appendChild(buyBtn);

@@ -107,7 +107,8 @@ export interface EquippedCosmetics {
   unitSkins: Partial<Record<HordeUnitType, string>>;  // unitType → skinId
   avatar: string;                   // portraitId or 'default'
   portraitFrame: string;            // frameId or 'none'
-  voicePack: string;                // packId or 'default'
+  voicePack: string;                // packId or 'default' (legacy)
+  voicePacks: Partial<Record<HordeUnitType, string>>;  // per-unit voice packs
   buildingTheme: string;
   mapTheme: string;
   deathEffect: string;
@@ -128,6 +129,7 @@ export const DEFAULT_EQUIPPED: EquippedCosmetics = {
   avatar: 'default',
   portraitFrame: 'none',
   voicePack: 'default',
+  voicePacks: {},
   buildingTheme: 'default',
   mapTheme: 'default',
   deathEffect: 'default',

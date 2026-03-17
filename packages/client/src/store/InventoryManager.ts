@@ -147,6 +147,16 @@ export class InventoryManager {
     return this.equipped.equipmentSkins[equipType];
   }
 
+  /** Get the equipped voice pack for a specific unit type, with legacy fallback. */
+  getEquippedVoice(unitType: HordeUnitType): string | undefined {
+    const perUnit = (this.equipped as any).voicePacks?.[unitType];
+    if (perUnit && perUnit !== 'default') return perUnit;
+    // Legacy fallback: check old single voicePack field
+    const legacy = this.equipped.voicePack;
+    if (legacy && legacy !== 'default') return legacy;
+    return undefined;
+  }
+
   // ── Subscriptions ───────────────────────────────────────────────
 
   /** Subscribe to inventory changes. Returns an unsubscribe function. */

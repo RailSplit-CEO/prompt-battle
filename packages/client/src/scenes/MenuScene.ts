@@ -10,6 +10,9 @@ import { MatchInvitePopup } from '../ui/MatchInvitePopup';
 import { createIconElement } from '../ui/FriendsPanel';
 import { C } from '../ui/UIColors';
 import { StorePanel } from '../ui/StorePanel';
+import { showGuestLoginPrompt } from '../ui/LoginOverlay';
+import { BattlePassPanel } from '../ui/BattlePassPanel';
+import { DailyRewardModal } from '../ui/DailyRewardModal';
 import { HORDE_SPRITE_CONFIGS } from '../sprites/SpriteConfig';
 
 export class MenuScene extends Phaser.Scene {
@@ -26,6 +29,7 @@ export class MenuScene extends Phaser.Scene {
   private matchInvitePopup: MatchInvitePopup | null = null;
   private friendsUnsub: (() => void) | null = null;
   private invitesUnsub: (() => void) | null = null;
+  private battlePassPanel: BattlePassPanel | null = null;
   private vignetteTimer?: Phaser.Time.TimerEvent;
 
   constructor() {
@@ -190,6 +194,10 @@ export class MenuScene extends Phaser.Scene {
       storeIcon.setPosition(-120, 0);
     }
     storeBtn.zone.on('pointerdown', () => {
+      if (AuthManager.getInstance().isGuest) {
+        showGuestLoginPrompt('access the store');
+        return;
+      }
       const store = new StorePanel();
       store.open();
     });
@@ -936,6 +944,21 @@ export class MenuScene extends Phaser.Scene {
     document.body.appendChild(this.profileCardEl);
     requestAnimationFrame(() => { if (this.profileCardEl) this.profileCardEl.style.opacity = '1'; });
 
+    // === BATTLE PASS LEFT SIDEBAR ===
+    this.battlePassPanel = new BattlePassPanel(() => {
+      // Login request callback
+      if (auth.isGuest) {
+        auth.linkGuestToGoogle().then(() => window.location.reload()).catch(() => {});
+      }
+    });
+    this.battlePassPanel.mount(document.body);
+
+    // === DAILY LOGIN REWARD (logged-in users only) ===
+    if (!auth.isGuest && auth.currentUser) {
+      const dailyModal = new DailyRewardModal();
+      this.time.delayedCall(1200, () => dailyModal.show());
+    }
+
     // === INVITE POPUP LISTENER (signed-in users only) ===
     if (!auth.isGuest && auth.userProfile) {
       this.matchInvitePopup = new MatchInvitePopup({
@@ -1639,6 +1662,8 @@ export class MenuScene extends Phaser.Scene {
     this.matchHistoryPanel = null;
     this.matchInvitePopup?.destroy();
     this.matchInvitePopup = null;
+    this.battlePassPanel?.unmount();
+    this.battlePassPanel = null;
     if (this.friendsUnsub) { this.friendsUnsub(); this.friendsUnsub = null; }
     if (this.invitesUnsub) { this.invitesUnsub(); this.invitesUnsub = null; }
     this.unblockGameInput();

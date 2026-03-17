@@ -213,7 +213,7 @@ export class TtsService {
   private getEffectiveVoiceSettings(charId: string): VoiceSettings {
     try {
       const equipped = InventoryManager.getInstance().getEquipped();
-      const packId = equipped.voicePack;
+      const packId = (equipped as any).voicePacks?.[charId as any] || equipped.voicePack;
       if (packId && packId !== 'default') {
         const pack = VOICE_PACK_OVERRIDES[packId];
         if (pack && pack.unitType === charId) {

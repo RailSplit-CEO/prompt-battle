@@ -43,6 +43,10 @@
         "function": "purchaseItem"
       },
       {
+        "source": "/api/store/grantXp",
+        "function": "grantXp"
+      },
+      {
         "source": "/api/auth/itchCallback",
         "function": "itchOAuthCallback"
       },

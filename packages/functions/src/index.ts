@@ -11,6 +11,7 @@ export { squareWebhook } from './store/webhook';
 export { adminGrantItems } from './store/admin';
 export { grantGlory } from './store/glory';
 export { purchaseItem } from './store/purchase-item';
+export { grantXp } from './store/grant-xp';
 
 // Auth
 export { itchOAuthCallback } from './auth/itch-auth';

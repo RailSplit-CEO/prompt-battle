@@ -44,6 +44,16 @@ export class EquipService {
     await this.equipItem(`unitSkins/${unitType}`, 'default');
   }
 
+  // ── Per-unit voice packs ───────────────────────────────────────
+
+  async equipUnitVoice(unitType: HordeUnitType, packId: string): Promise<void> {
+    await this.equipItem(`voicePacks/${unitType}`, packId);
+  }
+
+  async unequipUnitVoice(unitType: HordeUnitType): Promise<void> {
+    await this.equipItem(`voicePacks/${unitType}`, 'default');
+  }
+
   // ── Individual cosmetic slots ───────────────────────────────────
 
   async equipAvatar(portraitId: string): Promise<void> {

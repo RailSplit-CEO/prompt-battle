@@ -13,6 +13,7 @@ import { InventoryManager } from './store/InventoryManager';
 import { EquipService } from './store/EquipService';
 import { installDevTools } from './store/dev-tools';
 import { ThemeManager } from './store/ThemeManager';
+import { PlayerLevelManager } from './store/PlayerLevelManager';
 
 async function boot() {
   // Suppress the 10s "game not started" warning — we're in the auth flow
@@ -123,6 +124,7 @@ async function boot() {
     InventoryManager.getInstance().init(uid);
     EquipService.getInstance().init(uid);
     ThemeManager.getInstance().init();
+    PlayerLevelManager.getInstance().init(uid);
   }
 
   // 5c. Install dev tools in development mode

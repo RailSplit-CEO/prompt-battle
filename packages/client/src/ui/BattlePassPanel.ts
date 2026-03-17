@@ -1,18 +1,18 @@
-// ─── BattlePassPanel — DOM overlay for the Battle Pass ──────────
-// Dark glassmorphism panel matching StorePanel / FriendsPanel style.
-// Horizontal scrolling tier track with free + premium reward rows.
+// ─── BattlePassPanel — Vertical left sidebar for the Battle Pass ─────
+// Clash Royale style: free rewards left, premium rewards right per tier.
+// Always visible on menu screen as a slim sidebar.
 
 import { C } from './UIColors';
-import { WalletManager } from '../store/WalletManager';
 import { CURRENT_SEASON } from '@prompt-battle/shared';
 import type { BattlePassTier, BattlePassReward, PlayerBattlePass } from '@prompt-battle/shared';
+import { AuthManager } from '../auth/AuthManager';
+import { showGuestLoginPrompt } from './LoginOverlay';
 
 // ── Reward display helpers ──────────────────────────────────────
 
 function rewardLabel(r: BattlePassReward): string {
-  if (r.type === 'crowns') return `${r.amount ?? 0} \u{1F451}`;
-  if (r.type === 'glory') return `${r.amount ?? 0} \u2B50`;
-  // Item — derive a short display name from the itemId
+  if (r.type === 'crowns') return `${r.amount ?? 0}`;
+  if (r.type === 'glory') return `${r.amount ?? 0}`;
   return formatItemId(r.itemId ?? 'item');
 }
 
@@ -32,12 +32,10 @@ function rewardEmoji(r: BattlePassReward): string {
 }
 
 function formatItemId(id: string): string {
-  return id
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  return id.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
-// ── Stub player state (will be replaced by a real manager) ──────
+// ── Stub player state ───────────────────────────────────────────
 
 function getPlayerBattlePass(): PlayerBattlePass {
   // TODO: wire up to Firebase RTDB /users/{uid}/battlePass
@@ -55,346 +53,251 @@ function getPlayerBattlePass(): PlayerBattlePass {
 
 export class BattlePassPanel {
   private root: HTMLDivElement | null = null;
-  private escHandler: ((e: KeyboardEvent) => void) | null = null;
-  private tierTrack: HTMLDivElement | null = null;
-  private wallet = WalletManager.getInstance();
+  private tierList: HTMLDivElement | null = null;
+  private onLoginRequest: (() => void) | null = null;
+
+  constructor(onLoginRequest?: () => void) {
+    this.onLoginRequest = onLoginRequest ?? null;
+  }
 
   get isOpen(): boolean {
     return this.root !== null;
   }
 
-  open(): void {
+  /** Mount the sidebar into a parent element */
+  mount(parent: HTMLElement): void {
     if (this.root) return;
-    this.build();
-    this.escHandler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') this.close();
-    };
-    window.addEventListener('keydown', this.escHandler);
+    this.build(parent);
   }
 
-  close(): void {
-    if (this.escHandler) {
-      window.removeEventListener('keydown', this.escHandler);
-      this.escHandler = null;
-    }
+  /** Remove the sidebar */
+  unmount(): void {
     if (this.root) {
-      const r = this.root;
-      r.style.opacity = '0';
-      const panel = r.querySelector('[data-bp-panel]') as HTMLElement | null;
-      if (panel) panel.style.transform = 'scale(0.97)';
-      setTimeout(() => {
-        r.remove();
-        if (this.root === r) this.root = null;
-      }, 200);
+      this.root.remove();
+      this.root = null;
+      this.tierList = null;
     }
-    this.tierTrack = null;
   }
 
-  toggle(): void {
-    this.isOpen ? this.close() : this.open();
+  /** Refresh display (call after XP changes) */
+  refresh(): void {
+    const parent = this.root?.parentElement;
+    if (parent) {
+      this.unmount();
+      this.mount(parent);
+    }
   }
 
   // ──────────────────────────────────────────────────────────────
   //  Build
   // ──────────────────────────────────────────────────────────────
 
-  private build(): void {
+  private build(parent: HTMLElement): void {
     this.injectStyles();
 
     const season = CURRENT_SEASON;
     const player = getPlayerBattlePass();
     const currentTier = this.computeCurrentTier(player.xp);
-    const xpIntoTier = this.computeXpIntoTier(player.xp, currentTier);
-    const nextTierXp = currentTier < season.tiers.length
-      ? season.tiers[currentTier].xpRequired
-      : season.tiers[season.tiers.length - 1].xpRequired;
-    const prevTierXp = currentTier > 1
-      ? season.tiers[currentTier - 2]?.xpRequired ?? 0
-      : 0;
 
-    // ── Overlay ──
+    // ── Root container ──
     const root = document.createElement('div');
-    root.id = 'bp-overlay';
+    root.id = 'bp-sidebar';
     root.style.cssText = `
-      position:fixed;inset:0;z-index:9998;
-      background:${C.overlay};backdrop-filter:${C.panelBlur};-webkit-backdrop-filter:${C.panelBlur};
-      display:flex;align-items:center;justify-content:center;
-      opacity:0;transition:opacity 0.25s ease;
-    `;
-    this.root = root;
-
-    root.addEventListener('mousedown', (e) => {
-      if (e.target === root) this.close();
-    });
-
-    // ── Panel ──
-    const panel = document.createElement('div');
-    panel.setAttribute('data-bp-panel', '');
-    panel.style.cssText = `
-      width:min(95vw,1000px);height:min(85vh,500px);
+      position:fixed;top:16px;left:16px;bottom:16px;
+      width:clamp(220px, 20vw, 280px);
       background:${C.panelBg};
       border:2px solid ${C.panelBorder};border-radius:16px;
-      padding:0;box-shadow:${C.panelShadow};
+      backdrop-filter:${C.panelBlur};-webkit-backdrop-filter:${C.panelBlur};
+      box-shadow:${C.panelShadow};
       display:flex;flex-direction:column;overflow:hidden;
-      transform:scale(0.96);transition:transform 0.3s cubic-bezier(0.16,1,0.3,1);
       font-family:"Nunito",sans-serif;
+      z-index:90;
+      opacity:0;transition:opacity 0.5s ease 0.6s;
     `;
-    root.appendChild(panel);
+    this.root = root;
 
     // ── Header ──
     const header = document.createElement('div');
     header.style.cssText = `
-      display:flex;align-items:center;justify-content:space-between;
-      padding:18px 22px 14px;
+      padding:14px 14px 10px;
       border-bottom:1px solid ${C.divider};
       flex-shrink:0;
     `;
-    panel.appendChild(header);
-
-    // Left: title + season end
-    const titleWrap = document.createElement('div');
-    titleWrap.style.cssText = 'display:flex;flex-direction:column;gap:2px;';
 
     const titleRow = document.createElement('div');
-    titleRow.style.cssText = 'display:flex;align-items:center;gap:10px;';
+    titleRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;';
+
+    const titleLeft = document.createElement('div');
+    titleLeft.style.cssText = 'display:flex;align-items:center;gap:6px;';
 
     const titleIcon = document.createElement('span');
     titleIcon.textContent = '\u2694\uFE0F';
-    titleIcon.style.cssText = 'font-size:20px;opacity:0.7;';
-    titleRow.appendChild(titleIcon);
+    titleIcon.style.cssText = 'font-size:16px;';
+    titleLeft.appendChild(titleIcon);
 
-    const title = document.createElement('h2');
-    title.textContent = `BATTLE PASS \u2014 ${season.name}`;
+    const title = document.createElement('span');
+    title.textContent = 'BATTLE PASS';
     title.style.cssText = `
-      margin:0;font-size:18px;font-family:"Fredoka",sans-serif;font-weight:700;
-      color:${C.gold};letter-spacing:2px;
+      font-family:"Fredoka",sans-serif;font-weight:700;font-size:13px;
+      color:${C.gold};letter-spacing:1.5px;
     `;
-    titleRow.appendChild(title);
-    titleWrap.appendChild(titleRow);
+    titleLeft.appendChild(title);
+    titleRow.appendChild(titleLeft);
 
-    const endDate = document.createElement('span');
-    const daysLeft = Math.max(0, Math.ceil((season.endDate - Date.now()) / (24 * 60 * 60 * 1000)));
-    endDate.textContent = `${daysLeft} days remaining \u2022 Ends ${new Date(season.endDate).toLocaleDateString()}`;
-    endDate.style.cssText = `
-      font-size:11px;color:${C.textMuted};font-family:"Nunito",sans-serif;
-      letter-spacing:0.3px;
-    `;
-    titleWrap.appendChild(endDate);
-
-    header.appendChild(titleWrap);
-
-    // Right: close
-    const closeBtn = document.createElement('button');
-    closeBtn.textContent = '\u2715';
-    closeBtn.style.cssText = `
-      background:${C.inputBg};border:1px solid ${C.inputBorder};color:${C.textSecondary};
-      width:32px;height:32px;border-radius:8px;font-size:15px;cursor:pointer;
-      font-family:"Fredoka",sans-serif;transition:all 0.15s;display:flex;
-      align-items:center;justify-content:center;flex-shrink:0;
-    `;
-    closeBtn.onmouseenter = () => {
-      closeBtn.style.borderColor = C.red;
-      closeBtn.style.color = C.red;
-      closeBtn.style.background = 'rgba(255,107,107,0.1)';
-    };
-    closeBtn.onmouseleave = () => {
-      closeBtn.style.borderColor = C.inputBorder;
-      closeBtn.style.color = C.textSecondary;
-      closeBtn.style.background = C.inputBg;
-    };
-    closeBtn.onclick = () => this.close();
-    header.appendChild(closeBtn);
-
-    // ── Progress bar section ──
-    const progressSection = document.createElement('div');
-    progressSection.style.cssText = `
-      padding:14px 22px 10px;border-bottom:1px solid ${C.divider};
-      display:flex;align-items:center;gap:16px;flex-shrink:0;
-    `;
-    panel.appendChild(progressSection);
-
-    // Tier badge
-    const tierBadge = document.createElement('div');
+    const tierBadge = document.createElement('span');
+    tierBadge.textContent = `T${currentTier}`;
     tierBadge.style.cssText = `
       background:linear-gradient(135deg, ${C.gold}, ${C.goldDark});
       color:${C.textDark};font-family:"Fredoka",sans-serif;font-weight:700;
-      font-size:14px;padding:6px 14px;border-radius:10px;
-      letter-spacing:1px;white-space:nowrap;
-      box-shadow:0 2px 8px rgba(255,217,61,0.25);
+      font-size:11px;padding:3px 8px;border-radius:6px;
+      letter-spacing:0.5px;
     `;
-    tierBadge.textContent = `TIER ${currentTier}`;
-    progressSection.appendChild(tierBadge);
+    titleRow.appendChild(tierBadge);
+    header.appendChild(titleRow);
 
-    // Progress bar container
-    const progressWrap = document.createElement('div');
-    progressWrap.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:4px;';
-
-    const progressBarOuter = document.createElement('div');
-    progressBarOuter.style.cssText = `
-      width:100%;height:14px;background:${C.sliderTrack};border-radius:7px;
-      overflow:hidden;position:relative;
+    // Season info
+    const daysLeft = Math.max(0, Math.ceil((season.endDate - Date.now()) / (24 * 60 * 60 * 1000)));
+    const seasonInfo = document.createElement('div');
+    seasonInfo.textContent = `${season.name} \u2022 ${daysLeft}d left`;
+    seasonInfo.style.cssText = `
+      font-size:10px;color:${C.textMuted};margin-top:4px;
     `;
+    header.appendChild(seasonInfo);
 
+    // XP Progress bar
+    const xpIntoTier = this.computeXpIntoTier(player.xp, currentTier);
+    const nextTierXp = currentTier < season.tiers.length
+      ? season.tiers[currentTier].xpRequired
+      : season.tiers[season.tiers.length - 1].xpRequired;
+    const prevTierXp = currentTier >= 2 ? season.tiers[currentTier - 2]?.xpRequired ?? 0 : 0;
     const xpRange = nextTierXp - prevTierXp;
-    const progressFraction = xpRange > 0 ? Math.min(1, xpIntoTier / xpRange) : 1;
+    const progressFrac = xpRange > 0 ? Math.min(1, xpIntoTier / xpRange) : 1;
 
-    const progressBarFill = document.createElement('div');
-    progressBarFill.style.cssText = `
-      width:${progressFraction * 100}%;height:100%;
+    const progressWrap = document.createElement('div');
+    progressWrap.style.cssText = 'margin-top:8px;';
+
+    const progressBar = document.createElement('div');
+    progressBar.style.cssText = `
+      width:100%;height:8px;background:${C.sliderTrack};border-radius:4px;overflow:hidden;
+    `;
+    const progressFill = document.createElement('div');
+    progressFill.style.cssText = `
+      width:${progressFrac * 100}%;height:100%;
       background:linear-gradient(90deg, ${C.gold}, ${C.goldDark});
-      border-radius:7px;
-      transition:width 0.5s ease;
+      border-radius:4px;transition:width 0.5s ease;
     `;
-    progressBarOuter.appendChild(progressBarFill);
-    progressWrap.appendChild(progressBarOuter);
+    progressBar.appendChild(progressFill);
+    progressWrap.appendChild(progressBar);
 
-    const progressLabel = document.createElement('div');
-    progressLabel.style.cssText = `
-      display:flex;justify-content:space-between;
-      font-size:10px;color:${C.textMuted};font-family:"Nunito",sans-serif;
+    const xpLabel = document.createElement('div');
+    xpLabel.style.cssText = `
+      display:flex;justify-content:space-between;margin-top:3px;
+      font-size:9px;color:${C.textMuted};
     `;
-    const xpCurrent = document.createElement('span');
-    xpCurrent.textContent = `${player.xp.toLocaleString()} XP`;
+    const xpCur = document.createElement('span');
+    xpCur.textContent = `${player.xp} XP`;
     const xpNext = document.createElement('span');
-    xpNext.textContent = currentTier < season.tiers.length
-      ? `${nextTierXp.toLocaleString()} XP to Tier ${currentTier + 1}`
-      : 'MAX TIER';
-    progressLabel.appendChild(xpCurrent);
-    progressLabel.appendChild(xpNext);
-    progressWrap.appendChild(progressLabel);
+    xpNext.textContent = currentTier < season.tiers.length ? `${nextTierXp} XP` : 'MAX';
+    xpLabel.appendChild(xpCur);
+    xpLabel.appendChild(xpNext);
+    progressWrap.appendChild(xpLabel);
+    header.appendChild(progressWrap);
 
-    progressSection.appendChild(progressWrap);
+    root.appendChild(header);
 
-    // Premium status / buy button
+    // ── Track labels row ──
+    const labelsRow = document.createElement('div');
+    labelsRow.style.cssText = `
+      display:flex;align-items:center;padding:6px 14px;
+      border-bottom:1px solid ${C.divider};flex-shrink:0;
+      gap:4px;
+    `;
+    const tierLabel = document.createElement('span');
+    tierLabel.style.cssText = `width:28px;font-size:9px;font-weight:700;color:${C.textMuted};font-family:"Fredoka",sans-serif;text-align:center;flex-shrink:0;`;
+    tierLabel.textContent = '#';
+    labelsRow.appendChild(tierLabel);
+
+    const freeLabel = document.createElement('span');
+    freeLabel.style.cssText = `flex:1;font-size:9px;font-weight:700;color:${C.teal};font-family:"Fredoka",sans-serif;text-align:center;letter-spacing:0.5px;`;
+    freeLabel.textContent = 'FREE';
+    labelsRow.appendChild(freeLabel);
+
+    const premLabel = document.createElement('span');
+    premLabel.style.cssText = `flex:1;font-size:9px;font-weight:700;color:${C.gold};font-family:"Fredoka",sans-serif;text-align:center;letter-spacing:0.5px;`;
+    premLabel.textContent = 'PREMIUM';
+    labelsRow.appendChild(premLabel);
+
+    root.appendChild(labelsRow);
+
+    // ── Tier list (scrollable) ──
+    const tierList = document.createElement('div');
+    tierList.className = 'bp-tier-list';
+    tierList.style.cssText = `
+      flex:1;overflow-y:auto;overflow-x:hidden;
+      display:flex;flex-direction:column;
+    `;
+    this.tierList = tierList;
+
+    // Build tiers in REVERSE order (highest first, current near top)
+    const tiers = [...season.tiers].reverse();
+    for (const tierDef of tiers) {
+      const row = this.buildTierRow(tierDef, currentTier, player);
+      tierList.appendChild(row);
+    }
+
+    root.appendChild(tierList);
+
+    // ── Premium buy button (footer) ──
     if (!player.premium) {
-      const buyPremBtn = document.createElement('button');
-      buyPremBtn.textContent = `\u{1F451} BUY PREMIUM \u2022 ${season.premiumPriceCrowns}`;
-      buyPremBtn.style.cssText = `
-        flex-shrink:0;padding:8px 16px;border-radius:10px;font-size:12px;font-weight:700;
+      const footer = document.createElement('div');
+      footer.style.cssText = `
+        padding:10px 14px;border-top:1px solid ${C.divider};flex-shrink:0;
+      `;
+
+      const buyBtn = document.createElement('button');
+      buyBtn.innerHTML = `\u{1F451} <span style="font-size:12px;">UPGRADE</span> <span style="font-size:10px;opacity:0.7;">${season.premiumPriceCrowns} Crowns</span>`;
+      buyBtn.style.cssText = `
+        width:100%;padding:8px 10px;border-radius:10px;font-weight:700;
         font-family:"Fredoka",sans-serif;cursor:pointer;transition:all 0.15s;
         background:linear-gradient(135deg, ${C.gold}, ${C.goldDark});
-        border:none;color:${C.textDark};letter-spacing:0.5px;
+        border:none;color:${C.textDark};
+        display:flex;align-items:center;justify-content:center;gap:6px;
         box-shadow:0 2px 8px rgba(255,217,61,0.25);
-        white-space:nowrap;
       `;
-      buyPremBtn.onmouseenter = () => {
-        buyPremBtn.style.transform = 'translateY(-1px)';
-        buyPremBtn.style.boxShadow = '0 4px 14px rgba(255,217,61,0.35)';
+      buyBtn.onmouseenter = () => {
+        buyBtn.style.transform = 'translateY(-1px)';
+        buyBtn.style.boxShadow = '0 4px 14px rgba(255,217,61,0.35)';
       };
-      buyPremBtn.onmouseleave = () => {
-        buyPremBtn.style.transform = 'translateY(0)';
-        buyPremBtn.style.boxShadow = '0 2px 8px rgba(255,217,61,0.25)';
+      buyBtn.onmouseleave = () => {
+        buyBtn.style.transform = '';
+        buyBtn.style.boxShadow = '0 2px 8px rgba(255,217,61,0.25)';
       };
-      buyPremBtn.onclick = () => {
+      buyBtn.onclick = () => {
+        if (AuthManager.getInstance().isGuest) {
+          showGuestLoginPrompt('upgrade the Battle Pass');
+          return;
+        }
         console.log('Buy battle pass premium');
       };
-      progressSection.appendChild(buyPremBtn);
-    } else {
-      const premBadge = document.createElement('div');
-      premBadge.textContent = player.premiumPlus ? '\u2B50 PREMIUM+' : '\u2B50 PREMIUM';
-      premBadge.style.cssText = `
-        flex-shrink:0;padding:6px 14px;border-radius:10px;font-size:12px;font-weight:700;
-        font-family:"Fredoka",sans-serif;
-        background:rgba(255,217,61,0.12);border:1px solid ${C.goldDim};
-        color:${C.gold};letter-spacing:0.5px;white-space:nowrap;
-      `;
-      progressSection.appendChild(premBadge);
+      footer.appendChild(buyBtn);
+      root.appendChild(footer);
     }
-
-    // ── Track labels ──
-    const trackLabels = document.createElement('div');
-    trackLabels.style.cssText = `
-      display:flex;align-items:stretch;padding:0;flex-shrink:0;
-    `;
-
-    // Left labels column (fixed)
-    const labelsCol = document.createElement('div');
-    labelsCol.style.cssText = `
-      width:80px;flex-shrink:0;display:flex;flex-direction:column;
-      border-right:1px solid ${C.divider};
-    `;
-
-    const premLabel = document.createElement('div');
-    premLabel.textContent = 'PREMIUM';
-    premLabel.style.cssText = `
-      flex:1;display:flex;align-items:center;justify-content:center;
-      font-size:10px;font-weight:700;color:${C.gold};
-      font-family:"Fredoka",sans-serif;letter-spacing:1px;
-      border-bottom:1px solid ${C.divider};
-      padding:8px 4px;
-    `;
-    labelsCol.appendChild(premLabel);
-
-    const freeLabel = document.createElement('div');
-    freeLabel.textContent = 'FREE';
-    freeLabel.style.cssText = `
-      flex:1;display:flex;align-items:center;justify-content:center;
-      font-size:10px;font-weight:700;color:${C.textSecondary};
-      font-family:"Fredoka",sans-serif;letter-spacing:1px;
-      padding:8px 4px;
-    `;
-    labelsCol.appendChild(freeLabel);
-
-    trackLabels.appendChild(labelsCol);
-
-    // ── Tier track (horizontal scroll) ──
-    const tierTrack = document.createElement('div');
-    tierTrack.className = 'bp-tier-scroll';
-    tierTrack.style.cssText = `
-      flex:1;overflow-x:auto;overflow-y:hidden;
-      display:flex;flex-direction:row;
-      min-width:0;
-      -webkit-overflow-scrolling:touch;
-    `;
-    this.tierTrack = tierTrack;
-    trackLabels.appendChild(tierTrack);
-
-    panel.appendChild(trackLabels);
-
-    // ── Build tier columns ──
-    for (const tierDef of season.tiers) {
-      const col = this.buildTierColumn(tierDef, currentTier, player);
-      tierTrack.appendChild(col);
-    }
-
-    // ── Footer hint ──
-    const footer = document.createElement('div');
-    footer.style.cssText = `
-      padding:8px 22px;border-top:1px solid ${C.divider};
-      display:flex;justify-content:space-between;align-items:center;flex-shrink:0;
-    `;
-    const scrollHint = document.createElement('span');
-    scrollHint.textContent = '\u2190 Scroll to browse tiers \u2192';
-    scrollHint.style.cssText = `font-size:11px;color:${C.textMuted};font-family:"Nunito",sans-serif;`;
-    footer.appendChild(scrollHint);
-
-    const escHint = document.createElement('span');
-    escHint.textContent = 'ESC to close';
-    escHint.style.cssText = `font-size:11px;color:${C.textMuted};font-family:"Nunito",sans-serif;letter-spacing:0.5px;`;
-    footer.appendChild(escHint);
-
-    panel.appendChild(footer);
 
     // ── Mount ──
-    document.body.appendChild(root);
+    parent.appendChild(root);
 
     // Animate in
-    requestAnimationFrame(() => {
-      root.style.opacity = '1';
-      panel.style.transform = 'scale(1)';
-    });
+    requestAnimationFrame(() => { root.style.opacity = '1'; });
 
-    // Auto-scroll to current tier
-    requestAnimationFrame(() => {
-      this.scrollToCurrentTier(currentTier);
-    });
+    // Scroll to current tier
+    requestAnimationFrame(() => this.scrollToCurrentTier(currentTier));
   }
 
   // ──────────────────────────────────────────────────────────────
-  //  Build a single tier column
+  //  Build a single tier row
   // ──────────────────────────────────────────────────────────────
 
-  private buildTierColumn(
+  private buildTierRow(
     tierDef: BattlePassTier,
     currentTier: number,
     player: PlayerBattlePass,
@@ -404,71 +307,49 @@ export class BattlePassPanel {
     const isCurrent = tier === currentTier;
     const isFuture = tier > currentTier;
 
-    const freeClaimed = !!player.claimedFree[tier];
-    const premClaimed = !!player.claimedPremium[tier];
-    const hasFree = !!tierDef.freeReward;
-    const hasPrem = !!tierDef.premiumReward;
-    const freeClaimable = isUnlocked && hasFree && !freeClaimed;
-    const premClaimable = isUnlocked && hasPrem && !premClaimed && player.premium;
-
-    // Column
-    const col = document.createElement('div');
-    col.dataset.tier = String(tier);
-    col.style.cssText = `
-      flex:0 0 80px;width:80px;
-      display:flex;flex-direction:column;
-      border-right:1px solid ${C.divider};
-      position:relative;
-      ${isFuture ? 'opacity:0.45;' : ''}
+    const row = document.createElement('div');
+    row.dataset.tier = String(tier);
+    row.style.cssText = `
+      display:flex;align-items:stretch;
+      padding:4px 10px;gap:4px;
+      border-bottom:1px solid ${C.divider};
+      min-height:42px;
+      transition:background 0.15s;
+      ${isFuture ? 'opacity:0.4;' : ''}
+      ${isCurrent ? `background:rgba(255,217,61,0.06);border-left:3px solid ${C.gold};padding-left:7px;` : ''}
     `;
-    if (isCurrent) {
-      col.style.boxShadow = `inset 0 0 0 2px ${C.gold}`;
-      col.style.background = 'rgba(255,217,61,0.04)';
-    }
 
-    // ── Tier number strip ──
+    // Tier number
     const tierNum = document.createElement('div');
     tierNum.textContent = String(tier);
     tierNum.style.cssText = `
-      text-align:center;font-size:10px;font-weight:700;
+      width:24px;flex-shrink:0;
+      display:flex;align-items:center;justify-content:center;
+      font-size:11px;font-weight:700;
       color:${isCurrent ? C.gold : C.textMuted};
       font-family:"Fredoka",sans-serif;
-      padding:3px 0;
-      background:${isCurrent ? 'rgba(255,217,61,0.08)' : 'transparent'};
-      border-bottom:1px solid ${C.divider};
     `;
-    col.appendChild(tierNum);
+    row.appendChild(tierNum);
 
-    // ── Premium reward cell (top) ──
-    const premCell = this.buildRewardCell(
-      tierDef.premiumReward,
-      isUnlocked,
-      premClaimed,
-      premClaimable,
-      true,
-      tier,
-    );
-    col.appendChild(premCell);
-
-    // ── Divider ──
-    const divLine = document.createElement('div');
-    divLine.style.cssText = `
-      height:1px;background:${C.divider};flex-shrink:0;
-    `;
-    col.appendChild(divLine);
-
-    // ── Free reward cell (bottom) ──
+    // Free reward cell (left)
     const freeCell = this.buildRewardCell(
-      tierDef.freeReward,
-      isUnlocked,
-      freeClaimed,
-      freeClaimable,
-      false,
-      tier,
+      tierDef.freeReward, isUnlocked,
+      !!player.claimedFree[tier],
+      isUnlocked && !!tierDef.freeReward && !player.claimedFree[tier],
+      false, tier,
     );
-    col.appendChild(freeCell);
+    row.appendChild(freeCell);
 
-    return col;
+    // Premium reward cell (right)
+    const premCell = this.buildRewardCell(
+      tierDef.premiumReward, isUnlocked,
+      !!player.claimedPremium[tier],
+      isUnlocked && !!tierDef.premiumReward && !player.claimedPremium[tier] && player.premium,
+      true, tier,
+    );
+    row.appendChild(premCell);
+
+    return row;
   }
 
   // ──────────────────────────────────────────────────────────────
@@ -485,89 +366,70 @@ export class BattlePassPanel {
   ): HTMLDivElement {
     const cell = document.createElement('div');
     cell.style.cssText = `
-      flex:1;display:flex;flex-direction:column;
-      align-items:center;justify-content:center;
-      padding:6px 4px;gap:3px;
-      min-height:0;
+      flex:1;display:flex;align-items:center;gap:4px;
+      padding:3px 6px;border-radius:6px;min-width:0;
+      background:${isPremium ? 'rgba(255,217,61,0.04)' : 'rgba(69,230,176,0.04)'};
       position:relative;
     `;
 
     if (!reward) {
-      // Empty tier
       const dash = document.createElement('span');
       dash.textContent = '\u2014';
-      dash.style.cssText = `font-size:14px;color:${C.textMuted};opacity:0.3;`;
+      dash.style.cssText = `font-size:12px;color:${C.textMuted};opacity:0.3;margin:auto;`;
       cell.appendChild(dash);
       return cell;
     }
 
-    // Reward icon
-    const icon = document.createElement('div');
+    // Emoji
+    const icon = document.createElement('span');
     icon.textContent = rewardEmoji(reward);
     icon.style.cssText = `
-      font-size:20px;line-height:1;
+      font-size:14px;line-height:1;flex-shrink:0;
       ${isPremium && !isUnlocked ? 'filter:grayscale(1) brightness(0.5);' : ''}
     `;
     cell.appendChild(icon);
 
-    // Reward label
-    const label = document.createElement('div');
+    // Label
+    const label = document.createElement('span');
     label.textContent = rewardLabel(reward);
     label.style.cssText = `
-      font-size:9px;font-weight:700;
+      font-size:10px;font-weight:600;
       color:${isPremium ? C.gold : C.textPrimary};
-      font-family:"Nunito",sans-serif;
-      text-align:center;white-space:nowrap;
-      overflow:hidden;text-overflow:ellipsis;
-      max-width:72px;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+      flex:1;min-width:0;
     `;
     cell.appendChild(label);
 
-    // Claimed checkmark
+    // State indicator
     if (isClaimed) {
-      const check = document.createElement('div');
+      const check = document.createElement('span');
       check.textContent = '\u2713';
       check.style.cssText = `
-        font-size:11px;font-weight:700;color:${C.green};
-        background:rgba(90,154,78,0.15);
-        border-radius:50%;width:18px;height:18px;
-        display:flex;align-items:center;justify-content:center;
+        font-size:10px;font-weight:700;color:${C.green};flex-shrink:0;
       `;
       cell.appendChild(check);
-    }
-
-    // Claim button
-    if (isClaimable) {
+    } else if (isClaimable) {
       const claimBtn = document.createElement('button');
-      claimBtn.textContent = 'CLAIM';
+      claimBtn.textContent = '\u2193';
+      claimBtn.title = 'Claim';
       claimBtn.style.cssText = `
-        padding:2px 10px;border-radius:6px;font-size:9px;font-weight:700;
-        font-family:"Fredoka",sans-serif;cursor:pointer;transition:all 0.15s;
+        width:20px;height:20px;border-radius:5px;font-size:11px;font-weight:700;
+        cursor:pointer;transition:all 0.15s;flex-shrink:0;
         background:${C.green};border:none;color:#fff;
-        letter-spacing:0.5px;
+        display:flex;align-items:center;justify-content:center;
+        padding:0;
       `;
-      claimBtn.onmouseenter = () => {
-        claimBtn.style.background = C.greenDark;
-        claimBtn.style.transform = 'scale(1.05)';
-      };
-      claimBtn.onmouseleave = () => {
-        claimBtn.style.background = C.green;
-        claimBtn.style.transform = 'scale(1)';
-      };
+      claimBtn.onmouseenter = () => { claimBtn.style.background = C.greenDark; };
+      claimBtn.onmouseleave = () => { claimBtn.style.background = C.green; };
       claimBtn.onclick = (e) => {
         e.stopPropagation();
-        console.log(`Claim ${isPremium ? 'premium' : 'free'} reward at tier ${tier}`);
+        this.handleClaim(tier, isPremium);
       };
       cell.appendChild(claimBtn);
-    }
-
-    // Lock icon for premium rewards on non-premium players
-    if (isPremium && !isUnlocked) {
-      const lock = document.createElement('div');
+    } else if (isPremium && !isUnlocked) {
+      const lock = document.createElement('span');
       lock.textContent = '\uD83D\uDD12';
-      lock.style.cssText = `
-        position:absolute;top:4px;right:4px;font-size:10px;opacity:0.5;
-      `;
+      lock.style.cssText = 'font-size:10px;opacity:0.4;flex-shrink:0;';
       cell.appendChild(lock);
     }
 
@@ -575,44 +437,124 @@ export class BattlePassPanel {
   }
 
   // ──────────────────────────────────────────────────────────────
+  //  Claim handling
+  // ──────────────────────────────────────────────────────────────
+
+  private handleClaim(tier: number, isPremium: boolean): void {
+    const auth = AuthManager.getInstance();
+    if (auth.isGuest) {
+      showGuestLoginPrompt('claim rewards');
+      return;
+    }
+    console.log(`Claim ${isPremium ? 'premium' : 'free'} reward at tier ${tier}`);
+    // TODO: write to Firebase and refresh
+  }
+
+  private showLoginPrompt(): void {
+    // Small modal overlay
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position:fixed;inset:0;z-index:9999;
+      background:${C.overlay};
+      backdrop-filter:${C.panelBlur};-webkit-backdrop-filter:${C.panelBlur};
+      display:flex;align-items:center;justify-content:center;
+      opacity:0;transition:opacity 0.2s ease;
+    `;
+
+    const modal = document.createElement('div');
+    modal.style.cssText = `
+      width:min(320px, 85vw);padding:24px 20px;
+      background:${C.panelBg};border:2px solid ${C.panelBorder};
+      border-radius:16px;box-shadow:${C.panelShadow};
+      text-align:center;
+    `;
+
+    const icon = document.createElement('div');
+    icon.textContent = '\uD83D\uDD12';
+    icon.style.cssText = 'font-size:32px;margin-bottom:12px;';
+    modal.appendChild(icon);
+
+    const msg = document.createElement('div');
+    msg.textContent = 'Log in to save your progress and claim rewards!';
+    msg.style.cssText = `
+      font-size:14px;color:${C.textPrimary};margin-bottom:18px;
+      font-family:"Nunito",sans-serif;line-height:1.4;
+    `;
+    modal.appendChild(msg);
+
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:8px;justify-content:center;';
+
+    const loginBtn = document.createElement('button');
+    loginBtn.textContent = 'Log In';
+    loginBtn.style.cssText = `
+      padding:8px 20px;border-radius:8px;font-size:13px;font-weight:700;
+      font-family:"Fredoka",sans-serif;cursor:pointer;
+      background:${C.gold};border:none;color:${C.textDark};
+      transition:filter 0.15s;
+    `;
+    loginBtn.onmouseenter = () => { loginBtn.style.filter = 'brightness(1.1)'; };
+    loginBtn.onmouseleave = () => { loginBtn.style.filter = ''; };
+    loginBtn.onclick = () => {
+      overlay.remove();
+      this.onLoginRequest?.();
+    };
+    btnRow.appendChild(loginBtn);
+
+    const laterBtn = document.createElement('button');
+    laterBtn.textContent = 'Later';
+    laterBtn.style.cssText = `
+      padding:8px 20px;border-radius:8px;font-size:13px;font-weight:700;
+      font-family:"Fredoka",sans-serif;cursor:pointer;
+      background:${C.surface};border:1px solid ${C.panelBorder};color:${C.textSecondary};
+      transition:all 0.15s;
+    `;
+    laterBtn.onclick = () => {
+      overlay.style.opacity = '0';
+      setTimeout(() => overlay.remove(), 200);
+    };
+    btnRow.appendChild(laterBtn);
+    modal.appendChild(btnRow);
+
+    overlay.appendChild(modal);
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        overlay.style.opacity = '0';
+        setTimeout(() => overlay.remove(), 200);
+      }
+    });
+
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => { overlay.style.opacity = '1'; });
+  }
+
+  // ──────────────────────────────────────────────────────────────
   //  XP / tier helpers
   // ──────────────────────────────────────────────────────────────
 
   private computeCurrentTier(xp: number): number {
-    const tiers = CURRENT_SEASON.tiers;
     let tier = 0;
-    for (const t of tiers) {
-      if (xp >= t.xpRequired) {
-        tier = t.tier;
-      } else {
-        break;
-      }
+    for (const t of CURRENT_SEASON.tiers) {
+      if (xp >= t.xpRequired) tier = t.tier;
+      else break;
     }
     return tier;
   }
 
   private computeXpIntoTier(xp: number, currentTier: number): number {
     if (currentTier <= 0) return xp;
-    const prevXp = currentTier >= 2
-      ? CURRENT_SEASON.tiers[currentTier - 2].xpRequired
-      : 0;
+    const prevXp = currentTier >= 2 ? CURRENT_SEASON.tiers[currentTier - 2].xpRequired : 0;
     return xp - prevXp;
   }
 
-  // ──────────────────────────────────────────────────────────────
-  //  Scroll to current tier
-  // ──────────────────────────────────────────────────────────────
-
   private scrollToCurrentTier(currentTier: number): void {
-    if (!this.tierTrack) return;
-    const tierCol = this.tierTrack.querySelector(`[data-tier="${currentTier}"]`) as HTMLElement | null;
-    if (tierCol) {
-      // Center the current tier in the scroll area
-      const trackWidth = this.tierTrack.clientWidth;
-      const colLeft = tierCol.offsetLeft;
-      const colWidth = tierCol.offsetWidth;
-      const scrollTarget = colLeft - (trackWidth / 2) + (colWidth / 2);
-      this.tierTrack.scrollTo({ left: Math.max(0, scrollTarget), behavior: 'smooth' });
+    if (!this.tierList) return;
+    const tierRow = this.tierList.querySelector(`[data-tier="${currentTier}"]`) as HTMLElement | null;
+    if (tierRow) {
+      const listHeight = this.tierList.clientHeight;
+      const rowTop = tierRow.offsetTop;
+      const rowHeight = tierRow.offsetHeight;
+      this.tierList.scrollTo({ top: Math.max(0, rowTop - listHeight / 2 + rowHeight / 2), behavior: 'smooth' });
     }
   }
 
@@ -621,21 +563,19 @@ export class BattlePassPanel {
   // ──────────────────────────────────────────────────────────────
 
   private injectStyles(): void {
-    if (document.getElementById('bp-panel-styles')) return;
+    if (document.getElementById('bp-sidebar-styles')) return;
     const style = document.createElement('style');
-    style.id = 'bp-panel-styles';
+    style.id = 'bp-sidebar-styles';
     style.textContent = `
-      /* Horizontal scrollbar for tier track */
-      #bp-overlay .bp-tier-scroll::-webkit-scrollbar { height:6px; }
-      #bp-overlay .bp-tier-scroll::-webkit-scrollbar-track { background:transparent; }
-      #bp-overlay .bp-tier-scroll::-webkit-scrollbar-thumb {
+      #bp-sidebar .bp-tier-list::-webkit-scrollbar { width:5px; }
+      #bp-sidebar .bp-tier-list::-webkit-scrollbar-track { background:transparent; }
+      #bp-sidebar .bp-tier-list::-webkit-scrollbar-thumb {
         background:rgba(139,115,85,0.35);border-radius:3px;
       }
-      #bp-overlay .bp-tier-scroll::-webkit-scrollbar-thumb:hover {
+      #bp-sidebar .bp-tier-list::-webkit-scrollbar-thumb:hover {
         background:rgba(139,115,85,0.55);
       }
-      /* Firefox */
-      #bp-overlay .bp-tier-scroll {
+      #bp-sidebar .bp-tier-list {
         scrollbar-width:thin;
         scrollbar-color:rgba(139,115,85,0.35) transparent;
       }
