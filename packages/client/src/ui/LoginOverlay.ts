@@ -21,6 +21,13 @@ export class LoginOverlay {
   private resolve: ((value: 'google' | 'guest') => void) | null = null;
 
   show(): Promise<'google' | 'guest'> {
+    // If already showing, just swap the resolve so next click resolves the new promise
+    if (this.root) {
+      return new Promise<'google' | 'guest'>((resolve) => {
+        this.resolve = resolve;
+      });
+    }
+
     return new Promise<'google' | 'guest'>((resolve) => {
       this.resolve = resolve;
 

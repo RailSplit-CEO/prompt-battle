@@ -1,18 +1,31 @@
 import { C } from './UIColors';
+import {
+  RegExpMatcher,
+  englishDataset,
+  englishRecommendedTransformers,
+} from 'obscenity';
 
+// Avatar portrait images (same as TalkingPortrait system)
+const AVATAR_BASE = 'assets/enemies/avatars';
 const PROFILE_ICONS = [
-  { key: 'gnome', label: 'Gnome', path: 'assets/enemies/gnome/Gnome_Idle.png', fw: 192, fh: 192, fc: 8 },
-  { key: 'turtle', label: 'Turtle', path: 'assets/enemies/turtle/Turtle_Idle.png', fw: 320, fh: 320, fc: 10 },
-  { key: 'skull', label: 'Skull', path: 'assets/enemies/skull/Skull_Idle.png', fw: 192, fh: 192, fc: 8 },
-  { key: 'spider', label: 'Spider', path: 'assets/enemies/spider/Spider_Idle.png', fw: 192, fh: 192, fc: 8 },
-  { key: 'hyena', label: 'Hyena', path: 'assets/enemies/gnoll/Gnoll_Idle.png', fw: 192, fh: 192, fc: 8 },
-  { key: 'rogue', label: 'Rogue', path: 'assets/enemies/skull/Skull_Idle.png', fw: 192, fh: 192, fc: 8 },
-  { key: 'panda', label: 'Panda', path: 'assets/enemies/panda/Panda_Idle.png', fw: 256, fh: 256, fc: 8 },
-  { key: 'lizard', label: 'Lizard', path: 'assets/enemies/lizard/Lizard_Idle.png', fw: 192, fh: 192, fc: 8 },
-  { key: 'minotaur', label: 'Minotaur', path: 'assets/enemies/minotaur/Minotaur_Idle.png', fw: 320, fh: 320, fc: 8 },
-  { key: 'shaman', label: 'Shaman', path: 'assets/enemies/shaman/Shaman_Idle.png', fw: 192, fh: 192, fc: 8 },
-  { key: 'troll', label: 'Troll', path: 'assets/enemies/troll/Troll_Idle.png', fw: 384, fh: 384, fc: 8 },
+  { key: 'gnome', label: 'Gnome' },
+  { key: 'turtle', label: 'Turtle' },
+  { key: 'skull', label: 'Skull' },
+  { key: 'spider', label: 'Spider' },
+  { key: 'hyena', label: 'Hyena' },
+  { key: 'rogue', label: 'Rogue' },
+  { key: 'panda', label: 'Panda' },
+  { key: 'lizard', label: 'Lizard' },
+  { key: 'minotaur', label: 'Minotaur' },
+  { key: 'shaman', label: 'Shaman' },
+  { key: 'troll', label: 'Troll' },
 ] as const;
+
+// Profanity filter — catches leetspeak, character substitution, etc.
+const profanityMatcher = new RegExpMatcher({
+  ...englishDataset.build(),
+  ...englishRecommendedTransformers,
+});
 
 const USERNAME_REGEX = /^[a-zA-Z0-9_]{2,16}$/;
 
@@ -53,20 +66,22 @@ export class ProfileSetupOverlay {
         transition: 'opacity 0.35s ease',
       });
 
-      // Panel
+      // Panel — tall vertical layout
       const panel = document.createElement('div');
       Object.assign(panel.style, {
-        maxWidth: '480px',
-        width: '90%',
+        maxWidth: '420px',
+        width: '92%',
         background: C.panelBg,
-        border: `1px solid ${C.panelBorder}`,
-        borderRadius: '16px',
+        border: `2px solid ${C.panelBorder}`,
+        borderRadius: '20px',
         boxShadow: C.panelShadow,
-        padding: '32px 28px 28px',
+        backdropFilter: C.panelBlur,
+        WebkitBackdropFilter: C.panelBlur,
+        padding: '36px 32px 32px',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
-        maxHeight: '90vh',
+        maxHeight: '92vh',
         overflowY: 'auto',
       });
 
@@ -75,12 +90,12 @@ export class ProfileSetupOverlay {
       title.textContent = 'CREATE YOUR PROFILE';
       Object.assign(title.style, {
         fontFamily: "'Fredoka', sans-serif",
-        fontSize: '20px',
+        fontSize: '26px',
         fontWeight: 'bold',
         color: C.gold,
         letterSpacing: '3px',
         textAlign: 'center',
-        marginBottom: '28px',
+        marginBottom: '32px',
       });
       panel.appendChild(title);
 
@@ -94,11 +109,11 @@ export class ProfileSetupOverlay {
       const usernameLabel = document.createElement('div');
       usernameLabel.textContent = 'USERNAME';
       Object.assign(usernameLabel.style, {
-        fontSize: '11px',
+        fontSize: '13px',
         fontWeight: 'bold',
-        color: C.textMuted,
+        color: C.textSecondary,
         letterSpacing: '2px',
-        marginBottom: '8px',
+        marginBottom: '10px',
       });
       usernameSection.appendChild(usernameLabel);
 
@@ -114,9 +129,9 @@ export class ProfileSetupOverlay {
         background: C.inputBg,
         border: `1px solid ${C.inputBorder}`,
         borderRadius: '8px',
-        padding: '10px 14px',
+        padding: '12px 16px',
         color: C.textPrimary,
-        fontSize: '14px',
+        fontSize: '16px',
         fontFamily: "'Nunito', sans-serif",
         outline: 'none',
         transition: 'border-color 0.2s ease',
@@ -173,6 +188,12 @@ export class ProfileSetupOverlay {
           return;
         }
 
+        if (profanityMatcher.hasMatch(val)) {
+          statusText.textContent = 'Username not allowed';
+          statusText.style.color = C.red;
+          return;
+        }
+
         this.usernameValid = true;
         statusText.textContent = 'Checking...';
         statusText.style.color = C.textMuted;
@@ -216,11 +237,11 @@ export class ProfileSetupOverlay {
       const iconLabel = document.createElement('div');
       iconLabel.textContent = 'CHOOSE YOUR ICON';
       Object.assign(iconLabel.style, {
-        fontSize: '11px',
+        fontSize: '13px',
         fontWeight: 'bold',
-        color: C.textMuted,
+        color: C.textSecondary,
         letterSpacing: '2px',
-        marginBottom: '12px',
+        marginBottom: '14px',
       });
       iconSection.appendChild(iconLabel);
 
@@ -228,9 +249,10 @@ export class ProfileSetupOverlay {
       const grid = document.createElement('div');
       Object.assign(grid.style, {
         display: 'grid',
-        gridTemplateColumns: 'repeat(4, 1fr)',
-        gap: '12px',
+        gridTemplateColumns: 'repeat(3, 1fr)',
+        gap: '16px',
         justifyItems: 'center',
+        width: '100%',
       });
 
       const iconCells: Map<string, HTMLDivElement> = new Map();
@@ -246,35 +268,37 @@ export class ProfileSetupOverlay {
         });
 
         const iconBox = document.createElement('div');
-        // Scale: we want one frame (fw x fh) to show as 64x64
-        // background-size: totalWidth scaled, totalHeight scaled
-        // totalWidth = fw * fc, scaled to 64 * fc
-        // totalHeight = fh, scaled to 64
-        const scaledSheetWidth = 64 * icon.fc;
-        const scaledFrameHeight = 64;
-
         Object.assign(iconBox.style, {
-          width: '64px',
-          height: '64px',
-          borderRadius: '10px',
+          width: '88px',
+          height: '88px',
+          borderRadius: '12px',
           overflow: 'hidden',
           border: '3px solid transparent',
-          backgroundImage: `url(${icon.path})`,
-          backgroundSize: `${scaledSheetWidth}px ${scaledFrameHeight}px`,
-          backgroundPosition: '0 0',
-          backgroundRepeat: 'no-repeat',
           transition: 'border-color 0.2s ease, filter 0.2s ease',
+          background: C.surface,
+        });
+
+        const img = document.createElement('img');
+        img.src = `${AVATAR_BASE}/${icon.key}.png`;
+        img.alt = icon.label;
+        Object.assign(img.style, {
+          width: '100%',
+          height: '100%',
+          objectFit: 'cover',
+          display: 'block',
           imageRendering: 'pixelated',
         });
+        iconBox.appendChild(img);
 
         const label = document.createElement('div');
         label.textContent = icon.label;
         Object.assign(label.style, {
-          fontSize: '10px',
+          fontSize: '12px',
           color: C.textMuted,
           textTransform: 'capitalize',
-          marginTop: '4px',
+          marginTop: '6px',
           textAlign: 'center',
+          fontWeight: '600',
         });
 
         cell.appendChild(iconBox);
@@ -323,10 +347,12 @@ export class ProfileSetupOverlay {
         color: '#fff',
         fontFamily: "'Fredoka', sans-serif",
         fontWeight: 'bold',
-        fontSize: '16px',
+        fontSize: '18px',
         border: 'none',
-        borderRadius: '10px',
-        padding: '12px 32px',
+        borderRadius: '12px',
+        padding: '14px 40px',
+        width: '100%',
+        maxWidth: '300px',
         cursor: 'not-allowed',
         opacity: '0.4',
         transition: 'opacity 0.2s ease, background 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease',
@@ -334,16 +360,17 @@ export class ProfileSetupOverlay {
       });
 
       this.createBtn.addEventListener('mouseenter', () => {
-        if (this.isFormValid()) {
-          this.createBtn!.style.background = '#6ab55e';
-          this.createBtn!.style.transform = 'translateY(-1px)';
-          this.createBtn!.style.boxShadow = '0 4px 16px rgba(90,154,78,0.35)';
+        if (this.createBtn && this.isFormValid()) {
+          this.createBtn.style.background = '#6ab55e';
+          this.createBtn.style.transform = 'translateY(-1px)';
+          this.createBtn.style.boxShadow = '0 4px 16px rgba(90,154,78,0.35)';
         }
       });
       this.createBtn.addEventListener('mouseleave', () => {
-        this.createBtn!.style.background = C.green;
-        this.createBtn!.style.transform = 'translateY(0)';
-        this.createBtn!.style.boxShadow = 'none';
+        if (!this.createBtn) return;
+        this.createBtn.style.background = C.green;
+        this.createBtn.style.transform = 'translateY(0)';
+        this.createBtn.style.boxShadow = 'none';
       });
 
       this.createBtn.addEventListener('click', () => {

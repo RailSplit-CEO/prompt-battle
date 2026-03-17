@@ -120,6 +120,11 @@ export class AuthManager {
   }
 
   waitForExistingSession(): Promise<User | null> {
+    // If we already have a user from redirect result, return immediately
+    if (this.currentUser) {
+      return Promise.resolve(this.currentUser);
+    }
+
     return new Promise<User | null>((resolve) => {
       let settled = false;
 
@@ -129,7 +134,7 @@ export class AuthManager {
           unsub();
           resolve(null);
         }
-      }, 2000);
+      }, 3000);
 
       const unsub = onAuthStateChanged(this.auth, (user) => {
         if (!settled) {
@@ -145,9 +150,27 @@ export class AuthManager {
 
   async signInWithGoogle(): Promise<User> {
     const provider = new GoogleAuthProvider();
-    const cred = await signInWithPopup(this.auth, provider);
-    this.currentUser = cred.user;
-    return cred.user;
+    try {
+      const cred = await signInWithPopup(this.auth, provider);
+      this.currentUser = cred.user;
+      return cred.user;
+    } catch (err: any) {
+      // If popup was blocked by browser, throw a specific message
+      if (err?.code === 'auth/popup-blocked') {
+        throw new Error('POPUP_BLOCKED');
+      }
+      // If popup was closed by user, that's a cancel — not an error
+      if (err?.code === 'auth/popup-closed-by-user' || err?.code === 'auth/cancelled-popup-request') {
+        throw new Error('POPUP_CANCELLED');
+      }
+      // COOP may cause window.close errors but auth still succeeds —
+      // check if we actually got authenticated despite the error
+      if (this.auth.currentUser) {
+        this.currentUser = this.auth.currentUser;
+        return this.currentUser;
+      }
+      throw err;
+    }
   }
 
   async signInAsGuest(): Promise<User> {
@@ -171,6 +194,17 @@ export class AuthManager {
         const cred = await signInWithPopup(this.auth, provider);
         this.currentUser = cred.user;
         return cred.user;
+      }
+      if (err?.code === 'auth/popup-blocked') {
+        throw new Error('POPUP_BLOCKED');
+      }
+      if (err?.code === 'auth/popup-closed-by-user' || err?.code === 'auth/cancelled-popup-request') {
+        throw new Error('POPUP_CANCELLED');
+      }
+      // COOP — check if auth succeeded anyway
+      if (this.auth.currentUser && !this.auth.currentUser.isAnonymous) {
+        this.currentUser = this.auth.currentUser;
+        return this.currentUser;
       }
       throw err;
     }
@@ -206,11 +240,10 @@ export class AuthManager {
       lastSeen: Date.now(),
       online: true,
     };
-    const updates: Record<string, any> = {
-      [`users/${uid}`]: profile,
-      [`usernames/${lowerName}`]: uid,
-    };
-    await update(ref(this.db), updates);
+    // Write profile and username lookup as separate operations
+    // (multi-path update at root requires root-level write permission)
+    await set(ref(this.db, `users/${uid}`), profile);
+    await set(ref(this.db, `usernames/${lowerName}`), { uid });
     this.userProfile = profile;
   }
 

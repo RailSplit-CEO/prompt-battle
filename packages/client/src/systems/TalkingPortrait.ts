@@ -38,6 +38,7 @@ export class TalkingPortrait {
   private fallbackTimer: number | null = null;
   private _bubbleTimer: number | null = null;
   private voiceLabel: HTMLDivElement;
+  private nameLabel: HTMLDivElement;
 
   constructor(parent: HTMLElement) {
     this.container = document.createElement('div');
@@ -54,6 +55,11 @@ export class TalkingPortrait {
     this.talkImg.alt = '';
     this.talkImg.className = 'portrait-frame portrait-talk';
     this.container.appendChild(this.talkImg);
+
+    // Character name banner at bottom of portrait
+    this.nameLabel = document.createElement('div');
+    this.nameLabel.className = 'portrait-name-label';
+    this.container.appendChild(this.nameLabel);
 
     // Voice name label below portrait
     this.voiceLabel = document.createElement('div');
@@ -80,6 +86,7 @@ export class TalkingPortrait {
     this.currentChar = charId;
     this.idleImg.src = `${AVATAR_BASE}/${charId}.png`;
     this.talkImg.src = `${AVATAR_BASE}/${charId}_talk_nobg.png`;
+    this.nameLabel.textContent = charId.charAt(0).toUpperCase() + charId.slice(1);
   }
 
   startTalking(charId: string, audioEl?: HTMLAudioElement): void {

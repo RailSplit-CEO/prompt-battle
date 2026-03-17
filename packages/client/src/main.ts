@@ -20,22 +20,35 @@ async function boot() {
   const existingUser = await auth.waitForExistingSession();
 
   if (!existingUser) {
-    // 3. Show login screen
+    // 3. Show login screen — loop until successful sign-in
     const loginOverlay = new LoginOverlay();
-    const choice = await loginOverlay.show();
+    let signedIn = false;
 
-    try {
-      if (choice === 'google') {
-        await auth.signInWithGoogle();
-      } else {
-        await auth.signInAsGuest();
+    while (!signedIn) {
+      const choice = await loginOverlay.show();
+
+      try {
+        if (choice === 'google') {
+          await auth.signInWithGoogle();
+        } else {
+          await auth.signInAsGuest();
+        }
+        signedIn = true;
+      } catch (err: any) {
+        const msg = (err as Error).message;
+        if (msg === 'POPUP_BLOCKED') {
+          loginOverlay.showError('Popup blocked — please allow popups for this site and try again.');
+        } else if (msg === 'POPUP_CANCELLED') {
+          loginOverlay.showError(''); // clear error, user just closed the popup
+        } else {
+          loginOverlay.showError('Sign-in failed. Please try again.');
+          console.warn('[Boot] Sign-in error:', err);
+        }
+        // Stay on login screen, let user retry
       }
-      loginOverlay.hide();
-    } catch (err) {
-      loginOverlay.showError((err as Error).message || 'Sign-in failed. Please try again.');
-      loginOverlay.hide();
-      return boot();
     }
+
+    loginOverlay.hide();
   }
 
   // 4. For Google users, try loading/creating profile (gracefully handle permission errors)

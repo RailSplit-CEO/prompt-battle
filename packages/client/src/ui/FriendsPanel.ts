@@ -3,43 +3,26 @@
 
 import { C } from './UIColors';
 
-// ─── Icon spritesheet data ──────────────────────────────────────────
-export const PROFILE_ICONS: Record<string, { src: string; frameW: number; frameH: number; frames: number }> = {
-  gnome:    { src: 'assets/enemies/gnome/Gnome_Idle.png',       frameW: 192, frameH: 192, frames: 8 },
-  turtle:   { src: 'assets/enemies/turtle/Turtle_Idle.png',     frameW: 320, frameH: 320, frames: 10 },
-  skull:    { src: 'assets/enemies/skull/Skull_Idle.png',        frameW: 192, frameH: 192, frames: 8 },
-  spider:   { src: 'assets/enemies/spider/Spider_Idle.png',     frameW: 192, frameH: 192, frames: 8 },
-  hyena:    { src: 'assets/enemies/gnoll/Gnoll_Idle.png',       frameW: 192, frameH: 192, frames: 6 },
-  rogue:    { src: 'assets/enemies/skull/Skull_Idle.png',        frameW: 192, frameH: 192, frames: 8 },
-  panda:    { src: 'assets/enemies/panda/Panda_Idle.png',       frameW: 256, frameH: 256, frames: 10 },
-  lizard:   { src: 'assets/enemies/lizard/Lizard_Idle.png',     frameW: 192, frameH: 192, frames: 7 },
-  minotaur: { src: 'assets/enemies/minotaur/Minotaur_Idle.png', frameW: 320, frameH: 320, frames: 16 },
-  shaman:   { src: 'assets/enemies/shaman/Shaman_Idle.png',     frameW: 192, frameH: 192, frames: 8 },
-  troll:    { src: 'assets/enemies/troll/Troll_Idle.png',       frameW: 384, frameH: 384, frames: 12 },
-};
+// ─── Avatar portrait paths (same as TalkingPortrait system) ──────────
+const AVATAR_BASE = 'assets/enemies/avatars';
 
 /**
- * Creates an HTML div showing frame 0 of the spritesheet for the given icon key.
+ * Creates an HTML div showing the avatar portrait for the given icon key.
  * Reusable across panels.
  */
 export function createIconElement(iconKey: string, size: number): HTMLDivElement {
   const div = document.createElement('div');
-  const icon = PROFILE_ICONS[iconKey];
-  if (!icon) {
-    div.style.cssText = `width:${size}px;height:${size}px;border-radius:50%;background:${C.inputBg};flex-shrink:0;`;
-    return div;
-  }
-  const scale = size / icon.frameW;
-  const sheetWidth = icon.frameW * icon.frames;
   div.style.cssText = `
     width:${size}px;height:${size}px;flex-shrink:0;
-    background-image:url('${icon.src}');
-    background-size:${sheetWidth * scale}px ${size}px;
-    background-position:0 0;
-    background-repeat:no-repeat;
-    border-radius:50%;
-    image-rendering:pixelated;
+    border-radius:50%;overflow:hidden;
+    background:${C.inputBg};
   `;
+  const img = document.createElement('img');
+  img.src = `${AVATAR_BASE}/${iconKey}.png`;
+  img.alt = iconKey;
+  img.style.cssText = `width:100%;height:100%;object-fit:cover;display:block;image-rendering:pixelated;`;
+  img.onerror = () => { img.style.display = 'none'; };
+  div.appendChild(img);
   return div;
 }
 
@@ -145,7 +128,7 @@ export class FriendsPanel {
     const panel = document.createElement('div');
     panel.setAttribute('data-friends-panel', '');
     panel.style.cssText = `
-      width:min(440px,92vw);max-height:min(600px,88vh);
+      width:min(480px,92vw);max-height:min(650px,88vh);
       background:${C.panelBg};
       border:2px solid ${C.panelBorder};border-radius:16px;
       padding:0;box-shadow:${C.panelShadow};
@@ -406,13 +389,13 @@ export class FriendsPanel {
       const left = document.createElement('div');
       left.style.cssText = 'display:flex;align-items:center;gap:10px;min-width:0;';
 
-      const icon = createIconElement(friend.icon, 32);
+      const icon = createIconElement(friend.icon, 44);
       left.appendChild(icon);
 
       const name = document.createElement('span');
       name.textContent = friend.username;
       name.style.cssText = `
-        font-size:14px;font-weight:700;color:${C.textPrimary};
+        font-size:16px;font-weight:700;color:${C.textPrimary};
         font-family:"Nunito",sans-serif;
         overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
       `;
@@ -503,13 +486,13 @@ export class FriendsPanel {
       const left = document.createElement('div');
       left.style.cssText = 'display:flex;align-items:center;gap:10px;min-width:0;';
 
-      const icon = createIconElement(req.icon, 32);
+      const icon = createIconElement(req.icon, 44);
       left.appendChild(icon);
 
       const name = document.createElement('span');
       name.textContent = req.username;
       name.style.cssText = `
-        font-size:14px;font-weight:700;color:${C.textPrimary};
+        font-size:16px;font-weight:700;color:${C.textPrimary};
         font-family:"Nunito",sans-serif;
         overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
       `;
@@ -570,13 +553,13 @@ export class FriendsPanel {
       const left = document.createElement('div');
       left.style.cssText = 'display:flex;align-items:center;gap:10px;min-width:0;';
 
-      const icon = createIconElement(req.icon, 32);
+      const icon = createIconElement(req.icon, 44);
       left.appendChild(icon);
 
       const name = document.createElement('span');
       name.textContent = req.username;
       name.style.cssText = `
-        font-size:14px;font-weight:700;color:${C.textPrimary};
+        font-size:16px;font-weight:700;color:${C.textPrimary};
         font-family:"Nunito",sans-serif;
         overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
       `;

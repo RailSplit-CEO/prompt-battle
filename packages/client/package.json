@@ -12,6 +12,7 @@
     "@elevenlabs/client": "^0.15.1",
     "@prompt-battle/shared": "*",
     "firebase": "^10.12.0",
+    "obscenity": "^0.4.6",
     "phaser": "^3.80.0"
   },
   "devDependencies": {
