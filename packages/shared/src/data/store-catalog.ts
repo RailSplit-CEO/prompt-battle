@@ -72,6 +72,7 @@ export const CROWN_PACKAGES: CrownPackage[] = [
 
 const UNIT_TIER: Record<HordeUnitType, number> = {
   gnome: 1,
+  snake: 1,
   turtle: 1,
   skull: 2,
   spider: 2,
@@ -79,6 +80,8 @@ const UNIT_TIER: Record<HordeUnitType, number> = {
   rogue: 3,
   panda: 3,
   lizard: 3,
+  bear: 3,
+  harpoon_fish: 3,
   minotaur: 4,
   shaman: 4,
   troll: 5,
@@ -118,65 +121,83 @@ const UNIT_SKINS: Record<HordeUnitType, SkinDef[]> = {
     { theme: 'infernal', name: 'Infernal Gnome', desc: 'Wreathed in hellfire, this gnome means business.', rarity: 'epic' },
     { theme: 'celestial', name: 'Celestial Gnome', desc: 'Blessed by starlight, trailing constellations in its wake.', rarity: 'legendary' },
   ],
+  snake: [
+    { theme: 'coral', name: 'Coral Snake', desc: 'Bright bands of red and yellow warn of lethal venom.', rarity: 'common' },
+    { theme: 'golden', name: 'Golden Snake', desc: 'Scales of hammered gold shimmer with every slither.', rarity: 'rare' },
+    { theme: 'shadow_serpent', name: 'Shadow Serpent', desc: 'A living ribbon of darkness that strikes from the void.', rarity: 'epic' },
+    { theme: 'ouroboros', name: 'Ouroboros', desc: 'The eternal serpent, coiled in infinite recursion, devouring its own legend.', rarity: 'legendary' },
+  ],
   turtle: [
     { theme: 'mossy', name: 'Mossy Turtle', desc: 'Centuries of forest growth cling to this ancient shell.', rarity: 'common' },
     { theme: 'crystal', name: 'Crystal Turtle', desc: 'A translucent carapace refracts light into rainbows.', rarity: 'rare' },
     { theme: 'magma', name: 'Magma Turtle', desc: 'Molten rock flows through deep cracks in its shell.', rarity: 'epic' },
-    { theme: 'ancient_guardian', name: 'Ancient Guardian Turtle', desc: 'An elder of the deep, adorned with fossilized runes.', rarity: 'legendary' },
+    { theme: 'ancient', name: 'Ancient Turtle', desc: 'An elder of the deep, adorned with fossilized runes.', rarity: 'legendary' },
   ],
   skull: [
-    { theme: 'ashen', name: 'Ashen Skull', desc: 'Coated in grey ash from a long-forgotten pyre.', rarity: 'common' },
-    { theme: 'jade', name: 'Jade Skull', desc: 'Carved from enchanted jade, glowing with spectral light.', rarity: 'rare' },
-    { theme: 'plague', name: 'Plague Skull', desc: 'Toxic miasma seeps from every crack and hollow.', rarity: 'epic' },
-    { theme: 'death_emperor', name: 'Death Emperor Skull', desc: 'Crowned in bone and shadow, sovereign of the grave.', rarity: 'legendary' },
+    { theme: 'jade', name: 'Jade Skull', desc: 'Carved from enchanted jade, glowing with spectral light.', rarity: 'common' },
+    { theme: 'bloodmoon', name: 'Blood Moon Skull', desc: 'Bathed in crimson moonlight, thirsting for the hunt.', rarity: 'rare' },
+    { theme: 'phantom', name: 'Phantom Skull', desc: 'A translucent wraith flickering between worlds.', rarity: 'epic' },
+    { theme: 'deathknight', name: 'Death Knight Skull', desc: 'Crowned in bone and shadow, sovereign of the grave.', rarity: 'legendary' },
   ],
   spider: [
-    { theme: 'crimson', name: 'Crimson Spider', desc: 'Blood-red chitin glistens under torchlight.', rarity: 'common' },
-    { theme: 'jeweled', name: 'Jeweled Spider', desc: 'Encrusted with sapphires and amethysts along each leg.', rarity: 'rare' },
-    { theme: 'void_weaver', name: 'Void Weaver Spider', desc: 'Spins webs of dark matter between dimensions.', rarity: 'epic' },
-    { theme: 'queen_broodmother', name: 'Queen Broodmother Spider', desc: 'Massive and regal, trailing a living mantle of silk.', rarity: 'legendary' },
+    { theme: 'widow', name: 'Black Widow Spider', desc: 'Jet-black chitin marked with a crimson hourglass.', rarity: 'common' },
+    { theme: 'frost', name: 'Frost Spider', desc: 'Ice crystals cling to every silken thread it spins.', rarity: 'rare' },
+    { theme: 'void', name: 'Void Spider', desc: 'Spins webs of dark matter between dimensions.', rarity: 'epic' },
+    { theme: 'mech', name: 'Mech Spider', desc: 'Chrome-plated legs and a laser-targeting array.', rarity: 'legendary' },
   ],
   hyena: [
-    { theme: 'sandy', name: 'Sandy Hyena', desc: 'Desert-camouflaged with sun-bleached fur.', rarity: 'common' },
-    { theme: 'war_paint', name: 'War Paint Hyena', desc: 'Tribal markings glow across its snarling face.', rarity: 'rare' },
-    { theme: 'spectral', name: 'Spectral Hyena', desc: 'Flickering between planes, half-ghost and all menace.', rarity: 'epic' },
-    { theme: 'alpha_packmaster', name: 'Alpha Packmaster Hyena', desc: 'Pack leader draped in trophies from a hundred hunts.', rarity: 'legendary' },
+    { theme: 'arctic', name: 'Arctic Hyena', desc: 'Snow-white fur and ice-blue eyes, born of the tundra.', rarity: 'common' },
+    { theme: 'cursed', name: 'Cursed Hyena', desc: 'Dark magic seeps from its fur like living shadow.', rarity: 'rare' },
+    { theme: 'warpaint', name: 'Warpaint Hyena', desc: 'Tribal markings glow crimson across its snarling face.', rarity: 'epic' },
+    { theme: 'spectral', name: 'Spectral Hyena', desc: 'Flickering between planes, half-ghost and all menace.', rarity: 'legendary' },
   ],
   rogue: [
-    { theme: 'shadow', name: 'Shadow Rogue', desc: 'Cloaked in living darkness — barely visible at dusk.', rarity: 'common' },
-    { theme: 'silver_blade', name: 'Silver Blade Rogue', desc: 'Moonlit daggers and polished leather, deadly elegance.', rarity: 'rare' },
-    { theme: 'phantom', name: 'Phantom Rogue', desc: 'A translucent assassin that phases through solid walls.', rarity: 'epic' },
-    { theme: 'nightfall_sovereign', name: 'Nightfall Sovereign Rogue', desc: 'Master of every shadow, ruler of the unseen world.', rarity: 'legendary' },
+    { theme: 'nightblade', name: 'Nightblade Rogue', desc: 'Cloaked in living darkness — barely visible at dusk.', rarity: 'common' },
+    { theme: 'pirate', name: 'Pirate Rogue', desc: 'Cutlass, eyepatch, and a coat that smells of salt and gunpowder.', rarity: 'rare' },
+    { theme: 'ninja', name: 'Ninja Rogue', desc: 'Silent as smoke, deadly as a thrown shuriken.', rarity: 'epic' },
+    { theme: 'assassin', name: 'Assassin Rogue', desc: 'Master of every shadow, ruler of the unseen world.', rarity: 'legendary' },
   ],
   panda: [
-    { theme: 'bamboo', name: 'Bamboo Panda', desc: 'Wrapped in woven bamboo armor, smelling of fresh leaves.', rarity: 'common' },
-    { theme: 'samurai', name: 'Samurai Panda', desc: 'Adorned in lacquered red armor with a fearsome mempo.', rarity: 'rare' },
-    { theme: 'storm_monk', name: 'Storm Monk Panda', desc: 'Lightning crackles between its paws in meditation.', rarity: 'epic' },
-    { theme: 'divine_emperor', name: 'Divine Emperor Panda', desc: 'Draped in clouds and imperial silk, a living legend.', rarity: 'legendary' },
+    { theme: 'red', name: 'Red Panda', desc: 'Russet fur and a bushy ringed tail — impossibly cute.', rarity: 'common' },
+    { theme: 'bamboo', name: 'Bamboo Panda', desc: 'Wrapped in woven bamboo armor, smelling of fresh leaves.', rarity: 'rare' },
+    { theme: 'samurai', name: 'Samurai Panda', desc: 'Adorned in lacquered red armor with a fearsome mempo.', rarity: 'epic' },
+    { theme: 'jade_emperor', name: 'Jade Emperor Panda', desc: 'Draped in clouds and imperial silk, a living legend.', rarity: 'legendary' },
   ],
   lizard: [
-    { theme: 'jungle', name: 'Jungle Lizard', desc: 'Vibrant green scales blend seamlessly into the canopy.', rarity: 'common' },
-    { theme: 'prismatic', name: 'Prismatic Lizard', desc: 'Scales shift colour with every movement like a living gem.', rarity: 'rare' },
-    { theme: 'venomous', name: 'Venomous Lizard', desc: 'Dripping toxic purple, each step corrodes the ground.', rarity: 'epic' },
-    { theme: 'primordial_drake', name: 'Primordial Drake Lizard', desc: 'An echo of the first dragons, wreathed in primal flame.', rarity: 'legendary' },
+    { theme: 'chameleon', name: 'Chameleon Lizard', desc: 'Scales shift colour with every step like a living gem.', rarity: 'common' },
+    { theme: 'dragon', name: 'Dragon Lizard', desc: 'Ember-scaled with smoldering orange eyes and smoke on its breath.', rarity: 'rare' },
+    { theme: 'toxic', name: 'Toxic Lizard', desc: 'Dripping neon venom, each step corrodes the ground.', rarity: 'epic' },
+    { theme: 'elder_wyrm', name: 'Elder Wyrm Lizard', desc: 'An echo of the first dragons, wreathed in primal flame.', rarity: 'legendary' },
+  ],
+  bear: [
+    { theme: 'grizzly', name: 'Grizzly Bear', desc: 'Massive brown fur and raw power — the king of the river.', rarity: 'common' },
+    { theme: 'armored', name: 'Black Bear', desc: 'Sleek dark coat and sharp claws, silent in the underbrush.', rarity: 'rare' },
+    { theme: 'spirit', name: 'Polar Bear', desc: 'White as arctic snow, built for the coldest battlefields.', rarity: 'epic' },
+    { theme: 'elder', name: 'Kodiak Bear', desc: 'The largest of them all — ancient, towering, unstoppable.', rarity: 'legendary' },
+  ],
+  harpoon_fish: [
+    { theme: 'reef', name: 'Reef Fish', desc: 'Vivid tropical colors camouflage a deadly marksman.', rarity: 'common' },
+    { theme: 'steel', name: 'Steel Fish', desc: 'Chrome-plated scales deflect blows while the harpoon flies true.', rarity: 'rare' },
+    { theme: 'abyssal', name: 'Abyssal Fish', desc: 'Rising from crushing depths, bioluminescent lures dangle menacingly.', rarity: 'epic' },
+    { theme: 'leviathan', name: 'Leviathan Fish', desc: 'A sea-god in miniature — tidal waves follow in its wake.', rarity: 'legendary' },
   ],
   minotaur: [
-    { theme: 'bronze', name: 'Bronze Minotaur', desc: 'Plated in tarnished bronze from horn to hoof.', rarity: 'common' },
-    { theme: 'bloodforge', name: 'Bloodforge Minotaur', desc: 'Rune-scarred hide pulses with crimson forge-light.', rarity: 'rare' },
-    { theme: 'titan', name: 'Titan Minotaur', desc: 'Earthquake with every step — stone crumbles in its wake.', rarity: 'epic' },
-    { theme: 'worldbreaker', name: 'Worldbreaker Minotaur', desc: 'Cracks reality itself when it charges, horns ablaze.', rarity: 'legendary' },
+    { theme: 'iron', name: 'Iron Minotaur', desc: 'Plated in dark iron from horn to hoof.', rarity: 'common' },
+    { theme: 'berserker', name: 'Berserker Minotaur', desc: 'Rune-scarred hide pulses with crimson battle-rage.', rarity: 'rare' },
+    { theme: 'demonic', name: 'Demonic Minotaur', desc: 'Hellfire flickers in its eyes and cracks along its horns.', rarity: 'epic' },
+    { theme: 'titan', name: 'Titan Minotaur', desc: 'Earthquake with every step — stone crumbles in its wake.', rarity: 'legendary' },
   ],
   shaman: [
-    { theme: 'verdant', name: 'Verdant Shaman', desc: 'Draped in living vines that bloom with every spell.', rarity: 'common' },
-    { theme: 'spirit_walker', name: 'Spirit Walker Shaman', desc: 'Surrounded by ghostly animal totems at all times.', rarity: 'rare' },
-    { theme: 'blood_oracle', name: 'Blood Oracle Shaman', desc: 'Reads fate in crimson runes that hover mid-air.', rarity: 'epic' },
-    { theme: 'arch_druid', name: 'Arch-Druid Shaman', desc: 'Nature incarnate — trees bow and beasts kneel.', rarity: 'legendary' },
+    { theme: 'druid', name: 'Druid Shaman', desc: 'Draped in living vines that bloom with every spell.', rarity: 'common' },
+    { theme: 'necro', name: 'Necromancer Shaman', desc: 'Surrounded by ghostly totems and the whispers of the dead.', rarity: 'rare' },
+    { theme: 'archmage', name: 'Archmage Shaman', desc: 'Crackling arcane energy orbits every gesture.', rarity: 'epic' },
+    { theme: 'void_oracle', name: 'Void Oracle Shaman', desc: 'Gazes into the abyss — and the abyss obeys.', rarity: 'legendary' },
   ],
   troll: [
-    { theme: 'swamp', name: 'Swamp Troll', desc: 'Covered in dripping mud and tangled river weed.', rarity: 'common' },
-    { theme: 'war_chief', name: 'War Chief Troll', desc: 'Bedecked in bone trophies and tribal war banners.', rarity: 'rare' },
-    { theme: 'abyssal', name: 'Abyssal Troll', desc: 'Risen from the ocean deep, barnacled and terrible.', rarity: 'epic' },
-    { theme: 'mountain_king', name: 'Mountain King Troll', desc: 'A living mountain crowned with stone and thunder.', rarity: 'legendary' },
+    { theme: 'moss', name: 'Moss Troll', desc: 'Covered in dripping mud and tangled river weed.', rarity: 'common' },
+    { theme: 'volcanic', name: 'Volcanic Troll', desc: 'Magma veins glow beneath cracked obsidian skin.', rarity: 'rare' },
+    { theme: 'frost_king', name: 'Frost King Troll', desc: 'Crowned in glacial ice, breath that freezes steel.', rarity: 'epic' },
+    { theme: 'mountain_god', name: 'Mountain God Troll', desc: 'A living mountain crowned with stone and thunder.', rarity: 'legendary' },
   ],
 };
 
@@ -190,17 +211,21 @@ const catalog: CatalogItem[] = [];
 //  UNIT SKINS  (44 items — 4 per unit × 11 units)
 // ═════════════════════════════════════════════════════════════════
 
+// Pricing: common/rare = glory only, epic/legendary = crowns only
+const GLORY_PRICES: Record<Rarity, number> = { common: 1500, rare: 3000, epic: 0, legendary: 0 };
+
 for (const unit of Object.keys(UNIT_SKINS) as HordeUnitType[]) {
   const tier = UNIT_TIER[unit];
   for (const skin of UNIT_SKINS[unit]) {
+    const useGlory = skin.rarity === 'common' || skin.rarity === 'rare';
     catalog.push({
       id: `skin_${unit}_${skin.theme}`,
       category: 'unit_skin',
       name: skin.name,
       description: skin.desc,
       rarity: skin.rarity,
-      priceCrowns: skin.rarity === 'common' ? 0 : skinPrice(tier, skin.rarity),
-      priceGlory: skin.rarity === 'common' ? 1500 : null,
+      priceCrowns: useGlory ? 0 : skinPrice(tier, skin.rarity),
+      priceGlory: useGlory ? GLORY_PRICES[skin.rarity] : null,
       unitType: unit,
     });
   }
@@ -214,6 +239,7 @@ for (const unit of Object.keys(UNIT_SKINS) as HordeUnitType[]) {
 
 const DELUXE_PORTRAIT_DESCS: Record<HordeUnitType, string> = {
   gnome: 'A lovingly hand-painted portrait capturing every mischievous wrinkle.',
+  snake: 'Coiled and poised, scales gleaming with iridescent menace.',
   turtle: 'A serene close-up of ancient, knowing eyes peering from a weathered shell.',
   skull: 'A hauntingly detailed portrait wreathed in ghostly green flame.',
   spider: 'Eight gleaming eyes stare back from a web-framed masterpiece.',
@@ -221,6 +247,8 @@ const DELUXE_PORTRAIT_DESCS: Record<HordeUnitType, string> = {
   rogue: 'A half-shadowed face — you can only ever see one cunning eye.',
   panda: 'A regal portrait radiating calm wisdom and quiet strength.',
   lizard: 'Iridescent scales shimmer as you tilt the frame.',
+  bear: 'A massive silhouette framed by pine trees and falling snow.',
+  harpoon_fish: 'Gleaming scales and a razor-sharp spear, ready to strike.',
   minotaur: 'A fearsome bust carved in stone, horns piercing the border.',
   shaman: 'Surrounded by floating spirit orbs in a forest clearing.',
   troll: 'A towering silhouette against a blood-red sunset.',
@@ -433,6 +461,24 @@ const VOICE_PACKS: { id: string; unit: HordeUnitType; name: string; desc: string
   { id: 'voice_troll_warrior', unit: 'troll', name: 'Warchief Troll', desc: 'Fierce leadership from the biggest, meanest troll in the horde.', price: 250, voiceId: 'SOYHLrjzK2X1ezoPC6cr', sampleText: 'The ground SHAKES when I walk! Walls CRUMBLE when I swing! NOTHING can stop the troll!', personality: "Warchief. Describes own destructive power in real-time. 'Ground SHAKES! Walls CRUMBLE!' Hypes himself up. Battle narrator of his own rampage. Screams ability names. UNSTOPPABLE energy." },
   { id: 'voice_troll_storyteller', unit: 'troll', name: 'Elder Troll', desc: 'Warm rumbles from a troll who has seen a thousand battles.', price: 220, voiceId: 'JBFqnCBsd6RMkjVDRZzb', sampleText: 'Long ago, when I was small troll, only twelve feet tall, I learned that patience is the greatest weapon.', personality: "Grandpa troll. Tells stories about 'when troll was small' (twelve feet). Accidentally wise. Nostalgic about past battles. Warm, slow, uses broken grammar charmingly. 'Long ago, troll learn...'" },
   { id: 'voice_troll_deep', unit: 'troll', name: 'Abyssal Troll', desc: 'So deep it sounds like the earth itself is speaking.', price: 220, voiceId: 'nPczCjzI2devNBz1zQrb', sampleText: 'I am the mountain that walks. I am the earthquake that thinks. I am very, very hungry.', personality: "Elemental force of nature. Describes self as geological phenomena. 'I am the mountain that walks.' Ends profound statements with basic needs: '...and I am very hungry.' Cosmic scale meets troll appetite." },
+  // ── Snake voices (5) ──
+  { id: 'voice_snake_hiss', unit: 'snake', name: 'Venomous Snake', desc: 'Every sibilant word drips with deadly promise.', price: 200, sampleText: 'Sssso many targetsss. Sssso little time. My venom is patient, but I am not.', personality: "Draws out S sounds into hisses. Patient predator. Describes venom lovingly. Cold, calculating, eerily calm." },
+  { id: 'voice_snake_wise', unit: 'snake', name: 'Sage Snake', desc: 'Ancient wisdom coils within each measured sentence.', price: 200, sampleText: 'The wise serpent strikes only once. That is all it takes.', personality: "Philosophical snake. Speaks in ancient proverbs about patience and precision. Calm and composed." },
+  { id: 'voice_snake_mischief', unit: 'snake', name: 'Trickster Snake', desc: 'Playful and cunning, always one slither ahead.', price: 200, sampleText: 'Peek-a-boo! Did you forget about me? Big mistake. Huge mistake.', personality: "Playful trickster. Pops up unexpectedly. Teases enemies about forgetting it. Cheerful about ambushes." },
+  { id: 'voice_snake_cold', unit: 'snake', name: 'Frost Snake', desc: 'An icy whisper that chills the blood before the bite.', price: 220, sampleText: 'Feel the cold settling in? That is my venom working. Do not fight it.', personality: "Cold and clinical. Describes symptoms of its venom in detail. Eerily calm doctor energy." },
+  { id: 'voice_snake_royal', unit: 'snake', name: 'King Cobra', desc: 'Regal authority from the sovereign of all serpents.', price: 230, sampleText: 'I am the king of serpents. All lesser creatures bow or become prey.', personality: "Royal snake. Speaks with absolute authority. Expects obedience. Dignified even while attacking." },
+  // ── Bear voices (5) ──
+  { id: 'voice_bear_grumpy', unit: 'bear', name: 'Grumpy Bear', desc: 'Perpetually annoyed and looking for something to maul.', price: 200, sampleText: 'I was sleeping. You woke me up. This was your last mistake.', personality: "Grumpy and irritable. Was sleeping and got woken up. Blames everyone for disturbing the peace." },
+  { id: 'voice_bear_berserker', unit: 'bear', name: 'Berserker Bear', desc: 'Pure rage channeled through a wall of fur and muscle.', price: 200, sampleText: 'RAAAGH! Hit me! HIT ME HARDER! Every wound makes me STRONGER!', personality: "Berserker rage. LOVES getting hit because it makes it stronger. Completely unhinged battle joy." },
+  { id: 'voice_bear_gentle', unit: 'bear', name: 'Gentle Bear', desc: 'Soft-spoken and kind, until you threaten the ones it protects.', price: 200, sampleText: 'I do not want to hurt anyone. But I will. Oh, I very much will.', personality: "Gentle giant. Speaks softly and kindly. Apologizes before mauling. Genuine remorse mixed with violence." },
+  { id: 'voice_bear_hungry', unit: 'bear', name: 'Hungry Bear', desc: 'Everything is food. Everything.', price: 220, sampleText: 'Is that food? Is THAT food? Everything looks like food when you are this hungry.', personality: "Constantly hungry. Evaluates everything as potential food. Gets distracted by honey and berries." },
+  { id: 'voice_bear_ancient', unit: 'bear', name: 'Elder Bear', desc: 'A rumbling voice from the oldest bear in the forest.', price: 230, sampleText: 'I have walked these woods for a thousand winters. I remember when the mountains were young.', personality: "Ancient and wise. Remembers geological time periods. Speaks slowly and deliberately." },
+  // ── Harpoon Fish voices (5) ──
+  { id: 'voice_harpoon_fish_captain', unit: 'harpoon_fish', name: 'Captain Fish', desc: 'A grizzled sea captain barking orders from the deep.', price: 200, sampleText: 'All hands on deck! Target sighted, two hundred yards! Fire the harpoon!', personality: "Naval captain. Barks orders using nautical terminology. Treats every fight like a ship battle." },
+  { id: 'voice_harpoon_fish_stoic', unit: 'harpoon_fish', name: 'Silent Fisher', desc: 'Speaks rarely, but every word hits like a thrown spear.', price: 200, sampleText: 'One shot. One kill. That is the way of the deep.', personality: "Silent sniper. Minimal words, maximum impact. Zen-like focus. Every statement is final." },
+  { id: 'voice_harpoon_fish_jolly', unit: 'harpoon_fish', name: 'Jolly Fisher', desc: 'A cheerful fisherman who treats battle like a day at sea.', price: 200, sampleText: 'What a beautiful day for fishing! And by fishing I mean throwing harpoons at your face!', personality: "Cheerful fisherman. Treats combat as a fun fishing trip. Rates enemies by size." },
+  { id: 'voice_harpoon_fish_deep', unit: 'harpoon_fish', name: 'Abyssal Fisher', desc: 'Bubbling words from the crushing depths of the ocean floor.', price: 220, sampleText: 'You think you know pressure? I live where light fears to reach.', personality: "Deep-sea philosopher. References crushing depths and darkness. Otherworldly calm." },
+  { id: 'voice_harpoon_fish_pirate', unit: 'harpoon_fish', name: 'Pirate Fish', desc: 'Yarr! A swashbuckling fish with a taste for treasure and combat.', price: 230, sampleText: 'Yarr harr! Surrender yer booty or taste me harpoon, ye landlubbers!', personality: "Full pirate. Wants treasure. Threatens with harpoon constantly. Extremely fun." },
 ];
 
 for (const vp of VOICE_PACKS) {
@@ -1021,7 +1067,7 @@ export const STORE_BUNDLES: BundleDef[] = [
     items: [
       'skin_skull_jade',
       'skin_hyena_war_paint',
-      'voice_gnome_hyper',
+      'voice_gnome_energetic',
       'death_immolation',
     ],
     crownsIncluded: 1500,

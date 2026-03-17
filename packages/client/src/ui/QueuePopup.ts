@@ -21,7 +21,7 @@ export class QueuePopup {
 
     const overlay = document.createElement('div');
     overlay.style.cssText = `
-      position:fixed;inset:0;z-index:10000;
+      position:fixed;inset:0;z-index:50000;
       background:rgba(5,8,3,0.92);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
       display:flex;align-items:center;justify-content:center;
       opacity:0;transition:opacity 0.3s ease;

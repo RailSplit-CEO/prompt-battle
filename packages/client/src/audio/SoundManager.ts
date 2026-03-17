@@ -3,7 +3,7 @@ import { GameSettings } from '../systems/GameSettings';
 export type SfxKey = string;
 
 // Hyena is called "gnoll" in the audio files
-const UNIT_AUDIO_NAME: Record<string, string> = { hyena: 'gnoll', harpoon_fish: 'gnoll', thief: 'skull', bear: 'panda', snake: 'spider' };
+const UNIT_AUDIO_NAME: Record<string, string> = { hyena: 'gnoll', harpoon_fish: 'gnoll', bear: 'panda', snake: 'spider' };
 const audioName = (type: string) => UNIT_AUDIO_NAME[type] || type;
 
 // All sound files to load (relative to assets/sfx/)

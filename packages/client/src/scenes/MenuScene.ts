@@ -13,7 +13,7 @@ import { StorePanel } from '../ui/StorePanel';
 import { showGuestLoginPrompt } from '../ui/LoginOverlay';
 import { BattlePassPanel } from '../ui/BattlePassPanel';
 import { DailyRewardModal } from '../ui/DailyRewardModal';
-import { HORDE_SPRITE_CONFIGS } from '../sprites/SpriteConfig';
+import { HORDE_SPRITE_CONFIGS, getEffectiveSpriteConfig, getAnimKeyPrefix } from '../sprites/SpriteConfig';
 import { WalletManager } from '../store/WalletManager';
 import { PlayerLevelManager } from '../store/PlayerLevelManager';
 import { InventoryManager } from '../store/InventoryManager';
@@ -405,17 +405,20 @@ export class MenuScene extends Phaser.Scene {
 
   // Unit speeds from game data, used to scale walk speed + anim sync
   private static readonly VIGNETTE_UNITS: { type: string; speed: number; tier: number }[] = [
-    { type: 'gnome',    speed: 210, tier: 1 },
-    { type: 'turtle',   speed: 55,  tier: 1 },
-    { type: 'skull',    speed: 155, tier: 2 },
-    { type: 'spider',   speed: 140, tier: 2 },
-    { type: 'hyena',    speed: 175, tier: 2 },
-    { type: 'rogue',    speed: 200, tier: 2 },
-    { type: 'panda',    speed: 80,  tier: 3 },
-    { type: 'lizard',   speed: 110, tier: 3 },
-    { type: 'minotaur', speed: 105, tier: 4 },
-    { type: 'shaman',   speed: 95,  tier: 4 },
-    { type: 'troll',    speed: 50,  tier: 5 },
+    { type: 'gnome',        speed: 210, tier: 1 },
+    { type: 'snake',        speed: 190, tier: 1 },
+    { type: 'turtle',       speed: 55,  tier: 1 },
+    { type: 'skull',        speed: 155, tier: 2 },
+    { type: 'spider',       speed: 140, tier: 2 },
+    { type: 'hyena',        speed: 175, tier: 2 },
+    { type: 'rogue',        speed: 200, tier: 2 },
+    { type: 'panda',        speed: 80,  tier: 3 },
+    { type: 'lizard',       speed: 110, tier: 3 },
+    { type: 'bear',         speed: 90,  tier: 3 },
+    { type: 'harpoon_fish', speed: 70,  tier: 3 },
+    { type: 'minotaur',     speed: 105, tier: 4 },
+    { type: 'shaman',       speed: 95,  tier: 4 },
+    { type: 'troll',        speed: 50,  tier: 5 },
   ];
 
   // Rarity weights by tier: T1 45%, T2 20%, T3 15%, T4 12%, T5 8%
@@ -424,7 +427,13 @@ export class MenuScene extends Phaser.Scene {
   private startBackgroundVignettes() {
     // Filter to units whose walk anim texture is loaded
     const available = MenuScene.VIGNETTE_UNITS.filter(
-      u => this.textures.exists(HORDE_SPRITE_CONFIGS[u.type]?.walk.key)
+      u => {
+        // Check if equipped skin texture is loaded, otherwise fall back to default
+        const skinCfg = getEffectiveSpriteConfig(u.type);
+        const baseCfg = HORDE_SPRITE_CONFIGS[u.type];
+        return (skinCfg && this.textures.exists(skinCfg.walk.key)) ||
+               (baseCfg && this.textures.exists(baseCfg.walk.key));
+      }
     );
     if (available.length === 0) return;
 
@@ -448,9 +457,15 @@ export class MenuScene extends Phaser.Scene {
     if (this._vignettePool.length === 0) return;
     const { width, height } = this.cameras.main;
     const pick = this._vignettePool[Math.floor(Math.random() * this._vignettePool.length)];
-    const cfg = HORDE_SPRITE_CONFIGS[pick.type];
+    // Use equipped skin if its texture is loaded, otherwise fall back to default
+    let cfg = getEffectiveSpriteConfig(pick.type);
+    let animPrefix = getAnimKeyPrefix(pick.type);
+    if (!cfg || !this.textures.exists(cfg.walk.key)) {
+      cfg = HORDE_SPRITE_CONFIGS[pick.type];
+      animPrefix = `h_${pick.type}`;
+    }
     const walkKey = cfg.walk.key;
-    const animKey = `h_${pick.type}_walk`;
+    const animKey = `${animPrefix}_walk`;
 
     // Edge positions
     const edges = [

@@ -93,18 +93,18 @@ export function showPurchaseConfirm(opts: PurchaseConfirmOptions): void {
     display:flex;align-items:center;gap:6px;justify-content:center;
   `;
 
-  if (opts.priceCrowns != null && opts.priceCrowns > 0) {
-    const crownsSpan = document.createElement('span');
-    crownsSpan.style.cssText = `color:${C.gold};font-weight:700;`;
-    crownsSpan.textContent = `\u{1F451} ${opts.priceCrowns}`;
-    priceLine.appendChild(document.createTextNode('This will cost '));
-    priceLine.appendChild(crownsSpan);
-  } else if (opts.priceGlory != null && opts.priceGlory > 0) {
+  if (opts.priceGlory != null && opts.priceGlory > 0) {
     const glorySpan = document.createElement('span');
     glorySpan.style.cssText = `color:#C0C0D2;font-weight:700;`;
     glorySpan.textContent = `\u2605 ${opts.priceGlory}`;
     priceLine.appendChild(document.createTextNode('This will cost '));
     priceLine.appendChild(glorySpan);
+  } else if (opts.priceCrowns != null && opts.priceCrowns > 0) {
+    const crownsSpan = document.createElement('span');
+    crownsSpan.style.cssText = `color:${C.gold};font-weight:700;`;
+    crownsSpan.textContent = `\u{1F451} ${opts.priceCrowns}`;
+    priceLine.appendChild(document.createTextNode('This will cost '));
+    priceLine.appendChild(crownsSpan);
   }
   panel.appendChild(priceLine);
 

@@ -187,6 +187,8 @@ export const EQUIPMENT_PREREQS: Record<EquipmentType, EquipmentType[]> = {
   shield:  ['pickaxe'],
   boots:   ['pickaxe'],
   banner:  ['pickaxe'],
+  bow:     ['pickaxe'],
+  quiver:  ['pickaxe'],
 };
 
 export const RESOURCE_GATHER_NEEDS: Record<ResourceType, { needsEquipment?: EquipmentType }> = {

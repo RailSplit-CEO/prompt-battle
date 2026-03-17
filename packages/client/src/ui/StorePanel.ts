@@ -27,7 +27,7 @@ interface StoreTab {
 const TABS: StoreTab[] = [
   { id: 'gems',       label: '\uD83D\uDC51 Crowns',      categories: null },
   { id: 'stars',      label: '\u2605 Stars',              categories: null },
-  { id: 'battlepass', label: '\uD83C\uDFC6 Battle Pass',  categories: null },
+  { id: 'battlepass', label: '\uD83C\uDFC6 Horde Pass',  categories: null },
   { id: 'bundles',    label: '\uD83C\uDF81 Bundles',      categories: null },
 ];
 
@@ -558,11 +558,10 @@ export class StorePanel {
       card.style.boxShadow = 'none';
     };
 
-    // ── Bonus badge — show actual bonus %, skip if 0% ──
-    const effectiveBonus = pkg.bonusPercent + (isFirstPurchase ? 50 : 0);
-    if (effectiveBonus > 0 && pkg.id !== 'pouch') {
+    // ── Bonus badge — show package bonus %, skip if 0% ──
+    if (pkg.bonusPercent > 0) {
       const bonusBadge = document.createElement('div');
-      bonusBadge.textContent = `+${effectiveBonus}% BONUS`;
+      bonusBadge.textContent = `+${pkg.bonusPercent}% BONUS`;
       bonusBadge.style.cssText = `
         position:absolute;top:-8px;right:-6px;
         font-size:9px;font-weight:700;font-family:"Fredoka",sans-serif;
@@ -702,32 +701,25 @@ export class StorePanel {
         </div>
         <div style="width:1px;background:${C.divider};"></div>
         <div style="text-align:center;">
-          <div style="font-size:11px;color:${C.textMuted};letter-spacing:1px;">PREMIUM</div>
+          <div style="font-size:11px;color:${C.textMuted};letter-spacing:1px;">BATTLE PASS</div>
           <div style="font-size:14px;color:${C.gold};font-weight:700;margin-top:2px;">\uD83D\uDC51 1,000 Crowns</div>
-        </div>
-        <div style="width:1px;background:${C.divider};"></div>
-        <div style="text-align:center;">
-          <div style="font-size:11px;color:${C.textMuted};letter-spacing:1px;">PREMIUM+</div>
-          <div style="font-size:14px;color:${C.gold};font-weight:700;margin-top:2px;">\uD83D\uDC51 2,500 Crowns</div>
         </div>
       </div>
     `;
 
-    // Buy buttons
-    const btnRow = document.createElement('div');
-    btnRow.style.cssText = 'display:flex;gap:12px;justify-content:center;';
-
-    const premBtn = document.createElement('button');
-    premBtn.textContent = 'BUY PREMIUM — 1,000 \uD83D\uDC51';
-    premBtn.style.cssText = `
-      font-family:'Fredoka',sans-serif;font-size:14px;font-weight:700;
-      color:#1a1a0a;background:${C.gold};border:none;border-radius:10px;
-      padding:12px 24px;cursor:pointer;transition:all 0.15s;
+    // Buy button
+    const buyBtn = document.createElement('button');
+    buyBtn.textContent = 'BUY BATTLE PASS — 1,000 \uD83D\uDC51';
+    buyBtn.style.cssText = `
+      width:100%;max-width:360px;font-family:'Fredoka',sans-serif;font-size:16px;font-weight:700;
+      color:#1a1a0a;background:${C.gold};border:none;border-radius:12px;
+      padding:16px 32px;cursor:pointer;transition:all 0.15s;
+      box-shadow:0 4px 16px rgba(255,217,61,0.3);
     `;
-    premBtn.onmouseenter = () => { premBtn.style.filter = 'brightness(1.15)'; premBtn.style.transform = 'scale(1.03)'; };
-    premBtn.onmouseleave = () => { premBtn.style.filter = ''; premBtn.style.transform = ''; };
-    premBtn.onclick = async () => {
-      premBtn.textContent = '...';
+    buyBtn.onmouseenter = () => { buyBtn.style.filter = 'brightness(1.15)'; buyBtn.style.transform = 'scale(1.03)'; };
+    buyBtn.onmouseleave = () => { buyBtn.style.filter = ''; buyBtn.style.transform = ''; };
+    buyBtn.onclick = async () => {
+      buyBtn.textContent = '...';
       try {
         const { getAuth } = await import('firebase/auth');
         const { getFirebaseApp } = await import('../auth/firebaseApp');
@@ -740,48 +732,16 @@ export class StorePanel {
           body: JSON.stringify({ tier: 'premium' }),
         });
         const data = await res.json().catch(() => ({ error: 'Failed' }));
-        premBtn.textContent = data.success ? '\u2713 PREMIUM UNLOCKED' : (data.error || 'Failed');
-        if (data.success) premBtn.style.background = C.teal;
-      } catch { premBtn.textContent = 'Error'; }
+        buyBtn.textContent = data.success ? '\u2713 BATTLE PASS UNLOCKED' : (data.error || 'Failed');
+        if (data.success) buyBtn.style.background = C.teal;
+      } catch { buyBtn.textContent = 'Error'; }
     };
-    btnRow.appendChild(premBtn);
-
-    const premPlusBtn = document.createElement('button');
-    premPlusBtn.textContent = 'BUY PREMIUM+ — 2,500 \uD83D\uDC51';
-    premPlusBtn.style.cssText = `
-      font-family:'Fredoka',sans-serif;font-size:14px;font-weight:700;
-      color:${C.textH1};background:rgba(255,217,61,0.15);
-      border:2px solid ${C.goldDim};border-radius:10px;
-      padding:12px 24px;cursor:pointer;transition:all 0.15s;
-    `;
-    premPlusBtn.onmouseenter = () => { premPlusBtn.style.borderColor = C.gold; premPlusBtn.style.transform = 'scale(1.03)'; };
-    premPlusBtn.onmouseleave = () => { premPlusBtn.style.borderColor = C.goldDim; premPlusBtn.style.transform = ''; };
-    premPlusBtn.onclick = async () => {
-      premPlusBtn.textContent = '...';
-      try {
-        const { getAuth } = await import('firebase/auth');
-        const { getFirebaseApp } = await import('../auth/firebaseApp');
-        const token = await getAuth(getFirebaseApp()).currentUser?.getIdToken();
-        if (!token) return;
-        const baseUrl = (import.meta as any).env?.VITE_FUNCTIONS_URL || '';
-        const res = await fetch(`${baseUrl}/api/store/purchaseBattlePass`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-          body: JSON.stringify({ tier: 'premiumPlus' }),
-        });
-        const data = await res.json().catch(() => ({ error: 'Failed' }));
-        premPlusBtn.textContent = data.success ? '\u2713 PREMIUM+ UNLOCKED' : (data.error || 'Failed');
-        if (data.success) premPlusBtn.style.background = C.teal;
-      } catch { premPlusBtn.textContent = 'Error'; }
-    };
-    btnRow.appendChild(premPlusBtn);
-
-    banner.appendChild(btnRow);
+    banner.appendChild(buyBtn);
 
     // View full pass link
     const viewLink = document.createElement('div');
     viewLink.style.cssText = `text-align:center;margin-top:14px;font-size:12px;color:${C.teal};cursor:pointer;transition:color 0.15s;`;
-    viewLink.textContent = 'View full Battle Pass \u2192';
+    viewLink.textContent = 'View full Horde Pass \u2192';
     viewLink.onmouseenter = () => { viewLink.style.color = C.gold; };
     viewLink.onmouseleave = () => { viewLink.style.color = C.teal; };
     viewLink.onclick = () => {

@@ -65,6 +65,8 @@ const EQUIP_EMOJI: Record<EquipmentType, string> = {
   shield:  '\uD83D\uDEE1\uFE0F',
   boots:   '\uD83E\uDD7E',
   banner:  '\uD83C\uDFF4',
+  bow:     '\uD83C\uDFF9',
+  quiver:  '\uD83C\uDFAF',
 };
 
 const EQUIP_LABEL: Record<EquipmentType, string> = {
@@ -73,6 +75,8 @@ const EQUIP_LABEL: Record<EquipmentType, string> = {
   shield:  'Shield',
   boots:   'Boots',
   banner:  'Banner',
+  bow:     'Bow',
+  quiver:  'Quiver',
 };
 
 // ── Tab definitions ─────────────────────────────────────────────

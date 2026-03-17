@@ -1,4 +1,4 @@
-import { getAuth } from 'firebase/auth';
+import { getAuth, onAuthStateChanged } from 'firebase/auth';
 import { getFirebaseApp } from '../auth/firebaseApp';
 import type { CrownPackage } from '@prompt-battle/shared';
 
@@ -42,6 +42,13 @@ function getFunctionsUrl(): string {
 
 async function getIdToken(): Promise<string> {
   const auth = getAuth(getFirebaseApp());
+  // Wait for Firebase to restore the session if not ready yet
+  if (!auth.currentUser) {
+    await new Promise<void>((resolve) => {
+      const unsub = onAuthStateChanged(auth, () => { unsub(); resolve(); });
+      setTimeout(() => resolve(), 5000);
+    });
+  }
   const user = auth.currentUser;
   if (!user) throw new Error('Not signed in');
   return user.getIdToken();

@@ -32,6 +32,7 @@ interface UnitInfo {
 
 const UNIT_ORDER: UnitInfo[] = [
   { type: 'gnome', emoji: '\uD83E\uDDDD', name: 'Gnome', tier: 1, hp: 20, attack: 4, speed: 210, ability: 'Nimble Hands', desc: '2x pickup range, fastest gatherer', ability2: 'Plucky', desc2: 'Survives 1 lethal hit' },
+  { type: 'snake', emoji: '\uD83D\uDC0D', name: 'Snake', tier: 1, hp: 30, attack: 6, speed: 190, ability: 'Venom Spit', desc: 'Ranged attack (110 range), +3% max HP poison', ability2: 'Shed Skin', desc2: 'Drops aggro once when hit below 30% HP' },
   { type: 'turtle', emoji: '\uD83D\uDC22', name: 'Turtle', tier: 1, hp: 80, attack: 5, speed: 55, ability: 'Shell Stance', desc: '60% DR when stationary + taunt', ability2: 'Iron Shell', desc2: '10x carry, nearby allies -15% dmg' },
   { type: 'skull', emoji: '\uD83D\uDC80', name: 'Skull', tier: 2, hp: 90, attack: 16, speed: 155, ability: 'Undying', desc: 'Survives at 1 HP once', ability2: 'Dread Aura', desc2: 'Enemies nearby -15% attack speed' },
   { type: 'spider', emoji: '\uD83D\uDD77\uFE0F', name: 'Spider', tier: 2, hp: 110, attack: 20, speed: 140, ability: 'Venom Bite', desc: '+5% target max HP per hit', ability2: 'Web Trap', desc2: 'First attack slows 40% for 3s' },
@@ -39,6 +40,8 @@ const UNIT_ORDER: UnitInfo[] = [
   { type: 'rogue', emoji: '\uD83D\uDDE1\uFE0F', name: 'Rogue', tier: 2, hp: 70, attack: 40, speed: 200, ability: 'Backstab', desc: '3x first hit + invisible to neutrals', ability2: 'Shadow Step', desc2: 'Sneak past defenders' },
   { type: 'panda', emoji: '\uD83D\uDC3C', name: 'Panda', tier: 3, hp: 280, attack: 32, speed: 80, ability: 'Thick Hide', desc: 'Regen 1.5% max HP/sec', ability2: 'Bamboo Wall', desc2: 'Blocks projectiles for backline' },
   { type: 'lizard', emoji: '\uD83E\uDD8E', name: 'Lizard', tier: 3, hp: 200, attack: 55, speed: 110, ability: 'Cold Blood', desc: '3x dmg to targets <40% HP', ability2: 'Tail Whip', desc2: 'Hits enemies in 50px arc' },
+  { type: 'bear', emoji: '\uD83D\uDC3B', name: 'Bear', tier: 3, hp: 320, attack: 45, speed: 90, ability: 'Rage', desc: '+2% atk per 1% missing HP', ability2: 'Maul', desc2: 'Attacks stun for 0.5s' },
+  { type: 'harpoon_fish', emoji: '\uD83D\uDC21', name: 'Harpoon Fish', tier: 3, hp: 150, attack: 65, speed: 70, ability: 'Harpoon', desc: 'Longest range (160), pierces first target', ability2: 'Anchor Shot', desc2: 'Slows target 50% for 2s' },
   { type: 'minotaur', emoji: '\uD83D\uDC02', name: 'Minotaur', tier: 4, hp: 550, attack: 85, speed: 105, ability: 'War Cry', desc: 'Nearby allies +25% attack', ability2: 'Bull Rush', desc2: 'Charges for 2x impact' },
   { type: 'shaman', emoji: '\uD83D\uDD2E', name: 'Shaman', tier: 4, hp: 350, attack: 120, speed: 95, ability: 'Arcane Blast', desc: 'All attacks splash 60px', ability2: 'Hex Ward', desc2: 'Allies -20% splash dmg taken' },
   { type: 'troll', emoji: '\uD83D\uDC79', name: 'Troll', tier: 5, hp: 1200, attack: 200, speed: 50, ability: 'Club Slam', desc: '90px splash + slow', ability2: 'Regeneration', desc2: '0.5% HP/s, doubles <30% HP' },
@@ -101,7 +104,6 @@ export class CharacterHub {
   private currentView: 'grid' | 'detail' = 'grid';
   private selectedUnit: HordeUnitType | null = null;
   private _previewAudio: HTMLAudioElement | null = null;
-  private _previewCache: Record<string, string> = {};
   private selectedTab: 'skins' | 'voice' | 'effects' = 'skins';
   private spritePreview: SpritePreview | null = null;
   private xpBar: XpBar | null = null;
@@ -113,6 +115,11 @@ export class CharacterHub {
   private viewport: HTMLDivElement | null = null;
   private gridSlide: HTMLDivElement | null = null;
   private detailSlide: HTMLDivElement | null = null;
+
+  // Skin preview state
+  private previewedSkinId: string = 'default';
+  private skinCards: Map<string, HTMLElement> = new Map();
+  private currentAnimState: 'idle' | 'walk' | 'attack' = 'idle';
 
   // Subscriptions to clean up
   private unsubInventory: (() => void) | null = null;
@@ -406,9 +413,10 @@ export class CharacterHub {
     if (!this.gridSlide || !this.detailSlide) return;
     this.currentView = 'grid';
 
-    // Clean up sprite preview from detail
+    // Clean up sprite preview and skin state from detail
     this.spritePreview?.destroy();
     this.spritePreview = null;
+    this.skinCards.clear();
 
     // Clean up subscriptions
     this.unsubInventory?.();
@@ -489,6 +497,8 @@ export class CharacterHub {
     this.spritePreview = new SpritePreview(280, 280);
     const equippedSkin = InventoryManager.getInstance().getEquippedSkin(unit.type);
     this.spritePreview.loadUnit(unit.type, 'idle', equippedSkin || undefined);
+    this.previewedSkinId = equippedSkin || 'default';
+    this.currentAnimState = 'idle';
     const canvasWrap = document.createElement('div');
     canvasWrap.style.cssText = 'display:flex;justify-content:center;';
     canvasWrap.appendChild(this.spritePreview.getElement());
@@ -510,6 +520,7 @@ export class CharacterHub {
         background:${isActive ? C.tabActive : C.tabBg};color:${isActive ? C.gold : C.textSecondary};
       `;
       btn.onclick = () => {
+        this.currentAnimState = st;
         this.spritePreview?.setState(st);
         for (const b of stateButtons) {
           const active = b === btn;
@@ -726,6 +737,8 @@ export class CharacterHub {
   // ─── Skins Tab ─────────────────────────────────────────────────────────────
 
   private buildSkinsTab(unitType: HordeUnitType): HTMLElement {
+    this.skinCards.clear();
+
     const frag = document.createElement('div');
     frag.style.cssText = `
       display:grid;grid-template-columns:repeat(2,1fr);gap:10px;
@@ -772,6 +785,7 @@ export class CharacterHub {
       );
     }
 
+    this.refreshSkinCardHighlights();
     return frag;
   }
 
@@ -791,6 +805,7 @@ export class CharacterHub {
       padding:12px;border-radius:12px;background:${C.surface};
       border:1px solid ${C.divider};border-left:3px solid ${borderColor};
       display:flex;flex-direction:column;gap:6px;transition:all 0.15s;
+      cursor:pointer;
     `;
     card.onmouseenter = () => {
       card.style.background = C.surfaceHover;
@@ -798,6 +813,7 @@ export class CharacterHub {
     card.onmouseleave = () => {
       card.style.background = C.surface;
     };
+    this.skinCards.set(skinId, card);
 
     // Skin name
     const nameEl = document.createElement('div');
@@ -838,24 +854,35 @@ export class CharacterHub {
         } else {
           equip.equipUnitSkin(unitType, skinId);
         }
-        // Update preview
-        this.spritePreview?.loadUnit(unitType, 'idle', skinId === 'default' ? undefined : skinId);
+        // Update preview preserving current animation
+        this.spritePreview?.loadUnit(unitType, this.currentAnimState, skinId === 'default' ? undefined : skinId);
+        this.previewedSkinId = skinId;
+        this.refreshSkinCardHighlights();
       };
       actionRow.appendChild(equipBtn);
     } else {
-      // Locked — show price + buy
+      // Locked — show single price + buy
       const lockIcon = document.createElement('span');
       lockIcon.textContent = '\uD83D\uDD12';
       lockIcon.style.cssText = 'font-size:12px;';
       actionRow.appendChild(lockIcon);
 
-      if (priceCrowns != null && priceCrowns > 0) {
+      // Determine which currency this skin uses (glory or crowns, never both)
+      const useGlory = priceGlory != null && priceGlory > 0;
+
+      if (useGlory) {
+        const gloryEl = document.createElement('span');
+        gloryEl.textContent = `\u2605 ${priceGlory}`;
+        gloryEl.style.cssText = `font:bold 11px 'Nunito',sans-serif;color:#C0C0D2;`;
+        actionRow.appendChild(gloryEl);
+      } else if (priceCrowns != null && priceCrowns > 0) {
         const priceEl = document.createElement('span');
         priceEl.textContent = `\uD83D\uDC51 ${priceCrowns}`;
         priceEl.style.cssText = `font:bold 11px 'Nunito',sans-serif;color:${C.gold};`;
         actionRow.appendChild(priceEl);
       }
 
+      const currency: 'crowns' | 'glory' = useGlory ? 'glory' : 'crowns';
       const buyBtn = makeBtn('BUY', true);
       buyBtn.style.padding = '4px 12px';
       buyBtn.style.fontSize = '11px';
@@ -863,10 +890,9 @@ export class CharacterHub {
         e.stopPropagation();
         showPurchaseConfirm({
           itemName: name,
-          priceCrowns: priceCrowns ?? undefined,
-          priceGlory: priceGlory ?? undefined,
+          priceCrowns: useGlory ? undefined : (priceCrowns ?? undefined),
+          priceGlory: useGlory ? (priceGlory ?? undefined) : undefined,
           onConfirm: async () => {
-            const currency = priceGlory ? 'glory' : 'crowns';
             const result = await PaymentService.getInstance().purchaseItem(skinId, currency);
             if (!result.success) {
               console.warn('Purchase failed:', result.error);
@@ -880,14 +906,24 @@ export class CharacterHub {
 
     card.appendChild(actionRow);
 
-    // Click card to preview skin in sprite viewer
+    // Click card to preview skin in sprite viewer (all skins, including locked)
     card.onclick = () => {
-      if (owned || skinId === 'default') {
-        this.spritePreview?.loadUnit(unitType, 'idle', skinId === 'default' ? undefined : skinId);
-      }
+      const skinArg = skinId === 'default' ? undefined : skinId;
+      this.spritePreview?.loadUnit(unitType, this.currentAnimState, skinArg);
+      this.previewedSkinId = skinId;
+      this.refreshSkinCardHighlights();
     };
 
     return card;
+  }
+
+  /** Highlight the currently previewed skin card with a gold outline. */
+  private refreshSkinCardHighlights(): void {
+    for (const [id, el] of this.skinCards) {
+      const isActive = id === this.previewedSkinId;
+      el.style.outline = isActive ? `2px solid ${C.gold}` : 'none';
+      el.style.outlineOffset = isActive ? '2px' : '0';
+    }
   }
 
   // ─── Voice Tab ─────────────────────────────────────────────────────────────
@@ -1051,21 +1087,7 @@ export class CharacterHub {
 
   // ─── Voice Preview ─────────────────────────────────────────────────────────
 
-  private static readonly DEFAULT_VOICES: Record<string, { voiceId: string; sample: string }> = {
-    gnome: { voiceId: 'ouL9IsyrSnUkCmfnD02u', sample: 'Ooh ooh! Boss is here! Hehehehe! Ready when you are boss!' },
-    turtle: { voiceId: 'NOpBlnGInO9m6vDvFkFC', sample: 'Slow and steady. That is the way. Always has been.' },
-    skull: { voiceId: 'VR6AewLTigWG4xSOukaG', sample: 'From the grave I rise. Again. And again. Death cannot hold me.' },
-    spider: { voiceId: 'D2jw4N9m4xePLTQ3IHjU', sample: 'Shhh. Do you hear that? That is the sound of silk being spun around your ankles.' },
-    hyena: { voiceId: 'ZwLTvq6uCfb4W00YFl7F', sample: 'AHAHA! Run run run! The hunt is ON baby!' },
-    rogue: { voiceId: 'Z7RrOqZFTyLpIlzCgfsp', sample: 'You did not see me. You will not hear me. But you will definitely feel me.' },
-    panda: { voiceId: 'SMmCzq0obKgqq4BpVwlt', sample: 'Mmm. Bamboo. Battle. Both are good. But bamboo is better.' },
-    lizard: { voiceId: 'qhH5VOAvpCwvNpmn2srO', sample: 'Cold blood runs through these veins. It makes me patient. Very patient.' },
-    minotaur: { voiceId: 'cPoqAvGWCPfCfyPMwe4z', sample: 'The labyrinth trembles when I walk. As it should.' },
-    shaman: { voiceId: 'wXvR48IpOq9HACltTmt7', sample: 'The arcane flows through all things. I merely give it direction.' },
-    troll: { voiceId: 'dhwafD61uVd8h85wAZSE', sample: 'Me big. Me strong. Me hungry. You small. This not end well for you.' },
-  };
-
-  private async playVoicePreview(packId: string, unitType: HordeUnitType, btn: HTMLButtonElement): Promise<void> {
+  private async playVoicePreview(packId: string, unitType: HordeUnitType, _btn: HTMLButtonElement): Promise<void> {
     // Stop any currently playing preview
     if (this._previewAudio) {
       this._previewAudio.pause();
@@ -1073,11 +1095,10 @@ export class CharacterHub {
       this._previewAudio = null;
     }
 
-    // Determine the static file name
+    // Play from static file
     const fileKey = packId === 'default' ? `default_${unitType}` : packId;
     const staticUrl = `assets/audio/voice_samples/${fileKey}.mp3`;
 
-    // Try static file first (no API call)
     try {
       const audio = new Audio(staticUrl);
       audio.volume = 0.8;
@@ -1088,59 +1109,8 @@ export class CharacterHub {
       });
       this._previewAudio = audio;
       audio.play().catch(() => {});
-      return;
     } catch {
-      // Static file not available — fall back to API generation
-    }
-
-    // Resolve voice ID and sample text for API fallback
-    let voiceId: string | undefined;
-    let sampleText: string | undefined;
-    if (packId === 'default') {
-      const def = CharacterHub.DEFAULT_VOICES[unitType];
-      if (def) { voiceId = def.voiceId; sampleText = def.sample; }
-    } else {
-      const item = CatalogService.getInstance().getItem(packId);
-      voiceId = item?.voiceId;
-      sampleText = item?.sampleText;
-    }
-    if (!voiceId || !sampleText) return;
-
-    // Check in-memory cache
-    const cached = this._previewCache[packId];
-    if (cached) {
-      const audio = new Audio(cached);
-      audio.volume = 0.8;
-      this._previewAudio = audio;
-      audio.play().catch(() => {});
-      return;
-    }
-
-    // Generate via API — show loading
-    const origText = btn.textContent;
-    btn.textContent = '\u23F3';
-    btn.style.pointerEvents = 'none';
-    try {
-      const apiKey = (import.meta as any).env?.VITE_ELEVENLABS_API_KEY;
-      if (!apiKey) return;
-      const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream?output_format=mp3_44100_128`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'xi-api-key': apiKey },
-        body: JSON.stringify({ text: sampleText, model_id: 'eleven_flash_v2_5' }),
-      });
-      if (!res.ok) throw new Error(`API ${res.status}`);
-      const blob = new Blob([await res.arrayBuffer()], { type: 'audio/mpeg' });
-      const url = URL.createObjectURL(blob);
-      this._previewCache[packId] = url;
-      const audio = new Audio(url);
-      audio.volume = 0.8;
-      this._previewAudio = audio;
-      audio.play().catch(() => {});
-    } catch (err) {
-      console.warn('[Voice Preview] Failed:', err);
-    } finally {
-      btn.textContent = origText!;
-      btn.style.pointerEvents = '';
+      console.warn(`[Voice Preview] Static file not found: ${staticUrl}`);
     }
   }
 
@@ -1299,6 +1269,8 @@ export class CharacterHub {
     this.selectedTab = 'skins';
     this.spritePreview?.destroy();
     this.spritePreview = null;
+    this.skinCards.clear();
+    this.currentAnimState = 'idle';
     this.buildDetailView(newUnit, this.detailSlide);
   }
 }

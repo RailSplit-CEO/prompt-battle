@@ -6,10 +6,20 @@ import {
   getXpInCurrentLevel,
   getRewardForLevel,
   DEFAULT_PLAYER_LEVEL,
+  CURRENT_SEASON,
 } from '@prompt-battle/shared';
 import { addCrowns, addGlory, grantItem, logTransaction } from './inventory-helpers';
 
 const db = () => admin.database();
+
+function getBpTier(xp: number): number {
+  let tier = 0;
+  for (const t of CURRENT_SEASON.tiers) {
+    if (xp >= t.xpRequired) tier = t.tier;
+    else break;
+  }
+  return tier;
+}
 
 /**
  * Grants XP to a player based on match stats.
@@ -114,6 +124,33 @@ export const grantXp = functions.https.onRequest(async (req, res) => {
       status: 'completed',
     });
 
+    // ── Also grant Battle Pass XP ──────────────────────────────────
+    let bpTier = 0;
+    try {
+      const bpRef = db().ref(`users/${uid}/battlePass`);
+      const bpSnap = await bpRef.once('value');
+      const bp = bpSnap.val();
+
+      if (!bp || bp.season !== CURRENT_SEASON.id) {
+        // New season or first time — initialize with earned XP
+        await bpRef.set({
+          season: CURRENT_SEASON.id,
+          premium: false,
+          premiumPlus: false,
+          xp: xpGranted,
+          claimedFree: {},
+          claimedPremium: {},
+        });
+        bpTier = getBpTier(xpGranted);
+      } else {
+        const newBpXp = (bp.xp || 0) + xpGranted;
+        await bpRef.update({ xp: newBpXp });
+        bpTier = getBpTier(newBpXp);
+      }
+    } catch (bpErr) {
+      console.error('Battle pass XP grant failed (non-critical):', bpErr);
+    }
+
     res.json({
       success: true,
       xpGranted,
@@ -122,6 +159,7 @@ export const grantXp = functions.https.onRequest(async (req, res) => {
       leveledUp,
       rewards,
       playerLevel: updatedLevel,
+      battlePassTier: bpTier,
     });
   } catch (err: any) {
     console.error('XP grant error:', err);

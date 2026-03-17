@@ -148,9 +148,9 @@ export const HORDE_SPRITE_CONFIGS: Record<string, EnemySpriteConfig> = {
     originY: 0.5,
   },
   rogue: {
-    idle: { key: 'h_rogue_idle', path: 'assets/enemies/skull/Skull_Idle.png', frameWidth: 192, frameHeight: 192, frameCount: 8 },
-    walk: { key: 'h_rogue_walk', path: 'assets/enemies/skull/Skull_Run.png', frameWidth: 192, frameHeight: 192, frameCount: 6 },
-    attack: { key: 'h_rogue_attack', path: 'assets/enemies/skull/Skull_Attack.png', frameWidth: 192, frameHeight: 192, frameCount: 7 },
+    idle: { key: 'h_rogue_idle', path: 'assets/enemies/thief/Thief_Idle.png', frameWidth: 192, frameHeight: 192, frameCount: 6 },
+    walk: { key: 'h_rogue_walk', path: 'assets/enemies/thief/Thief_Run.png', frameWidth: 192, frameHeight: 192, frameCount: 6 },
+    attack: { key: 'h_rogue_attack', path: 'assets/enemies/thief/Thief_Attack.png', frameWidth: 192, frameHeight: 192, frameCount: 6 },
     displayScale: 0.9,
     originY: 0.5,
   },
@@ -160,15 +160,6 @@ export const HORDE_SPRITE_CONFIGS: Record<string, EnemySpriteConfig> = {
     idle: { key: 'h_snake_idle', path: 'assets/enemies/snake/Snake_Idle.png', frameWidth: 192, frameHeight: 192, frameCount: 8 },
     walk: { key: 'h_snake_walk', path: 'assets/enemies/snake/Snake_Run.png', frameWidth: 192, frameHeight: 192, frameCount: 8 },
     attack: { key: 'h_snake_attack', path: 'assets/enemies/snake/Snake_Attack.png', frameWidth: 192, frameHeight: 192, frameCount: 6 },
-    displayScale: 1.0,
-    originY: 0.5,
-  },
-
-  // ─── Tier 2 (ranged) ──────────────────────────────────
-  thief: {
-    idle: { key: 'h_thief_idle', path: 'assets/enemies/thief/Thief_Idle.png', frameWidth: 192, frameHeight: 192, frameCount: 8 },
-    walk: { key: 'h_thief_walk', path: 'assets/enemies/thief/Thief_Run.png', frameWidth: 192, frameHeight: 192, frameCount: 6 },
-    attack: { key: 'h_thief_attack', path: 'assets/enemies/thief/Thief_Attack.png', frameWidth: 192, frameHeight: 192, frameCount: 7 },
     displayScale: 1.0,
     originY: 0.5,
   },
@@ -189,9 +180,9 @@ export const HORDE_SPRITE_CONFIGS: Record<string, EnemySpriteConfig> = {
     originY: 0.5,
   },
   bear: {
-    idle: { key: 'h_bear_idle', path: 'assets/enemies/bear/Bear_Idle.png', frameWidth: 192, frameHeight: 192, frameCount: 8 },
-    walk: { key: 'h_bear_walk', path: 'assets/enemies/bear/Bear_Run.png', frameWidth: 192, frameHeight: 192, frameCount: 6 },
-    attack: { key: 'h_bear_attack', path: 'assets/enemies/bear/Bear_Attack.png', frameWidth: 192, frameHeight: 192, frameCount: 7 },
+    idle: { key: 'h_bear_idle', path: 'assets/enemies/bear/Bear_Idle.png', frameWidth: 256, frameHeight: 256, frameCount: 8 },
+    walk: { key: 'h_bear_walk', path: 'assets/enemies/bear/Bear_Run.png', frameWidth: 256, frameHeight: 256, frameCount: 5 },
+    attack: { key: 'h_bear_attack', path: 'assets/enemies/bear/Bear_Attack.png', frameWidth: 256, frameHeight: 256, frameCount: 9 },
     displayScale: 1.1,
     originY: 0.5,
   },

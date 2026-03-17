@@ -1,0 +1,93 @@
+# Claude Session Notes
+
+## Current Plan: Fix Battle Pass Rewards to Actually Grant Items
+
+The battle pass claim system is fully built end-to-end but 3 item rewards reference IDs that don't exist in the catalog. When claimed, they write a bad ID to inventory that doesn't match anything usable.
+
+### Fix: 3 ID corrections in `packages/shared/src/data/battle-pass.ts`
+
+| Tier | Track | Current (broken) | Replacement (exists in catalog) |
+|------|-------|-------------------|---------------------------------|
+| 28 | Free | `emote_laugh` | `emote_laughing` (epic ROFL emote) |
+| 15 | Premium | `voice_gnome_hyper` | `voice_gnome_energetic` (Energetic Gnome voice pack) |
+| 30 | Premium | `death_fx_shatter` | `death_shatter` (Shatter death effect) |
+
+Also fix matching reference in `packages/shared/src/data/store-catalog.ts` line 1070: `voice_gnome_hyper` → `voice_gnome_energetic` (Warrior Pack bundle).
+
+### Status: DONE
+- All 3 IDs corrected
+- TypeScript check passes
+- All 16 battle pass item IDs now match real catalog entries
+
+---
+
+## Project Memory
+
+### Project Location
+`C:/Users/E/prompt-battle/` - AI-commanded 1v1 RTS browser game
+
+### Tech Stack
+- Phaser 3 + TypeScript + Vite (client)
+- Firebase RTDB + Auth + Functions + Hosting (backend)
+- Gemini API via Cloud Functions (AI command parsing)
+- Web Speech API (voice input)
+- npm workspaces monorepo
+
+### Structure
+- `packages/shared/` - Types, class/animal data, abilities
+- `packages/client/` - Phaser game (scenes, entities, map, network, systems)
+- `packages/functions/` - Firebase Cloud Functions (matchmaking, game authority, AI)
+
+### Key Files
+- 8 RPG classes defined in `packages/shared/src/data/classes.ts`
+- 10 animals (week 1 scope) in `packages/shared/src/data/animals.ts`
+- Map generator (seeded noise + symmetry) in `packages/client/src/map/MapGenerator.ts`
+- BattleScene has local command parsing fallback for offline play
+- `packages/client/src/vite-env.d.ts` has SpeechRecognition type defs
+
+### Build Commands
+- `npm run dev` - Start Vite dev server on port 3000
+- `npx --workspace=packages/client vite build` - Production build to /dist
+- TypeScript checks pass for both client and functions packages
+
+### Notes
+- Client tsconfig includes `../shared/src` and removes rootDir to allow cross-package imports
+- BootScene generates all placeholder textures programmatically (no external assets needed)
+- Local test mode works without Firebase (auto-picks for opponent, local command parsing)
+
+---
+
+## Work Done This Session
+
+### 1. Merged server-simulation branch into master
+- 1 commit: voice preview static files, store UI improvements, star exchange
+
+### 2. Fixed TypeScript errors after merge
+- Added `bow` and `quiver` to `EquipmentType` records in `CosmeticsHub.ts` and `Constants.ts`
+
+### 3. Fixed rogue sprite showing skull asset
+- `SpriteConfig.ts`: Changed rogue config from `assets/enemies/skull/Skull_*.png` to `assets/enemies/thief/Thief_*.png`
+- Fixed frame counts (all thief sprites have 6 frames, not 8/7)
+- Also fixed orphaned `thief` config entry frame counts
+
+### 4. Voice preview system — static files only, no ElevenLabs API fallback
+- Generated all 84 static MP3 voice samples via `gen_voice_samples.js` (ElevenLabs API)
+- Simplified `CharacterHub.playVoicePreview()` — removed API fallback, `_previewCache`, `DEFAULT_VOICES`
+- Previews now only play from `assets/audio/voice_samples/{fileKey}.mp3`
+
+### 5. Added voice support for 3 new units (snake, bear, harpoon_fish)
+- `TtsService.ts`: Added to `HOARD_VOICES` and `HOARD_VOICE_SETTINGS`
+- `HordeScene.ts`: Added to `DEFAULT_PERSONALITIES`
+- `gen_voice_samples.js`: Added 18 new entries (3 defaults + 15 voice packs), generated MP3s
+
+### 6. Battle pass lock icon
+- Made lock much bigger (72px) and moved up (top:40%), opacity 0.5
+
+### 7. Queue popup always on top
+- Bumped `QueuePopup` z-index from 10000 to 50000
+
+### 8. Fixed battle pass reward IDs (3 mismatches)
+- `emote_laugh` → `emote_laughing`
+- `voice_gnome_hyper` → `voice_gnome_energetic`
+- `death_fx_shatter` → `death_shatter`
+- Also fixed Warrior Pack bundle reference

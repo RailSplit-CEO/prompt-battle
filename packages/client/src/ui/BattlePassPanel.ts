@@ -129,12 +129,47 @@ export class BattlePassPanel {
     titleLeft.appendChild(titleIcon);
 
     const title = document.createElement('span');
-    title.textContent = 'BATTLE PASS';
+    title.textContent = 'HORDE PASS';
     title.style.cssText = `
       font-family:"Fredoka",sans-serif;font-weight:700;font-size:16px;
       color:${C.gold};letter-spacing:2px;
     `;
     titleLeft.appendChild(title);
+
+    // Debug: +1000 XP button
+    const dbgBtn = document.createElement('button');
+    dbgBtn.textContent = '+1000 XP';
+    dbgBtn.style.cssText = `
+      font-size:9px;font-weight:700;font-family:"Nunito",sans-serif;
+      padding:2px 6px;border-radius:4px;cursor:pointer;
+      background:rgba(139,115,85,0.4);border:1px solid ${C.gold};
+      color:${C.gold};margin-left:6px;
+    `;
+    dbgBtn.onmouseenter = () => { dbgBtn.style.background = 'rgba(255,217,61,0.25)'; };
+    dbgBtn.onmouseleave = () => { dbgBtn.style.background = 'rgba(139,115,85,0.4)'; };
+    dbgBtn.onclick = async () => {
+      try {
+        const { getAuth } = await import('firebase/auth');
+        const { getFirebaseApp } = await import('../auth/firebaseApp');
+        const auth = getAuth(getFirebaseApp());
+        if (!auth.currentUser) {
+          dbgBtn.textContent = 'NO AUTH';
+          setTimeout(() => { dbgBtn.textContent = '+1000 XP'; }, 1200);
+          return;
+        }
+        const token = await auth.currentUser.getIdToken(true);
+        const res = await fetch('/api/store/grantBattlePassXp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ xp: 1000 }),
+        });
+        const data = await res.json();
+        dbgBtn.textContent = data.success ? `T${data.currentTier}!` : data.error || 'ERR';
+        setTimeout(() => { dbgBtn.textContent = '+1000 XP'; }, 1200);
+      } catch (e) { dbgBtn.textContent = 'ERR'; console.error('[BP debug]', e); setTimeout(() => { dbgBtn.textContent = '+1000 XP'; }, 1200); }
+    };
+    titleLeft.appendChild(dbgBtn);
+
     titleRow.appendChild(titleLeft);
 
     const tierBadge = document.createElement('span');
@@ -215,7 +250,7 @@ export class BattlePassPanel {
 
     const premLabel = document.createElement('span');
     premLabel.style.cssText = `flex:1;font-size:12px;font-weight:800;color:${C.gold};font-family:"Fredoka",sans-serif;text-align:center;letter-spacing:2px;text-shadow:0 0 8px rgba(255,217,61,0.4);`;
-    premLabel.textContent = '✨ PREMIUM';
+    premLabel.textContent = 'PREMIUM';
     labelsRow.appendChild(premLabel);
 
     const freeLabel = document.createElement('span');
@@ -271,7 +306,7 @@ export class BattlePassPanel {
       };
       buyBtn.onclick = async () => {
         if (AuthManager.getInstance().isGuest) {
-          showGuestLoginPrompt('upgrade the Battle Pass');
+          showGuestLoginPrompt('upgrade the Horde Pass');
           return;
         }
         const token = await getAuth(getFirebaseApp()).currentUser?.getIdToken();
@@ -471,8 +506,8 @@ export class BattlePassPanel {
       const lock = document.createElement('div');
       lock.textContent = '\uD83D\uDD12';
       lock.style.cssText = `
-        position:absolute;top:4px;right:4px;
-        font-size:12px;opacity:0.35;
+        position:absolute;top:40%;left:50%;transform:translate(-50%,-50%);
+        font-size:72px;opacity:0.5;
       `;
       card.appendChild(lock);
     }

@@ -191,6 +191,24 @@ const UNIT_SPECS: Record<string, UnitSpec> = {
     walk:   { frameCount: 10, frameWidth: 384, frameHeight: 384, basePath: 'troll/Troll_Walk.png' },
     attack: { frameCount: 6,  frameWidth: 384, frameHeight: 384, basePath: 'troll/Troll_Attack.png' },
   },
+  snake: {
+    frameWidth: 192, frameHeight: 192,
+    idle:   { frameCount: 8, frameWidth: 192, frameHeight: 192, basePath: 'snake/Snake_Idle.png' },
+    walk:   { frameCount: 8, frameWidth: 192, frameHeight: 192, basePath: 'snake/Snake_Run.png' },
+    attack: { frameCount: 6, frameWidth: 192, frameHeight: 192, basePath: 'snake/Snake_Attack.png' },
+  },
+  bear: {
+    frameWidth: 192, frameHeight: 192,
+    idle:   { frameCount: 8, frameWidth: 192, frameHeight: 192, basePath: 'bear/Bear_Idle.png' },
+    walk:   { frameCount: 6, frameWidth: 192, frameHeight: 192, basePath: 'bear/Bear_Run.png' },
+    attack: { frameCount: 7, frameWidth: 192, frameHeight: 192, basePath: 'bear/Bear_Attack.png' },
+  },
+  harpoon_fish: {
+    frameWidth: 192, frameHeight: 192,
+    idle:   { frameCount: 8, frameWidth: 192, frameHeight: 192, basePath: 'harpoon_fish/HarpoonFish_Idle.png' },
+    walk:   { frameCount: 6, frameWidth: 192, frameHeight: 192, basePath: 'harpoon_fish/HarpoonFish_Run.png' },
+    attack: { frameCount: 8, frameWidth: 192, frameHeight: 192, basePath: 'harpoon_fish/HarpoonFish_Throw.png' },
+  },
 };
 
 // ─── Skin Definitions ──────────────────────────────────────────────
@@ -312,6 +330,36 @@ const SKINS: SkinDef[] = [
     transform: { type: 'channelRemap', r: 0.4, g: 0.7, b: 1.6, contrast: 1.1, brightness: 20 } },
   { id: 'skin_troll_mountain_god', unitType: 'troll', name: 'Mountain God Troll',
     transform: { type: 'hueShift', degrees: 0, satMul: 0.2, lightMul: 1.1 } },
+
+  // ── Snake ──
+  { id: 'skin_snake_coral', unitType: 'snake', name: 'Coral Snake',
+    transform: { type: 'channelRemap', r: 1.6, g: 0.4, b: 0.3, contrast: 1.1 } },
+  { id: 'skin_snake_golden', unitType: 'snake', name: 'Golden Snake',
+    transform: { type: 'tint', color: [255, 215, 0], strength: 0.5 } },
+  { id: 'skin_snake_shadow_serpent', unitType: 'snake', name: 'Shadow Serpent',
+    transform: { type: 'channelRemap', r: 0.3, g: 0.15, b: 0.5, contrast: 1.4, brightness: -25 } },
+  { id: 'skin_snake_ouroboros', unitType: 'snake', name: 'Ouroboros',
+    transform: { type: 'tint', color: [180, 160, 220], strength: 0.45, satMul: 0.5 } },
+
+  // ── Bear ──
+  { id: 'skin_bear_grizzly', unitType: 'bear', name: 'Grizzly Bear',
+    transform: { type: 'hueShift', degrees: -20, satMul: 1.3 } },
+  { id: 'skin_bear_armored', unitType: 'bear', name: 'Black Bear',
+    transform: { type: 'hueShift', degrees: 0, satMul: 0.15, lightMul: 0.85 } },
+  { id: 'skin_bear_spirit', unitType: 'bear', name: 'Polar Bear',
+    transform: { type: 'tint', color: [220, 230, 255], strength: 0.55, satMul: 0.2 } },
+  { id: 'skin_bear_elder', unitType: 'bear', name: 'Kodiak Bear',
+    transform: { type: 'tint', color: [140, 100, 40], strength: 0.5 } },
+
+  // ── Harpoon Fish ──
+  { id: 'skin_harpoon_fish_reef', unitType: 'harpoon_fish', name: 'Reef Fish',
+    transform: { type: 'hueShift', degrees: 60, satMul: 1.4 } },
+  { id: 'skin_harpoon_fish_steel', unitType: 'harpoon_fish', name: 'Steel Fish',
+    transform: { type: 'hueShift', degrees: 0, satMul: 0.1, lightMul: 1.05 } },
+  { id: 'skin_harpoon_fish_abyssal', unitType: 'harpoon_fish', name: 'Abyssal Fish',
+    transform: { type: 'channelRemap', r: 0.3, g: 0.4, b: 1.5, contrast: 1.2, brightness: -15 } },
+  { id: 'skin_harpoon_fish_leviathan', unitType: 'harpoon_fish', name: 'Leviathan Fish',
+    transform: { type: 'tint', color: [20, 180, 160], strength: 0.5, satMul: 0.6 } },
 ];
 
 // ─── Processing ────────────────────────────────────────────────────

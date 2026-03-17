@@ -24,12 +24,14 @@ export type ItemCategory =
 export type Rarity = 'common' | 'rare' | 'epic' | 'legendary';
 
 export type HordeUnitType =
-  | 'gnome' | 'turtle' | 'skull' | 'spider' | 'hyena'
-  | 'rogue' | 'panda' | 'lizard' | 'minotaur' | 'shaman' | 'troll';
+  | 'gnome' | 'snake' | 'turtle' | 'skull' | 'spider' | 'hyena'
+  | 'rogue' | 'panda' | 'lizard' | 'bear' | 'harpoon_fish'
+  | 'minotaur' | 'shaman' | 'troll';
 
 export const HORDE_UNIT_TYPES: HordeUnitType[] = [
-  'gnome', 'turtle', 'skull', 'spider', 'hyena',
-  'rogue', 'panda', 'lizard', 'minotaur', 'shaman', 'troll',
+  'gnome', 'snake', 'turtle', 'skull', 'spider', 'hyena',
+  'rogue', 'panda', 'lizard', 'bear', 'harpoon_fish',
+  'minotaur', 'shaman', 'troll',
 ];
 
 // EquipmentType is re-exported from data/maps.ts — use that definition

@@ -63,6 +63,47 @@ export const SKIN_REGISTRY: Record<string, SkinDef> = {
     },
   },
 
+  // ── Snake ───────────────────────────────────────────────────────
+  skin_snake_coral: {
+    id: 'skin_snake_coral',
+    unitType: 'snake',
+    name: 'Coral Snake',
+    spritePath: 'assets/enemies/snake/skins/skin_snake_coral/',
+    isRecolor: true,
+  },
+  skin_snake_golden: {
+    id: 'skin_snake_golden',
+    unitType: 'snake',
+    name: 'Golden Snake',
+    spritePath: 'assets/enemies/snake/skins/skin_snake_golden/',
+    isRecolor: true,
+    particles: {
+      idle: { color: '#ffd700', count: 4, speed: 0.3 },
+    },
+  },
+  skin_snake_shadow_serpent: {
+    id: 'skin_snake_shadow_serpent',
+    unitType: 'snake',
+    name: 'Shadow Serpent',
+    spritePath: 'assets/enemies/snake/skins/skin_snake_shadow_serpent/',
+    isRecolor: false,
+    particles: {
+      attack: { color: '#2d002d', count: 10, speed: 2.0 },
+    },
+  },
+  skin_snake_ouroboros: {
+    id: 'skin_snake_ouroboros',
+    unitType: 'snake',
+    name: 'Ouroboros',
+    spritePath: 'assets/enemies/snake/skins/skin_snake_ouroboros/',
+    isRecolor: false,
+    particles: {
+      idle: { color: '#c8a2c8', count: 8, speed: 0.5 },
+      walk: { color: '#c8a2c8', count: 6, speed: 0.8 },
+      attack: { color: '#e0b0ff', count: 16, speed: 2.5 },
+    },
+  },
+
   // ── Turtle ──────────────────────────────────────────────────────
   skin_turtle_mossy: {
     id: 'skin_turtle_mossy',
@@ -347,6 +388,88 @@ export const SKIN_REGISTRY: Record<string, SkinDef> = {
       idle: { color: '#b8860b', count: 7, speed: 0.5 },
       walk: { color: '#b8860b', count: 6, speed: 0.9 },
       attack: { color: '#ff4500', count: 18, speed: 2.8 },
+    },
+  },
+
+  // ── Bear ────────────────────────────────────────────────────────
+  skin_bear_grizzly: {
+    id: 'skin_bear_grizzly',
+    unitType: 'bear',
+    name: 'Grizzly Bear',
+    spritePath: 'assets/enemies/bear/skins/skin_bear_grizzly/',
+    isRecolor: true,
+  },
+  skin_bear_armored: {
+    id: 'skin_bear_armored',
+    unitType: 'bear',
+    name: 'Black Bear',
+    spritePath: 'assets/enemies/bear/skins/skin_bear_armored/',
+    isRecolor: true,
+    particles: {
+      idle: { color: '#708090', count: 4, speed: 0.3 },
+    },
+  },
+  skin_bear_spirit: {
+    id: 'skin_bear_spirit',
+    unitType: 'bear',
+    name: 'Polar Bear',
+    spritePath: 'assets/enemies/bear/skins/skin_bear_spirit/',
+    isRecolor: false,
+    particles: {
+      attack: { color: '#e0ffff', count: 12, speed: 1.8 },
+    },
+  },
+  skin_bear_elder: {
+    id: 'skin_bear_elder',
+    unitType: 'bear',
+    name: 'Kodiak Bear',
+    spritePath: 'assets/enemies/bear/skins/skin_bear_elder/',
+    isRecolor: false,
+    particles: {
+      idle: { color: '#8b4513', count: 7, speed: 0.4 },
+      walk: { color: '#8b4513', count: 6, speed: 0.7 },
+      attack: { color: '#d2691e', count: 18, speed: 2.6 },
+    },
+  },
+
+  // ── Harpoon Fish ───────────────────────────────────────────────
+  skin_harpoon_fish_reef: {
+    id: 'skin_harpoon_fish_reef',
+    unitType: 'harpoon_fish',
+    name: 'Reef Fish',
+    spritePath: 'assets/enemies/harpoon_fish/skins/skin_harpoon_fish_reef/',
+    isRecolor: true,
+  },
+  skin_harpoon_fish_steel: {
+    id: 'skin_harpoon_fish_steel',
+    unitType: 'harpoon_fish',
+    name: 'Steel Fish',
+    spritePath: 'assets/enemies/harpoon_fish/skins/skin_harpoon_fish_steel/',
+    isRecolor: true,
+    particles: {
+      idle: { color: '#c0c0c0', count: 4, speed: 0.3 },
+    },
+  },
+  skin_harpoon_fish_abyssal: {
+    id: 'skin_harpoon_fish_abyssal',
+    unitType: 'harpoon_fish',
+    name: 'Abyssal Fish',
+    spritePath: 'assets/enemies/harpoon_fish/skins/skin_harpoon_fish_abyssal/',
+    isRecolor: false,
+    particles: {
+      attack: { color: '#00008b', count: 12, speed: 1.6 },
+    },
+  },
+  skin_harpoon_fish_leviathan: {
+    id: 'skin_harpoon_fish_leviathan',
+    unitType: 'harpoon_fish',
+    name: 'Leviathan Fish',
+    spritePath: 'assets/enemies/harpoon_fish/skins/skin_harpoon_fish_leviathan/',
+    isRecolor: false,
+    particles: {
+      idle: { color: '#006994', count: 8, speed: 0.5 },
+      walk: { color: '#006994', count: 7, speed: 0.8 },
+      attack: { color: '#00bfff', count: 18, speed: 2.8 },
     },
   },
 

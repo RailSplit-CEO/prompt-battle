@@ -18,6 +18,9 @@ const HOARD_VOICES: Record<string, { id: string; name: string }> = {
   shaman:   { id: 'wXvR48IpOq9HACltTmt7', name: 'Shaman' },     // custom clone — mystical
   troll:    { id: 'dhwafD61uVd8h85wAZSE', name: 'Troll' },      // custom clone — deep, slow
   rogue:    { id: 'Z7RrOqZFTyLpIlzCgfsp', name: 'Rogue' },      // custom clone — smooth, sneaky
+  snake:    { id: 'D2jw4N9m4xePLTQ3IHjU', name: 'Snake' },      // shares spider clone — sly, whispery
+  bear:     { id: 'cPoqAvGWCPfCfyPMwe4z', name: 'Bear' },       // shares minotaur clone — powerful, gruff
+  harpoon_fish: { id: 'NOpBlnGInO9m6vDvFkFC', name: 'Harpoon Fish' }, // shares turtle clone — calm, steady
   all:      { id: 'ouL9IsyrSnUkCmfnD02u', name: 'Gnome' },      // default = gnome voice
   test:     { id: 'ouL9IsyrSnUkCmfnD02u', name: 'Gnome' },      // test = gnome voice
 };
@@ -48,6 +51,9 @@ const HOARD_VOICE_SETTINGS: Record<string, VoiceSettings> = {
   shaman:   { stability: 0.40, similarity_boost: 0.85, style: 0.15, speed: 0.73, use_speaker_boost: true },  // ethereal, slow prophetic drawl
   troll:    { stability: 0.60, similarity_boost: 0.85, style: 0.0,  speed: 0.85, use_speaker_boost: true },  // dim-witted, slow brute
   rogue:    { stability: 0.50, similarity_boost: 0.85, style: 0.05, speed: 1.10, use_speaker_boost: true },  // smooth, quick cocky delivery
+  snake:    { stability: 0.40, similarity_boost: 0.85, style: 0.10, speed: 0.90, use_speaker_boost: false }, // hissy, deliberate, sinister
+  bear:     { stability: 0.30, similarity_boost: 0.85, style: 0.15, speed: 0.85, use_speaker_boost: true },  // deep growl, powerful, lumbering
+  harpoon_fish: { stability: 0.55, similarity_boost: 0.85, style: 0.05, speed: 1.00, use_speaker_boost: true }, // steady, nautical calm
 };
 
 const DEFAULT_VOICE_SETTINGS: VoiceSettings = { stability: 0.5, similarity_boost: 0.75, style: 0.0, speed: 1.0, use_speaker_boost: true };
