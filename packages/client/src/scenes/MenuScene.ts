@@ -9,6 +9,7 @@ import { MatchHistoryPanel } from '../ui/MatchHistoryPanel';
 import { MatchInvitePopup } from '../ui/MatchInvitePopup';
 import { createIconElement } from '../ui/FriendsPanel';
 import { C } from '../ui/UIColors';
+import { StorePanel } from '../ui/StorePanel';
 import { HORDE_SPRITE_CONFIGS } from '../sprites/SpriteConfig';
 
 export class MenuScene extends Phaser.Scene {
@@ -73,7 +74,8 @@ export class MenuScene extends Phaser.Scene {
     const btn1Y = dividerY + 60;
     const btn2Y = btn1Y + 68;
     const btn3Y = btn2Y + 68;
-    const btn4Y = btn3Y + 68;
+    const btnStoreY = btn3Y + 68;
+    const btn4Y = btnStoreY + 68;
     const howToPlayY = btn4Y + 75;
 
     // === TITLE ===
@@ -171,6 +173,20 @@ export class MenuScene extends Phaser.Scene {
       charBtn.container.add(charIcon);
       charIcon.setPosition(-120, 0);
     }
+
+    // ═══ STORE BUTTON ═══
+    const storeBtn = this.createMedievalButton(width / 2, btnStoreY, 340, 54, 'STORE', 'yellow', false);
+    storeBtn.container.setAlpha(0).setScale(0.5);
+    this.tweens.add({ targets: storeBtn.container, alpha: 1, scaleX: 1, scaleY: 1, duration: 600, delay: 1050, ease: 'Back.easeOut' });
+    if (this.textures.exists('ts_icon1')) {
+      const storeIcon = this.add.image(0, 0, 'ts_icon1').setScale(0.65).setDepth(15);
+      storeBtn.container.add(storeIcon);
+      storeIcon.setPosition(-120, 0);
+    }
+    storeBtn.zone.on('pointerdown', () => {
+      const store = new StorePanel();
+      store.open();
+    });
 
     const debugBtn = this.createMedievalButton(width / 2, btn4Y, 340, 54, 'DEBUG MODE', 'yellow', false);
     debugBtn.container.setAlpha(0).setScale(0.5);

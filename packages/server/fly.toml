@@ -2,6 +2,10 @@ app = "prompt-battle-server"
 primary_region = "iad"
 
 [build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
 
 [http_service]
   internal_port = 8080

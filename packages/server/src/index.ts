@@ -21,8 +21,8 @@ async function main() {
     });
   });
 
-  app.listen(PORT, () => {
-    console.log(`[Server] Listening on port ${PORT}`);
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`[Server] Listening on 0.0.0.0:${PORT}`);
   });
 
   // Graceful shutdown

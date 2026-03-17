@@ -7,6 +7,10 @@ import { AuthManager } from './auth/AuthManager';
 import { LoginOverlay } from './ui/LoginOverlay';
 import { ProfileSetupOverlay } from './ui/ProfileSetupOverlay';
 import { FirebaseSync } from './network/FirebaseSync';
+import { WalletManager } from './store/WalletManager';
+import { InventoryManager } from './store/InventoryManager';
+import { EquipService } from './store/EquipService';
+import { installDevTools } from './store/dev-tools';
 
 async function boot() {
   // Suppress the 10s "game not started" warning — we're in the auth flow
@@ -74,6 +78,20 @@ async function boot() {
   // 5. Set up online presence tracking (only for users with a profile)
   if (auth.currentUser && !auth.isGuest && auth.userProfile) {
     try { auth.setupPresence(); } catch { /* non-critical */ }
+  }
+
+  // 5b. Initialize store managers (wallet, inventory, equip)
+  if (auth.currentUser) {
+    const uid = auth.currentUser.uid;
+    WalletManager.getInstance().init(uid);
+    InventoryManager.getInstance().init(uid);
+    EquipService.getInstance().init(uid);
+  }
+
+  // 5c. Install dev tools in development mode
+  const isDev = (import.meta as any).env?.VITE_DEV_MODE === 'true' || localStorage.getItem('pb_dev') === 'true';
+  if (isDev) {
+    installDevTools();
   }
 
   // 6. Check for active game to rejoin (multiplayer or solo)
