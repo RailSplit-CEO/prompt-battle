@@ -9,6 +9,7 @@ import {
   setPersistence,
   browserLocalPersistence,
   signOut as firebaseSignOut,
+  signInWithCustomToken,
   Auth,
   User,
 } from 'firebase/auth';
@@ -37,7 +38,7 @@ export interface UserProfile {
   uid: string;
   username: string;
   icon: string;
-  provider: 'google' | 'anonymous';
+  provider: 'google' | 'anonymous' | 'itch';
   createdAt: number;
   lastSeen: number;
   online: boolean;
@@ -179,6 +180,93 @@ export class AuthManager {
     return cred.user;
   }
 
+  async signInWithItch(): Promise<User> {
+    if (!this.auth) throw new Error('Auth not initialized');
+
+    // Get itch.io OAuth client ID from env
+    const clientId = (import.meta as any).env?.VITE_ITCH_CLIENT_ID || '';
+    if (!clientId) throw new Error('itch.io OAuth not configured');
+
+    const redirectUri = encodeURIComponent(window.location.origin + '/auth/itch/callback');
+    const oauthUrl = `https://itch.io/user/oauth?client_id=${clientId}&scope=profile:me&response_type=token&redirect_uri=${redirectUri}`;
+
+    return new Promise<User>((resolve, reject) => {
+      // Open OAuth popup
+      const popup = window.open(oauthUrl, 'itchOAuth', 'width=600,height=700,menubar=no,toolbar=no');
+      if (!popup) { reject(new Error('POPUP_BLOCKED')); return; }
+
+      let resolved = false;
+
+      const messageHandler = async (event: MessageEvent) => {
+        if (resolved) return;
+
+        const data = event.data;
+
+        if (data?.type === 'itch-auth' && data.firebaseToken) {
+          resolved = true;
+          window.removeEventListener('message', messageHandler);
+          clearInterval(pollTimer);
+
+          try {
+            const credential = await signInWithCustomToken(this.auth!, data.firebaseToken);
+            this.currentUser = credential.user;
+
+            // Store itch user info for profile creation
+            (this as any)._pendingItchUser = data.itchUser;
+
+            resolve(credential.user);
+          } catch (err) {
+            reject(err);
+          }
+        } else if (data?.type === 'itch-auth-token' && data.accessToken) {
+          // Implicit flow fallback — send token to our Cloud Function
+          resolved = true;
+          window.removeEventListener('message', messageHandler);
+          clearInterval(pollTimer);
+
+          try {
+            const res = await fetch('/api/auth/itchCallback', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ accessToken: data.accessToken }),
+            });
+            const result = await res.json();
+            if (!result.firebaseToken) throw new Error('No token received');
+
+            const credential = await signInWithCustomToken(this.auth!, result.firebaseToken);
+            this.currentUser = credential.user;
+            (this as any)._pendingItchUser = result.itchUser;
+            resolve(credential.user);
+          } catch (err) {
+            reject(err);
+          }
+        } else if (data?.type === 'itch-auth-error') {
+          resolved = true;
+          window.removeEventListener('message', messageHandler);
+          clearInterval(pollTimer);
+          reject(new Error(data.error || 'itch.io sign-in failed'));
+        }
+      };
+
+      window.addEventListener('message', messageHandler);
+
+      // Poll to detect if popup was closed without completing
+      const pollTimer = setInterval(() => {
+        if (popup.closed && !resolved) {
+          resolved = true;
+          window.removeEventListener('message', messageHandler);
+          clearInterval(pollTimer);
+          reject(new Error('POPUP_CANCELLED'));
+        }
+      }, 500);
+    });
+  }
+
+  /** Get pending itch user info (used during profile creation after itch sign-in) */
+  getPendingItchUser(): { id: number; username: string; displayName: string } | null {
+    return (this as any)._pendingItchUser || null;
+  }
+
   async linkGuestToGoogle(): Promise<User> {
     if (!this.auth.currentUser) {
       throw new Error('No current user to link');
@@ -228,7 +316,7 @@ export class AuthManager {
     uid: string,
     username: string,
     icon: string,
-    provider: 'google' | 'anonymous',
+    provider: 'google' | 'anonymous' | 'itch',
   ): Promise<void> {
     const lowerName = username.toLowerCase();
     const profile: UserProfile = {
@@ -304,6 +392,18 @@ export class AuthManager {
       entries.push(child.val() as MatchHistoryEntry);
     });
     return entries;
+  }
+
+  // ── Ratings ─────────────────────────────────────────────────────
+
+  async getRating(uid: string): Promise<import('../systems/RankSystem').PlayerRating | null> {
+    const snap = await get(ref(this.db, `ratings/${uid}`));
+    return snap.exists() ? snap.val() : null;
+  }
+
+  async writeRating(data: import('../systems/RankSystem').PlayerRating): Promise<void> {
+    if (!this.currentUser) throw new Error('Not authenticated');
+    await set(ref(this.db, `ratings/${this.currentUser.uid}`), data);
   }
 
   // ── Friends ──────────────────────────────────────────────────────

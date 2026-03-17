@@ -133,33 +133,22 @@ export class PaymentService {
     return data;
   }
 
-  // ── In-game crown purchases ─────────────────────────────────────
+  // ── In-game item purchases ──────────────────────────────────────
 
   /**
-   * Purchase an item with Crowns.
-   * Deducting crowns and granting items is handled server-side.
-   * In test mode, uses the admin grant endpoint directly.
+   * Purchase a catalog item with Crowns or Glory.
+   * Deducting currency and granting items is handled server-side.
    */
-  async purchaseWithCrowns(itemId: string, priceCrowns: number): Promise<PurchaseResult> {
-    if (this.platform === 'test') {
-      const token = await getIdToken();
-      const auth = getAuth(getFirebaseApp());
-      const uid = auth.currentUser?.uid;
-      const res = await fetch(`${getFunctionsUrl()}/api/store/adminGrant`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-          'x-dev-mode': 'true',
-        },
-        body: JSON.stringify({ targetUid: uid, action: 'grant_item', itemId }),
-      });
-      const data = await res.json();
-      return { success: data.success, error: data.error };
-    }
-
-    // In production, item purchases are handled by a dedicated Cloud Function
-    return { success: false, error: 'Item purchase not yet implemented' };
+  async purchaseItem(itemId: string, currency: 'crowns' | 'glory'): Promise<PurchaseResult> {
+    const token = await getIdToken();
+    const res = await fetch(`${getFunctionsUrl()}/api/store/purchaseItem`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ itemId, currency }),
+    });
+    const data = await res.json();
+    if (!res.ok) return { success: false, error: data.error };
+    return { success: true };
   }
 
   // ── Glory grants ────────────────────────────────────────────────

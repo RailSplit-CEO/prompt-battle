@@ -1,3 +1,5 @@
+import { InventoryManager } from '../store/InventoryManager';
+
 // ElevenLabs TTS — text-to-speech via streaming API
 const TTS_BASE = 'https://api.elevenlabs.io/v1/text-to-speech';
 const MODEL_ID = 'eleven_flash_v2_5';
@@ -48,6 +50,18 @@ const HOARD_VOICE_SETTINGS: Record<string, VoiceSettings> = {
 };
 
 const DEFAULT_VOICE_SETTINGS: VoiceSettings = { stability: 0.5, similarity_boost: 0.75, style: 0.0, speed: 1.0, use_speaker_boost: true };
+
+// Voice pack overrides — alternative voice settings for purchased packs
+const VOICE_PACK_OVERRIDES: Record<string, { unitType: string; settings: VoiceSettings }> = {
+  voice_gnome_hyper: { unitType: 'gnome', settings: { stability: 0.02, similarity_boost: 0.85, style: 0.4, speed: 1.5, use_speaker_boost: true } },
+  voice_turtle_zen: { unitType: 'turtle', settings: { stability: 0.9, similarity_boost: 0.9, style: 0.0, speed: 0.65, use_speaker_boost: true } },
+  voice_skull_whisper: { unitType: 'skull', settings: { stability: 0.9, similarity_boost: 0.95, style: 0.1, speed: 0.7, use_speaker_boost: true } },
+  voice_spider_hiss: { unitType: 'spider', settings: { stability: 0.15, similarity_boost: 0.8, style: 0.5, speed: 1.1, use_speaker_boost: true } },
+  voice_hyena_manic: { unitType: 'hyena', settings: { stability: 0.02, similarity_boost: 0.75, style: 0.45, speed: 1.4, use_speaker_boost: true } },
+  voice_rogue_suave: { unitType: 'rogue', settings: { stability: 0.7, similarity_boost: 0.9, style: 0.3, speed: 0.9, use_speaker_boost: true } },
+  voice_panda_sleepy: { unitType: 'panda', settings: { stability: 0.85, similarity_boost: 0.85, style: 0.0, speed: 0.6, use_speaker_boost: true } },
+  voice_minotaur_calm: { unitType: 'minotaur', settings: { stability: 0.85, similarity_boost: 0.8, style: 0.0, speed: 0.75, use_speaker_boost: true } },
+};
 
 interface QueueEntry {
   text: string;
@@ -128,7 +142,7 @@ export class TtsService {
         body: JSON.stringify({
           text: entry.text,
           model_id: MODEL_ID,
-          voice_settings: HOARD_VOICE_SETTINGS[entry.charId] || DEFAULT_VOICE_SETTINGS,
+          voice_settings: this.getEffectiveVoiceSettings(entry.charId),
         }),
       });
 
@@ -194,6 +208,20 @@ export class TtsService {
       this.onPlayEnd?.(entry.charId);
       this.processQueue();
     }
+  }
+
+  private getEffectiveVoiceSettings(charId: string): VoiceSettings {
+    try {
+      const equipped = InventoryManager.getInstance().getEquipped();
+      const packId = equipped.voicePack;
+      if (packId && packId !== 'default') {
+        const pack = VOICE_PACK_OVERRIDES[packId];
+        if (pack && pack.unitType === charId) {
+          return pack.settings;
+        }
+      }
+    } catch { /* inventory not initialized */ }
+    return HOARD_VOICE_SETTINGS[charId] || DEFAULT_VOICE_SETTINGS;
   }
 
   stop() {

@@ -18,6 +18,8 @@ import type {
   EquipmentType,
   BehaviorMods,
   HWorkflow,
+  WorkflowStep,
+  HordeCommand,
   PendingHit,
   MapDef,
 } from './SimTypes';
@@ -45,6 +47,7 @@ import {
   GOLDEN_ANGLE,
   WILD_ANIMAL_COUNT,
   ELITE_PREY_COUNT,
+  pdist2,
 } from './Constants';
 
 import * as DayNight from './DayNight';
@@ -417,10 +420,280 @@ export class GameSimulation implements SimState {
 
   // ─── Process Player Commands ────────────────────────────────
 
-  processCommand(_team: 1 | 2, _orders: any[]): void {
-    // Apply player orders to units.
-    // This will be wired to the LLM command parser.
-    // Each order sets unit.loop, unit.targetX/Y, unit.mods, etc.
+  processCommand(team: 1 | 2, orders: any[]): void {
+    for (const order of orders) {
+      const parsed = order.order?.parsed || order.parsed;
+      const selectedHoard = order.order?.selectedHoard || order.selectedHoard || 'all';
+      if (!parsed || !Array.isArray(parsed)) continue;
+      for (const cmd of parsed) {
+        this.executeCommand(cmd as HordeCommand, team, selectedHoard);
+      }
+    }
+  }
+
+  private executeCommand(cmd: HordeCommand, team: 1 | 2, subject: string): void {
+    const base = team === 1 ? P1_BASE : P2_BASE;
+    let tx = 0, ty = 0, found = false;
+
+    // ─── Apply behavior modifiers (sticky) ───────────────────
+    if (cmd.modifiers) {
+      this.applyModifiers(cmd.modifiers, subject, team);
+    }
+
+    // Modifier-only command: update modifiers but keep existing workflow
+    if (cmd.modifierOnly) {
+      return;
+    }
+
+    // ─── Resolve target position ─────────────────────────────
+    if (cmd.targetType === 'nexus') {
+      const n = this.nexuses.find(n2 => n2.team !== team);
+      if (n) { tx = n.x; ty = n.y; found = true; }
+
+    } else if (cmd.targetType === 'base' || cmd.targetType === 'defend' || cmd.targetType === 'retreat') {
+      tx = base.x; ty = base.y; found = true;
+
+    } else if (cmd.targetType === 'camp') {
+      // Specific camp by index
+      if (cmd.campIndex != null && cmd.campIndex >= 0 && cmd.campIndex < this.camps.length) {
+        const c = this.camps[cmd.campIndex];
+        tx = c.x; ty = c.y; found = true;
+      }
+      // By animal type — nearest not owned by me
+      if (!found && cmd.targetAnimal) {
+        const cs = this.camps.filter(c => c.animalType === cmd.targetAnimal && c.owner !== team)
+          .sort((a, b) => pdist2(a, base) - pdist2(b, base));
+        if (cs.length > 0) { tx = cs[0].x; ty = cs[0].y; found = true; }
+      }
+
+    } else if (cmd.targetType === 'nearest_camp') {
+      const result = this.findNearestCamp(team, cmd.targetAnimal, cmd.qualifier, subject);
+      if (result) { tx = result.x; ty = result.y; found = true; }
+
+    } else if (cmd.targetType === 'sweep_camps') {
+      // Chain-capture: find all matching uncaptured camps, sorted nearest-first
+      let targets = this.camps.filter(c => c.owner !== team);
+      if (cmd.targetAnimal) targets = targets.filter(c => c.animalType === cmd.targetAnimal);
+      targets.sort((a, b) => pdist2(a, base) - pdist2(b, base));
+
+      if (targets.length > 0) {
+        // Build a multi-step workflow that attacks each camp in order
+        const steps: WorkflowStep[] = [];
+        for (const t of targets) {
+          const campIdx = this.camps.indexOf(t);
+          steps.push({ action: 'attack_camp', campIndex: campIdx, targetAnimal: t.animalType });
+        }
+        const workflow: HWorkflow = {
+          steps,
+          currentStep: 0,
+          label: cmd.narration || `Sweeping ${cmd.targetAnimal || 'all'}!`,
+          loopFrom: 0,
+          playedOnce: false,
+          voiceCommand: '',
+        };
+        this.assignWorkflow(workflow, subject, team);
+        return;
+      }
+
+    } else if (cmd.targetType === 'workflow' && cmd.workflow && cmd.workflow.length > 0) {
+      // LLM-defined workflow — parse steps and assign to selected units
+      const steps: WorkflowStep[] = this.parseWorkflowSteps(cmd.workflow);
+      if (steps.length === 0) return;
+      if (steps.length > 7) steps.length = 7; // cap complexity
+
+      let rawLoopFrom = cmd.loopFrom ?? 0;
+      // Safety net: if workflow has attack_camp and delivers to a camp, force loopFrom: 0
+      const hasAttackCamp = steps.some(s => s.action === 'attack_camp');
+      const deliversToCamp = steps.some(s => s.action === 'deliver' && 'target' in s && (s as { target: string }).target.includes('_camp'));
+      if (hasAttackCamp && deliversToCamp) rawLoopFrom = 0;
+
+      const workflow: HWorkflow = {
+        steps,
+        currentStep: 0,
+        label: cmd.narration || 'Custom workflow',
+        loopFrom: Math.max(0, Math.min(rawLoopFrom, steps.length - 1)),
+        playedOnce: false,
+        voiceCommand: '',
+      };
+      this.assignWorkflow(workflow, subject, team);
+      return;
+
+    } else if (cmd.targetType === 'position') {
+      if (cmd.workflow && cmd.workflow.length > 0 && cmd.workflow[0].x != null && cmd.workflow[0].y != null) {
+        tx = cmd.workflow[0].x;
+        ty = cmd.workflow[0].y;
+      } else {
+        tx = WORLD_W / 2;
+        ty = WORLD_H / 2;
+      }
+      found = true;
+
+    } else if (cmd.targetType === 'query' || cmd.targetType === 'advanced_plan') {
+      // Queries and advanced plans are not handled server-side in processCommand
+      return;
+    }
+
+    if (!found) return;
+
+    // ─── Build workflow steps for simple target types ─────────
+    let steps: WorkflowStep[];
+    if (cmd.targetType === 'nexus') {
+      steps = [{ action: 'attack_enemies' as const }];
+    } else if (cmd.targetType === 'camp' || cmd.targetType === 'nearest_camp') {
+      steps = [{ action: 'attack_camp' as const, targetAnimal: cmd.targetAnimal, qualifier: cmd.qualifier || 'nearest' }];
+    } else if (cmd.targetType === 'defend') {
+      steps = [{ action: 'defend' as const, target: 'base' }];
+    } else if (cmd.targetType === 'retreat' || cmd.targetType === 'base') {
+      steps = [{ action: 'move' as const, x: base.x, y: base.y }];
+    } else {
+      steps = [{ action: 'move' as const, x: tx, y: ty }];
+    }
+
+    const workflow: HWorkflow = {
+      steps,
+      currentStep: 0,
+      label: cmd.narration || '',
+      loopFrom: 0,
+      playedOnce: false,
+      voiceCommand: '',
+    };
+    this.assignWorkflow(workflow, subject, team);
+  }
+
+  /** Parse raw workflow step objects from LLM into typed WorkflowStep array */
+  private parseWorkflowSteps(rawSteps: { action: string; resourceType?: string; target?: string; targetType?: string; campIndex?: number; qualifier?: string; targetAnimal?: string; x?: number; y?: number; equipmentType?: string }[]): WorkflowStep[] {
+    return rawSteps.map(s => {
+      switch (s.action) {
+        case 'seek_resource':
+          return { action: 'seek_resource' as const, resourceType: (s.resourceType || 'carrot') as ResourceType };
+        case 'deliver':
+          return { action: 'deliver' as const, target: s.target || 'base' };
+        case 'hunt':
+          return { action: 'hunt' as const, targetType: s.targetType };
+        case 'attack_camp':
+          return { action: 'attack_camp' as const, campIndex: s.campIndex, qualifier: s.qualifier, targetAnimal: s.targetAnimal };
+        case 'move':
+          return { action: 'move' as const, x: s.x || WORLD_W / 2, y: s.y || WORLD_H / 2 };
+        case 'defend':
+          return { action: 'defend' as const, target: s.target || 'base' };
+        case 'attack_enemies':
+          return { action: 'attack_enemies' as const };
+        case 'scout':
+          return { action: 'scout' as const, x: s.x, y: s.y };
+        case 'collect':
+          return { action: 'collect' as const, resourceType: (s.resourceType || 'meat') as ResourceType };
+        case 'kill_only':
+          return { action: 'kill_only' as const, targetType: s.targetType };
+        case 'mine':
+          return { action: 'mine' as const };
+        case 'equip':
+          return { action: 'equip' as const, equipmentType: (s.equipmentType || 'pickaxe') as EquipmentType };
+        case 'contest_event':
+          return { action: 'contest_event' as const };
+        case 'withdraw_base':
+          return { action: 'withdraw_base' as const, resourceType: (s.resourceType || 'carrot') as ResourceType };
+        case 'upgrade':
+          return { action: 'upgrade' as const, equipmentType: (s.equipmentType || 'pickaxe') as EquipmentType };
+        default:
+          return null;
+      }
+    }).filter((s): s is WorkflowStep => s !== null);
+  }
+
+  /** Assign a workflow to all matching units and store as group workflow */
+  private assignWorkflow(workflow: HWorkflow, subject: string, team: 1 | 2): void {
+    const sel = this.units.filter(u => u.team === team && !u.dead &&
+      (subject === 'all' || u.type === subject));
+    if (sel.length === 0) return;
+
+    for (const u of sel) {
+      u.loop = { ...workflow, currentStep: 0 };
+      u.targetX = u.x;
+      u.targetY = u.y;
+      u.pathWaypoints = null;
+      u.claimItemId = -1;
+      // Ensure mods are up-to-date from group modifiers
+      const gm = this.groupModifiers[`${u.type}_${team}`];
+      if (gm) u.mods = { ...gm };
+    }
+
+    // Store as group workflow so new spawns inherit it
+    if (subject === 'all') {
+      const types = new Set(sel.map(u => u.type));
+      for (const t of types) this.groupWorkflows[`${t}_${team}`] = workflow;
+    } else {
+      this.groupWorkflows[`${subject}_${team}`] = workflow;
+    }
+  }
+
+  /** Apply behavior modifiers (sticky — only update axes that are explicitly set) */
+  private applyModifiers(mods: { formation?: string | null; caution?: string | null; pacing?: string | null }, subject: string, team: 1 | 2): void {
+    const sel = this.units.filter(u => u.team === team && !u.dead && (subject === 'all' || u.type === subject));
+    const types = subject === 'all' ? new Set(sel.map(u => u.type)) : new Set([subject]);
+
+    for (const type of types) {
+      const key = `${type}_${team}`;
+      if (!this.groupModifiers[key]) this.groupModifiers[key] = { ...DEFAULT_MODS };
+      const gm = this.groupModifiers[key];
+
+      // null = clear that axis back to normal. undefined = leave unchanged (sticky).
+      if (mods.formation !== undefined) gm.formation = (mods.formation as BehaviorMods['formation']) || 'normal';
+      if (mods.caution !== undefined) gm.caution = (mods.caution as BehaviorMods['caution']) || 'normal';
+      if (mods.pacing !== undefined) gm.pacing = (mods.pacing as BehaviorMods['pacing']) || 'normal';
+    }
+
+    // Apply to living units
+    for (const u of sel) {
+      const key = `${u.type}_${team}`;
+      const gm = this.groupModifiers[key] || DEFAULT_MODS;
+      u.mods = { ...gm };
+    }
+  }
+
+  /** Find the nearest camp matching filters, sorted by qualifier */
+  private findNearestCamp(team: 1 | 2, animal?: string, qualifier?: string, _subject?: string): { x: number; y: number; campIndex: number } | null {
+    const base = team === 1 ? P1_BASE : P2_BASE;
+    let candidates = this.camps.slice();
+
+    // Filter by animal type if specified
+    if (animal) candidates = candidates.filter(c => c.animalType === animal);
+
+    // Filter by qualifier
+    const q = qualifier || 'nearest';
+    if (q === 'uncaptured') candidates = candidates.filter(c => c.owner !== team);
+    else if (q === 'enemy') candidates = candidates.filter(c => c.owner !== 0 && c.owner !== team);
+    else candidates = candidates.filter(c => c.owner !== team); // default: not mine
+
+    if (candidates.length === 0) {
+      // If no uncaptured, try any camp of that type
+      if (animal) candidates = this.camps.filter(c => c.animalType === animal);
+      else candidates = this.camps.slice();
+    }
+
+    // Sort by qualifier
+    if (q === 'nearest' || q === 'uncaptured' || q === 'enemy') {
+      candidates.sort((a, b) => pdist2(a, base) - pdist2(b, base));
+    } else if (q === 'furthest') {
+      candidates.sort((a, b) => pdist2(b, base) - pdist2(a, base));
+    } else if (q === 'weakest') {
+      candidates.sort((a, b) => {
+        const da = this.units.filter(u => u.campId === a.id && u.team === 0 && !u.dead).length;
+        const db = this.units.filter(u => u.campId === b.id && u.team === 0 && !u.dead).length;
+        return da - db;
+      });
+    } else if (q === 'strongest') {
+      candidates.sort((a, b) => {
+        const da = this.units.filter(u => u.campId === a.id && u.team === 0 && !u.dead).length;
+        const db = this.units.filter(u => u.campId === b.id && u.team === 0 && !u.dead).length;
+        return db - da;
+      });
+    }
+
+    if (candidates.length > 0) {
+      const campIndex = this.camps.indexOf(candidates[0]);
+      return { x: candidates[0].x, y: candidates[0].y, campIndex };
+    }
+    return null;
   }
 
   // ─── Sync State ─────────────────────────────────────────────

@@ -1,4 +1,5 @@
-import { AnimalType } from '@prompt-battle/shared';
+import { AnimalType, getSkinDef } from '@prompt-battle/shared';
+import { InventoryManager } from '../store/InventoryManager';
 
 export interface SpriteSheetDef {
   key: string;           // Phaser texture key
@@ -202,3 +203,62 @@ export const ANIM_FRAME_RATES = {
   walk: 20,
   attack: 12,
 };
+
+/**
+ * Returns the effective sprite config for a unit, applying the equipped skin if any.
+ * Falls back to default config if no skin equipped or skin not found.
+ */
+export function getEffectiveSpriteConfig(unitType: string, skinId?: string): EnemySpriteConfig {
+  const base = HORDE_SPRITE_CONFIGS[unitType];
+  if (!base) return base;
+
+  // If no skinId provided, check InventoryManager for equipped skin
+  const actualSkinId = skinId ?? InventoryManager.getInstance().getEquippedSkin(unitType as any);
+  if (!actualSkinId || actualSkinId === 'default') return base;
+
+  const skinDef = getSkinDef(actualSkinId);
+  if (!skinDef) return base;
+
+  // For recolors, keep same frame dimensions but change paths and keys
+  // For new sprites, use the skin's own sprite paths
+  const skinPrefix = `skin_${actualSkinId}`;
+
+  return {
+    idle: {
+      key: `${skinPrefix}_idle`,
+      path: `${skinDef.spritePath}Idle.png`,
+      frameWidth: skinDef.isRecolor ? base.idle.frameWidth : base.idle.frameWidth,
+      frameHeight: skinDef.isRecolor ? base.idle.frameHeight : base.idle.frameHeight,
+      frameCount: base.idle.frameCount, // assume same frame count
+    },
+    walk: {
+      key: `${skinPrefix}_walk`,
+      path: `${skinDef.spritePath}Walk.png`,
+      frameWidth: skinDef.isRecolor ? base.walk.frameWidth : base.walk.frameWidth,
+      frameHeight: skinDef.isRecolor ? base.walk.frameHeight : base.walk.frameHeight,
+      frameCount: base.walk.frameCount,
+    },
+    attack: {
+      key: `${skinPrefix}_attack`,
+      path: `${skinDef.spritePath}Attack.png`,
+      frameWidth: skinDef.isRecolor ? base.attack.frameWidth : base.attack.frameWidth,
+      frameHeight: skinDef.isRecolor ? base.attack.frameHeight : base.attack.frameHeight,
+      frameCount: base.attack.frameCount,
+    },
+    displayScale: base.displayScale,
+    originY: base.originY,
+  };
+}
+
+/**
+ * Get the animation key prefix for a unit, respecting equipped skins.
+ * Default: "h_{type}", With skin: "skin_{skinId}"
+ */
+export function getAnimKeyPrefix(unitType: string): string {
+  const skinId = InventoryManager.getInstance().getEquippedSkin(unitType as any);
+  if (skinId && skinId !== 'default') {
+    const skinDef = getSkinDef(skinId);
+    if (skinDef) return `skin_${skinId}`;
+  }
+  return `h_${unitType}`;
+}

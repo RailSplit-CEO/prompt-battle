@@ -17,6 +17,7 @@ export class PaymentModal {
   private overlay: HTMLDivElement | null = null;
   private card: any = null;       // Square Card instance
   private googlePay: any = null;  // Square GooglePay instance
+  private applePay: any = null;   // Square ApplePay instance
 
   async show(opts: PaymentModalOptions): Promise<void> {
     // ── Inject keyframes ──────────────────────────────────────────
@@ -203,6 +204,16 @@ export class PaymentModal {
     gpaySection.appendChild(gpayWrapper);
     panel.appendChild(gpaySection);
 
+    // ── 8b. Apple Pay Section (hidden by default) ───────────────
+    const apWrapEl = document.createElement('div');
+    apWrapEl.id = 'sq-applepay-wrap';
+    apWrapEl.style.cssText = 'width:100%;display:none;';
+    apWrapEl.innerHTML = `
+      <div style="text-align:center;color:${C.textMuted};font:13px 'Nunito',sans-serif;margin:12px 0 8px;">or</div>
+      <div id="sq-applepay-container" style="min-height:44px;"></div>
+    `;
+    panel.appendChild(apWrapEl);
+
     // ── 9. Cancel Link ────────────────────────────────────────────
     const cancelLink = document.createElement('div');
     cancelLink.textContent = 'Cancel';
@@ -239,16 +250,18 @@ export class PaymentModal {
       this.card = await payments.card();
       await this.card.attach('#sq-card-container');
 
-      // 13. Google Pay — gracefully handle unavailability
+      // 13. Payment request for digital wallets (Google Pay, Apple Pay)
+      const paymentRequest = payments.paymentRequest({
+        countryCode: 'US',
+        currencyCode: 'USD',
+        total: {
+          amount: (opts.amountUSD * 100).toFixed(0),
+          label: opts.packageName,
+        },
+      });
+
+      // Google Pay — gracefully handle unavailability
       try {
-        const paymentRequest = payments.paymentRequest({
-          countryCode: 'US',
-          currencyCode: 'USD',
-          total: {
-            amount: (opts.amountUSD * 100).toFixed(0),
-            label: opts.packageName,
-          },
-        });
         this.googlePay = await payments.googlePay(paymentRequest);
         await this.googlePay.attach('#sq-googlepay-container');
 
@@ -259,6 +272,14 @@ export class PaymentModal {
         // Google Pay not available — silently hide the section
         gpaySection.style.display = 'none';
       }
+
+      // Apple Pay — gracefully handle unavailability
+      try {
+        this.applePay = await payments.applePay(paymentRequest);
+        await this.applePay.attach('#sq-applepay-container');
+        const apWrap = overlay.querySelector('#sq-applepay-wrap') as HTMLElement;
+        if (apWrap) apWrap.style.display = 'block';
+      } catch { /* Apple Pay not available */ }
     } catch (err) {
       errorEl.textContent = 'Failed to load payment form. Please try again.';
       errorEl.style.opacity = '1';
@@ -304,6 +325,14 @@ export class PaymentModal {
       }
     };
 
+    // ── 15a. Apple Pay tokenize flow ─────────────────────────────
+    if (this.applePay) {
+      this.applePay.addEventListener('ontokenize', (event: any) => {
+        const token = event?.detail?.token;
+        if (token) opts.onSuccess(token);
+      });
+    }
+
     // ── 15. Google Pay tokenize flow ──────────────────────────────
     if (this.googlePay) {
       this.googlePay.addEventListener('payment', async (event: any) => {
@@ -336,6 +365,10 @@ export class PaymentModal {
     if (this.googlePay) {
       this.googlePay.destroy();
       this.googlePay = null;
+    }
+    if (this.applePay) {
+      this.applePay.destroy();
+      this.applePay = null;
     }
     if (this.overlay) {
       this.overlay.style.opacity = '0';

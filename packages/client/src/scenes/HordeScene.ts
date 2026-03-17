@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { FirebaseSync } from '../network/FirebaseSync';
-import { HORDE_SPRITE_CONFIGS } from '../sprites/SpriteConfig';
+import { HORDE_SPRITE_CONFIGS, getAnimKeyPrefix, getEffectiveSpriteConfig } from '../sprites/SpriteConfig';
 import { MapDef, MapCampSlot, MapZoneDef, MapTowerSlot, MapBushZone, MapRockDef, MapBoundaryBlock, assignAnimalsToSlots, getMapById, ALL_MAPS, TILE_SIZE, EquipmentType as SharedEquipmentType } from '@prompt-battle/shared';
 import { resolveGrid, ResolvedTile } from '../map/AutoTileResolver';
 import { getTileSourceRect, getCliffSourceRect, WATER_COLOR_HEX, getTilesetFilename } from '../map/TilesetAtlas';
@@ -1083,6 +1083,8 @@ interface HordeSceneData {
   mapDef?: MapDef; // direct map definition from editor live sync
   isDebug?: boolean;
   opponentUid?: string;
+  matchType?: 'solo' | 'unranked' | 'ranked' | 'friendly';
+  isRanked?: boolean;
 }
 
 interface HordeSyncUnit {
@@ -1789,7 +1791,7 @@ export class HordeScene extends Phaser.Scene {
   // Command history tracking
   private commandHistory: { command: string; outcome: string; color: string; time: number }[] = [];
   private pendingCommandText: string | null = null;
-  private pendingRemoteCommands: { text: string; team: 1 | 2; selectedHoard: string }[] = [];
+  private pendingRemoteCommands: { text?: string; parsed?: HordeCommand[]; team: 1 | 2; selectedHoard: string }[] = [];
   private pendingLocalCommands: { text: string; team: 1 | 2 }[] = [];
   private isProcessingCommand = false;
 
@@ -2095,6 +2097,9 @@ export class HordeScene extends Phaser.Scene {
   private gameId: string | null = null;
   private playerId: string | null = null;
   private opponentUid: string | null = null;
+  private matchType: string = 'solo';
+  private isRanked = false;
+  private ratingDelta: { oldRating: number; newRating: number; delta: number } | null = null;
   private firebase: FirebaseSync | null = null;
   private syncTimer = 0;
   private readonly SYNC_INTERVAL_MS = 150; // push state 6-7 times/sec
@@ -2102,6 +2107,11 @@ export class HordeScene extends Phaser.Scene {
 
   constructor() {
     super({ key: 'HordeScene' });
+  }
+
+  /** Get the animation key prefix for a unit, using skin for own team */
+  private animPrefix(u: { type: string; team: number }): string {
+    return (u.team === this.myTeam) ? getAnimKeyPrefix(u.type) : `h_${u.type}`;
   }
 
   /** Returns a snapshot of key metrics for the memory overlay / profiling tests. */
@@ -2236,6 +2246,8 @@ export class HordeScene extends Phaser.Scene {
     this.isDebug = data?.isDebug || false;
     if (this.isDebug) this.fogDisabled = true;
     this.opponentUid = data?.opponentUid || null;
+    this.matchType = data?.matchType || 'solo';
+    this.isRanked = data?.isRanked || false;
 
     // Map selection: direct mapDef from editor, or editor-saved file, or hardcoded, or default
     if (data?.mapDef) {
@@ -2452,7 +2464,15 @@ export class HordeScene extends Phaser.Scene {
           if (data.orders) {
             for (const entry of data.orders) {
               const cmd = (entry as any).order || entry;
-              if (cmd.text && cmd.team) {
+              if (cmd.parsed && cmd.team) {
+                // New format: pre-parsed commands from client
+                this.pendingRemoteCommands.push({
+                  parsed: cmd.parsed as HordeCommand[],
+                  team: cmd.team as 1 | 2,
+                  selectedHoard: cmd.selectedHoard || 'all',
+                });
+              } else if (cmd.text && cmd.team) {
+                // Legacy format: raw text (fallback)
                 this.pendingRemoteCommands.push({
                   text: cmd.text,
                   team: cmd.team as 1 | 2,
@@ -6358,7 +6378,15 @@ export class HordeScene extends Phaser.Scene {
       const cmd = this.pendingRemoteCommands.shift()!;
       const prevHoard = this.selectedHoard;
       this.selectedHoard = cmd.selectedHoard;
-      this.handleCommand(cmd.text, cmd.team);
+      if (cmd.parsed && cmd.parsed.length > 0) {
+        // Pre-parsed commands: execute directly without re-parsing
+        for (const gCmd of cmd.parsed) {
+          this.executeGeminiCommand(gCmd, cmd.team);
+        }
+      } else if (cmd.text) {
+        // Legacy raw text: parse and execute
+        this.handleCommand(cmd.text, cmd.team);
+      }
       this.selectedHoard = prevHoard;
     }
 
@@ -7928,7 +7956,9 @@ export class HordeScene extends Phaser.Scene {
         u.attackFaceX = best.x;
         if (u.sprite && u.animState !== 'attack' && HORDE_SPRITE_CONFIGS[u.type]) {
           u.animState = 'attack';
-          u.sprite.play(`h_${u.type}_attack`);
+          const _apAtk = this.animPrefix(u);
+          const _apAtkSafe = this.anims.exists(`${_apAtk}_attack`) ? _apAtk : `h_${u.type}`;
+          u.sprite.play(`${_apAtkSafe}_attack`);
         }
       } else if (nex && nexD2 <= COMBAT_RANGE * COMBAT_RANGE && u.team !== 0) {
         const neqB = this.getUnitEquipBuffs(u);
@@ -7957,7 +7987,9 @@ export class HordeScene extends Phaser.Scene {
         u.attackFaceX = nex.x;
         if (u.sprite && u.animState !== 'attack' && HORDE_SPRITE_CONFIGS[u.type]) {
           u.animState = 'attack';
-          u.sprite.play(`h_${u.type}_attack`);
+          const _apAtk = this.animPrefix(u);
+          const _apAtkSafe = this.anims.exists(`${_apAtk}_attack`) ? _apAtk : `h_${u.type}`;
+          u.sprite.play(`${_apAtkSafe}_attack`);
         }
       } else if (closestTower && towerD2 <= COMBAT_RANGE * COMBAT_RANGE && u.team !== 0) {
         // Attack enemy tower
@@ -7970,7 +8002,9 @@ export class HordeScene extends Phaser.Scene {
         u.attackFaceX = closestTower.x;
         if (u.sprite && u.animState !== 'attack' && HORDE_SPRITE_CONFIGS[u.type]) {
           u.animState = 'attack';
-          u.sprite.play(`h_${u.type}_attack`);
+          const _apAtk = this.animPrefix(u);
+          const _apAtkSafe = this.anims.exists(`${_apAtk}_attack`) ? _apAtk : `h_${u.type}`;
+          u.sprite.play(`${_apAtkSafe}_attack`);
         }
       }
     }
@@ -8751,10 +8785,12 @@ export class HordeScene extends Phaser.Scene {
       }
       if (!u.sprite) {
         if ((u as any)._fogVisible === undefined) (u as any)._fogVisible = false;
-        const spriteConf = HORDE_SPRITE_CONFIGS[u.type];
+        const spriteConf = (u.team === this.myTeam) ? getEffectiveSpriteConfig(u.type) : HORDE_SPRITE_CONFIGS[u.type];
         if (spriteConf) {
           // Create animated sprite at unit's actual position
-          u.sprite = this.add.sprite(u.x, u.y, spriteConf.idle.key);
+          // Fall back to default texture if skin texture failed to load
+          const idleKey = this.textures.exists(spriteConf.idle.key) ? spriteConf.idle.key : HORDE_SPRITE_CONFIGS[u.type]?.idle.key;
+          u.sprite = this.add.sprite(u.x, u.y, idleKey);
           u.prevSpriteX = u.x;
           u.prevSpriteY = u.y;
           const scale = u.isElite ? spriteConf.displayScale * 1.3 : spriteConf.displayScale;
@@ -8764,12 +8800,15 @@ export class HordeScene extends Phaser.Scene {
           u.sprite.setDepth(initDepth);
           (u as any)._lastDepth = initDepth;
           // Start with correct animation based on whether unit is already moving
+          const _ap = this.animPrefix(u);
+          // Fall back to default anim prefix if skin animation doesn't exist
+          const _apSafe = this.anims.exists(`${_ap}_idle`) ? _ap : `h_${u.type}`;
           const initDist = Math.sqrt((u.targetX - u.x) ** 2 + (u.targetY - u.y) ** 2);
           if (initDist > 8) {
-            u.sprite.play(`h_${u.type}_walk`);
+            u.sprite.play(`${_apSafe}_walk`);
             u.animState = 'walk';
           } else {
-            u.sprite.play(`h_${u.type}_idle`);
+            u.sprite.play(`${_apSafe}_idle`);
             u.animState = 'idle';
           }
 
@@ -8788,9 +8827,9 @@ export class HordeScene extends Phaser.Scene {
 
           // Return to idle after attack animation completes
           u.sprite.on('animationcomplete', (anim: Phaser.Animations.Animation) => {
-            if (anim.key === `h_${u.type}_attack`) {
+            if (anim.key === `${_apSafe}_attack` || anim.key === `h_${u.type}_attack`) {
               u.animState = 'idle';
-              if (u.sprite) u.sprite.play(`h_${u.type}_idle`);
+              if (u.sprite) u.sprite.play(`${_apSafe}_idle`);
             }
           });
         } else {
@@ -8850,12 +8889,14 @@ export class HordeScene extends Phaser.Scene {
 
       if (u.animState !== 'attack') {
         u.attackFaceX = null;
+        const _ap = this.animPrefix(u);
+        const _apSafe = this.anims.exists(`${_ap}_walk`) ? _ap : `h_${u.type}`;
         if (isMoving && u.animState !== 'walk') {
           u.animState = 'walk';
-          u.sprite.play(`h_${u.type}_walk`);
+          u.sprite.play(`${_apSafe}_walk`);
         } else if (!isMoving && u.animState !== 'idle') {
           u.animState = 'idle';
-          u.sprite.play(`h_${u.type}_idle`);
+          u.sprite.play(`${_apSafe}_idle`);
         }
       }
 
@@ -8889,7 +8930,7 @@ export class HordeScene extends Phaser.Scene {
       }
 
       // ─── Equipment visual modifiers ───
-      const spriteConf = HORDE_SPRITE_CONFIGS[u.type];
+      const spriteConf = (u.team === this.myTeam) ? getEffectiveSpriteConfig(u.type) : HORDE_SPRITE_CONFIGS[u.type];
       const baseScale = spriteConf ? (u.isElite ? spriteConf.displayScale * 1.3 : spriteConf.displayScale) : 1;
 
       // Clean up visuals if equipment changed
@@ -10641,9 +10682,30 @@ export class HordeScene extends Phaser.Scene {
         this.sfx.playGlobal(this.winner === this.myTeam ? 'victory' : 'defeat');
         this.profilingRecorder?.finalize();
         this.writeMatchHistory();
+        this.grantEndOfMatchGlory();
+        this.updateRankedRating();
         this.showGameOver();
         return;
       }
+    }
+  }
+
+  /** Grant Glory currency at end of match */
+  private async grantEndOfMatchGlory(): Promise<void> {
+    try {
+      const { PaymentService } = await import('../store/PaymentService');
+      const ps = PaymentService.getInstance();
+      const isWin = this.winner === this.myTeam;
+      const result = await ps.grantGlory('match_complete', {
+        matchResult: isWin ? 'win' : 'loss',
+        isOnline: this.isOnline,
+      });
+      if (result.gloryGranted > 0) {
+        this.showFeedback(`+${result.gloryGranted} Glory earned!`, '#45E6B0');
+      }
+    } catch (e) {
+      // Non-critical — don't break game over screen
+      console.warn('[Glory] Failed to grant:', e);
     }
   }
 
@@ -10677,6 +10739,18 @@ export class HordeScene extends Phaser.Scene {
       });
     } catch (err) {
       console.warn('[MatchHistory] Failed to write:', err);
+    }
+  }
+
+  /** Update ranked rating after match */
+  private async updateRankedRating(): Promise<void> {
+    if (!this.isRanked || !this.opponentUid || !this.winner) return;
+    try {
+      const { updateRatingAfterMatch } = await import('../systems/RankSystem');
+      const won = this.winner === this.myTeam;
+      this.ratingDelta = await updateRatingAfterMatch(this.opponentUid, won);
+    } catch (err) {
+      console.warn('[RankSystem] Failed to update rating:', err);
     }
   }
 
@@ -10976,17 +11050,7 @@ export class HordeScene extends Phaser.Scene {
       }
     }
     this.lastHoardCommand[this.selectedHoard] = text;
-    if (this.isOnline && !this.isHost) {
-      // Guest: send command to host via Firebase
-      this.showFeedback('Sending...', '#FFD93D');
-      if (this.firebase && this.gameId) {
-        this.firebase.sendRemoteOrders(this.gameId, this.playerId || '', [
-          { heroId: '', order: { text, team: this.myTeam, selectedHoard: this.selectedHoard } as any },
-        ]);
-      }
-      return;
-    }
-    // Host or solo: execute locally
+    // All paths: parse and execute (or send parsed result if online)
     const team = this.isDebug ? this.debugControlTeam : this.myTeam;
     this.handleCommand(text, team);
   }
@@ -11235,6 +11299,7 @@ export class HordeScene extends Phaser.Scene {
       this.winner = state.winner as 1 | 2 | null;
       this.sfx.playGlobal(this.winner === this.myTeam ? 'victory' : 'defeat');
       this.writeMatchHistory();
+      this.updateRankedRating();
       this.showGameOver();
     }
   }
@@ -11358,8 +11423,24 @@ export class HordeScene extends Phaser.Scene {
         const gCmd = validateAndFixWorkflow(geminiResult[0]);
         console.log('[Gemini] Validated command:', JSON.stringify(gCmd));
 
+        // Online mode: send parsed command to server instead of executing locally
+        if (this.isOnline && this.gameId) {
+          this.firebase!.sendRemoteOrders(this.gameId, this.playerId || '', [{
+            heroId: '',
+            order: {
+              parsed: [gCmd],
+              team,
+              selectedHoard: this.selectedHoard,
+            } as any,
+          }]);
+          this.showFeedback('Command sent!', '#6CC4FF');
+          if (gCmd.narration) this.showAIResponse(gCmd.narration);
+          this.sfx.playGlobal('voice_recognized');
+          geminiHandled = true;
+        }
+
         // Handle non-action responses from Gemini
-        if (gCmd.responseType === 'unrecognized' && !gCmd.workflow?.length && gCmd.targetType !== 'workflow') {
+        else if (gCmd.responseType === 'unrecognized' && !gCmd.workflow?.length && gCmd.targetType !== 'workflow') {
           const quip = gCmd.narration || this.getContextualHint(team);
           this.showFeedback(quip, '#FFD93D');
           this.showAIResponse(quip);

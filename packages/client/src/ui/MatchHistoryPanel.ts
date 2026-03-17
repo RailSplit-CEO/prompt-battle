@@ -2,7 +2,7 @@
 // Dark glassmorphism panel matching FriendsPanel / SettingsPanel style.
 
 import { C } from './UIColors';
-import { createIconElement } from './FriendsPanel';
+import { createIconElement, renderBadgeHTML } from './FriendsPanel';
 
 // ─── Interfaces ─────────────────────────────────────────────────────
 export interface MatchHistoryEntry {
@@ -13,6 +13,7 @@ export interface MatchHistoryEntry {
   durationMs: number;
   datePlayed: number;
   mapName: string;
+  opponentBadge?: string;
 }
 
 // ─── Panel ──────────────────────────────────────────────────────────
@@ -237,6 +238,13 @@ export class MatchHistoryPanel {
         overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
       `;
       center.appendChild(nameEl);
+
+      const badgeHTML = renderBadgeHTML(entry.opponentBadge);
+      if (badgeHTML) {
+        const badgeSpan = document.createElement('span');
+        badgeSpan.innerHTML = badgeHTML;
+        center.appendChild(badgeSpan);
+      }
 
       row.appendChild(center);
 

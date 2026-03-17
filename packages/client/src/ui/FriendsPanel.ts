@@ -10,7 +10,7 @@ const AVATAR_BASE = 'assets/enemies/avatars';
  * Creates an HTML div showing the avatar portrait for the given icon key.
  * Reusable across panels.
  */
-export function createIconElement(iconKey: string, size: number): HTMLDivElement {
+export function createIconElement(iconKey: string, size: number, frameId?: string): HTMLDivElement {
   const div = document.createElement('div');
   div.style.cssText = `
     width:${size}px;height:${size}px;flex-shrink:0;
@@ -23,7 +23,77 @@ export function createIconElement(iconKey: string, size: number): HTMLDivElement
   img.style.cssText = `width:100%;height:100%;object-fit:cover;display:block;image-rendering:pixelated;`;
   img.onerror = () => { img.style.display = 'none'; };
   div.appendChild(img);
+  if (frameId) {
+    const frameCSS = getFrameStyle(frameId);
+    if (frameCSS) div.style.cssText += frameCSS;
+  }
   return div;
+}
+
+/**
+ * Render a profile badge next to a username.
+ * Returns an HTML string for inline insertion.
+ */
+export function renderBadgeHTML(badgeId: string | undefined): string {
+  if (!badgeId || badgeId === 'none') return '';
+  const BADGE_EMOJIS: Record<string, string> = {
+    badge_crown: '\u{1F451}',
+    badge_skull_mark: '\u{1F480}',
+    badge_gold_star: '\u2B50',
+    badge_flames: '\u{1F525}',
+    badge_diamond: '\u{1F48E}',
+    badge_founder: '\u{1F3C5}',
+    badge_season1: '\u{1F5E1}\uFE0F',
+  };
+  const emoji = BADGE_EMOJIS[badgeId] || '\u{1F3F7}\uFE0F';
+  return `<span style="margin-left:4px;font-size:12px;" title="${badgeId}">${emoji}</span>`;
+}
+
+/**
+ * Render a title under a username.
+ * Returns an HTML string.
+ */
+export function renderTitleHTML(titleId: string | undefined): string {
+  if (!titleId || titleId === 'none') return '';
+  const TITLE_TEXT: Record<string, string> = {
+    title_the_magnificent: 'The Magnificent',
+    title_chaos_lord: 'Chaos Lord',
+    title_grand_marshal: 'Grand Marshal',
+    title_doom_bringer: 'Doom Bringer',
+    title_the_eternal: 'The Eternal',
+    title_commander: 'Commander',
+    title_warlord: 'Warlord',
+    title_overlord: 'Overlord',
+    title_beast_master: 'Beast Master',
+    title_legend: 'Legend',
+    title_champion: 'Champion',
+  };
+  const text = TITLE_TEXT[titleId] || titleId.replace(/^title_/, '').replace(/_/g, ' ');
+  return `<div style="font-size:9px;color:#a89870;font-family:'Fredoka',sans-serif;letter-spacing:0.5px;margin-top:1px;text-transform:uppercase;">${text}</div>`;
+}
+
+/**
+ * Get CSS border style for a portrait frame.
+ */
+export function getFrameStyle(frameId: string | undefined): string {
+  if (!frameId || frameId === 'none') return '';
+  const FRAME_STYLES: Record<string, string> = {
+    frame_wooden: 'border:3px solid #8B6914;',
+    frame_iron: 'border:3px solid #708090;',
+    frame_stone: 'border:3px solid #808080;',
+    frame_copper: 'border:3px solid #B87333;',
+    frame_bone: 'border:3px solid #E8E0D0;',
+    frame_shimmer: 'border:3px solid #FFD93D;box-shadow:0 0 8px rgba(255,217,61,0.4);',
+    frame_thorns: 'border:3px solid #2E8B57;box-shadow:0 0 6px rgba(46,139,87,0.3);',
+    frame_flames: 'border:3px solid #FF4500;box-shadow:0 0 8px rgba(255,69,0,0.4);',
+    frame_frost: 'border:3px solid #87CEEB;box-shadow:0 0 8px rgba(135,206,235,0.4);',
+    frame_vines: 'border:3px solid #228B22;box-shadow:0 0 6px rgba(34,139,34,0.3);',
+    frame_dragon: 'border:3px solid #FF6B6B;box-shadow:0 0 12px rgba(255,107,107,0.5);',
+    frame_celestial: 'border:3px solid #FFD93D;box-shadow:0 0 14px rgba(255,217,61,0.6);',
+    frame_void: 'border:3px solid #9933FF;box-shadow:0 0 12px rgba(153,51,255,0.5);',
+    frame_gold: 'border:3px solid #FFD93D;box-shadow:0 0 10px rgba(255,217,61,0.5);',
+  };
+  return FRAME_STYLES[frameId] || 'border:3px solid #FFD93D;';
 }
 
 // ─── Interfaces ─────────────────────────────────────────────────────
@@ -41,6 +111,9 @@ export interface FriendEntry {
   icon: string;
   status: 'accepted' | 'pending_sent' | 'pending_received';
   online: boolean;
+  profileBadge?: string;
+  profileTitle?: string;
+  profileBorder?: string;
 }
 
 type Tab = 'friends' | 'requests';
@@ -385,12 +458,18 @@ export class FriendsPanel {
       row.onmouseenter = () => { row.style.background = C.surfaceHover; };
       row.onmouseleave = () => { row.style.background = 'transparent'; };
 
-      // Left side: icon + name + online dot
+      // Left side: icon + name/title + badge + online dot
       const left = document.createElement('div');
       left.style.cssText = 'display:flex;align-items:center;gap:10px;min-width:0;';
 
-      const icon = createIconElement(friend.icon, 44);
+      const icon = createIconElement(friend.icon, 44, friend.profileBorder);
       left.appendChild(icon);
+
+      const nameBlock = document.createElement('div');
+      nameBlock.style.cssText = 'display:flex;flex-direction:column;min-width:0;';
+
+      const nameRow = document.createElement('div');
+      nameRow.style.cssText = 'display:flex;align-items:center;';
 
       const name = document.createElement('span');
       name.textContent = friend.username;
@@ -399,7 +478,25 @@ export class FriendsPanel {
         font-family:"Nunito",sans-serif;
         overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
       `;
-      left.appendChild(name);
+      nameRow.appendChild(name);
+
+      const badgeHTML = renderBadgeHTML(friend.profileBadge);
+      if (badgeHTML) {
+        const badgeSpan = document.createElement('span');
+        badgeSpan.innerHTML = badgeHTML;
+        nameRow.appendChild(badgeSpan);
+      }
+
+      nameBlock.appendChild(nameRow);
+
+      const titleHTML = renderTitleHTML(friend.profileTitle);
+      if (titleHTML) {
+        const titleEl = document.createElement('div');
+        titleEl.innerHTML = titleHTML;
+        nameBlock.appendChild(titleEl);
+      }
+
+      left.appendChild(nameBlock);
 
       const dot = document.createElement('span');
       dot.style.cssText = `
@@ -486,8 +583,14 @@ export class FriendsPanel {
       const left = document.createElement('div');
       left.style.cssText = 'display:flex;align-items:center;gap:10px;min-width:0;';
 
-      const icon = createIconElement(req.icon, 44);
+      const icon = createIconElement(req.icon, 44, req.profileBorder);
       left.appendChild(icon);
+
+      const nameBlock = document.createElement('div');
+      nameBlock.style.cssText = 'display:flex;flex-direction:column;min-width:0;';
+
+      const nameRow = document.createElement('div');
+      nameRow.style.cssText = 'display:flex;align-items:center;';
 
       const name = document.createElement('span');
       name.textContent = req.username;
@@ -496,7 +599,25 @@ export class FriendsPanel {
         font-family:"Nunito",sans-serif;
         overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
       `;
-      left.appendChild(name);
+      nameRow.appendChild(name);
+
+      const badgeHTML = renderBadgeHTML(req.profileBadge);
+      if (badgeHTML) {
+        const badgeSpan = document.createElement('span');
+        badgeSpan.innerHTML = badgeHTML;
+        nameRow.appendChild(badgeSpan);
+      }
+
+      nameBlock.appendChild(nameRow);
+
+      const titleHTML = renderTitleHTML(req.profileTitle);
+      if (titleHTML) {
+        const titleEl = document.createElement('div');
+        titleEl.innerHTML = titleHTML;
+        nameBlock.appendChild(titleEl);
+      }
+
+      left.appendChild(nameBlock);
 
       row.appendChild(left);
 
@@ -553,8 +674,14 @@ export class FriendsPanel {
       const left = document.createElement('div');
       left.style.cssText = 'display:flex;align-items:center;gap:10px;min-width:0;';
 
-      const icon = createIconElement(req.icon, 44);
+      const icon = createIconElement(req.icon, 44, req.profileBorder);
       left.appendChild(icon);
+
+      const nameBlock = document.createElement('div');
+      nameBlock.style.cssText = 'display:flex;flex-direction:column;min-width:0;';
+
+      const nameRow = document.createElement('div');
+      nameRow.style.cssText = 'display:flex;align-items:center;';
 
       const name = document.createElement('span');
       name.textContent = req.username;
@@ -563,7 +690,25 @@ export class FriendsPanel {
         font-family:"Nunito",sans-serif;
         overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
       `;
-      left.appendChild(name);
+      nameRow.appendChild(name);
+
+      const badgeHTML = renderBadgeHTML(req.profileBadge);
+      if (badgeHTML) {
+        const badgeSpan = document.createElement('span');
+        badgeSpan.innerHTML = badgeHTML;
+        nameRow.appendChild(badgeSpan);
+      }
+
+      nameBlock.appendChild(nameRow);
+
+      const titleHTML = renderTitleHTML(req.profileTitle);
+      if (titleHTML) {
+        const titleEl = document.createElement('div');
+        titleEl.innerHTML = titleHTML;
+        nameBlock.appendChild(titleEl);
+      }
+
+      left.appendChild(nameBlock);
 
       row.appendChild(left);
 

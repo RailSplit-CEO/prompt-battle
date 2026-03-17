@@ -18,17 +18,17 @@ We do not sell or share your data. All game data is stored securely and associat
 export class LoginOverlay {
   private root: HTMLDivElement | null = null;
   private errorEl: HTMLDivElement | null = null;
-  private resolve: ((value: 'google' | 'guest') => void) | null = null;
+  private resolve: ((value: 'google' | 'guest' | 'itch') => void) | null = null;
 
-  show(): Promise<'google' | 'guest'> {
+  show(): Promise<'google' | 'guest' | 'itch'> {
     // If already showing, just swap the resolve so next click resolves the new promise
     if (this.root) {
-      return new Promise<'google' | 'guest'>((resolve) => {
+      return new Promise<'google' | 'guest' | 'itch'>((resolve) => {
         this.resolve = resolve;
       });
     }
 
-    return new Promise<'google' | 'guest'>((resolve) => {
+    return new Promise<'google' | 'guest' | 'itch'>((resolve) => {
       this.resolve = resolve;
 
       // Inject keyframes
@@ -192,6 +192,32 @@ export class LoginOverlay {
       divider.appendChild(mkDot());
       panel.appendChild(divider);
 
+      // Platform detection for itch.io
+      const isItchPlatform = (import.meta as any).env?.VITE_PLATFORM === 'itch' || window.location.hostname.includes('itch.zone');
+
+      // itch.io sign-in button
+      const itchBtn = document.createElement('button');
+      itchBtn.textContent = 'Sign in with itch.io';
+      itchBtn.style.cssText = `
+        width:100%;max-width:300px;padding:13px 24px;
+        background:#FA5C5C;color:#fff;font-size:15px;
+        font-family:'Fredoka',sans-serif;font-weight:bold;
+        border:none;border-radius:10px;cursor:pointer;
+        display:flex;align-items:center;justify-content:center;
+        margin-bottom:12px;
+        transition:box-shadow 0.2s, transform 0.15s;
+        box-shadow:0 2px 12px rgba(0,0,0,0.25);
+      `;
+      itchBtn.onmouseenter = () => {
+        itchBtn.style.boxShadow = '0 4px 24px rgba(0,0,0,0.4), 0 0 0 2px rgba(250,92,92,0.4)';
+        itchBtn.style.transform = 'translateY(-2px)';
+      };
+      itchBtn.onmouseleave = () => {
+        itchBtn.style.boxShadow = '0 2px 12px rgba(0,0,0,0.25)';
+        itchBtn.style.transform = 'translateY(0)';
+      };
+      itchBtn.onclick = () => { if (this.resolve) this.resolve('itch'); };
+
       // Google sign-in button
       const googleBtn = document.createElement('button');
       googleBtn.innerHTML = `${GOOGLE_SVG} Sign in with Google`;
@@ -214,7 +240,6 @@ export class LoginOverlay {
         googleBtn.style.transform = 'translateY(0)';
       };
       googleBtn.onclick = () => { if (this.resolve) this.resolve('google'); };
-      panel.appendChild(googleBtn);
 
       // Guest button — green tinted like the horde solo button
       const guestBtn = document.createElement('button');
@@ -237,6 +262,16 @@ export class LoginOverlay {
         guestBtn.style.background = 'rgba(58,106,46,0.2)';
       };
       guestBtn.onclick = () => { if (this.resolve) this.resolve('guest'); };
+
+      // On itch.io platform: itch first, then Google, then Guest
+      // On own website: Google first, then itch, then Guest
+      if (isItchPlatform) {
+        panel.appendChild(itchBtn);
+        panel.appendChild(googleBtn);
+      } else {
+        panel.appendChild(googleBtn);
+        panel.appendChild(itchBtn);
+      }
       panel.appendChild(guestBtn);
 
       // Error area

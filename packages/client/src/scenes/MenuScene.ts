@@ -146,7 +146,13 @@ export class MenuScene extends Phaser.Scene {
     const pvpBtn = this.createMedievalButton(width / 2, btn2Y, 340, 54, 'HORDE PVP', 'red', true);
     pvpBtn.container.setAlpha(0).setScale(0.5);
     this.tweens.add({ targets: pvpBtn.container, alpha: 1, scaleX: 1, scaleY: 1, duration: 600, delay: 850, ease: 'Back.easeOut' });
-    pvpBtn.zone.on('pointerdown', () => this.findHordeMatch());
+    pvpBtn.zone.on('pointerdown', () => {
+      this.cameras.main.fadeOut(300, 15, 26, 10);
+      this.cameras.main.once('camerafadeoutcomplete', () => {
+        this.cleanupSocialUI();
+        this.scene.start('PvpMenuScene');
+      });
+    });
 
     if (this.textures.exists('ts_icon5')) {
       // Crossed swords — two copies angled and overlapping

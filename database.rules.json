@@ -12,7 +12,7 @@
           ".validate": "newData.isString()"
         },
         "provider": {
-          ".validate": "newData.val() === 'google' || newData.val() === 'anonymous'"
+          ".validate": "newData.val() === 'google' || newData.val() === 'anonymous' || newData.val() === 'itch'"
         },
         "wallet": {
           ".read": "auth != null && auth.uid === $uid",
@@ -60,6 +60,19 @@
       }
     },
     "matchHistory": {
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "ratings": {
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "leaderboard": {
+      ".indexOn": ["rating"],
       "$uid": {
         ".read": "auth != null",
         ".write": "auth != null && auth.uid === $uid"

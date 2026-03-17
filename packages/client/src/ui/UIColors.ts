@@ -1,3 +1,5 @@
+import { ThemeManager } from '../store/ThemeManager';
+
 // Shared color tokens — extracted from SettingsPanel for reuse across all UI overlays
 export const C = {
   // Panel
@@ -41,3 +43,12 @@ export const C = {
   inputBorder:  'rgba(139,115,85,0.35)',
   inputBorderHi:'rgba(255,217,61,0.5)',
 } as const;
+
+// Theme-aware accessor — returns overridden value if a UI theme is equipped
+export function themed<K extends keyof typeof C>(key: K): (typeof C)[K] {
+  try {
+    const override = ThemeManager.getInstance().getColor(key as any);
+    if (override) return override as (typeof C)[K];
+  } catch { /* ThemeManager not initialized */ }
+  return C[key];
+}

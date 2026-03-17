@@ -39,6 +39,14 @@
         "function": "grantGlory"
       },
       {
+        "source": "/api/store/purchaseItem",
+        "function": "purchaseItem"
+      },
+      {
+        "source": "/api/auth/itchCallback",
+        "function": "itchOAuthCallback"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
 import { AnimalType, UNIT_DEFS } from '@prompt-battle/shared';
-import { SPRITE_CONFIGS, HORDE_SPRITE_CONFIGS, ANIM_FRAME_RATES } from '../sprites/SpriteConfig';
+import { SPRITE_CONFIGS, HORDE_SPRITE_CONFIGS, ANIM_FRAME_RATES, getEffectiveSpriteConfig } from '../sprites/SpriteConfig';
 import { SoundManager } from '../audio/SoundManager';
+import { InventoryManager } from '../store/InventoryManager';
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -151,6 +152,34 @@ export class BootScene extends Phaser.Scene {
         }
       }
     }
+
+    // Load equipped skin sprites (if any)
+    try {
+      const inv = InventoryManager.getInstance();
+      const equipped = inv.getEquipped();
+
+      if (equipped.unitSkins) {
+        for (const [unitType, skinId] of Object.entries(equipped.unitSkins)) {
+          if (!skinId || skinId === 'default') continue;
+          const skinConfig = getEffectiveSpriteConfig(unitType, skinId);
+          if (!skinConfig) continue;
+
+          for (const state of ['idle', 'walk', 'attack'] as const) {
+            const sheet = skinConfig[state];
+            if (!loaded.has(sheet.key)) {
+              this.load.spritesheet(sheet.key, sheet.path, {
+                frameWidth: sheet.frameWidth,
+                frameHeight: sheet.frameHeight,
+              });
+              loaded.add(sheet.key);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      // Store not initialized yet (e.g. guest user) — skip skin loading
+      console.log('[Boot] Skin loading skipped:', (e as Error).message);
+    }
   }
 
   private loadTinySwordsAssets() {
@@ -266,6 +295,38 @@ export class BootScene extends Phaser.Scene {
     // Horde mode animations (prefixed with h_)
     for (const [type, config] of Object.entries(HORDE_SPRITE_CONFIGS)) {
       createAnimsForConfig(`h_${type}`, config);
+    }
+
+    // Create animations for equipped skin sprites
+    try {
+      const inv = InventoryManager.getInstance();
+      const equipped = inv.getEquipped();
+
+      if (equipped.unitSkins) {
+        for (const [unitType, skinId] of Object.entries(equipped.unitSkins)) {
+          if (!skinId || skinId === 'default') continue;
+          const skinConfig = getEffectiveSpriteConfig(unitType, skinId);
+          if (!skinConfig) continue;
+
+          const prefix = `skin_${skinId}`;
+          for (const [state, rate] of Object.entries(ANIM_FRAME_RATES)) {
+            const sheet = skinConfig[state as keyof typeof skinConfig] as any;
+            if (!sheet?.key || !this.textures.exists(sheet.key)) continue;
+
+            const animKey = `${prefix}_${state}`;
+            if (!this.anims.exists(animKey)) {
+              this.anims.create({
+                key: animKey,
+                frames: this.anims.generateFrameNumbers(sheet.key, { start: 0, end: sheet.frameCount - 1 }),
+                frameRate: rate,
+                repeat: state === 'attack' ? 0 : -1,
+              });
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.log('[Boot] Skin animation creation skipped:', (e as Error).message);
     }
   }
 

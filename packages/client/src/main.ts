@@ -3,6 +3,7 @@ import { BootScene } from './scenes/BootScene';
 import { MenuScene } from './scenes/MenuScene';
 import { HordeScene } from './scenes/HordeScene';
 import { CharactersScene } from './scenes/CharactersScene';
+import { PvpMenuScene } from './scenes/PvpMenuScene';
 import { AuthManager } from './auth/AuthManager';
 import { LoginOverlay } from './ui/LoginOverlay';
 import { ProfileSetupOverlay } from './ui/ProfileSetupOverlay';
@@ -11,6 +12,7 @@ import { WalletManager } from './store/WalletManager';
 import { InventoryManager } from './store/InventoryManager';
 import { EquipService } from './store/EquipService';
 import { installDevTools } from './store/dev-tools';
+import { ThemeManager } from './store/ThemeManager';
 
 async function boot() {
   // Suppress the 10s "game not started" warning — we're in the auth flow
@@ -35,6 +37,8 @@ async function boot() {
       try {
         if (choice === 'google') {
           await auth.signInWithGoogle();
+        } else if (choice === 'itch') {
+          await auth.signInWithItch();
         } else {
           await auth.signInAsGuest();
         }
@@ -61,13 +65,33 @@ async function boot() {
     try {
       await auth.loadMyProfile();
       if (!auth.userProfile) {
-        const profileSetup = new ProfileSetupOverlay(
-          (username) => auth.checkUsernameAvailable(username)
-        );
-        const { username, icon } = await profileSetup.show();
-        await auth.createProfile(auth.currentUser.uid, username, icon, 'google');
-        profileSetup.hide();
-        await auth.loadMyProfile();
+        const itchUser = auth.getPendingItchUser();
+        if (itchUser) {
+          // Auto-create profile from itch.io info
+          try {
+            const username = itchUser.username.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 16);
+            await auth.createProfile(auth.currentUser.uid, username, 'gnome', 'itch');
+            await auth.loadMyProfile();
+          } catch {
+            // Fall back to manual profile setup
+            const profileSetup = new ProfileSetupOverlay(
+              (username) => auth.checkUsernameAvailable(username)
+            );
+            const { username, icon } = await profileSetup.show();
+            await auth.createProfile(auth.currentUser.uid, username, icon, 'itch');
+            profileSetup.hide();
+            await auth.loadMyProfile();
+          }
+        } else {
+          // Normal Google profile setup flow
+          const profileSetup = new ProfileSetupOverlay(
+            (username) => auth.checkUsernameAvailable(username)
+          );
+          const { username, icon } = await profileSetup.show();
+          await auth.createProfile(auth.currentUser.uid, username, icon, 'google');
+          profileSetup.hide();
+          await auth.loadMyProfile();
+        }
       }
     } catch (err) {
       console.warn('[Boot] Profile load/create failed (deploy database rules?):', err);
@@ -86,12 +110,20 @@ async function boot() {
     WalletManager.getInstance().init(uid);
     InventoryManager.getInstance().init(uid);
     EquipService.getInstance().init(uid);
+    ThemeManager.getInstance().init();
   }
 
   // 5c. Install dev tools in development mode
   const isDev = (import.meta as any).env?.VITE_DEV_MODE === 'true' || localStorage.getItem('pb_dev') === 'true';
   if (isDev) {
     installDevTools();
+  }
+
+  // 5d. Show daily reward on login (non-blocking)
+  if (auth.currentUser && !auth.isGuest) {
+    import('./ui/DailyRewardModal').then(({ DailyRewardModal }) => {
+      new DailyRewardModal().show();
+    }).catch(() => { /* non-critical */ });
   }
 
   // 6. Check for active game to rejoin (multiplayer or solo)
@@ -135,7 +167,7 @@ async function boot() {
     scale: {
       mode: Phaser.Scale.RESIZE,
     },
-    scene: [BootScene, MenuScene, HordeScene, CharactersScene],
+    scene: [BootScene, MenuScene, PvpMenuScene, HordeScene, CharactersScene],
     physics: {
       default: 'arcade',
       arcade: {

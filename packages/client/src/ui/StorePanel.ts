@@ -8,6 +8,10 @@ import { WalletManager } from '../store/WalletManager';
 import { InventoryManager } from '../store/InventoryManager';
 import { CatalogService } from '../store/CatalogService';
 import type { CatalogItem, CrownPackage, Rarity, ItemCategory } from '@prompt-battle/shared';
+import { PaymentService } from '../store/PaymentService';
+import { PaymentModal } from './PaymentModal';
+import { ItchRedeemModal } from './ItchRedeemModal';
+import { showPurchaseConfirm } from './PurchaseConfirmModal';
 
 // ── Category definitions ────────────────────────────────────────
 
@@ -410,7 +414,19 @@ export class StorePanel {
       card.style.boxShadow = glow;
     };
     card.onclick = () => {
-      console.log('Open detail:', item.id);
+      const inv = InventoryManager.getInstance();
+      if (inv.owns(item.id)) return; // already owned
+      showPurchaseConfirm({
+        itemName: item.name,
+        priceCrowns: item.priceCrowns,
+        priceGlory: item.priceGlory ?? undefined,
+        onConfirm: async () => {
+          const currency = item.priceGlory ? 'glory' : 'crowns';
+          const result = await PaymentService.getInstance().purchaseItem(item.id, currency);
+          if (!result.success) alert(result.error || 'Purchase failed');
+        },
+        onCancel: () => {},
+      });
     };
 
     // ── Preview area ──
@@ -600,9 +616,44 @@ export class StorePanel {
     buyBtn.onmouseleave = () => {
       buyBtn.style.background = C.gold;
     };
-    buyBtn.onclick = (e) => {
+    buyBtn.onclick = async (e) => {
       e.stopPropagation();
-      console.log('Buy crown package:', pkg.id);
+      const platform = PaymentService.getInstance().getPlatform();
+      if (platform === 'test') {
+        // Dev mode: grant crowns directly
+        PaymentService.getInstance().purchaseItem(pkg.id, 'crowns').catch(() => {});
+        // Or use dev tools
+        (window as any).__devAddCrowns?.(pkg.crowns);
+      } else if (platform === 'itch') {
+        const modal = new ItchRedeemModal();
+        modal.show({ onSuccess: () => {}, onCancel: () => {} });
+      } else {
+        // Square payment
+        try {
+          const order = await PaymentService.getInstance().createOrder(pkg.id);
+          const payModal = new PaymentModal();
+          payModal.show({
+            packageName: pkg.name,
+            crowns: order.crowns,
+            amountUSD: pkg.priceUSD,
+            orderId: order.orderId,
+            onSuccess: async (sourceId: string) => {
+              payModal.close();
+              const result = await PaymentService.getInstance().completePayment(order.orderId, sourceId, pkg.id);
+              if (result.success) {
+                // Show success feedback - wallet updates automatically via listener
+                alert(`+${result.crownsGranted} Crowns!`);
+              } else {
+                alert(result.error || 'Payment failed');
+              }
+            },
+            onCancel: () => payModal.close(),
+            onError: (err) => { payModal.close(); alert(err); },
+          });
+        } catch (err: any) {
+          alert(err.message || 'Failed to start payment');
+        }
+      }
     };
     card.appendChild(buyBtn);
 
