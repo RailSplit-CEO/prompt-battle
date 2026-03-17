@@ -20,7 +20,7 @@ export interface SettingsData {
 
   // Display
   hudScale: number;       // 0.75–1.5
-  minimapSize: number;    // 120–280 px
+  minimapSize: number;    // 120–360 px
   showDamageNumbers: boolean;
   cameraShakeIntensity: number; // 0–1 (0 = off, 1 = full)
   showCommandLog: boolean;
@@ -52,7 +52,7 @@ const DEFAULTS: SettingsData = {
   ttsSpeed: 1.0,
 
   hudScale: 1.0,
-  minimapSize: 200,
+  minimapSize: 288,
   showDamageNumbers: true,
   cameraShakeIntensity: 1.0,
   showCommandLog: true,

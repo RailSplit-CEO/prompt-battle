@@ -4629,6 +4629,9 @@ export class HordeScene extends Phaser.Scene {
     // ═══ BOTTOM-RIGHT MINIMAP ═══
     this.setupMinimap(gc);
 
+    // ═══ FORFEIT BUTTON (above minimap) ═══
+    this.setupForfeitButton(gc);
+
     // ═══ BOTTOM-LEFT QUEST PANEL ═══
     this.setupQuestPanel(gc);
 
@@ -4799,7 +4802,9 @@ export class HordeScene extends Phaser.Scene {
       html += `<div class="ctrl-card${active ? ' active' : ''}" data-hoard="${s.id}">
         <div class="hotkey">${s.key}</div>
         <div style="display:flex;align-items:center;justify-content:center;min-height:64px;">
-          ${avatarImg(s.id === 'all' ? '' : s.id, 64) || `<span style="font-size:42px;">${s.emoji}</span>`}
+          ${s.id === 'all'
+            ? `<img src="assets/ui/icons/Icon_05.png" width="48" height="48" style="image-rendering:pixelated;object-fit:contain;" alt="all">`
+            : `<img src="assets/ui/icons/Icon_05.png" width="48" height="48" style="image-rendering:pixelated;object-fit:contain;" alt="${s.id}">`}
         </div>
         <div style="font-size:11px;font-weight:800;color:#2a1a0a;letter-spacing:0.3px;white-space:nowrap;">${s.name} <span style="color:#8B5E34;">${s.count}</span></div>
       </div>`;
@@ -4876,8 +4881,8 @@ export class HordeScene extends Phaser.Scene {
     const hoard = this.selectedHoard;
 
     if (hoard === 'all') {
-      const html = `<div style="font-size:12px;font-weight:800;color:#4a3520;text-transform:uppercase;letter-spacing:1px;font-family:'Fredoka',sans-serif;">All Units</div>
-        <div style="font-size:11px;color:#6a5a4a;margin-top:2px;">Select a group (1-5) to see abilities</div>`;
+      const html = `<div style="font-size:13px;font-weight:800;color:#4a3520;text-transform:uppercase;letter-spacing:1.5px;font-family:'Fredoka',sans-serif;">All Units</div>
+        <div style="font-size:12px;color:#6a5a4a;margin-top:2px;">Select a group (1-5) to see abilities</div>`;
       if (html !== this._prevCharStatsHTML) {
         this.charStatsPanelEl.innerHTML = html;
         this._prevCharStatsHTML = html;
@@ -4889,25 +4894,27 @@ export class HordeScene extends Phaser.Scene {
     if (!animal) return;
     const strengths = UNIT_STRENGTHS[hoard] || [];
 
-    let html = `<div style="font-size:12px;font-weight:800;color:#4a3520;text-transform:uppercase;letter-spacing:1px;font-family:'Fredoka',sans-serif;">${animal.emoji} ${hoard}</div>`;
-    // Abilities
-    html += `<div style="margin-top:4px;">
-      <div style="display:flex;align-items:baseline;gap:4px;">
-        <span style="font-size:11px;color:#8B5E34;font-weight:700;">⚔ ${animal.ability}</span>
-        <span style="font-size:10px;color:#6a5a4a;">— ${animal.desc}</span>
+    let html = `<div style="font-size:13px;font-weight:800;color:#4a3520;text-transform:uppercase;letter-spacing:1.5px;font-family:'Fredoka',sans-serif;">${animal.emoji} ${hoard}</div>`;
+    // Abilities — quest-card style
+    html += `<div style="background:rgba(245,235,220,0.92);border:1px solid rgba(139,115,85,0.35);border-radius:8px;padding:6px 8px;display:flex;align-items:center;gap:6px;">
+      <span style="font-size:18px;line-height:1;">⚔</span>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:12px;font-weight:700;color:#2a1a0a;">${animal.ability}</div>
+        <div style="font-size:10px;color:#6a5a4a;">${animal.desc}</div>
       </div>
-      <div style="display:flex;align-items:baseline;gap:4px;margin-top:2px;">
-        <span style="font-size:11px;color:#8B5E34;font-weight:700;">🛡 ${animal.ability2}</span>
-        <span style="font-size:10px;color:#6a5a4a;">— ${animal.desc2}</span>
+    </div>`;
+    html += `<div style="background:rgba(245,235,220,0.92);border:1px solid rgba(139,115,85,0.35);border-radius:8px;padding:6px 8px;display:flex;align-items:center;gap:6px;">
+      <span style="font-size:18px;line-height:1;">🛡</span>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:12px;font-weight:700;color:#2a1a0a;">${animal.ability2}</div>
+        <div style="font-size:10px;color:#6a5a4a;">${animal.desc2}</div>
       </div>
     </div>`;
     // Strengths (first 2)
     if (strengths.length > 0) {
-      html += `<div style="margin-top:4px;border-top:1px solid rgba(139,115,85,0.2);padding-top:4px;">`;
       for (let i = 0; i < Math.min(2, strengths.length); i++) {
-        html += `<div style="font-size:10px;color:#45886a;font-weight:600;">💡 ${strengths[i]}</div>`;
+        html += `<div style="font-size:11px;color:#45886a;font-weight:600;">💡 ${strengths[i]}</div>`;
       }
-      html += `</div>`;
     }
 
     if (html !== this._prevCharStatsHTML) {
@@ -4926,6 +4933,79 @@ export class HordeScene extends Phaser.Scene {
     `;
     gc.appendChild(panel);
     this.cmdLogPanelEl = panel;
+  }
+
+  // ─── SETUP: FORFEIT BUTTON ──────────────────────────────────────
+  private forfeitBtnEl: HTMLElement | null = null;
+
+  private setupForfeitButton(gc: HTMLElement) {
+    const btn = document.createElement('button');
+    btn.id = 'horde-forfeit-btn';
+    btn.innerHTML = '<span style="display:inline-block;transform:scaleX(0.65)">🏳️</span> Forfeit';
+    gc.appendChild(btn);
+    this.forfeitBtnEl = btn;
+
+    btn.addEventListener('click', () => {
+      if (this.gameOver) return;
+      this.showForfeitConfirm();
+    });
+  }
+
+  private showForfeitConfirm() {
+    // Prevent duplicates
+    if (document.getElementById('forfeit-overlay')) return;
+
+    const overlay = document.createElement('div');
+    overlay.id = 'forfeit-overlay';
+
+    const panel = document.createElement('div');
+    panel.id = 'forfeit-panel';
+    panel.innerHTML = `
+      <div class="forfeit-icon">⚔️</div>
+      <div class="forfeit-title">Forfeit Match?</div>
+      <div class="forfeit-desc">Your nexus will be destroyed and the enemy will claim victory. This cannot be undone.</div>
+      <div class="forfeit-btns">
+        <button class="forfeit-cancel">Keep Fighting</button>
+        <button class="forfeit-confirm">Surrender</button>
+      </div>
+    `;
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+
+    // Animate in
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => { overlay.classList.add('visible'); });
+    });
+
+    const close = () => {
+      overlay.classList.remove('visible');
+      setTimeout(() => overlay.remove(), 250);
+      window.removeEventListener('keydown', escHandler);
+    };
+
+    const escHandler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close();
+    };
+    window.addEventListener('keydown', escHandler);
+
+    // Click backdrop to cancel
+    overlay.addEventListener('mousedown', (e) => {
+      if (e.target === overlay) close();
+    });
+
+    // Cancel button
+    panel.querySelector('.forfeit-cancel')!.addEventListener('click', close);
+
+    // Confirm forfeit
+    panel.querySelector('.forfeit-confirm')!.addEventListener('click', () => {
+      close();
+      // Destroy own nexus to trigger defeat
+      const myNex = this.nexuses.find(n => n.team === this.myTeam);
+      if (myNex) {
+        myNex.hp = 0;
+        this.checkWin();
+      }
+    });
   }
 
   // ─── SETUP: QUEST CARDS ───────────────────────────────────────
@@ -5140,7 +5220,7 @@ export class HordeScene extends Phaser.Scene {
   }
 
   // ─── SETUP: MINIMAP ───────────────────────────────────────────
-  private static readonly MM_SIZE = 240;
+  private static readonly MM_SIZE = 288;
 
   private setupMinimap(gc: HTMLElement) {
     const MM = HordeScene.MM_SIZE;
@@ -5152,10 +5232,10 @@ export class HordeScene extends Phaser.Scene {
     canvas.style.cssText = 'width:100%;height:100%;display:block;';
     wrapper.appendChild(canvas);
 
-    // Tooltip element
+    // Tooltip element — appended to game container so it can overflow minimap bounds
     const tip = document.createElement('div');
     tip.id = 'horde-minimap-tip';
-    wrapper.appendChild(tip);
+    gc.appendChild(tip);
 
     gc.appendChild(wrapper);
     this.minimapEl = canvas;
@@ -5189,7 +5269,7 @@ export class HordeScene extends Phaser.Scene {
       const mx = (e.clientX - rect.left) / rect.width;
       const my = (e.clientY - rect.top) / rect.height;
       const wx = mx * WORLD_W, wy = my * WORLD_H;
-      const threshold = 200;
+      const threshold = 350;
       const myTeam = this.myTeam;
 
       let label = '';
@@ -5259,9 +5339,9 @@ export class HordeScene extends Phaser.Scene {
       if (label) {
         tip.textContent = label;
         tip.style.display = 'block';
-        const wrapRect = wrapper.getBoundingClientRect();
-        tip.style.left = (e.clientX - wrapRect.left) + 'px';
-        tip.style.top = (e.clientY - wrapRect.top) + 'px';
+        const gcRect = gc.getBoundingClientRect();
+        tip.style.left = (e.clientX - gcRect.left) + 'px';
+        tip.style.top = (e.clientY - gcRect.top) + 'px';
       } else {
         tip.style.display = 'none';
       }
@@ -5388,24 +5468,24 @@ export class HordeScene extends Phaser.Scene {
       if (c.owner === myTeam) {
         // Friendly camp — bright teal dot with glow
         ctx.shadowColor = '#4af0e0';
-        ctx.shadowBlur = 6;
+        ctx.shadowBlur = 9;
         ctx.fillStyle = '#4af0e0';
         ctx.beginPath();
-        ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+        ctx.arc(cx, cy, 3.75, 0, Math.PI * 2);
         ctx.fill();
         ctx.shadowBlur = 0;
       } else if (c.owner === 0) {
         // Neutral camp — dim gray ring
         ctx.strokeStyle = 'rgba(180,180,180,0.6)';
-        ctx.lineWidth = 1;
+        ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.arc(cx, cy, 2, 0, Math.PI * 2);
+        ctx.arc(cx, cy, 3, 0, Math.PI * 2);
         ctx.stroke();
       } else if (c.scouted) {
         // Enemy camp (scouted) — dim red dot, no glow
         ctx.fillStyle = 'rgba(255,80,80,0.4)';
         ctx.beginPath();
-        ctx.arc(cx, cy, 2, 0, Math.PI * 2);
+        ctx.arc(cx, cy, 3, 0, Math.PI * 2);
         ctx.fill();
       }
     }
@@ -5417,64 +5497,57 @@ export class HordeScene extends Phaser.Scene {
         const unlocked = (this.unlockedEquipment[arm.team]?.get(arm.equipmentType) ?? 0) > 0;
         if (unlocked) {
           ctx.shadowColor = '#4af0e0';
-          ctx.shadowBlur = 4;
+          ctx.shadowBlur = 6;
           ctx.fillStyle = '#4af0e0';
         } else {
-          ctx.fillStyle = 'rgba(74,240,224,0.35)';
+          ctx.fillStyle = 'rgba(180,180,180,0.5)';
         }
       } else {
         ctx.fillStyle = 'rgba(255,80,80,0.4)';
       }
       ctx.beginPath();
-      ctx.moveTo(ax, ay - 2);
-      ctx.lineTo(ax - 2.5, ay + 2);
-      ctx.lineTo(ax + 2.5, ay + 2);
+      ctx.moveTo(ax, ay - 3);
+      ctx.lineTo(ax - 3.75, ay + 3);
+      ctx.lineTo(ax + 3.75, ay + 3);
       ctx.closePath();
       ctx.fill();
       ctx.shadowBlur = 0;
     }
 
-    // Layer 2c: mines — tiny yellow dots
+    // Layer 2c: mines — yellow dots
     for (const mine of this.mineNodes) {
       ctx.fillStyle = '#ffd700';
       ctx.beginPath();
-      ctx.arc(mine.x * scaleX, mine.y * scaleY, 1.5, 0, Math.PI * 2);
+      ctx.arc(mine.x * scaleX, mine.y * scaleY, 2.25, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    // Layer 3: towers — tower-shaped polygon outline
+    // Layer 3: towers — filled tower-shaped polygon
     for (const t of this.towers) {
       if (!t.alive) continue;
       const tx = t.x * scaleX, ty = t.y * scaleY;
       if (t.team === myTeam) {
         ctx.shadowColor = '#4af0e0';
-        ctx.shadowBlur = 4;
-        ctx.strokeStyle = '#4af0e0';
+        ctx.shadowBlur = 6;
+        ctx.fillStyle = '#4af0e0';
       } else {
-        ctx.strokeStyle = 'rgba(255,80,80,0.4)';
+        ctx.fillStyle = 'rgba(255,80,80,0.4)';
       }
-      ctx.lineWidth = 1;
-      // Crown (crenellated top)
+      // Crown (two crenellation bumps)
       ctx.beginPath();
-      ctx.moveTo(tx - 3, ty - 3);
-      ctx.lineTo(tx - 3, ty - 2);
-      ctx.lineTo(tx - 1, ty - 2);
-      ctx.lineTo(tx - 1, ty - 3);
-      ctx.moveTo(tx + 1, ty - 3);
-      ctx.lineTo(tx + 1, ty - 2);
-      ctx.lineTo(tx + 3, ty - 2);
-      ctx.lineTo(tx + 3, ty - 3);
-      ctx.stroke();
+      ctx.rect(tx - 3, ty - 4.5, 2.25, 1.5);
+      ctx.rect(tx + 0.75, ty - 4.5, 2.25, 1.5);
+      ctx.fill();
       // Body (crossbar down to base)
       ctx.beginPath();
-      ctx.moveTo(tx - 3, ty - 2);
-      ctx.lineTo(tx + 3, ty - 2);
-      ctx.lineTo(tx + 2, ty + 1);
-      ctx.lineTo(tx + 2, ty + 4);
-      ctx.lineTo(tx - 2, ty + 4);
-      ctx.lineTo(tx - 2, ty + 1);
+      ctx.moveTo(tx - 3, ty - 3);
+      ctx.lineTo(tx + 3, ty - 3);
+      ctx.lineTo(tx + 2.25, ty + 1.5);
+      ctx.lineTo(tx + 2.25, ty + 6);
+      ctx.lineTo(tx - 2.25, ty + 6);
+      ctx.lineTo(tx - 2.25, ty + 1.5);
       ctx.closePath();
-      ctx.stroke();
+      ctx.fill();
       ctx.shadowBlur = 0;
     }
 
@@ -5485,12 +5558,12 @@ export class HordeScene extends Phaser.Scene {
       if (n.team === myTeam) {
         // Friendly nexus — bright gold diamond with glow
         ctx.shadowColor = '#ffd700';
-        ctx.shadowBlur = 8;
+        ctx.shadowBlur = 12;
         ctx.fillStyle = '#ffd700';
         ctx.save();
         ctx.translate(nx, ny);
         ctx.rotate(Math.PI / 4);
-        ctx.fillRect(-4, -4, 8, 8);
+        ctx.fillRect(-6, -6, 12, 12);
         ctx.restore();
         ctx.shadowBlur = 0;
       } else {
@@ -5499,30 +5572,30 @@ export class HordeScene extends Phaser.Scene {
         ctx.save();
         ctx.translate(nx, ny);
         ctx.rotate(Math.PI / 4);
-        ctx.fillRect(-4, -4, 8, 8);
+        ctx.fillRect(-6, -6, 12, 12);
         ctx.restore();
       }
     }
 
-    // Layer 4: friendly units only — no enemy visibility
+    // Layer 5: friendly units only — no enemy visibility
     ctx.shadowColor = '#6ab4ff';
-    ctx.shadowBlur = 3;
+    ctx.shadowBlur = 4;
     ctx.fillStyle = '#6ab4ff';
     for (const u of this.units) {
       if (u.dead || u.team !== myTeam) continue;
-      ctx.fillRect(u.x * scaleX - 1, u.y * scaleY - 1, 2, 2);
+      ctx.fillRect(u.x * scaleX - 1.5, u.y * scaleY - 1.5, 3, 3);
     }
     ctx.shadowBlur = 0;
 
     // Layer 7: active map events — yellow rings
     ctx.shadowColor = '#ffd700';
-    ctx.shadowBlur = 5;
+    ctx.shadowBlur = 7;
     ctx.strokeStyle = '#ffd700';
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = 2.25;
     for (const ev of this.mapEvents) {
       if (ev.state !== 'active') continue;
       ctx.beginPath();
-      ctx.arc(ev.x * scaleX, ev.y * scaleY, 4, 0, Math.PI * 2);
+      ctx.arc(ev.x * scaleX, ev.y * scaleY, 6, 0, Math.PI * 2);
       ctx.stroke();
     }
     ctx.shadowBlur = 0;
@@ -14289,6 +14362,8 @@ export class HordeScene extends Phaser.Scene {
     this.charStatsPanelEl?.remove(); this.charStatsPanelEl = null;
     document.getElementById('horde-minimap')?.remove();
     this.minimapEl = null; this.minimapCtx = null; this.minimapTerrainCanvas = null;
+    this.forfeitBtnEl?.remove(); this.forfeitBtnEl = null;
+    document.getElementById('forfeit-overlay')?.remove();
     this.settingsPanel.close();
     // Cleanup FPS counter and colorblind filters
     this.fpsEl?.remove(); this.fpsEl = null;

@@ -453,28 +453,29 @@
       50% { box-shadow: 0 0 8px 2px rgba(201, 143, 255, 0.25); }
     }
 
-    /* ─── DAY/NIGHT CYCLE INDICATOR ────────────────────────── */
+    /* ─── DAY/NIGHT CYCLE INDICATOR (left of minimap) ─── */
     #horde-daynight {
-      position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
-      margin-top: 62px; /* below the top bar */
+      position: absolute; bottom: 8px;
+      right: calc(clamp(216px, 22vw, 288px) + 12px);
       display: flex; align-items: center; gap: 8px;
       padding: 6px 14px;
-      background: rgba(20, 15, 40, 0.85);
-      backdrop-filter: blur(8px);
-      border: 2px solid rgba(139,115,85,0.4);
-      border-radius: 20px;
+      background: rgba(212,196,160,0.88);
+      backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      border: 2px solid rgba(139,115,85,0.5);
+      border-radius: 12px;
       z-index: 101; pointer-events: none;
       font-family: 'Nunito', sans-serif;
-      transition: background 1s ease, border-color 1s ease;
+      transition: background 1s ease, border-color 1s ease, box-shadow 1s ease;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
     }
     #horde-daynight.night {
-      background: rgba(10, 5, 30, 0.92);
-      border-color: rgba(100, 80, 160, 0.6);
+      background: rgba(180,172,200,0.88);
+      border-color: rgba(100,80,160,0.6);
     }
     #horde-daynight.blood-moon {
-      background: rgba(40, 5, 10, 0.92);
-      border-color: rgba(200, 50, 50, 0.7);
-      box-shadow: 0 0 20px rgba(200, 50, 50, 0.3);
+      background: rgba(210,175,165,0.9);
+      border-color: rgba(180,60,60,0.65);
+      box-shadow: 0 0 16px rgba(200,50,50,0.25);
     }
     #horde-daynight .dn-icon {
       font-size: 18px;
@@ -483,17 +484,17 @@
     #horde-daynight .dn-text {
       font-size: 12px;
       font-weight: 700;
-      color: rgba(255,255,255,0.7);
+      color: #4a3a28;
       letter-spacing: 1px;
     }
     #horde-daynight .dn-timer {
       font-size: 11px;
       font-weight: 600;
-      color: rgba(255,255,255,0.4);
+      color: rgba(74,58,40,0.55);
     }
     #horde-daynight .dn-bar {
       width: 60px; height: 4px;
-      background: rgba(255,255,255,0.1);
+      background: rgba(139,115,85,0.25);
       border-radius: 2px;
       overflow: hidden;
     }
@@ -554,7 +555,7 @@
     /* ─── RIGHT SIDEBAR (resources + quests) ─────────────── */
     #horde-right-sidebar {
       position: absolute; top: 8px; right: 8px;
-      width: min(clamp(180px, 18vw, 240px), calc(50vw - 16px));
+      width: min(clamp(216px, 22vw, 288px), calc(50vw - 16px));
       max-width: calc(100vw - 16px);
       display: flex; flex-direction: column; gap: 8px;
       z-index: 101; pointer-events: none;
@@ -580,7 +581,7 @@
     /* ─── LEFT SIDEBAR (portrait + stats + cmd log) ────── */
     #horde-left-sidebar {
       position: absolute; top: 8px; left: 8px;
-      width: min(clamp(180px, 18vw, 240px), calc(50vw - 16px));
+      width: min(clamp(216px, 22vw, 288px), calc(50vw - 16px));
       max-width: calc(100vw - 16px);
       display: flex; flex-direction: column; gap: 8px;
       z-index: 101; pointer-events: none;
@@ -593,31 +594,29 @@
     #horde-char-stats {
       width: 100%; box-sizing: border-box;
       background: rgba(212,196,160,0.88); backdrop-filter: blur(10px);
-      border: 2px solid rgba(139,115,85,0.5); border-radius: 10px;
-      padding: 6px 10px; pointer-events: all;
+      border: 2px solid rgba(139,115,85,0.5); border-radius: 12px;
+      padding: 10px 12px; pointer-events: all;
       font-family: 'Nunito', sans-serif;
       overflow: hidden;
       flex-shrink: 0;
+      display: flex; flex-direction: column; gap: 6px;
     }
 
     /* Command log panel */
     #horde-cmd-log {
       width: 100%; box-sizing: border-box;
-      flex: 1 1 0; min-height: 60px; overflow-y: auto; overflow-x: hidden;
+      flex-shrink: 0;
+      overflow: hidden;
       background: rgba(212,196,160,0.88); backdrop-filter: blur(10px);
       border: 2px solid rgba(139,115,85,0.5); border-radius: 12px;
       padding: 10px 12px; pointer-events: all;
       font-family: 'Nunito', sans-serif;
-      scrollbar-width: thin; scrollbar-color: rgba(139,115,85,0.5) rgba(212,196,160,0.4);
     }
-    #horde-cmd-log::-webkit-scrollbar { width: 5px; }
-    #horde-cmd-log::-webkit-scrollbar-track { background: rgba(139,115,85,0.15); border-radius: 3px; }
-    #horde-cmd-log::-webkit-scrollbar-thumb { background: rgba(139,115,85,0.4); border-radius: 3px; }
 
     /* Quest cards (bottom-left, absolute) */
     #horde-quest-panel {
       position: absolute; bottom: 8px; left: 8px;
-      width: clamp(180px, 18vw, 240px); box-sizing: border-box;
+      width: clamp(216px, 22vw, 288px); box-sizing: border-box;
       max-height: min(25vh, 180px); overflow-y: auto; overflow-x: hidden;
       background: rgba(212,196,160,0.88); backdrop-filter: blur(10px);
       border: 2px solid rgba(139,115,85,0.5); border-radius: 12px;
@@ -648,7 +647,7 @@
     /* Bottom-right minimap */
     #horde-minimap {
       position: absolute; bottom: 8px; right: 8px;
-      width: clamp(180px, 18vw, 240px); height: clamp(180px, 18vw, 240px);
+      width: clamp(216px, 22vw, 288px); height: clamp(216px, 22vw, 288px);
       background: #0d1a0d;
       border: 1px solid rgba(106,180,255,0.25);
       border-radius: 10px; z-index: 101; pointer-events: all;
@@ -657,12 +656,123 @@
     }
     #horde-minimap-tip {
       position: absolute; pointer-events: none;
-      background: rgba(0,0,0,0.85); color: #eee;
-      font: 11px/1.3 monospace; padding: 3px 6px;
-      border-radius: 4px; white-space: nowrap;
-      border: 1px solid rgba(106,180,255,0.3);
-      display: none; z-index: 102;
-      transform: translate(-50%, -100%); margin-top: -6px;
+      background: rgba(212,196,160,0.95); color: #3a2a18;
+      font: bold 13px/1.4 'Nunito', sans-serif; padding: 5px 10px;
+      border-radius: 8px; white-space: nowrap;
+      border: 2px solid rgba(139,115,85,0.6);
+      box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+      display: none; z-index: 200;
+      transform: translate(-50%, -100%); margin-top: -12px;
+    }
+
+    /* ─── FORFEIT BUTTON (above minimap) ────────────── */
+    #horde-forfeit-btn {
+      position: absolute;
+      bottom: calc(clamp(216px, 22vw, 288px) + 10px);
+      right: 8px;
+      z-index: 101;
+      pointer-events: all;
+      background: rgba(60,18,18,0.85);
+      backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      border: 2px solid rgba(180,60,60,0.5);
+      border-radius: 8px;
+      padding: 5px 12px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 4px;
+      font-family: 'Fredoka', sans-serif;
+      font-size: 11px; font-weight: 700;
+      color: #FF6B6B;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      transition: all 0.2s ease;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+    #horde-forfeit-btn:hover {
+      background: rgba(100,25,25,0.92);
+      border-color: rgba(255,107,107,0.7);
+      color: #ff9090;
+      box-shadow: 0 2px 16px rgba(180,60,60,0.35);
+      transform: scale(1.02);
+    }
+    #horde-forfeit-btn:active {
+      transform: scale(0.97);
+    }
+
+    /* ─── FORFEIT CONFIRMATION MODAL ─────────────── */
+    #forfeit-overlay {
+      position: fixed; inset: 0; z-index: 9999;
+      background: rgba(5,8,3,0.82);
+      backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; transition: opacity 0.25s ease;
+    }
+    #forfeit-overlay.visible { opacity: 1; }
+    #forfeit-panel {
+      width: min(400px, 88vw);
+      background: rgba(18,22,14,0.94);
+      border: 2px solid rgba(139,115,85,0.45);
+      border-radius: 16px;
+      padding: 32px 28px 24px;
+      box-shadow: 0 12px 48px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,217,61,0.06);
+      text-align: center;
+      transform: scale(0.92);
+      transition: transform 0.3s cubic-bezier(0.16,1,0.3,1);
+      font-family: 'Nunito', sans-serif;
+    }
+    #forfeit-overlay.visible #forfeit-panel {
+      transform: scale(1);
+    }
+    #forfeit-panel .forfeit-icon {
+      font-size: 36px;
+      margin-bottom: 8px;
+      display: inline-block;
+      transform: scaleX(0.7);
+    }
+    #forfeit-panel .forfeit-title {
+      font-family: 'Fredoka', sans-serif;
+      font-size: 24px; font-weight: 700;
+      color: #FF6B6B;
+      margin-bottom: 8px;
+    }
+    #forfeit-panel .forfeit-desc {
+      font-size: 14px;
+      color: #a89870;
+      margin-bottom: 24px;
+      line-height: 1.5;
+    }
+    #forfeit-panel .forfeit-btns {
+      display: flex; gap: 12px; justify-content: center;
+    }
+    #forfeit-panel .forfeit-btns button {
+      font-family: 'Fredoka', sans-serif;
+      font-size: 15px; font-weight: 700;
+      padding: 10px 28px;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      letter-spacing: 0.5px;
+      border: 2px solid;
+    }
+    #forfeit-panel .forfeit-cancel {
+      background: rgba(255,248,230,0.05);
+      border-color: rgba(139,115,85,0.4);
+      color: #d4c8a0;
+    }
+    #forfeit-panel .forfeit-cancel:hover {
+      background: rgba(255,248,230,0.1);
+      border-color: rgba(255,217,61,0.5);
+      color: #FFD93D;
+    }
+    #forfeit-panel .forfeit-confirm {
+      background: rgba(180,40,40,0.35);
+      border-color: rgba(255,107,107,0.5);
+      color: #FF6B6B;
+    }
+    #forfeit-panel .forfeit-confirm:hover {
+      background: rgba(200,50,50,0.5);
+      border-color: rgba(255,107,107,0.8);
+      color: #ff9090;
+      box-shadow: 0 0 16px rgba(200,50,50,0.25);
     }
 
     /* Always-on voice pulsing */
@@ -855,20 +965,28 @@
     }
     #talking-portrait .portrait-bubble.visible { opacity: 1; }
 
-    /* Voice name label below portrait */
-    #talking-portrait .portrait-voice-label {
+    /* Character name banner on portrait */
+    #talking-portrait .portrait-name-label {
       position: absolute;
-      bottom: 4px;
+      bottom: 0;
       left: 0;
       width: 100%;
       text-align: center;
-      color: #e8d5b0;
-      font-size: 11px;
-      font-family: 'Press Start 2P', monospace;
-      text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+      color: #fff;
+      font-size: 14px;
+      font-weight: 800;
+      font-family: 'Fredoka', sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      text-shadow: 0 1px 4px rgba(0,0,0,0.7), 0 0 8px rgba(0,0,0,0.4);
       pointer-events: none;
-      background: linear-gradient(transparent, rgba(0,0,0,0.5));
-      padding: 4px 0 2px;
+      background: linear-gradient(transparent 0%, rgba(0,0,0,0.55) 100%);
+      padding: 14px 4px 6px;
+    }
+
+    /* Voice name label below portrait */
+    #talking-portrait .portrait-voice-label {
+      display: none;
     }
   </style>
 </head>

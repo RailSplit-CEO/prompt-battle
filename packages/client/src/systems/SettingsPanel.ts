@@ -326,7 +326,7 @@ export class SettingsPanel {
     this.addSectionHeader(el, 'Interface');
     this.addSlider(el, 'HUD Scale', s.hudScale, 0.75, 1.5, 0.05, v => this.settings.set('hudScale', v),
       'Scale all HUD panels');
-    this.addSlider(el, 'Minimap Size', s.minimapSize, 120, 280, 10, v => this.settings.set('minimapSize', v),
+    this.addSlider(el, 'Minimap Size', s.minimapSize, 120, 360, 10, v => this.settings.set('minimapSize', v),
       'Minimap width & height in pixels');
     this.addToggle(el, 'Damage Numbers', s.showDamageNumbers, v => this.settings.set('showDamageNumbers', v));
     this.addToggle(el, 'Command Log', s.showCommandLog, v => this.settings.set('showCommandLog', v));

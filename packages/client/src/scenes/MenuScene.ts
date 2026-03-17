@@ -9,6 +9,7 @@ import { MatchHistoryPanel } from '../ui/MatchHistoryPanel';
 import { MatchInvitePopup } from '../ui/MatchInvitePopup';
 import { createIconElement } from '../ui/FriendsPanel';
 import { C } from '../ui/UIColors';
+import { HORDE_SPRITE_CONFIGS } from '../sprites/SpriteConfig';
 
 export class MenuScene extends Phaser.Scene {
   private matchmaking!: Matchmaking;
@@ -24,6 +25,7 @@ export class MenuScene extends Phaser.Scene {
   private matchInvitePopup: MatchInvitePopup | null = null;
   private friendsUnsub: (() => void) | null = null;
   private invitesUnsub: (() => void) | null = null;
+  private vignetteTimer?: Phaser.Time.TimerEvent;
 
   constructor() {
     super({ key: 'MenuScene' });
@@ -60,6 +62,9 @@ export class MenuScene extends Phaser.Scene {
     // === FLOATING DECORATIVE ICONS ===
     this.createFloatingIcons(width, height);
 
+    // === BACKGROUND UNIT VIGNETTES ===
+    this.startBackgroundVignettes();
+
     // === VERTICALLY CENTERED LAYOUT ===
     const centerY = height / 2;
     const titleY = centerY - 220;
@@ -74,9 +79,9 @@ export class MenuScene extends Phaser.Scene {
     // === TITLE ===
     // Sword decorations on each side of title
     if (this.textures.exists('ts_icon5')) {
-      const swordL = this.add.image(width / 2 - 240, titleY + 5, 'ts_icon5')
+      const swordL = this.add.image(width / 2 - 270, titleY + 5, 'ts_icon5')
         .setScale(1.0).setDepth(10).setAngle(-30).setAlpha(0.7);
-      const swordR = this.add.image(width / 2 + 240, titleY + 5, 'ts_icon5')
+      const swordR = this.add.image(width / 2 + 270, titleY + 5, 'ts_icon5')
         .setScale(1.0).setDepth(10).setAngle(30).setFlipX(true).setAlpha(0.7);
       this.tweens.add({ targets: [swordL, swordR], alpha: 0.85, duration: 800, delay: 300 });
     }
@@ -130,10 +135,10 @@ export class MenuScene extends Phaser.Scene {
     this.tweens.add({ targets: hordeBtn.container, alpha: 1, scaleX: 1, scaleY: 1, duration: 600, delay: 700, ease: 'Back.easeOut' });
     hordeBtn.zone.on('pointerdown', () => this.startHordeMode());
 
-    if (this.textures.exists('ts_icon6')) {
-      const shieldIcon = this.add.image(width / 2 - 140, btn1Y, 'ts_icon6').setScale(0.7).setDepth(15);
-      hordeBtn.container.add(shieldIcon);
-      shieldIcon.setPosition(-120, 0);
+    if (this.textures.exists('ts_icon5')) {
+      const soloSword = this.add.image(0, 0, 'ts_icon5').setScale(0.65).setDepth(15);
+      hordeBtn.container.add(soloSword);
+      soloSword.setPosition(-120, 0);
     }
 
     const pvpBtn = this.createMedievalButton(width / 2, btn2Y, 340, 54, 'HORDE PVP', 'red', true);
@@ -142,9 +147,13 @@ export class MenuScene extends Phaser.Scene {
     pvpBtn.zone.on('pointerdown', () => this.findHordeMatch());
 
     if (this.textures.exists('ts_icon5')) {
-      const swordIcon = this.add.image(0, 0, 'ts_icon5').setScale(0.65).setDepth(15);
-      pvpBtn.container.add(swordIcon);
-      swordIcon.setPosition(-120, 0);
+      // Crossed swords — two copies angled and overlapping
+      const swordL = this.add.image(0, 0, 'ts_icon5').setScale(0.55).setDepth(15).setAngle(0);
+      const swordR = this.add.image(0, 0, 'ts_icon5').setScale(0.55).setDepth(15).setAngle(0).setFlipX(true);
+      pvpBtn.container.add(swordL);
+      pvpBtn.container.add(swordR);
+      swordL.setPosition(-121, 0);
+      swordR.setPosition(-119, 0);
     }
 
     const charBtn = this.createMedievalButton(width / 2, btn3Y, 340, 54, 'CHARACTERS', 'blue', false);
@@ -157,10 +166,10 @@ export class MenuScene extends Phaser.Scene {
       });
     });
 
-    if (this.textures.exists('ts_icon11')) {
-      const infoIcon = this.add.image(0, 0, 'ts_icon11').setScale(0.65).setDepth(15);
-      charBtn.container.add(infoIcon);
-      infoIcon.setPosition(-120, 0);
+    if (this.textures.exists('ts_icon3')) {
+      const charIcon = this.add.image(0, 0, 'ts_icon3').setScale(0.85).setDepth(15);
+      charBtn.container.add(charIcon);
+      charIcon.setPosition(-120, 0);
     }
 
     const debugBtn = this.createMedievalButton(width / 2, btn4Y, 340, 54, 'DEBUG MODE', 'yellow', false);
@@ -245,8 +254,8 @@ export class MenuScene extends Phaser.Scene {
     howContainer.setAlpha(0);
     this.tweens.add({ targets: howContainer, alpha: 1, duration: 800, delay: 1300 });
 
-    // Settings gear button (top-right)
-    const gearContainer = this.add.container(width - 36, 36).setDepth(20);
+    // Settings gear button (top-right area, left of profile card)
+    const gearContainer = this.add.container(36, 36).setDepth(20);
     const gearBg = this.add.graphics();
     gearBg.fillStyle(0x243a18, 0.85);
     gearBg.fillCircle(0, 0, 22);
@@ -259,7 +268,7 @@ export class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5);
     gearContainer.add(gearText);
 
-    const gearZone = this.add.zone(width - 36, 36, 48, 48)
+    const gearZone = this.add.zone(36, 36, 48, 48)
       .setInteractive({ useHandCursor: true }).setDepth(21);
     gearZone.on('pointerover', () => {
       gearText.setColor('#FFD93D');
@@ -280,6 +289,16 @@ export class MenuScene extends Phaser.Scene {
     gearZone.on('pointerdown', () => {
       this.playsfx('button_click', 0.4);
       this.settingsPanel.toggle();
+      if (this.settingsPanel.isOpen) {
+        this.blockGameInput();
+        // Watch for settings panel close to unblock
+        const checkClose = setInterval(() => {
+          if (!this.settingsPanel.isOpen) {
+            clearInterval(checkClose);
+            this.unblockGameInput();
+          }
+        }, 200);
+      }
     });
 
     gearContainer.setAlpha(0);
@@ -348,6 +367,169 @@ export class MenuScene extends Phaser.Scene {
         rot: (Math.random() - 0.5) * 0.1,
       });
     }
+  }
+
+  // === BACKGROUND UNIT VIGNETTES ===
+
+  // Unit speeds from game data, used to scale walk speed + anim sync
+  private static readonly VIGNETTE_UNITS: { type: string; speed: number; tier: number }[] = [
+    { type: 'gnome',    speed: 210, tier: 1 },
+    { type: 'turtle',   speed: 55,  tier: 1 },
+    { type: 'skull',    speed: 155, tier: 2 },
+    { type: 'spider',   speed: 140, tier: 2 },
+    { type: 'hyena',    speed: 175, tier: 2 },
+    { type: 'rogue',    speed: 200, tier: 2 },
+    { type: 'panda',    speed: 80,  tier: 3 },
+    { type: 'lizard',   speed: 110, tier: 3 },
+    { type: 'minotaur', speed: 105, tier: 4 },
+    { type: 'shaman',   speed: 95,  tier: 4 },
+    { type: 'troll',    speed: 50,  tier: 5 },
+  ];
+
+  // Rarity weights by tier: T1 45%, T2 20%, T3 15%, T4 12%, T5 8%
+  private static readonly TIER_WEIGHTS: Record<number, number> = { 1: 45, 2: 20, 3: 15, 4: 12, 5: 8 };
+
+  private startBackgroundVignettes() {
+    // Filter to units whose walk anim texture is loaded
+    const available = MenuScene.VIGNETTE_UNITS.filter(
+      u => this.textures.exists(HORDE_SPRITE_CONFIGS[u.type]?.walk.key)
+    );
+    if (available.length === 0) return;
+
+    // Build weighted pool
+    this._vignettePool = [];
+    for (const u of available) {
+      const w = MenuScene.TIER_WEIGHTS[u.tier] || 5;
+      for (let i = 0; i < w; i++) this._vignettePool.push(u);
+    }
+
+    const spawn = () => this.spawnVignette();
+
+    // First one after 2s, then every 5s
+    this.time.delayedCall(2000, spawn);
+    this.vignetteTimer = this.time.addEvent({ delay: 5000, loop: true, callback: spawn });
+  }
+
+  private _vignettePool: { type: string; speed: number; tier: number }[] = [];
+
+  private spawnVignette() {
+    if (this._vignettePool.length === 0) return;
+    const { width, height } = this.cameras.main;
+    const pick = this._vignettePool[Math.floor(Math.random() * this._vignettePool.length)];
+    const cfg = HORDE_SPRITE_CONFIGS[pick.type];
+    const walkKey = cfg.walk.key;
+    const animKey = `h_${pick.type}_walk`;
+
+    // Edge positions
+    const edges = [
+      { x: -50, y: height * (0.3 + Math.random() * 0.4) },   // left
+      { x: width + 50, y: height * (0.3 + Math.random() * 0.4) }, // right
+      { x: width * (0.2 + Math.random() * 0.6), y: -50 },    // top
+      { x: width * (0.2 + Math.random() * 0.6), y: height + 50 }, // bottom
+    ];
+    const entryIdx = Math.floor(Math.random() * 4);
+    let exitIdx = Math.floor(Math.random() * 3);
+    if (exitIdx >= entryIdx) exitIdx++;
+    const start = edges[entryIdx];
+    const exit = edges[exitIdx];
+
+    // Carrot in middle area but offset from center menu column
+    const side = Math.random() < 0.5 ? -1 : 1;
+    const carrotX = width / 2 + side * (200 + Math.random() * 150);
+    const carrotY = height * 0.35 + Math.random() * height * 0.35;
+
+    // Pickup point — stop 30px short of carrot
+    const angleToCarrot = Math.atan2(carrotY - start.y, carrotX - start.x);
+    const pickupX = carrotX - Math.cos(angleToCarrot) * 30;
+    const pickupY = carrotY - Math.sin(angleToCarrot) * 30;
+
+    // Walk speed derived from game speed — scale to screen px/s
+    // Game speeds range 50-210; map to ~40-170 px/s on screen
+    const gameSpeed = pick.speed;
+    const screenSpeed = (gameSpeed / 210) * 170 + 15;
+
+    // Anim timeScale — sync animation pace to movement speed
+    // Base anim (20fps) feels right at gnome speed (210). Scale proportionally.
+    // Floor at 0.45 so slow units (turtle/troll) don't look frozen
+    const animTimeScale = Math.max(0.45, gameSpeed / 210);
+
+    // Random resource drop: 80% carrot, 10% meat, 5% crystal, 5% metal
+    const roll = Math.random();
+    const emoji = roll < 0.80 ? '🥕' : roll < 0.90 ? '🍖' : roll < 0.95 ? '💎' : '⚙️';
+
+    // Create resource emoji — sits on ground
+    const carrot = this.add.text(carrotX, carrotY, emoji, { fontSize: '18px' })
+      .setOrigin(0.5).setDepth(2).setAlpha(0.55);
+    this.tweens.add({
+      targets: carrot, y: carrotY - 3,
+      duration: 1000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+    });
+
+    // Create unit sprite — above carrot
+    const unit = this.add.sprite(start.x, start.y, walkKey)
+      .setDepth(3).setAlpha(0.55).setScale(cfg.displayScale * 0.5);
+    if (carrotX < start.x) unit.setFlipX(true);
+    if (this.anims.exists(animKey)) {
+      unit.play(animKey);
+      unit.anims.timeScale = animTimeScale;
+    }
+
+    // Dragged carrot physics state
+    let dragX = 0, dragY = 0, dragVx = 0, dragVy = 0;
+    let bouncePhase = Math.random() * Math.PI * 2;
+
+    // Step 1: walk to pickup point near carrot
+    const distToPickup = Math.hypot(pickupX - start.x, pickupY - start.y);
+    this.tweens.add({
+      targets: unit, x: pickupX, y: pickupY,
+      duration: (distToPickup / screenSpeed) * 1000, ease: 'Linear',
+      onComplete: () => {
+        if (!unit.active) return;
+
+        // Immediately flip for exit direction & start walking out
+        unit.setFlipX(exit.x < pickupX);
+
+        // Shrink carrot emoji for carrying
+        this.tweens.killTweensOf(carrot);
+        carrot.setFontSize(12).setAlpha(0.5);
+        dragX = carrot.x;
+        dragY = carrot.y;
+
+        const distToExit = Math.hypot(exit.x - pickupX, exit.y - pickupY);
+
+        // Tween unit to exit
+        this.tweens.add({
+          targets: unit, x: exit.x, y: exit.y,
+          duration: (distToExit / screenSpeed) * 1000, ease: 'Linear',
+          onUpdate: () => {
+            if (!carrot.active || !unit.active) return;
+            // Dragged/pulled item with springy bounce — trails far behind
+            const trailDist = 35;
+            const dx = unit.flipX ? trailDist : -trailDist;
+            const targetX = unit.x + dx;
+            const targetY = unit.y + 12;
+
+            // Soft spring — low stiffness + damping = laggy drag
+            const springK = 0.08;
+            const damping = 0.82;
+            dragVx = (dragVx + (targetX - dragX) * springK) * damping;
+            dragVy = (dragVy + (targetY - dragY) * springK) * damping;
+            dragX += dragVx;
+            dragY += dragVy;
+
+            // Bounce wobble
+            bouncePhase += 0.18;
+            const bounce = Math.sin(bouncePhase) * 3;
+
+            carrot.setPosition(dragX, dragY + bounce);
+          },
+          onComplete: () => {
+            unit.destroy();
+            if (carrot.active) carrot.destroy();
+          },
+        });
+      },
+    });
   }
 
   private createMedievalButton(
@@ -531,113 +713,160 @@ export class MenuScene extends Phaser.Scene {
   private setupSocialUI() {
     const auth = AuthManager.getInstance();
 
-    // === TOP-RIGHT ACCOUNT BAR (DOM overlay) ===
+    // === TOP-RIGHT VERTICAL ACCOUNT PANEL (DOM overlay) ===
     this.profileCardEl = document.createElement('div');
     this.profileCardEl.id = 'menu-profile-card';
     this.profileCardEl.style.cssText = `
-      position:fixed;top:16px;right:70px;z-index:100;
-      display:flex;align-items:center;gap:8px;
-      padding:8px 16px;
-      background:rgba(36,58,24,0.85);
-      border:2px solid rgba(90,154,78,0.5);border-radius:22px;
-      backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+      position:fixed;top:16px;right:16px;z-index:100;
+      display:flex;flex-direction:column;align-items:stretch;gap:0;
+      padding:0;
+      background:${C.panelBg};
+      border:2px solid ${C.panelBorder};border-radius:14px;
+      backdrop-filter:${C.panelBlur};-webkit-backdrop-filter:${C.panelBlur};
       font-family:"Nunito",sans-serif;
       opacity:0;transition:opacity 0.6s ease 0.8s;
-      box-shadow:0 2px 12px rgba(0,0,0,0.3);
+      box-shadow:${C.panelShadow};
+      overflow:hidden;width:240px;
     `;
 
     if (!auth.isGuest && auth.userProfile) {
-      // Signed-in user: icon + name + online dot + social buttons
-      const iconEl = createIconElement(auth.userProfile.icon, 28);
+      // Profile header — avatar + name + online dot
+      const header = document.createElement('div');
+      header.style.cssText = `
+        display:flex;align-items:center;gap:10px;
+        padding:12px 14px;
+        background:rgba(255,217,61,0.06);
+        border-bottom:1px solid ${C.divider};
+      `;
+
+      const iconEl = createIconElement(auth.userProfile.icon, 48);
       iconEl.style.borderRadius = '50%';
       iconEl.style.border = `2px solid ${C.gold}`;
       iconEl.style.flexShrink = '0';
-      this.profileCardEl.appendChild(iconEl);
+      iconEl.style.boxShadow = '0 0 8px rgba(255,217,61,0.2)';
+      header.appendChild(iconEl);
 
-      const nameEl = document.createElement('span');
+      const nameWrap = document.createElement('div');
+      nameWrap.style.cssText = `display:flex;flex-direction:column;gap:2px;min-width:0;`;
+
+      const nameEl = document.createElement('div');
       nameEl.textContent = auth.userProfile.username;
-      nameEl.style.cssText = `font-size:13px;font-weight:700;color:${C.textPrimary};`;
-      this.profileCardEl.appendChild(nameEl);
+      nameEl.style.cssText = `font-size:15px;font-weight:700;color:${C.textH1};white-space:nowrap;`;
+      nameWrap.appendChild(nameEl);
 
+      const statusRow = document.createElement('div');
+      statusRow.style.cssText = `display:flex;align-items:center;gap:5px;`;
       const dot = document.createElement('span');
-      dot.style.cssText = `width:7px;height:7px;border-radius:50%;background:#45E6B0;flex-shrink:0;box-shadow:0 0 6px rgba(69,230,176,0.5);`;
-      this.profileCardEl.appendChild(dot);
+      dot.style.cssText = `width:6px;height:6px;border-radius:50%;background:#45E6B0;box-shadow:0 0 6px rgba(69,230,176,0.5);`;
+      statusRow.appendChild(dot);
+      const statusText = document.createElement('span');
+      statusText.textContent = 'Online';
+      statusText.style.cssText = `font-size:10px;color:${C.teal};font-weight:600;`;
+      statusRow.appendChild(statusText);
+      nameWrap.appendChild(statusRow);
 
-      // Divider
-      const sep = document.createElement('span');
-      sep.style.cssText = `width:1px;height:20px;background:rgba(139,115,85,0.3);margin:0 4px;`;
-      this.profileCardEl.appendChild(sep);
+      header.appendChild(nameWrap);
+      this.profileCardEl.appendChild(header);
 
-      // Social buttons inline
-      const makeSocialBtn = (label: string, onClick: () => void) => {
+      // Action buttons — distinct styled cards
+      const btnList = document.createElement('div');
+      btnList.style.cssText = `display:flex;flex-direction:column;gap:6px;padding:10px 10px 8px;`;
+
+      const makeSocialBtn = (iconSrc: string, label: string, borderColor: string, glowColor: string, hoverBorder: string, onClick: () => void) => {
         const btn = document.createElement('button');
-        btn.textContent = label;
+        const iconImg = `<img src="${iconSrc}" style="width:32px;height:32px;object-fit:contain;image-rendering:pixelated;flex-shrink:0;">`;
+        btn.innerHTML = `${iconImg}<span style="flex:1;text-align:left;">${label}</span><span style="font-size:11px;color:${C.textMuted};transition:transform 0.15s;">&#x276F;</span>`;
         btn.style.cssText = `
-          padding:4px 10px;font-size:11px;font-weight:700;
-          font-family:"Fredoka",sans-serif;letter-spacing:1px;
-          background:transparent;border:1.5px solid rgba(139,115,85,0.3);
-          color:${C.textSecondary};border-radius:6px;cursor:pointer;
-          transition:all 0.15s;white-space:nowrap;
+          display:flex;align-items:center;gap:10px;
+          padding:10px 12px;font-size:15px;font-weight:700;
+          font-family:"Nunito",sans-serif;
+          background:${C.surface};
+          border:1.5px solid ${borderColor};
+          color:${C.textPrimary};border-radius:8px;cursor:pointer;
+          transition:all 0.2s;text-align:left;width:100%;
+          box-shadow:0 1px 4px rgba(0,0,0,0.15);
         `;
-        btn.onmouseenter = () => { btn.style.borderColor = C.gold; btn.style.color = C.gold; btn.style.background = 'rgba(255,217,61,0.08)'; };
-        btn.onmouseleave = () => { btn.style.borderColor = 'rgba(139,115,85,0.3)'; btn.style.color = C.textSecondary; btn.style.background = 'transparent'; };
+        btn.onmouseenter = () => {
+          btn.style.borderColor = hoverBorder;
+          btn.style.background = C.surfaceHover;
+          btn.style.boxShadow = `0 2px 10px ${glowColor}`;
+          btn.style.transform = 'translateX(-2px)';
+        };
+        btn.onmouseleave = () => {
+          btn.style.borderColor = borderColor;
+          btn.style.background = C.surface;
+          btn.style.boxShadow = '0 1px 4px rgba(0,0,0,0.15)';
+          btn.style.transform = 'translateX(0)';
+        };
         btn.onclick = onClick;
         return btn;
       };
 
-      this.profileCardEl.appendChild(makeSocialBtn('FRIENDS', () => this.openFriendsPanel()));
-      this.profileCardEl.appendChild(makeSocialBtn('HISTORY', () => this.openMatchHistory()));
+      btnList.appendChild(makeSocialBtn(
+        'assets/ui/icons/Icon_06.png', 'Friends',
+        'rgba(69,230,176,0.3)', 'rgba(69,230,176,0.15)', C.teal,
+        () => this.openFriendsPanel()
+      ));
 
-      // Sign out button (subtle)
+      btnList.appendChild(makeSocialBtn(
+        'assets/ui/icons/Icon_11.png', 'History',
+        'rgba(255,217,61,0.25)', 'rgba(255,217,61,0.12)', C.gold,
+        () => this.openMatchHistory()
+      ));
+
+      this.profileCardEl.appendChild(btnList);
+
+      // Sign out — small text link at bottom
+      const signOutRow = document.createElement('div');
+      signOutRow.style.cssText = `
+        padding:4px 14px 8px;text-align:center;
+        border-top:1px solid ${C.divider};
+      `;
       const signOutBtn = document.createElement('button');
       signOutBtn.textContent = 'Sign Out';
       signOutBtn.style.cssText = `
-        padding:4px 8px;font-size:10px;font-weight:600;
-        font-family:"Nunito",sans-serif;
-        background:transparent;border:none;
-        color:${C.textMuted};cursor:pointer;
-        transition:color 0.15s;
+        font-size:11px;font-weight:600;font-family:"Nunito",sans-serif;
+        background:none;border:none;color:${C.textMuted};
+        cursor:pointer;transition:color 0.15s;padding:4px 8px;
       `;
       signOutBtn.onmouseenter = () => { signOutBtn.style.color = C.red; };
       signOutBtn.onmouseleave = () => { signOutBtn.style.color = C.textMuted; };
-      signOutBtn.onclick = async () => {
-        await auth.signOut();
-        window.location.reload();
-      };
-      this.profileCardEl.appendChild(signOutBtn);
+      signOutBtn.onclick = async () => { await auth.signOut(); window.location.reload(); };
+      signOutRow.appendChild(signOutBtn);
+      this.profileCardEl.appendChild(signOutRow);
     } else {
-      // Guest user: guest icon + label + sign in button
+      // Guest — compact card with sign in CTA
+      const guestHeader = document.createElement('div');
+      guestHeader.style.cssText = `
+        display:flex;align-items:center;gap:10px;
+        padding:12px 14px;
+        border-bottom:1px solid ${C.divider};
+      `;
       const guestIcon = document.createElement('span');
-      guestIcon.textContent = '\u2694'; // crossed swords
-      guestIcon.style.cssText = `font-size:18px;opacity:0.5;`;
-      this.profileCardEl.appendChild(guestIcon);
+      guestIcon.textContent = '\u2694';
+      guestIcon.style.cssText = `font-size:20px;opacity:0.4;`;
+      guestHeader.appendChild(guestIcon);
 
-      const guestLabel = document.createElement('span');
-      guestLabel.textContent = 'Guest';
-      guestLabel.style.cssText = `font-size:13px;font-weight:700;color:${C.textMuted};`;
-      this.profileCardEl.appendChild(guestLabel);
-
-      // Divider
-      const sep = document.createElement('span');
-      sep.style.cssText = `width:1px;height:20px;background:rgba(139,115,85,0.3);margin:0 4px;`;
-      this.profileCardEl.appendChild(sep);
+      const guestName = document.createElement('div');
+      guestName.textContent = 'Guest';
+      guestName.style.cssText = `font-size:14px;font-weight:700;color:${C.textMuted};`;
+      guestHeader.appendChild(guestName);
+      this.profileCardEl.appendChild(guestHeader);
 
       const signInBtn = document.createElement('button');
-      signInBtn.textContent = 'Sign In';
+      signInBtn.innerHTML = `<span style="font-size:14px;">&#x1F511;</span> Sign in with Google`;
       signInBtn.style.cssText = `
-        padding:5px 14px;font-size:12px;font-weight:700;
-        font-family:"Fredoka",sans-serif;letter-spacing:1px;
-        background:rgba(255,217,61,0.12);border:1.5px solid rgba(255,217,61,0.35);
-        color:${C.gold};border-radius:6px;cursor:pointer;
-        transition:all 0.15s;
+        display:flex;align-items:center;gap:8px;justify-content:center;
+        margin:10px 12px 12px;padding:10px 14px;font-size:13px;font-weight:700;
+        font-family:"Nunito",sans-serif;
+        background:rgba(255,217,61,0.1);border:1.5px solid ${C.goldDim};
+        color:${C.gold};border-radius:8px;cursor:pointer;
+        transition:all 0.2s;
       `;
-      signInBtn.onmouseenter = () => { signInBtn.style.background = 'rgba(255,217,61,0.2)'; signInBtn.style.borderColor = C.gold; };
-      signInBtn.onmouseleave = () => { signInBtn.style.background = 'rgba(255,217,61,0.12)'; signInBtn.style.borderColor = 'rgba(255,217,61,0.35)'; };
+      signInBtn.onmouseenter = () => { signInBtn.style.background = 'rgba(255,217,61,0.18)'; signInBtn.style.borderColor = C.gold; signInBtn.style.transform = 'translateY(-1px)'; };
+      signInBtn.onmouseleave = () => { signInBtn.style.background = 'rgba(255,217,61,0.1)'; signInBtn.style.borderColor = C.goldDim; signInBtn.style.transform = 'translateY(0)'; };
       signInBtn.onclick = async () => {
-        try {
-          await auth.linkGuestToGoogle();
-          window.location.reload();
-        } catch { /* user cancelled popup */ }
+        try { await auth.linkGuestToGoogle(); window.location.reload(); } catch { /* cancelled */ }
       };
       this.profileCardEl.appendChild(signInBtn);
     }
@@ -677,8 +906,20 @@ export class MenuScene extends Phaser.Scene {
     }
   }
 
+  /** Block Phaser canvas interaction while a DOM overlay is open */
+  private blockGameInput() {
+    const canvas = document.querySelector('#game-container canvas') as HTMLCanvasElement | null;
+    if (canvas) canvas.style.pointerEvents = 'none';
+  }
+
+  /** Restore Phaser canvas interaction */
+  private unblockGameInput() {
+    const canvas = document.querySelector('#game-container canvas') as HTMLCanvasElement | null;
+    if (canvas) canvas.style.pointerEvents = '';
+  }
+
   private openFriendsPanel() {
-    if (this.friendsPanel?.isOpen) { this.friendsPanel.close(); return; }
+    if (this.friendsPanel?.isOpen) { this.friendsPanel.close(); this.unblockGameInput(); return; }
     const auth = AuthManager.getInstance();
 
     this.friendsPanel = new FriendsPanel({
@@ -714,6 +955,10 @@ export class MenuScene extends Phaser.Scene {
       },
     });
     this.friendsPanel.open();
+    this.blockGameInput();
+    const checkFriendsClose = setInterval(() => {
+      if (!this.friendsPanel?.isOpen) { clearInterval(checkFriendsClose); this.unblockGameInput(); }
+    }, 200);
 
     // Feed friends data
     if (this.friendsUnsub) this.friendsUnsub();
@@ -723,10 +968,14 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private async openMatchHistory() {
-    if (this.matchHistoryPanel?.isOpen) { this.matchHistoryPanel.close(); return; }
+    if (this.matchHistoryPanel?.isOpen) { this.matchHistoryPanel.close(); this.unblockGameInput(); return; }
     const auth = AuthManager.getInstance();
     this.matchHistoryPanel = new MatchHistoryPanel();
     this.matchHistoryPanel.openLoading();
+    this.blockGameInput();
+    const checkHistoryClose = setInterval(() => {
+      if (!this.matchHistoryPanel?.isOpen) { clearInterval(checkHistoryClose); this.unblockGameInput(); }
+    }, 200);
 
     try {
       const entries = await auth.getMatchHistory(20);
@@ -747,6 +996,7 @@ export class MenuScene extends Phaser.Scene {
     this.matchInvitePopup = null;
     if (this.friendsUnsub) { this.friendsUnsub(); this.friendsUnsub = null; }
     if (this.invitesUnsub) { this.invitesUnsub(); this.invitesUnsub = null; }
+    this.unblockGameInput();
   }
 
   private playsfx(key: string, volume = 0.5) {
