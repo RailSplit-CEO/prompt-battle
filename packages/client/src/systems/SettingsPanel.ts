@@ -61,6 +61,67 @@ export class SettingsPanel {
     this.isOpen ? this.close() : this.open();
   }
 
+  /** Render settings UI into an external container (embedded mode, no overlay) */
+  renderInto(container: HTMLElement): void {
+    this.injectStyles();
+
+    // Tab bar
+    const tabBar = document.createElement('div');
+    tabBar.style.cssText = `
+      display:flex;gap:4px;padding:0 0 10px;
+      border-bottom:1px solid ${C.divider};margin-bottom:12px;
+    `;
+    container.appendChild(tabBar);
+
+    const tabBtns: HTMLButtonElement[] = [];
+    for (const tab of TABS) {
+      const btn = document.createElement('button');
+      btn.dataset.tab = tab.id;
+      btn.innerHTML = `<span style="font-size:13px">${tab.icon}</span> ${tab.label}`;
+      btn.style.cssText = `
+        flex:1;padding:9px 4px 11px;
+        border:none;border-bottom:2px solid transparent;
+        border-radius:0;
+        background:none;color:${C.textMuted};
+        font-size:12px;font-weight:700;cursor:pointer;
+        font-family:"Nunito",sans-serif;transition:all 0.15s;
+        display:flex;align-items:center;justify-content:center;gap:5px;
+        margin-bottom:-1px;
+      `;
+      btn.onmouseenter = () => { if (btn.dataset.tab !== this.activeTab) btn.style.color = C.textSecondary; };
+      btn.onmouseleave = () => { if (btn.dataset.tab !== this.activeTab) btn.style.color = C.textMuted; };
+      btn.onclick = () => {
+        this.activeTab = tab.id;
+        this.renderTab(content, tabBtns);
+      };
+      tabBar.appendChild(btn);
+      tabBtns.push(btn);
+    }
+
+    // Content area
+    const content = document.createElement('div');
+    content.className = 'settings-content';
+    container.appendChild(content);
+
+    // Reset button
+    const resetRow = document.createElement('div');
+    resetRow.style.cssText = `margin-top:16px;padding-top:12px;border-top:1px solid ${C.divider};`;
+    const resetBtn = document.createElement('button');
+    resetBtn.textContent = 'Reset to Defaults';
+    resetBtn.style.cssText = `
+      background:rgba(255,107,107,0.08);border:1px solid rgba(255,107,107,0.25);
+      color:${C.red};padding:7px 16px;border-radius:8px;font-size:12px;font-weight:700;
+      cursor:pointer;font-family:"Nunito",sans-serif;transition:all 0.15s;
+    `;
+    resetBtn.onmouseenter = () => { resetBtn.style.background = 'rgba(255,107,107,0.18)'; };
+    resetBtn.onmouseleave = () => { resetBtn.style.background = 'rgba(255,107,107,0.08)'; };
+    resetBtn.onclick = () => { this.settings.reset(); this.renderTab(content, tabBtns); };
+    resetRow.appendChild(resetBtn);
+    container.appendChild(resetRow);
+
+    this.renderTab(content, tabBtns);
+  }
+
   // ────────────────────────────────────────────────────────────
   private build(): void {
     this.injectStyles();

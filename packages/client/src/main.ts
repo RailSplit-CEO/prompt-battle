@@ -4,6 +4,8 @@ import { MenuScene } from './scenes/MenuScene';
 import { HordeScene } from './scenes/HordeScene';
 import { CharactersScene } from './scenes/CharactersScene';
 import { PvpMenuScene } from './scenes/PvpMenuScene';
+import { AccountScene } from './scenes/AccountScene';
+// StoreScene removed — store is now a popup (StorePanel)
 import { AuthManager } from './auth/AuthManager';
 import { LoginOverlay } from './ui/LoginOverlay';
 import { ProfileSetupOverlay } from './ui/ProfileSetupOverlay';
@@ -14,6 +16,7 @@ import { EquipService } from './store/EquipService';
 import { installDevTools } from './store/dev-tools';
 import { ThemeManager } from './store/ThemeManager';
 import { PlayerLevelManager } from './store/PlayerLevelManager';
+import { BattlePassManager } from './store/BattlePassManager';
 
 async function boot() {
   // Suppress the 10s "game not started" warning — we're in the auth flow
@@ -125,6 +128,7 @@ async function boot() {
     EquipService.getInstance().init(uid);
     ThemeManager.getInstance().init();
     PlayerLevelManager.getInstance().init(uid);
+    BattlePassManager.getInstance().init(uid);
   }
 
   // 5c. Install dev tools in development mode
@@ -141,6 +145,12 @@ async function boot() {
   }
 
   // 6. Check for active game to rejoin (multiplayer or solo)
+  // Escape hatch: ?clearGame=1 in URL clears stuck game state
+  if (new URLSearchParams(window.location.search).has('clearGame')) {
+    localStorage.removeItem('pb_active_game');
+    console.log('[Boot] Cleared active game state via URL param');
+    window.history.replaceState({}, '', window.location.pathname);
+  }
   const activeGameStr = localStorage.getItem('pb_active_game');
   if (activeGameStr) {
     try {
@@ -181,7 +191,7 @@ async function boot() {
     scale: {
       mode: Phaser.Scale.RESIZE,
     },
-    scene: [BootScene, MenuScene, PvpMenuScene, HordeScene, CharactersScene],
+    scene: [BootScene, MenuScene, PvpMenuScene, AccountScene, HordeScene, CharactersScene],
     physics: {
       default: 'arcade',
       arcade: {
@@ -191,6 +201,36 @@ async function boot() {
   };
 
   const game = new Phaser.Game(config);
+
+  // ─── CRASH MONITORING ───────────────────────────────────────
+  // WebGL context loss recovery
+  game.events.once('ready', () => {
+    const canvas = game.canvas;
+    if (canvas) {
+      canvas.addEventListener('webglcontextlost', (e) => {
+        e.preventDefault();
+        console.error('[GPU] WebGL context lost — game will attempt recovery');
+        const overlay = document.createElement('div');
+        overlay.id = 'gpu-crash-overlay';
+        overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.9);display:flex;align-items:center;justify-content:center;color:#ff6b6b;font-family:sans-serif;font-size:20px;text-align:center;padding:20px;';
+        overlay.innerHTML = '<div>GPU context lost.<br><small style="color:#aaa">Waiting for recovery... If nothing happens, refresh the page.</small></div>';
+        document.body.appendChild(overlay);
+      });
+      canvas.addEventListener('webglcontextrestored', () => {
+        console.log('[GPU] WebGL context restored — reloading');
+        document.getElementById('gpu-crash-overlay')?.remove();
+        window.location.reload();
+      });
+    }
+  });
+
+  // Global error handlers
+  window.addEventListener('error', (e) => {
+    console.error('[Global]', e.error?.stack || e.message);
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    console.error('[Unhandled Promise]', e.reason);
+  });
 
   // Prevent Phaser from pausing the game loop when the tab is hidden
   game.loop.sleep = () => {};

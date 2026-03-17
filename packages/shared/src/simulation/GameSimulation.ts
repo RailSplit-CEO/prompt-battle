@@ -1,6 +1,6 @@
 // ─── GameSimulation.ts ─────────────────────────────────────────
 // Main orchestrator class. Holds all game state, runs the tick
-// loop. Mirrors HordeScene.update() host path.
+// loop including movement and combat. Server-authoritative.
 // ────────────────────────────────────────────────────────────────
 
 import type {
@@ -21,8 +21,10 @@ import type {
   WorkflowStep,
   HordeCommand,
   PendingHit,
-  MapDef,
+  CampDef,
 } from './SimTypes';
+
+import type { MapDef } from '../data/maps';
 
 import { DEFAULT_MODS } from './SimTypes';
 
@@ -48,13 +50,32 @@ import {
   WILD_ANIMAL_COUNT,
   ELITE_PREY_COUNT,
   pdist2,
+  PATH_CELL,
+  PATH_GRID,
+  MAX_PATHS_PER_FRAME,
+  ROCK_RADIUS,
+  ROCK_PATH_RADIUS,
+  NIGHT_BUILDING_SAFE_RANGE,
+  CAMP_GUARD_COUNT,
+  CAMP_SPAWN_MS,
+  seededRandom,
+  cap,
+  pickCampName,
 } from './Constants';
+
+import { TILE_SIZE, assignAnimalsToSlots } from '../data/maps';
 
 import * as DayNight from './DayNight';
 import * as CampLogic from './CampLogic';
 import * as UnitAI from './UnitAI';
 import * as MapEvents from './MapEvents';
 import * as BotAI from './BotAI';
+import * as Movement from './Movement';
+import * as Combat from './Combat';
+import { buildSpatialGrid, getNearbyFromGrid } from './SpatialGrid';
+import type { PathRequest } from './Movement';
+import type { MovementContext } from './Movement';
+import type { CombatContext, DropItemRequest } from './Combat';
 
 // ────────────────────────────────────────────────────────────────
 
@@ -141,9 +162,63 @@ export class GameSimulation implements SimState {
   // ─── Ground Item Lookup ─────────────────────────────────────
   private _groundItemMap = new Map<number, SimGroundItem>();
 
-  constructor(mapDef: MapDef | null, _mapSeed: number, isSolo: boolean) {
+  // ─── Tile / Walkability Grid ────────────────────────────────
+  private _tiles: number[][] = [];
+  private _walkableGrid: Uint8Array | null = null;
+  private _walkGridRows = 0;
+  private _walkGridCols = 0;
+  private _staticBlockedGrid: Uint8Array | null = null;
+  private _staticClearancePenalty: Float32Array = new Float32Array(0);
+  private _rockCollisionPoints: { x: number; y: number }[] = [];
+
+  // ─── A* Pathfinding Buffers ─────────────────────────────────
+  private _astarBlocked: Uint8Array;
+  private _astarGScore: Float32Array;
+  private _astarFScore: Float32Array;
+  private _astarCameFrom: Int32Array;
+  private _astarClosed: Uint8Array;
+  private _astarInOpen: Uint8Array;
+  private _astarOccupied: Uint8Array;
+  private _frameOccupiedReady = false;
+
+  // ─── Per-Frame Caches ───────────────────────────────────────
+  private _framePathCache = new Map<string, { x: number; y: number }[] | null>();
+  private _frameAvoidPenalty = new Map<string, Float32Array>();
+  private _avoidPenaltyPool: Float32Array[] = [];
+  private _pathQueue: PathRequest[] = [];
+  private _pathsThisFrame = 0;
+
+  // ─── Spatial Grid ───────────────────────────────────────────
+  private _spatialGrid = new Map<number, SimUnit[]>();
+  private _spatialCellSize = 200;
+  private _bucketPool: SimUnit[][] = [];
+
+  // ─── Frame State ────────────────────────────────────────────
+  private _frameCount = 0;
+  private _stuckCheckCounter = 0;
+  private _unitById = new Map<number, SimUnit>();
+  private _defendedCamps = new Set<string>();
+
+  // ─── Combat Tracking ────────────────────────────────────────
+  private _unitKillCounts = new Map<number, number>();
+  private _topKiller = {
+    1: { type: '', kills: 0 },
+    2: { type: '', kills: 0 },
+  };
+
+  constructor(mapDef: MapDef | null, mapSeed: number, isSolo: boolean) {
     this.mapDef = mapDef;
     this.isSolo = isSolo;
+
+    // Pre-allocate A* buffers
+    const gridSize = PATH_GRID * PATH_GRID;
+    this._astarBlocked = new Uint8Array(gridSize);
+    this._astarGScore = new Float32Array(gridSize);
+    this._astarFScore = new Float32Array(gridSize);
+    this._astarCameFrom = new Int32Array(gridSize);
+    this._astarClosed = new Uint8Array(gridSize);
+    this._astarInOpen = new Uint8Array(gridSize);
+    this._astarOccupied = new Uint8Array(gridSize);
 
     // Create nexuses
     this.nexuses = [
@@ -151,12 +226,256 @@ export class GameSimulation implements SimState {
       { team: 2, x: P2_BASE.x, y: P2_BASE.y, hp: NEXUS_MAX_HP, maxHp: NEXUS_MAX_HP, attackTimer: 0 },
     ];
 
+    // Initialize map infrastructure
+    if (mapDef) {
+      this.initMapInfrastructure(mapDef);
+      this.initCampsFromMap(mapDef, mapSeed);
+    }
+
     // Spawn starting gnomes (3 per team)
     for (const team of [1, 2] as const) {
       const b = team === 1 ? P1_BASE : P2_BASE;
       for (let i = 0; i < 3; i++) {
         this.spawnUnit('gnome', team, b.x + (i - 1) * 30, b.y + 40);
       }
+    }
+
+    // Pre-capture T1 camps (gnome + turtle) for each team
+    for (const animalType of ['gnome', 'turtle']) {
+      const campsOfType = this.camps.filter(c => c.animalType === animalType);
+      const p1Camp = campsOfType.slice().sort((a, b) => pdist2(a, P1_BASE) - pdist2(b, P1_BASE))[0];
+      const p2Camp = campsOfType.filter(c => c !== p1Camp).sort((a, b) => pdist2(a, P2_BASE) - pdist2(b, P2_BASE))[0];
+      if (p1Camp) {
+        p1Camp.owner = 1;
+        this.units = this.units.filter(u => u.campId !== p1Camp.id);
+      }
+      if (p2Camp) {
+        p2Camp.owner = 2;
+        this.units = this.units.filter(u => u.campId !== p2Camp.id);
+      }
+    }
+  }
+
+  // ─── Map Infrastructure Init ──────────────────────────────────
+
+  private initMapInfrastructure(mapDef: MapDef): void {
+    const tiles = mapDef.tiles;
+    if (tiles && tiles.length > 0) {
+      this._tiles = tiles;
+      const rows = tiles.length;
+      const cols = tiles[0].length;
+
+      // Build walkability grid (TILE_SIZE resolution)
+      const walkGrid = new Uint8Array(rows * cols);
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const v = tiles[r][c];
+          if (v === 2 || v === 3) walkGrid[r * cols + c] = 1;
+        }
+      }
+
+      // Stamp boundary blocks
+      const boundaries = mapDef.boundaryBlocks || [];
+      for (const b of boundaries) {
+        const minC = Math.floor(b.x / TILE_SIZE);
+        const maxC = Math.ceil((b.x + b.w) / TILE_SIZE);
+        const minR = Math.floor(b.y / TILE_SIZE);
+        const maxR = Math.ceil((b.y + b.h) / TILE_SIZE);
+        for (let r = minR; r < maxR; r++) {
+          for (let c = minC; c < maxC; c++) {
+            if (r >= 0 && r < rows && c >= 0 && c < cols) walkGrid[r * cols + c] = 1;
+          }
+        }
+      }
+
+      // Collect rock collision points
+      this._rockCollisionPoints = [];
+      for (const rock of (mapDef.rockPositions || [])) {
+        this._rockCollisionPoints.push({ x: rock.bluePos.x, y: rock.bluePos.y });
+        this._rockCollisionPoints.push({ x: rock.redPos.x, y: rock.redPos.y });
+      }
+
+      // Stamp rock collision points onto walkability grid
+      const walkRockR = ROCK_RADIUS;
+      const walkRockTiles = Math.ceil(walkRockR / TILE_SIZE);
+      for (const rp of this._rockCollisionPoints) {
+        const rc = Math.floor(rp.x / TILE_SIZE);
+        const rr = Math.floor(rp.y / TILE_SIZE);
+        for (let r = rr - walkRockTiles; r <= rr + walkRockTiles; r++) {
+          for (let c = rc - walkRockTiles; c <= rc + walkRockTiles; c++) {
+            if (r >= 0 && r < rows && c >= 0 && c < cols) {
+              const dx = (c + 0.5) * TILE_SIZE - rp.x;
+              const dy = (r + 0.5) * TILE_SIZE - rp.y;
+              if (dx * dx + dy * dy <= walkRockR * walkRockR) {
+                walkGrid[r * cols + c] = 1;
+              }
+            }
+          }
+        }
+      }
+
+      this._walkableGrid = walkGrid;
+      this._walkGridCols = cols;
+      this._walkGridRows = rows;
+
+      // Build static blocked grid (PATH_CELL resolution for A*)
+      const G = PATH_GRID;
+      const CELL = PATH_CELL;
+      const staticBlocked = new Uint8Array(G * G);
+      for (let gy = 0; gy < G && gy < rows; gy++) {
+        for (let gx = 0; gx < G && gx < cols; gx++) {
+          if (tiles[gy][gx] === 2 || tiles[gy][gx] === 3) staticBlocked[gy * G + gx] = 1;
+        }
+      }
+      for (const b of boundaries) {
+        const minGX = Math.floor(b.x / CELL);
+        const maxGX = Math.ceil((b.x + b.w) / CELL);
+        const minGY = Math.floor(b.y / CELL);
+        const maxGY = Math.ceil((b.y + b.h) / CELL);
+        for (let gy = minGY; gy < maxGY; gy++) {
+          for (let gx = minGX; gx < maxGX; gx++) {
+            if (gx >= 0 && gx < G && gy >= 0 && gy < G) staticBlocked[gy * G + gx] = 1;
+          }
+        }
+      }
+      const rockR = ROCK_PATH_RADIUS;
+      const rockCells = Math.ceil(rockR / CELL);
+      for (const rp of this._rockCollisionPoints) {
+        const rcx = Math.floor(rp.x / CELL);
+        const rcy = Math.floor(rp.y / CELL);
+        for (let ry = rcy - rockCells; ry <= rcy + rockCells; ry++) {
+          for (let rx = rcx - rockCells; rx <= rcx + rockCells; rx++) {
+            if (rx >= 0 && rx < G && ry >= 0 && ry < G) {
+              const dx = (rx + 0.5) * CELL - rp.x;
+              const dy = (ry + 0.5) * CELL - rp.y;
+              if (dx * dx + dy * dy <= rockR * rockR) {
+                staticBlocked[ry * G + rx] = 1;
+              }
+            }
+          }
+        }
+      }
+      this._staticBlockedGrid = staticBlocked;
+
+      // Build clearance penalty
+      const staticClearance = new Float32Array(G * G);
+      for (let cy2 = 0; cy2 < G; cy2++) {
+        for (let cx2 = 0; cx2 < G; cx2++) {
+          const idx = cy2 * G + cx2;
+          if (staticBlocked[idx]) continue;
+          let pen = 0;
+          for (let pdy = -1; pdy <= 1; pdy++) {
+            for (let pdx = -1; pdx <= 1; pdx++) {
+              if (pdx === 0 && pdy === 0) continue;
+              const px = cx2 + pdx, py = cy2 + pdy;
+              if (px >= 0 && px < G && py >= 0 && py < G && staticBlocked[py * G + px]) pen += 0.5;
+            }
+          }
+          staticClearance[idx] = pen;
+        }
+      }
+      this._staticClearancePenalty = staticClearance;
+    }
+  }
+
+  // ─── Camp Initialization ──────────────────────────────────────
+
+  private initCampsFromMap(mapDef: MapDef, seed: number): void {
+    const rng = seededRandom(seed);
+    const usedNames: Record<string, number> = {};
+    const animalAssignments = assignAnimalsToSlots(mapDef.campSlots, rng);
+
+    let idx = 0;
+    for (let i = 0; i < mapDef.campSlots.length; i++) {
+      const slot = mapDef.campSlots[i];
+      const animalType = animalAssignments[i];
+      const def = ANIMALS[animalType];
+      if (!def) continue;
+
+      const name1 = pickCampName(animalType, rng, usedNames);
+      const name2 = pickCampName(animalType, rng, usedNames);
+      const guards = CAMP_GUARD_COUNT[animalType] || 1;
+      const spawnMs = CAMP_SPAWN_MS[animalType] || 5000;
+      const buff1 = { stat: 'attack', value: 0.05 + rng() * 0.05 };
+      const buff2 = { stat: 'hp', value: 0.05 + rng() * 0.05 };
+
+      const blueCamp: SimCamp = {
+        id: `camp_${idx++}`, name: name1, animalType, tier: def.tier,
+        guardCount: guards, x: slot.bluePos.x, y: slot.bluePos.y,
+        owner: 0, spawnMs, spawnTimer: 0, buff: buff1, storedFood: 0,
+        scouted: false, lastSeenOwner: 0, lastSeenLabel: '', lastSeenColor: '#FFD93D',
+      };
+      this.camps.push(blueCamp);
+
+      const redCamp: SimCamp = {
+        id: `camp_${idx++}`, name: name2, animalType, tier: def.tier,
+        guardCount: guards, x: slot.redPos.x, y: slot.redPos.y,
+        owner: 0, spawnMs, spawnTimer: 0, buff: buff2, storedFood: 0,
+        scouted: false, lastSeenOwner: 0, lastSeenLabel: '', lastSeenColor: '#FFD93D',
+      };
+      this.camps.push(redCamp);
+
+      // Spawn camp defenders
+      if (def.tier <= this.currentEra + 2) {
+        this.spawnCampDefenders(blueCamp);
+        this.spawnCampDefenders(redCamp);
+      }
+    }
+
+    // Troll camp
+    if (mapDef.trollSlot) {
+      const trollDef = ANIMALS['troll'];
+      if (trollDef) {
+        const trollCamp: SimCamp = {
+          id: `camp_${idx++}`, name: 'Troll Camp', animalType: 'troll', tier: trollDef.tier,
+          guardCount: CAMP_GUARD_COUNT['troll'] || 1,
+          x: mapDef.trollSlot.x, y: mapDef.trollSlot.y,
+          owner: 0, spawnMs: CAMP_SPAWN_MS['troll'] || 15000, spawnTimer: 0,
+          buff: { stat: 'all', value: 0.10 }, storedFood: 0,
+          scouted: false, lastSeenOwner: 0, lastSeenLabel: '', lastSeenColor: '#FFD93D',
+        };
+        this.camps.push(trollCamp);
+        if (trollDef.tier <= this.currentEra + 2) {
+          this.spawnCampDefenders(trollCamp);
+        }
+      }
+    }
+
+    // Spawn wild animals and elite prey
+    this.spawnWildAnimals(['skull', 'spider', 'hyena', 'rogue'], WILD_ANIMAL_COUNT);
+    this.spawnElitePreyBatch();
+  }
+
+  private spawnCampDefenders(camp: SimCamp): void {
+    const def = ANIMALS[camp.animalType];
+    if (!def) return;
+    for (let i = 0; i < camp.guardCount; i++) {
+      const angle = (i / camp.guardCount) * Math.PI * 2;
+      const gx = camp.x + Math.cos(angle) * 50;
+      const gy = camp.y + Math.sin(angle) * 50;
+      const safe = this.findWalkableSpawn(gx, gy);
+      const wanderAngle = Math.random() * Math.PI * 2;
+      const wanderR = 20 + Math.random() * 40;
+      const speedVar = 0.85 + Math.random() * 0.3;
+      this.units.push({
+        id: this.nextId++, type: camp.animalType, team: 0,
+        hp: def.hp, maxHp: def.hp,
+        attack: def.attack, speed: def.speed * speedVar,
+        x: safe.x, y: safe.y,
+        targetX: safe.x + Math.cos(wanderAngle) * wanderR,
+        targetY: safe.y + Math.sin(wanderAngle) * wanderR,
+        attackTimer: 0, dead: false, animState: 'idle' as const,
+        campId: camp.id, lungeX: 0, lungeY: 0,
+        gnomeShield: 0, hasRebirth: camp.animalType === 'skull',
+        diveReady: false, diveTimer: 0,
+        lastAttackTarget: -1, attackFaceX: null,
+        prevSpriteX: 0, prevSpriteY: 0,
+        pathWaypoints: null, pathAge: 0, pathTargetX: 0, pathTargetY: 0,
+        lastCheckX: 0, lastCheckY: 0, stuckFrames: 0, stuckCooldown: 0,
+        mods: { ...DEFAULT_MODS },
+        carrying: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
+        equipment: null, equipLevel: 0, equipVisualApplied: null,
+      });
     }
   }
 
@@ -167,17 +486,34 @@ export class GameSimulation implements SimState {
   }
 
   isInVision(_x: number, _y: number): boolean {
-    // Server sim has full vision
-    return true;
+    return true; // server has global vision
   }
 
   findWalkableSpawn(x: number, y: number): { x: number; y: number } {
-    // TODO: integrate with tile map for proper pathfinding
-    // For now, clamp to world bounds
-    return {
-      x: Math.max(50, Math.min(WORLD_W - 50, x)),
-      y: Math.max(50, Math.min(WORLD_H - 50, y)),
-    };
+    const cx = Math.max(50, Math.min(WORLD_W - 50, x));
+    const cy = Math.max(50, Math.min(WORLD_H - 50, y));
+    if (!this._walkableGrid) return { x: cx, y: cy };
+    // Check if requested position is walkable
+    const col = Math.floor(cx / TILE_SIZE);
+    const row = Math.floor(cy / TILE_SIZE);
+    if (col >= 0 && col < this._walkGridCols && row >= 0 && row < this._walkGridRows) {
+      if (!this._walkableGrid[row * this._walkGridCols + col]) return { x: cx, y: cy };
+    }
+    // Spiral search for nearest walkable tile
+    for (let radius = 1; radius < 20; radius++) {
+      for (let dr = -radius; dr <= radius; dr++) {
+        for (let dc = -radius; dc <= radius; dc++) {
+          if (Math.abs(dr) !== radius && Math.abs(dc) !== radius) continue;
+          const r2 = row + dr, c2 = col + dc;
+          if (r2 >= 0 && r2 < this._walkGridRows && c2 >= 0 && c2 < this._walkGridCols) {
+            if (!this._walkableGrid[r2 * this._walkGridCols + c2]) {
+              return { x: (c2 + 0.5) * TILE_SIZE, y: (r2 + 0.5) * TILE_SIZE };
+            }
+          }
+        }
+      }
+    }
+    return { x: cx, y: cy };
   }
 
   spawnGroundItem(type: ResourceType, x: number, y: number): void {
@@ -204,11 +540,11 @@ export class GameSimulation implements SimState {
   }
 
   getMaxSupply(team: 1 | 2): number {
-    let cap = MAX_SUPPLY;
+    let maxCap = MAX_SUPPLY;
     for (const b of this.teamBuffs) {
-      if (b.team === team && b.stat === 'supply' && b.remaining > 0) cap += b.amount;
+      if (b.team === team && b.stat === 'supply' && b.remaining > 0) maxCap += b.amount;
     }
-    return cap;
+    return maxCap;
   }
 
   getSupplyCost(type: string): number {
@@ -234,13 +570,11 @@ export class GameSimulation implements SimState {
       else if (s === 'hp') hp += c.buff.value;
       else if (s === 'all') { speed += c.buff.value; attack += c.buff.value; hp += c.buff.value; }
     }
-    // Event buffs
     for (const b of this.eventBuffs) {
       if (b.team !== team) continue;
       if (b.stat === 'attack') attack += b.value;
       if (b.stat === 'speed') speed += b.value;
     }
-    // Camp loot buffs
     for (const b of this.teamBuffs) {
       if (b.team !== team) continue;
       if (b.stat === 'speed') speed += b.amount;
@@ -282,7 +616,6 @@ export class GameSimulation implements SimState {
       const type = types[Math.floor(Math.random() * types.length)];
       const def = ANIMALS[type];
       if (!def) continue;
-      // Random outskirts position
       let x: number, y: number;
       let tries = 0;
       do {
@@ -353,6 +686,149 @@ export class GameSimulation implements SimState {
     }
   }
 
+  // ─── Callback Helpers ─────────────────────────────────────────
+
+  private isNonCombatStep(u: SimUnit): boolean {
+    if (!u.loop) return true;
+    const step = u.loop.steps[u.loop.currentStep];
+    if (!step) return true;
+    return step.action !== 'attack_camp'
+      && step.action !== 'attack_enemies'
+      && step.action !== 'hunt'
+      && step.action !== 'kill_only'
+      && step.action !== 'defend';
+  }
+
+  private isNearFriendlyBuilding(u: { x: number; y: number; team: 0 | 1 | 2 }): boolean {
+    if (u.team === 0) return false;
+    const range2 = NIGHT_BUILDING_SAFE_RANGE * NIGHT_BUILDING_SAFE_RANGE;
+    const base = u.team === 1 ? P1_BASE : P2_BASE;
+    if (pdist2(u, base) < range2) return true;
+    for (const c of this.camps) {
+      if (c.owner === u.team && pdist2(u, c) < range2) return true;
+    }
+    for (const tw of this.towers) {
+      if (tw.alive && tw.team === u.team && pdist2(u, tw) < range2) return true;
+    }
+    for (const a of this.armories) {
+      if (a.team === u.team && pdist2(u, a) < range2) return true;
+    }
+    return false;
+  }
+
+  private getBannerAura(u: SimUnit): { attack: number; speed: number } {
+    if (u.team === 0) return { attack: 0, speed: 0 };
+    const BANNER_RANGE = 120;
+    const nearby = getNearbyFromGrid(this._spatialGrid, u.x, u.y, BANNER_RANGE, this._spatialCellSize);
+    for (const ally of nearby) {
+      if (ally === u || ally.team !== u.team || ally.equipment !== 'banner') continue;
+      const lm = EQUIP_LEVEL_STAT_MULT[ally.equipLevel] || 1;
+      return { attack: 0.20 * lm, speed: 0.15 * lm };
+    }
+    return { attack: 0, speed: 0 };
+  }
+
+  private getBootstrapAnimal(wf: { steps: { action: string; targetAnimal?: string }[] }): string | undefined {
+    for (const s of wf.steps) {
+      if (s.action === 'attack_camp' && s.targetAnimal) return s.targetAnimal;
+    }
+    return undefined;
+  }
+
+  private getNearbyUnits(x: number, y: number, radius: number): SimUnit[] {
+    return getNearbyFromGrid(this._spatialGrid, x, y, radius, this._spatialCellSize);
+  }
+
+  private getElevation(x: number, y: number): number {
+    if (!this._tiles || this._tiles.length === 0) return 0;
+    const row = Math.floor(y / TILE_SIZE);
+    const col = Math.floor(x / TILE_SIZE);
+    if (row >= 0 && row < this._tiles.length && col >= 0 && col < this._tiles[0].length) {
+      return this._tiles[row][col] === 1 ? 1 : 0;
+    }
+    return 0;
+  }
+
+  // ─── Movement Context Builder ─────────────────────────────────
+
+  private buildMovementContext(dt: number): MovementContext {
+    return {
+      units: this.units,
+      tiles: this._tiles.length > 0 ? this._tiles : null as any,
+      walkableGrid: this._walkableGrid,
+      walkGridRows: this._walkGridRows,
+      walkGridCols: this._walkGridCols,
+      staticBlockedGrid: this._staticBlockedGrid,
+      isNight: this.isNight,
+      frameCount: this._frameCount,
+      stuckCheckCounter: this._stuckCheckCounter,
+      camps: this.camps,
+      defendedCamps: this._defendedCamps,
+      spatialGrid: this._spatialGrid,
+      spatialCellSize: this._spatialCellSize,
+      framePathCache: this._framePathCache,
+      pathsThisFrame: this._pathsThisFrame,
+      pathQueue: this._pathQueue,
+      astarBlocked: this._astarBlocked,
+      astarGScore: this._astarGScore,
+      astarFScore: this._astarFScore,
+      astarCameFrom: this._astarCameFrom,
+      astarClosed: this._astarClosed,
+      astarInOpen: this._astarInOpen,
+      astarOccupied: this._astarOccupied,
+      frameOccupiedReady: this._frameOccupiedReady,
+      frameAvoidPenalty: this._frameAvoidPenalty,
+      avoidPenaltyPool: this._avoidPenaltyPool,
+      staticClearancePenalty: this._staticClearancePenalty,
+      getUnitEquipBuffs: (u) => this.getUnitEquipBuffs(u),
+      getBannerAura: (u) => this.getBannerAura(u),
+      getBuffs: (team) => this.getBuffs(team),
+      isNearFriendlyBuilding: (u) => this.isNearFriendlyBuilding(u),
+      isNonCombatStep: (u) => this.isNonCombatStep(u),
+      getBootstrapAnimal: (wf) => this.getBootstrapAnimal(wf as any),
+      getNearbyUnits: (x, y, r) => this.getNearbyUnits(x, y, r),
+      p1Base: P1_BASE,
+      p2Base: P2_BASE,
+    };
+  }
+
+  // ─── Combat Context Builder ───────────────────────────────────
+
+  private buildCombatContext(): CombatContext {
+    const enemyNexus: { [team: number]: SimNexus | null } = {};
+    for (const n of this.nexuses) {
+      // For team 1, enemy nexus is team 2's, and vice versa
+      enemyNexus[n.team === 1 ? 2 : 1] = enemyNexus[n.team === 1 ? 2 : 1] || null;
+    }
+    // Properly set: team 1's enemy is team 2's nexus, team 2's enemy is team 1's nexus
+    enemyNexus[1] = this.nexuses.find(n => n.team === 2) || null;
+    enemyNexus[2] = this.nexuses.find(n => n.team === 1) || null;
+
+    return {
+      units: this.units,
+      unitById: this._unitById,
+      camps: this.camps,
+      nexuses: this.nexuses,
+      towers: this.towers,
+      pendingHits: this.pendingHits,
+      isNight: this.isNight,
+      getUnitEquipBuffs: (u) => this.getUnitEquipBuffs(u),
+      getBannerAura: (u) => this.getBannerAura(u),
+      getBuffs: (team) => this.getBuffs(team),
+      isNearFriendlyBuilding: (u) => this.isNearFriendlyBuilding(u),
+      isNonCombatStep: (u) => this.isNonCombatStep(u),
+      getNearbyUnits: (x, y, r) => this.getNearbyUnits(x, y, r),
+      getElevation: (x, y) => this.getElevation(x, y),
+      enemyNexus,
+      p1Base: P1_BASE,
+      p2Base: P2_BASE,
+      matchStats: this.matchStats,
+      unitKillCounts: this._unitKillCounts,
+      topKiller: this._topKiller,
+      eliteKillCount: this.eliteKillCount,
+    };
+  }
+
   // ─── Main Tick ──────────────────────────────────────────────
 
   tick(deltaMs: number): void {
@@ -360,12 +836,32 @@ export class GameSimulation implements SimState {
     this.lastDeltaMs = deltaMs;
     const dt = deltaMs / 1000;
     this.gameTime += deltaMs;
+    this._frameCount++;
 
     // Rebuild ground item lookup
     this._groundItemMap.clear();
     for (const i of this.groundItems) {
       if (!i.dead) this._groundItemMap.set(i.id, i);
     }
+
+    // Rebuild spatial grid
+    this._spatialGrid = buildSpatialGrid(this.units, this._spatialCellSize, this._spatialGrid, this._bucketPool);
+
+    // Rebuild unit-by-id map
+    this._unitById.clear();
+    for (const u of this.units) if (!u.dead) this._unitById.set(u.id, u);
+
+    // Build defended camps set
+    this._defendedCamps.clear();
+    for (const u of this.units) if (!u.dead && u.team === 0 && u.campId) this._defendedCamps.add(u.campId);
+
+    // Clear per-frame caches
+    this._framePathCache.clear();
+    for (const arr of this._frameAvoidPenalty.values()) this._avoidPenaltyPool.push(arr);
+    this._frameAvoidPenalty.clear();
+    this._frameOccupiedReady = false;
+    this._pathsThisFrame = 0;
+    this._pathQueue.length = 0;
 
     // Tick down camp loot buffs
     for (let i = this.teamBuffs.length - 1; i >= 0; i--) {
@@ -389,8 +885,37 @@ export class GameSimulation implements SimState {
     UnitAI.updateResourcePickup(this);
     UnitAI.updateDeliveries(this);
 
-    // Movement is handled externally (Movement module)
-    // Combat is handled externally (Combat module)
+    // Movement
+    const movCtx = this.buildMovementContext(dt);
+    const movResult = Movement.updateMovement(dt, movCtx);
+    this._stuckCheckCounter = movResult.stuckCheckCounter;
+    this._pathsThisFrame = movResult.pathsThisFrame;
+    this._frameOccupiedReady = movResult.frameOccupiedReady;
+
+    // Drain path queue
+    while (this._pathQueue.length > 0 && this._pathsThisFrame < MAX_PATHS_PER_FRAME) {
+      const req = this._pathQueue.shift()!;
+      req.callback(null); // simplified: deferred paths get null (unit will retry next tick)
+    }
+
+    // Combat (every 2nd frame, 2x delta — matching client pattern)
+    if (this._frameCount % 2 === 0) {
+      const combatCtx = this.buildCombatContext();
+      const combatResult = Combat.updateCombat(deltaMs * 2, combatCtx);
+      for (const drop of combatResult.drops) {
+        this.spawnGroundItem(drop.type as ResourceType, drop.x, drop.y);
+      }
+      // Merge new pending hits
+      for (const hit of combatResult.newPendingHits) {
+        this.pendingHits.push(hit as any);
+      }
+      // Process pending hits
+      const hitResult = Combat.processPendingHits(deltaMs * 2, combatCtx);
+      for (const drop of hitResult.drops) {
+        this.spawnGroundItem(drop.type as ResourceType, drop.x, drop.y);
+      }
+      this.eliteKillCount = combatCtx.eliteKillCount;
+    }
 
     // Nexus & tower combat
     CampLogic.updateNexusCombat(deltaMs, this);
@@ -454,12 +979,10 @@ export class GameSimulation implements SimState {
       tx = base.x; ty = base.y; found = true;
 
     } else if (cmd.targetType === 'camp') {
-      // Specific camp by index
       if (cmd.campIndex != null && cmd.campIndex >= 0 && cmd.campIndex < this.camps.length) {
         const c = this.camps[cmd.campIndex];
         tx = c.x; ty = c.y; found = true;
       }
-      // By animal type — nearest not owned by me
       if (!found && cmd.targetAnimal) {
         const cs = this.camps.filter(c => c.animalType === cmd.targetAnimal && c.owner !== team)
           .sort((a, b) => pdist2(a, base) - pdist2(b, base));
@@ -471,13 +994,11 @@ export class GameSimulation implements SimState {
       if (result) { tx = result.x; ty = result.y; found = true; }
 
     } else if (cmd.targetType === 'sweep_camps') {
-      // Chain-capture: find all matching uncaptured camps, sorted nearest-first
       let targets = this.camps.filter(c => c.owner !== team);
       if (cmd.targetAnimal) targets = targets.filter(c => c.animalType === cmd.targetAnimal);
       targets.sort((a, b) => pdist2(a, base) - pdist2(b, base));
 
       if (targets.length > 0) {
-        // Build a multi-step workflow that attacks each camp in order
         const steps: WorkflowStep[] = [];
         for (const t of targets) {
           const campIdx = this.camps.indexOf(t);
@@ -496,13 +1017,11 @@ export class GameSimulation implements SimState {
       }
 
     } else if (cmd.targetType === 'workflow' && cmd.workflow && cmd.workflow.length > 0) {
-      // LLM-defined workflow — parse steps and assign to selected units
       const steps: WorkflowStep[] = this.parseWorkflowSteps(cmd.workflow);
       if (steps.length === 0) return;
-      if (steps.length > 7) steps.length = 7; // cap complexity
+      if (steps.length > 7) steps.length = 7;
 
       let rawLoopFrom = cmd.loopFrom ?? 0;
-      // Safety net: if workflow has attack_camp and delivers to a camp, force loopFrom: 0
       const hasAttackCamp = steps.some(s => s.action === 'attack_camp');
       const deliversToCamp = steps.some(s => s.action === 'deliver' && 'target' in s && (s as { target: string }).target.includes('_camp'));
       if (hasAttackCamp && deliversToCamp) rawLoopFrom = 0;
@@ -529,7 +1048,6 @@ export class GameSimulation implements SimState {
       found = true;
 
     } else if (cmd.targetType === 'query' || cmd.targetType === 'advanced_plan') {
-      // Queries and advanced plans are not handled server-side in processCommand
       return;
     }
 
@@ -560,7 +1078,6 @@ export class GameSimulation implements SimState {
     this.assignWorkflow(workflow, subject, team);
   }
 
-  /** Parse raw workflow step objects from LLM into typed WorkflowStep array */
   private parseWorkflowSteps(rawSteps: { action: string; resourceType?: string; target?: string; targetType?: string; campIndex?: number; qualifier?: string; targetAnimal?: string; x?: number; y?: number; equipmentType?: string }[]): WorkflowStep[] {
     return rawSteps.map(s => {
       switch (s.action) {
@@ -600,7 +1117,6 @@ export class GameSimulation implements SimState {
     }).filter((s): s is WorkflowStep => s !== null);
   }
 
-  /** Assign a workflow to all matching units and store as group workflow */
   private assignWorkflow(workflow: HWorkflow, subject: string, team: 1 | 2): void {
     const sel = this.units.filter(u => u.team === team && !u.dead &&
       (subject === 'all' || u.type === subject));
@@ -612,12 +1128,10 @@ export class GameSimulation implements SimState {
       u.targetY = u.y;
       u.pathWaypoints = null;
       u.claimItemId = -1;
-      // Ensure mods are up-to-date from group modifiers
       const gm = this.groupModifiers[`${u.type}_${team}`];
       if (gm) u.mods = { ...gm };
     }
 
-    // Store as group workflow so new spawns inherit it
     if (subject === 'all') {
       const types = new Set(sel.map(u => u.type));
       for (const t of types) this.groupWorkflows[`${t}_${team}`] = workflow;
@@ -626,7 +1140,6 @@ export class GameSimulation implements SimState {
     }
   }
 
-  /** Apply behavior modifiers (sticky — only update axes that are explicitly set) */
   private applyModifiers(mods: { formation?: string | null; caution?: string | null; pacing?: string | null }, subject: string, team: 1 | 2): void {
     const sel = this.units.filter(u => u.team === team && !u.dead && (subject === 'all' || u.type === subject));
     const types = subject === 'all' ? new Set(sel.map(u => u.type)) : new Set([subject]);
@@ -635,14 +1148,11 @@ export class GameSimulation implements SimState {
       const key = `${type}_${team}`;
       if (!this.groupModifiers[key]) this.groupModifiers[key] = { ...DEFAULT_MODS };
       const gm = this.groupModifiers[key];
-
-      // null = clear that axis back to normal. undefined = leave unchanged (sticky).
       if (mods.formation !== undefined) gm.formation = (mods.formation as BehaviorMods['formation']) || 'normal';
       if (mods.caution !== undefined) gm.caution = (mods.caution as BehaviorMods['caution']) || 'normal';
       if (mods.pacing !== undefined) gm.pacing = (mods.pacing as BehaviorMods['pacing']) || 'normal';
     }
 
-    // Apply to living units
     for (const u of sel) {
       const key = `${u.type}_${team}`;
       const gm = this.groupModifiers[key] || DEFAULT_MODS;
@@ -650,27 +1160,22 @@ export class GameSimulation implements SimState {
     }
   }
 
-  /** Find the nearest camp matching filters, sorted by qualifier */
   private findNearestCamp(team: 1 | 2, animal?: string, qualifier?: string, _subject?: string): { x: number; y: number; campIndex: number } | null {
     const base = team === 1 ? P1_BASE : P2_BASE;
     let candidates = this.camps.slice();
 
-    // Filter by animal type if specified
     if (animal) candidates = candidates.filter(c => c.animalType === animal);
 
-    // Filter by qualifier
     const q = qualifier || 'nearest';
     if (q === 'uncaptured') candidates = candidates.filter(c => c.owner !== team);
     else if (q === 'enemy') candidates = candidates.filter(c => c.owner !== 0 && c.owner !== team);
-    else candidates = candidates.filter(c => c.owner !== team); // default: not mine
+    else candidates = candidates.filter(c => c.owner !== team);
 
     if (candidates.length === 0) {
-      // If no uncaptured, try any camp of that type
       if (animal) candidates = this.camps.filter(c => c.animalType === animal);
       else candidates = this.camps.slice();
     }
 
-    // Sort by qualifier
     if (q === 'nearest' || q === 'uncaptured' || q === 'enemy') {
       candidates.sort((a, b) => pdist2(a, base) - pdist2(b, base));
     } else if (q === 'furthest') {
@@ -698,6 +1203,18 @@ export class GameSimulation implements SimState {
 
   // ─── Sync State ─────────────────────────────────────────────
 
+  /** Recursively strip undefined values (Firebase/JSON rejects them) */
+  private static stripUndefined(obj: any): any {
+    if (obj === null || obj === undefined) return null;
+    if (typeof obj !== 'object') return obj;
+    if (Array.isArray(obj)) return obj.map(v => GameSimulation.stripUndefined(v));
+    const clean: Record<string, any> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (v !== undefined) clean[k] = GameSimulation.stripUndefined(v);
+    }
+    return clean;
+  }
+
   buildSyncState(): any {
     const syncUnits = this.units.filter(u => !u.dead).map(u => ({
       id: u.id, type: u.type, team: u.team,
@@ -706,7 +1223,11 @@ export class GameSimulation implements SimState {
       dead: false, campId: u.campId,
       carrying: u.carrying, equipment: u.equipment, equipLevel: u.equipLevel,
       animState: u.animState,
-      loop: u.loop ? { steps: u.loop.steps.map(s => ({ ...(s as any) })), currentStep: u.loop.currentStep } : null,
+      loop: u.loop ? { steps: u.loop.steps.map(s => {
+        const obj: Record<string, any> = {};
+        for (const [k, v] of Object.entries(s)) { if (v !== undefined) obj[k] = v; }
+        return obj;
+      }), currentStep: u.loop.currentStep } : null,
     }));
     const syncCamps = this.camps.map(c => ({
       id: c.id, owner: c.owner, spawnTimer: c.spawnTimer, storedFood: c.storedFood,
@@ -714,7 +1235,7 @@ export class GameSimulation implements SimState {
     const syncNexuses = this.nexuses.map(n => ({
       team: n.team, hp: n.hp,
     }));
-    return {
+    return GameSimulation.stripUndefined({
       units: syncUnits,
       camps: syncCamps,
       nexuses: syncNexuses,
@@ -747,7 +1268,7 @@ export class GameSimulation implements SimState {
           cost: e.data.cost, sacrificesNeeded: e.data.sacrificesNeeded,
         },
       })),
-    };
+    });
   }
 
   isGameOver(): boolean {
@@ -757,7 +1278,6 @@ export class GameSimulation implements SimState {
   // ─── Cleanup ────────────────────────────────────────────────
 
   private cleanupDead(): void {
-    // In-place compaction for units
     let writeIdx = 0;
     for (let readIdx = 0; readIdx < this.units.length; readIdx++) {
       const u = this.units[readIdx];
@@ -766,7 +1286,5 @@ export class GameSimulation implements SimState {
       }
     }
     this.units.length = writeIdx;
-
-    // Ground items are cleaned up by UnitAI.updateGroundItems
   }
 }

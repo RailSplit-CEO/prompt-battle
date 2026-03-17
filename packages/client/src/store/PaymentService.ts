@@ -17,14 +17,12 @@ export interface PurchaseResult {
 // ── Helpers ──────────────────────────────────────────────────────
 
 function detectPlatform(): PaymentPlatform {
-  // Check for test / dev mode
   if (
     (import.meta as any).env?.VITE_DEV_MODE === 'true' ||
     localStorage.getItem('pb_dev') === 'true'
   ) {
     return 'test';
   }
-  // Check for itch.io
   if (
     (import.meta as any).env?.VITE_PLATFORM === 'itch' ||
     window.location.hostname.includes('itch.zone')
@@ -34,12 +32,14 @@ function detectPlatform(): PaymentPlatform {
   return 'square';
 }
 
-/** Get the Cloud Functions base URL from env. */
 function getFunctionsUrl(): string {
+  // Explicit env override takes priority
   return (import.meta as any).env?.VITE_FUNCTIONS_URL || '';
+  // Empty string = relative URLs. Works in:
+  //   - Production: Firebase Hosting rewrites /api/store/* → Cloud Functions
+  //   - Dev: Vite proxy in vite.config.ts rewrites /api/store/* → deployed Cloud Functions
 }
 
-/** Get a fresh Firebase ID token for authenticated requests. */
 async function getIdToken(): Promise<string> {
   const auth = getAuth(getFirebaseApp());
   const user = auth.currentUser;
@@ -47,9 +47,34 @@ async function getIdToken(): Promise<string> {
   return user.getIdToken();
 }
 
+/** Safely parse JSON from a response — returns fallback on failure */
+async function safeJson(res: Response, fallback: any = {}): Promise<any> {
+  try {
+    const text = await res.text();
+    if (!text) return fallback;
+    return JSON.parse(text);
+  } catch {
+    return fallback;
+  }
+}
+
+/** Make an authenticated POST to a Cloud Function endpoint */
+async function apiPost(path: string, body: Record<string, any>): Promise<{ res: Response; data: any }> {
+  const baseUrl = getFunctionsUrl();
+  const token = await getIdToken();
+  const res = await fetch(`${baseUrl}${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+  });
+  const data = await safeJson(res, { error: `Server returned ${res.status}` });
+  return { res, data };
+}
+
 // ── PaymentService singleton ────────────────────────────────────
-// Abstracts over Square / itch.io / test-mode payments so the UI
-// layer never has to care which platform it's running on.
 
 export class PaymentService {
   private static instance: PaymentService | null = null;
@@ -72,102 +97,64 @@ export class PaymentService {
 
   // ── Square flow ─────────────────────────────────────────────────
 
-  /**
-   * Create a Square order for a crown package.
-   * Returns an orderId the payment form needs to complete the charge.
-   */
   async createOrder(
     packageId: string,
   ): Promise<{ orderId: string; amount: number; crowns: number; bonusPercent: number }> {
-    const token = await getIdToken();
-    const res = await fetch(`${getFunctionsUrl()}/api/store/createOrder`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ packageId }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: 'Request failed' }));
-      throw new Error(err.error || 'Failed to create order');
-    }
-    return res.json();
+    const { res, data } = await apiPost('/api/store/createOrder', { packageId });
+    if (!res.ok) throw new Error(data.error || 'Failed to create order');
+    return data;
   }
 
-  /** Complete a Square payment with the card nonce / source ID. */
   async completePayment(
     orderId: string,
     sourceId: string,
     packageId: string,
   ): Promise<PurchaseResult> {
-    const token = await getIdToken();
-    const res = await fetch(`${getFunctionsUrl()}/api/store/completePayment`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ orderId, sourceId, packageId }),
-    });
-    const data = await res.json();
-    if (!res.ok) return { success: false, error: data.error };
-    return data;
+    try {
+      const { res, data } = await apiPost('/api/store/completePayment', { orderId, sourceId, packageId });
+      if (!res.ok) return { success: false, error: data.error || 'Payment failed' };
+      return data;
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Payment request failed' };
+    }
   }
 
   // ── Itch.io flow ────────────────────────────────────────────────
 
-  /** Redeem an itch.io download key for crowns. */
   async redeemItchKey(key: string, packageId: string): Promise<PurchaseResult> {
-    const token = await getIdToken();
-    const res = await fetch(`${getFunctionsUrl()}/api/store/redeemItchKey`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ key, packageId }),
-    });
-    const data = await res.json();
-    if (!res.ok) return { success: false, error: data.error };
-    return data;
+    try {
+      const { res, data } = await apiPost('/api/store/redeemItchKey', { key, packageId });
+      if (!res.ok) return { success: false, error: data.error || 'Key redemption failed' };
+      return data;
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Key redemption request failed' };
+    }
   }
 
   // ── In-game item purchases ──────────────────────────────────────
 
-  /**
-   * Purchase a catalog item with Crowns or Glory.
-   * Deducting currency and granting items is handled server-side.
-   */
   async purchaseItem(itemId: string, currency: 'crowns' | 'glory'): Promise<PurchaseResult> {
-    const token = await getIdToken();
-    const res = await fetch(`${getFunctionsUrl()}/api/store/purchaseItem`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify({ itemId, currency }),
-    });
-    const data = await res.json();
-    if (!res.ok) return { success: false, error: data.error };
-    return { success: true };
+    try {
+      const { res, data } = await apiPost('/api/store/purchaseItem', { itemId, currency });
+      if (!res.ok) return { success: false, error: data.error || 'Purchase failed' };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Purchase request failed' };
+    }
   }
 
   // ── Glory grants ────────────────────────────────────────────────
 
-  /** Request a glory grant for a gameplay event (server validates). */
   async grantGlory(
     event: string,
     extra?: Record<string, any>,
   ): Promise<{ gloryGranted: number; breakdown?: Record<string, number> }> {
-    const token = await getIdToken();
-    const res = await fetch(`${getFunctionsUrl()}/api/store/grantGlory`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ event, ...extra }),
-    });
-    if (!res.ok) return { gloryGranted: 0 };
-    return res.json();
+    try {
+      const { res, data } = await apiPost('/api/store/grantGlory', { event, ...extra });
+      if (!res.ok) return { gloryGranted: 0 };
+      return data;
+    } catch {
+      return { gloryGranted: 0 };
+    }
   }
 }

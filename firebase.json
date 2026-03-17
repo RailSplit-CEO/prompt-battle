@@ -55,6 +55,18 @@
         "function": "itchAppAuth"
       },
       {
+        "source": "/api/store/purchaseBattlePass",
+        "function": "purchaseBattlePass"
+      },
+      {
+        "source": "/api/store/grantBattlePassXp",
+        "function": "grantBattlePassXp"
+      },
+      {
+        "source": "/api/store/claimBattlePassReward",
+        "function": "claimBattlePassReward"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

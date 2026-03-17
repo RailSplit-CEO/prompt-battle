@@ -86,6 +86,12 @@
         ".write": "auth != null && auth.uid === $uid"
       }
     },
+    "activeBoosters": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
     "matchmaking": {
       ".read": "auth != null",
       ".write": "auth != null"

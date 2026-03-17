@@ -254,117 +254,62 @@ export class ProfileSetupOverlay {
 
       panel.appendChild(usernameSection);
 
-      // Icon section
-      const iconSection = document.createElement('div');
-      Object.assign(iconSection.style, {
-        width: '100%',
+      // Auto-assign a random icon (no selection)
+      this.selectedIcon = PROFILE_ICONS[Math.floor(Math.random() * PROFILE_ICONS.length)].key;
+
+      // Show assigned icon preview
+      const iconPreview = document.createElement('div');
+      Object.assign(iconPreview.style, {
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
         marginBottom: '24px',
+        gap: '8px',
       });
 
       const iconLabel = document.createElement('div');
-      iconLabel.textContent = 'CHOOSE YOUR ICON';
+      iconLabel.textContent = 'YOUR ICON';
       Object.assign(iconLabel.style, {
         fontSize: '13px',
         fontWeight: 'bold',
         color: C.textSecondary,
         letterSpacing: '2px',
-        marginBottom: '14px',
       });
-      iconSection.appendChild(iconLabel);
+      iconPreview.appendChild(iconLabel);
 
-      // Icon grid
-      const grid = document.createElement('div');
-      Object.assign(grid.style, {
-        display: 'grid',
-        gridTemplateColumns: 'repeat(3, 1fr)',
-        gap: '16px',
-        justifyItems: 'center',
-        width: '100%',
+      const iconBox = document.createElement('div');
+      Object.assign(iconBox.style, {
+        width: '100px',
+        height: '100px',
+        borderRadius: '50%',
+        overflow: 'hidden',
+        border: `3px solid ${C.gold}`,
+        background: C.surface,
+        boxShadow: '0 0 12px rgba(255,217,61,0.2)',
       });
+      const img = document.createElement('img');
+      img.src = `${AVATAR_BASE}/${this.selectedIcon}.png`;
+      Object.assign(img.style, {
+        width: '100%', height: '100%', objectFit: 'cover', display: 'block', imageRendering: 'pixelated',
+      });
+      iconBox.appendChild(img);
+      iconPreview.appendChild(iconBox);
 
-      const iconCells: Map<string, HTMLDivElement> = new Map();
+      const iconName = document.createElement('div');
+      iconName.textContent = PROFILE_ICONS.find(i => i.key === this.selectedIcon)?.label || '';
+      Object.assign(iconName.style, {
+        fontSize: '14px', fontWeight: '700', color: C.textPrimary, textTransform: 'capitalize',
+      });
+      iconPreview.appendChild(iconName);
 
-      for (const icon of PROFILE_ICONS) {
-        const cell = document.createElement('div');
-        Object.assign(cell.style, {
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          cursor: 'pointer',
-          transition: 'transform 0.15s ease',
-        });
+      const iconHint = document.createElement('div');
+      iconHint.textContent = 'More icons available in the shop!';
+      Object.assign(iconHint.style, {
+        fontSize: '11px', color: C.textMuted, fontStyle: 'italic',
+      });
+      iconPreview.appendChild(iconHint);
 
-        const iconBox = document.createElement('div');
-        Object.assign(iconBox.style, {
-          width: '88px',
-          height: '88px',
-          borderRadius: '12px',
-          overflow: 'hidden',
-          border: '3px solid transparent',
-          transition: 'border-color 0.2s ease, filter 0.2s ease',
-          background: C.surface,
-        });
-
-        const img = document.createElement('img');
-        img.src = `${AVATAR_BASE}/${icon.key}.png`;
-        img.alt = icon.label;
-        Object.assign(img.style, {
-          width: '100%',
-          height: '100%',
-          objectFit: 'cover',
-          display: 'block',
-          imageRendering: 'pixelated',
-        });
-        iconBox.appendChild(img);
-
-        const label = document.createElement('div');
-        label.textContent = icon.label;
-        Object.assign(label.style, {
-          fontSize: '12px',
-          color: C.textMuted,
-          textTransform: 'capitalize',
-          marginTop: '6px',
-          textAlign: 'center',
-          fontWeight: '600',
-        });
-
-        cell.appendChild(iconBox);
-        cell.appendChild(label);
-
-        cell.addEventListener('mouseenter', () => {
-          if (this.selectedIcon !== icon.key) {
-            iconBox.style.filter = 'brightness(1.25)';
-          }
-          cell.style.transform = 'scale(1.05)';
-        });
-        cell.addEventListener('mouseleave', () => {
-          if (this.selectedIcon !== icon.key) {
-            iconBox.style.filter = 'brightness(1)';
-          }
-          cell.style.transform = 'scale(1)';
-        });
-
-        cell.addEventListener('click', () => {
-          // Deselect previous
-          if (this.selectedIcon) {
-            const prev = iconCells.get(this.selectedIcon);
-            if (prev) {
-              (prev.firstChild as HTMLDivElement).style.borderColor = 'transparent';
-              (prev.firstChild as HTMLDivElement).style.filter = 'brightness(1)';
-            }
-          }
-          this.selectedIcon = icon.key;
-          iconBox.style.borderColor = '#FFD93D';
-          iconBox.style.filter = 'brightness(1.15)';
-          this.updateCreateButton();
-        });
-
-        iconCells.set(icon.key, cell);
-        grid.appendChild(cell);
-      }
-
-      iconSection.appendChild(grid);
-      panel.appendChild(iconSection);
+      panel.appendChild(iconPreview);
 
       // Create button
       this.createBtn = document.createElement('button');
@@ -465,7 +410,7 @@ export class ProfileSetupOverlay {
   }
 
   private isFormValid(): boolean {
-    return this.usernameValid && this.usernameAvailable && this.selectedIcon !== null;
+    return this.usernameValid && this.usernameAvailable;
   }
 
   private updateCreateButton(): void {

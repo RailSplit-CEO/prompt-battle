@@ -100,6 +100,8 @@ export class CharacterHub {
   private root: HTMLDivElement | null = null;
   private currentView: 'grid' | 'detail' = 'grid';
   private selectedUnit: HordeUnitType | null = null;
+  private _previewAudio: HTMLAudioElement | null = null;
+  private _previewCache: Record<string, string> = {};
   private selectedTab: 'skins' | 'voice' | 'effects' = 'skins';
   private spritePreview: SpritePreview | null = null;
   private xpBar: XpBar | null = null;
@@ -299,20 +301,12 @@ export class CharacterHub {
 
     container.appendChild(header);
 
-    // ── XP Bar ──
-    const xpRow = document.createElement('div');
-    xpRow.style.cssText = 'padding:8px 20px 4px;flex-shrink:0;';
-    this.xpBar = new XpBar(false);
-    this.xpBar.autoSubscribe();
-    xpRow.appendChild(this.xpBar.getElement());
-    container.appendChild(xpRow);
-
     // ── Scrollable grid ──
     const scroll = document.createElement('div');
     scroll.style.cssText = `
       flex:1;overflow-y:auto;padding:16px 20px 20px;
-      display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));
-      gap:14px;align-content:start;
+      display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));
+      gap:16px;align-content:start;
     `;
 
     for (const unit of UNIT_ORDER) {
@@ -327,7 +321,7 @@ export class CharacterHub {
     const tierColor = TIER_COLORS[unit.tier] || TIER_COLORS[1];
     card.style.cssText = `
       display:flex;flex-direction:column;align-items:center;
-      padding:12px 8px 10px;border-radius:14px;
+      padding:16px 12px 14px;border-radius:14px;
       background:${C.surface};border:1px solid ${C.divider};
       cursor:pointer;transition:all 0.2s ease;
       position:relative;
@@ -351,8 +345,8 @@ export class CharacterHub {
     avatar.src = `assets/enemies/avatars/${unit.type}.png`;
     avatar.alt = unit.name;
     avatar.style.cssText = `
-      width:80px;height:80px;image-rendering:pixelated;
-      border-radius:10px;background:rgba(0,0,0,0.2);
+      width:120px;height:120px;image-rendering:pixelated;
+      border-radius:12px;background:rgba(0,0,0,0.2);
       object-fit:contain;
     `;
     avatar.onerror = () => {
@@ -360,7 +354,7 @@ export class CharacterHub {
       avatar.style.display = 'none';
       const fallback = document.createElement('div');
       fallback.textContent = unit.emoji;
-      fallback.style.cssText = 'font-size:48px;width:80px;height:80px;display:flex;align-items:center;justify-content:center;';
+      fallback.style.cssText = 'font-size:56px;width:120px;height:120px;display:flex;align-items:center;justify-content:center;';
       card.insertBefore(fallback, card.firstChild);
     };
     card.appendChild(avatar);
@@ -369,8 +363,8 @@ export class CharacterHub {
     const name = document.createElement('span');
     name.textContent = unit.name;
     name.style.cssText = `
-      font:bold 13px 'Fredoka',sans-serif;color:${C.textH1};
-      margin-top:6px;text-align:center;
+      font:bold 15px 'Fredoka',sans-serif;color:${C.textH1};
+      margin-top:8px;text-align:center;
     `;
     card.appendChild(name);
 
@@ -973,7 +967,7 @@ export class CharacterHub {
     };
     playBtn.onclick = (e) => {
       e.stopPropagation();
-      console.log('Preview voice:', packId);
+      this.playVoicePreview(packId, unitType, playBtn);
     };
     row.appendChild(playBtn);
 
@@ -1053,6 +1047,81 @@ export class CharacterHub {
     }
 
     return row;
+  }
+
+  // ─── Voice Preview ─────────────────────────────────────────────────────────
+
+  private static readonly DEFAULT_VOICES: Record<string, { voiceId: string; sample: string }> = {
+    gnome: { voiceId: 'ouL9IsyrSnUkCmfnD02u', sample: 'Ooh ooh! Boss is here! Hehehehe! Ready when you are boss!' },
+    turtle: { voiceId: 'NOpBlnGInO9m6vDvFkFC', sample: 'Slow and steady. That is the way. Always has been.' },
+    skull: { voiceId: 'VR6AewLTigWG4xSOukaG', sample: 'From the grave I rise. Again. And again. Death cannot hold me.' },
+    spider: { voiceId: 'D2jw4N9m4xePLTQ3IHjU', sample: 'Shhh. Do you hear that? That is the sound of silk being spun around your ankles.' },
+    hyena: { voiceId: 'ZwLTvq6uCfb4W00YFl7F', sample: 'AHAHA! Run run run! The hunt is ON baby!' },
+    rogue: { voiceId: 'Z7RrOqZFTyLpIlzCgfsp', sample: 'You did not see me. You will not hear me. But you will definitely feel me.' },
+    panda: { voiceId: 'SMmCzq0obKgqq4BpVwlt', sample: 'Mmm. Bamboo. Battle. Both are good. But bamboo is better.' },
+    lizard: { voiceId: 'qhH5VOAvpCwvNpmn2srO', sample: 'Cold blood runs through these veins. It makes me patient. Very patient.' },
+    minotaur: { voiceId: 'cPoqAvGWCPfCfyPMwe4z', sample: 'The labyrinth trembles when I walk. As it should.' },
+    shaman: { voiceId: 'wXvR48IpOq9HACltTmt7', sample: 'The arcane flows through all things. I merely give it direction.' },
+    troll: { voiceId: 'dhwafD61uVd8h85wAZSE', sample: 'Me big. Me strong. Me hungry. You small. This not end well for you.' },
+  };
+
+  private async playVoicePreview(packId: string, unitType: HordeUnitType, btn: HTMLButtonElement): Promise<void> {
+    let voiceId: string | undefined;
+    let sampleText: string | undefined;
+
+    if (packId === 'default') {
+      const def = CharacterHub.DEFAULT_VOICES[unitType];
+      if (def) { voiceId = def.voiceId; sampleText = def.sample; }
+    } else {
+      const item = CatalogService.getInstance().getItem(packId);
+      voiceId = item?.voiceId;
+      sampleText = item?.sampleText;
+    }
+    if (!voiceId || !sampleText) return;
+
+    // Stop any currently playing preview
+    if (this._previewAudio) {
+      this._previewAudio.pause();
+      this._previewAudio.currentTime = 0;
+      this._previewAudio = null;
+    }
+
+    // Check cache
+    const cached = this._previewCache[packId];
+    if (cached) {
+      const audio = new Audio(cached);
+      audio.volume = 0.8;
+      this._previewAudio = audio;
+      audio.play().catch(() => {});
+      return;
+    }
+
+    // Generate — show loading
+    const origText = btn.textContent;
+    btn.textContent = '\u23F3';
+    btn.style.pointerEvents = 'none';
+    try {
+      const apiKey = (import.meta as any).env?.VITE_ELEVENLABS_API_KEY;
+      if (!apiKey) return;
+      const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream?output_format=mp3_44100_128`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'xi-api-key': apiKey },
+        body: JSON.stringify({ text: sampleText, model_id: 'eleven_flash_v2_5' }),
+      });
+      if (!res.ok) throw new Error(`API ${res.status}`);
+      const blob = new Blob([await res.arrayBuffer()], { type: 'audio/mpeg' });
+      const url = URL.createObjectURL(blob);
+      this._previewCache[packId] = url;
+      const audio = new Audio(url);
+      audio.volume = 0.8;
+      this._previewAudio = audio;
+      audio.play().catch(() => {});
+    } catch (err) {
+      console.warn('[Voice Preview] Failed:', err);
+    } finally {
+      btn.textContent = origText!;
+      btn.style.pointerEvents = '';
+    }
   }
 
   // ─── Effects Tab ───────────────────────────────────────────────────────────

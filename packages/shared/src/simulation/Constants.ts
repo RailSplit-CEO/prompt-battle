@@ -4,7 +4,8 @@
 // ═══════════════════════════════════════════════════════════════
 
 import type { EquipmentType } from '../data/maps';
-import { TILE_SIZE } from '../data/maps';
+import { TILE_SIZE as _TILE_SIZE } from '../data/maps';
+export const TILE_SIZE = _TILE_SIZE;
 import type {
   AnimalDef,
   CampDef,
@@ -13,6 +14,13 @@ import type {
   MapEventType,
   ResourceType,
 } from './SimTypes';
+
+// ─── Pathfinding Grid ───────────────────────────────────────
+
+export const PATH_CELL = 64;
+export const PATH_GRID = 100; // WORLD_W / PATH_CELL
+export const MAX_PATHS_PER_FRAME = 15;
+export { SPATIAL_KEY_STRIDE } from './SpatialGrid';
 
 // ─── World / Tile Constants ─────────────────────────────────
 
@@ -56,6 +64,7 @@ export const COMBAT_RANGE = 80;
 export const TURTLE_TAUNT_RANGE = 100;
 export const PROJECTILE_SPEED = 450;
 export const PROJECTILE_HIT_DIST = 18;
+export const HIT_DELAY_MS = 500;
 
 // ─── Tower ───────────────────────────────────────────────────
 

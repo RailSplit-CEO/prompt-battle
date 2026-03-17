@@ -432,6 +432,22 @@ export interface GameContext {
   activeBuffs?: { stat: string; amount: number; remaining: number }[];
 }
 
+// ─── Movement / Combat Context Types ────────────────────────
+
+export type SimWorkflow = HWorkflow;
+
+export type Pos = { x: number; y: number };
+
+export type EquipBuffs = {
+  speed: number; attack: number; hp: number;
+  damageTaken: number; atkSpeedMult: number;
+  pickupRange: number; gatherSpeed: number;
+};
+
+export type BannerAura = { speed: number; attack: number };
+
+export type TeamBuffs = { speed: number; attack: number; hp: number };
+
 // ─── Type Aliases (sim-prefixed names for clarity) ──────────
 // These allow simulation modules to use readable "Sim*" names
 // while the core types retain "H*" for HordeScene compat.
@@ -444,18 +460,10 @@ export type SimGroundItem = HGroundItem;
 export type SimMineNode = HMineNode;
 export type SimArmory = HArmory;
 
-// ─── Map Definition (minimal, for server-side sim) ──────────
-
-export interface MapDef {
-  carrotZones: { x: number; y: number; w: number; h: number }[];
-  wildZones: { x: number; y: number; w: number; h: number }[];
-  wildExclusions: { x: number; y: number; radius: number }[];
-  campSlots: { bluePos: { x: number; y: number }; redPos: { x: number; y: number }; tier: number }[];
-  trollSlot?: { x: number; y: number };
-  mineSlots?: { bluePos: { x: number; y: number }; redPos: { x: number; y: number } }[];
-  armorySlots?: { bluePos: { x: number; y: number }; redPos: { x: number; y: number }; equipmentType?: string }[];
-  safeRadius?: number;
-}
+// ─── Map Definition ──────────────────────────────────────────
+// Re-export the full MapDef from data/maps so simulation and server can use it.
+import type { MapDef as _MapDef } from '../data/maps';
+export type MapDef = _MapDef;
 
 // ─── SimState Interface ─────────────────────────────────────
 // Implemented by GameSimulation and consumed by all system modules.

@@ -20,6 +20,7 @@ export class PvpMenuScene extends Phaser.Scene {
   private cancelBtn?: { container: Phaser.GameObjects.Container; zone: Phaser.GameObjects.Zone };
   private _resizeHandler: (() => void) | null = null;
   private _resizeTimer: number | null = null;
+  private _friendsList: any[] = [];
 
   constructor() {
     super({ key: 'PvpMenuScene' });
@@ -706,6 +707,135 @@ export class PvpMenuScene extends Phaser.Scene {
     }, 1000);
   }
 
+  private showInviteScreen(friendName: string) {
+    this.destroyQueueOverlay();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'pvp-queue-overlay';
+    overlay.style.cssText = `
+      position:fixed;inset:0;z-index:9998;
+      background:rgba(5,8,3,0.88);
+      backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+      display:flex;flex-direction:column;align-items:center;justify-content:center;
+      font-family:'Nunito',sans-serif;
+      opacity:0;transition:opacity 0.4s ease;
+    `;
+
+    // Timer
+    let elapsed = 0;
+    const timerEl = document.createElement('div');
+    timerEl.style.cssText = 'font-size:42px;font-weight:800;color:#FFD93D;font-family:"Fredoka",sans-serif;letter-spacing:2px;margin-bottom:8px;';
+    timerEl.textContent = '0:00';
+
+    // Label
+    const label = document.createElement('div');
+    label.style.cssText = 'font-size:16px;color:#a89870;letter-spacing:3px;text-transform:uppercase;margin-bottom:6px;';
+    label.textContent = `INVITING ${friendName.toUpperCase()}`;
+
+    // Animated dots
+    const dotsEl = document.createElement('div');
+    dotsEl.style.cssText = 'font-size:28px;color:#4a8aBB;letter-spacing:8px;margin-bottom:40px;height:32px;';
+
+    // Pulsing ring animation
+    const ring = document.createElement('div');
+    ring.style.cssText = `
+      width:120px;height:120px;border-radius:50%;
+      border:3px solid rgba(74,138,187,0.3);
+      box-shadow:0 0 30px rgba(74,138,187,0.1),inset 0 0 30px rgba(74,138,187,0.05);
+      display:flex;align-items:center;justify-content:center;
+      margin-bottom:32px;
+      animation:pvq-invite-pulse 2s ease-in-out infinite;
+    `;
+    const ringIcon = document.createElement('div');
+    ringIcon.style.cssText = 'font-size:48px;';
+    ringIcon.textContent = '🤝';
+    ring.appendChild(ringIcon);
+
+    // Cancel button
+    const cancelBtn = document.createElement('button');
+    cancelBtn.textContent = 'CANCEL';
+    cancelBtn.style.cssText = `
+      padding:14px 48px;border-radius:10px;cursor:pointer;
+      background:rgba(139,51,51,0.6);border:2px solid rgba(187,68,68,0.7);
+      color:#FF6B6B;font-family:'Fredoka',sans-serif;font-size:16px;font-weight:700;
+      letter-spacing:2px;text-transform:uppercase;
+      transition:all 0.2s ease;
+      box-shadow:0 4px 16px rgba(0,0,0,0.3);
+    `;
+    cancelBtn.onmouseenter = () => {
+      cancelBtn.style.background = 'rgba(180,60,60,0.8)';
+      cancelBtn.style.borderColor = '#FF6B6B';
+      cancelBtn.style.transform = 'scale(1.05)';
+    };
+    cancelBtn.onmouseleave = () => {
+      cancelBtn.style.background = 'rgba(139,51,51,0.6)';
+      cancelBtn.style.borderColor = 'rgba(187,68,68,0.7)';
+      cancelBtn.style.transform = 'scale(1)';
+    };
+    cancelBtn.onclick = () => {
+      this.destroyQueueOverlay();
+      this.cleanupQueue();
+      this.statusText.setText('Invite cancelled');
+      this.statusText.setColor('#a89870');
+    };
+
+    // Tip text
+    const tip = document.createElement('div');
+    tip.style.cssText = 'font-size:11px;color:#5a6a4a;margin-top:16px;';
+    tip.textContent = 'Press ESC to cancel';
+
+    // Inject invite pulse animation
+    if (!document.getElementById('pvq-invite-styles')) {
+      const style = document.createElement('style');
+      style.id = 'pvq-invite-styles';
+      style.textContent = `
+        @keyframes pvq-invite-pulse {
+          0%,100% { transform:scale(1); border-color:rgba(74,138,187,0.3); box-shadow:0 0 30px rgba(74,138,187,0.1),inset 0 0 30px rgba(74,138,187,0.05); }
+          50% { transform:scale(1.08); border-color:rgba(74,138,187,0.6); box-shadow:0 0 50px rgba(74,138,187,0.2),inset 0 0 40px rgba(74,138,187,0.1); }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    overlay.appendChild(ring);
+    overlay.appendChild(timerEl);
+    overlay.appendChild(label);
+    overlay.appendChild(dotsEl);
+    overlay.appendChild(cancelBtn);
+    overlay.appendChild(tip);
+    document.body.appendChild(overlay);
+    this.queueOverlay = overlay;
+
+    // ESC to cancel
+    const escHandler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && this.queueOverlay === overlay) {
+        window.removeEventListener('keydown', escHandler);
+        this.destroyQueueOverlay();
+        this.cleanupQueue();
+        this.statusText.setText('Invite cancelled');
+        this.statusText.setColor('#a89870');
+      }
+    };
+    window.addEventListener('keydown', escHandler);
+
+    // Fade in
+    requestAnimationFrame(() => { overlay.style.opacity = '1'; });
+
+    // Timer + dots update
+    let dotCount = 0;
+    const interval = setInterval(() => {
+      if (!this.queueOverlay || this.queueOverlay !== overlay) { clearInterval(interval); window.removeEventListener('keydown', escHandler); return; }
+      elapsed++;
+      const m = Math.floor(elapsed / 60);
+      const s = elapsed % 60;
+      timerEl.textContent = `${m}:${s.toString().padStart(2, '0')}`;
+      dotCount = (dotCount + 1) % 4;
+      dotsEl.textContent = '●'.repeat(dotCount + 1) + '○'.repeat(3 - dotCount);
+      if (elapsed === 30) label.textContent = 'WAITING FOR RESPONSE...';
+      else if (elapsed === 50) label.textContent = 'INVITE EXPIRING SOON...';
+    }, 1000);
+  }
+
   private async buildLadderSidebar(overlay: HTMLDivElement) {
     const auth = AuthManager.getInstance();
     if (!auth.currentUser) return;
@@ -1117,24 +1247,19 @@ export class PvpMenuScene extends Phaser.Scene {
         onDeclineRequest: async (uid: string) => auth.declineRequest(uid),
         onRemoveFriend: async (uid: string) => auth.removeFriend(uid),
         onInvite: async (friendUid: string) => {
-          // Send invite, close panel, wait for response
+          // Send invite, close panel, show invite overlay
+          const friendEntry = this._friendsList.find((f: any) => f.uid === friendUid);
+          const friendName = friendEntry?.username || 'friend';
           panel.close();
           canvas.style.pointerEvents = 'auto';
 
-          this.statusText.setText('Sending invite...');
+          this.statusText.setText('');
           try {
             const { inviteId, gameId } = await auth.sendInvite(friendUid);
-            this.statusText.setText('Waiting for response...');
-
-            const { width } = this.cameras.main;
-            this.cancelBtn = this.createMedievalButton(width / 2, this.statusText.y + 40, 160, 40, 'CANCEL', 'red', false);
-            this.cancelBtn.zone.on('pointerdown', () => {
-              this.cleanupQueue();
-              this.statusText.setText('Invite cancelled');
-              this.statusText.setColor('#a89870');
-            });
+            this.showInviteScreen(friendName);
 
             const response = await auth.waitForInviteResponse(friendUid, inviteId);
+            this.destroyQueueOverlay();
             this.cleanupQueue();
 
             if (response === 'accepted') {
@@ -1163,6 +1288,7 @@ export class PvpMenuScene extends Phaser.Scene {
               this.statusText.setColor('#a89870');
             }
           } catch (err) {
+            this.destroyQueueOverlay();
             this.cleanupQueue();
             this.statusText.setText('Error: ' + (err as Error).message);
             this.statusText.setColor('#BB4444');
@@ -1172,6 +1298,7 @@ export class PvpMenuScene extends Phaser.Scene {
 
       // Load friends list
       const unsub = auth.onFriendsChanged((friends) => {
+        this._friendsList = friends;
         panel.updateFriends(friends);
       });
 

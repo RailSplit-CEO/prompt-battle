@@ -101,8 +101,8 @@ export function showPurchaseConfirm(opts: PurchaseConfirmOptions): void {
     priceLine.appendChild(crownsSpan);
   } else if (opts.priceGlory != null && opts.priceGlory > 0) {
     const glorySpan = document.createElement('span');
-    glorySpan.style.cssText = `color:${C.teal};font-weight:700;`;
-    glorySpan.textContent = `\u2B50 ${opts.priceGlory}`;
+    glorySpan.style.cssText = `color:#C0C0D2;font-weight:700;`;
+    glorySpan.textContent = `\u2605 ${opts.priceGlory}`;
     priceLine.appendChild(document.createTextNode('This will cost '));
     priceLine.appendChild(glorySpan);
   }

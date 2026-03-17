@@ -75,7 +75,6 @@ export class InventoryManager {
           attackTrail: data.attackTrail ?? 'default',
           victoryEffect: data.victoryEffect ?? 'default',
           profileBorder: data.profileBorder ?? 'none',
-          profileBadge: data.profileBadge ?? 'none',
           profileTitle: data.profileTitle ?? 'none',
           profileBackground: data.profileBackground ?? 'none',
           cursor: data.cursor ?? 'default',

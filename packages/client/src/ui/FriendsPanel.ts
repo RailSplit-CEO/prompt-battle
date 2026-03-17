@@ -34,19 +34,9 @@ export function createIconElement(iconKey: string, size: number, frameId?: strin
  * Render a profile badge next to a username.
  * Returns an HTML string for inline insertion.
  */
-export function renderBadgeHTML(badgeId: string | undefined): string {
-  if (!badgeId || badgeId === 'none') return '';
-  const BADGE_EMOJIS: Record<string, string> = {
-    badge_crown: '\u{1F451}',
-    badge_skull_mark: '\u{1F480}',
-    badge_gold_star: '\u2B50',
-    badge_flames: '\u{1F525}',
-    badge_diamond: '\u{1F48E}',
-    badge_founder: '\u{1F3C5}',
-    badge_season1: '\u{1F5E1}\uFE0F',
-  };
-  const emoji = BADGE_EMOJIS[badgeId] || '\u{1F3F7}\uFE0F';
-  return `<span style="margin-left:4px;font-size:12px;" title="${badgeId}">${emoji}</span>`;
+/** @deprecated Badges removed from the game */
+export function renderBadgeHTML(_badgeId: string | undefined): string {
+  return '';
 }
 
 /**
@@ -57,10 +47,26 @@ export function renderTitleHTML(titleId: string | undefined): string {
   if (!titleId || titleId === 'none') return '';
   const TITLE_TEXT: Record<string, string> = {
     title_the_magnificent: 'The Magnificent',
+    title_recruit: 'Recruit',
+    title_wanderer: 'Wanderer',
+    title_strategist: 'Strategist',
+    title_horde_whisperer: 'Horde Whisperer',
     title_chaos_lord: 'Chaos Lord',
     title_grand_marshal: 'Grand Marshal',
+    title_beast_tamer: 'Beast Tamer',
+    title_iron_will: 'Iron Will',
+    title_war_chief: 'War Chief',
+    title_shadow_walker: 'Shadow Walker',
+    title_nexus_breaker: 'Nexus Breaker',
     title_doom_bringer: 'Doom Bringer',
+    title_soul_reaver: 'Soul Reaver',
+    title_arcane_sovereign: 'Arcane Sovereign',
+    title_the_undying: 'The Undying',
+    title_world_eater: 'World Eater',
     title_the_eternal: 'The Eternal',
+    title_god_king: 'God-King',
+    title_lord_of_hordes: 'Lord of Hordes',
+    // Earned titles
     title_commander: 'Commander',
     title_warlord: 'Warlord',
     title_overlord: 'Overlord',

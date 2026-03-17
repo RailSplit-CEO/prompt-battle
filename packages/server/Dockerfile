@@ -11,7 +11,7 @@ COPY packages/shared/ packages/shared/
 
 # Install server deps only (skip workspace resolution of shared)
 WORKDIR /app/packages/server
-RUN npm install --omit=dev --ignore-scripts --no-package-lock firebase-admin express tsx 2>/dev/null || true
+RUN npm install --omit=dev --ignore-scripts --no-package-lock firebase-admin express tsx ws 2>/dev/null || true
 
 # Copy server source
 COPY packages/server/src/ src/

@@ -14,6 +14,13 @@ import { showGuestLoginPrompt } from '../ui/LoginOverlay';
 import { BattlePassPanel } from '../ui/BattlePassPanel';
 import { DailyRewardModal } from '../ui/DailyRewardModal';
 import { HORDE_SPRITE_CONFIGS } from '../sprites/SpriteConfig';
+import { WalletManager } from '../store/WalletManager';
+import { PlayerLevelManager } from '../store/PlayerLevelManager';
+import { InventoryManager } from '../store/InventoryManager';
+import { renderBadgeHTML, renderTitleHTML, getFrameStyle } from '../ui/FriendsPanel';
+import { FriendsSidebar } from '../ui/FriendsSidebar';
+import { PlayerProfilePopup } from '../ui/PlayerProfilePopup';
+import { getCatalogItem } from '@prompt-battle/shared';
 
 export class MenuScene extends Phaser.Scene {
   private matchmaking!: Matchmaking;
@@ -31,6 +38,9 @@ export class MenuScene extends Phaser.Scene {
   private invitesUnsub: (() => void) | null = null;
   private battlePassPanel: BattlePassPanel | null = null;
   private vignetteTimer?: Phaser.Time.TimerEvent;
+  private _queueUnsub: (() => void) | null = null;
+  private queueStatusText: Phaser.GameObjects.Text | null = null;
+  private friendsSidebar: FriendsSidebar | null = null;
 
   constructor() {
     super({ key: 'MenuScene' });
@@ -75,12 +85,11 @@ export class MenuScene extends Phaser.Scene {
     const titleY = centerY - 220;
     const subtitleY = titleY + 58;
     const dividerY = subtitleY + 28;
-    const btn1Y = dividerY + 60;
-    const btn2Y = btn1Y + 68;
-    const btn3Y = btn2Y + 68;
-    const btnStoreY = btn3Y + 68;
-    const btn4Y = btnStoreY + 68;
-    const howToPlayY = btn4Y + 75;
+    const btn1Y = dividerY + 60;   // Characters
+    const btnCosmeticsY = btn1Y + 68; // Cosmetics (above Store)
+    const btn2Y = btnCosmeticsY + 68; // Store
+    const btn3Y = btn2Y + 68;      // Debug
+    const playAreaY = btn3Y + 85;   // massive PLAY button
 
     // === TITLE ===
     // Sword decorations on each side of title
@@ -136,44 +145,13 @@ export class MenuScene extends Phaser.Scene {
     this.tweens.add({ targets: divLine, alpha: 1, duration: 600, delay: 600 });
 
     // === BUTTONS ===
-    const hordeBtn = this.createMedievalButton(width / 2, btn1Y, 340, 54, 'HORDE (SOLO)', 'green', true);
-    hordeBtn.container.setAlpha(0).setScale(0.5);
-    this.tweens.add({ targets: hordeBtn.container, alpha: 1, scaleX: 1, scaleY: 1, duration: 600, delay: 700, ease: 'Back.easeOut' });
-    hordeBtn.zone.on('pointerdown', () => this.startHordeMode());
-
-    if (this.textures.exists('ts_icon5')) {
-      const soloSword = this.add.image(0, 0, 'ts_icon5').setScale(0.65).setDepth(15);
-      hordeBtn.container.add(soloSword);
-      soloSword.setPosition(-120, 0);
-    }
-
-    const pvpBtn = this.createMedievalButton(width / 2, btn2Y, 340, 54, 'HORDE PVP', 'red', true);
-    pvpBtn.container.setAlpha(0).setScale(0.5);
-    this.tweens.add({ targets: pvpBtn.container, alpha: 1, scaleX: 1, scaleY: 1, duration: 600, delay: 850, ease: 'Back.easeOut' });
-    pvpBtn.zone.on('pointerdown', () => {
-      this.cameras.main.fadeOut(300, 15, 26, 10);
-      this.cameras.main.once('camerafadeoutcomplete', () => {
-        this.cleanupSocialUI();
-        this.scene.start('PvpMenuScene');
-      });
-    });
-
-    if (this.textures.exists('ts_icon5')) {
-      // Crossed swords — two copies angled and overlapping
-      const swordL = this.add.image(0, 0, 'ts_icon5').setScale(0.55).setDepth(15).setAngle(0);
-      const swordR = this.add.image(0, 0, 'ts_icon5').setScale(0.55).setDepth(15).setAngle(0).setFlipX(true);
-      pvpBtn.container.add(swordL);
-      pvpBtn.container.add(swordR);
-      swordL.setPosition(-121, 0);
-      swordR.setPosition(-119, 0);
-    }
-
-    const charBtn = this.createMedievalButton(width / 2, btn3Y, 340, 54, 'CHARACTERS', 'blue', false);
+    const charBtn = this.createMedievalButton(width / 2, btn1Y, 340, 54, 'CHARACTERS', 'blue', false);
     charBtn.container.setAlpha(0).setScale(0.5);
-    this.tweens.add({ targets: charBtn.container, alpha: 1, scaleX: 1, scaleY: 1, duration: 600, delay: 1000, ease: 'Back.easeOut' });
+    this.tweens.add({ targets: charBtn.container, alpha: 1, scaleX: 1, scaleY: 1, duration: 600, delay: 700, ease: 'Back.easeOut' });
     charBtn.zone.on('pointerdown', () => {
       this.cameras.main.fadeOut(300, 15, 26, 10);
       this.cameras.main.once('camerafadeoutcomplete', () => {
+        this.cleanupSocialUI();
         this.scene.start('CharactersScene');
       });
     });
@@ -185,9 +163,9 @@ export class MenuScene extends Phaser.Scene {
     }
 
     // ═══ STORE BUTTON ═══
-    const storeBtn = this.createMedievalButton(width / 2, btnStoreY, 340, 54, 'STORE', 'yellow', false);
+    const storeBtn = this.createMedievalButton(width / 2, btn2Y, 340, 54, 'STORE', 'yellow', false);
     storeBtn.container.setAlpha(0).setScale(0.5);
-    this.tweens.add({ targets: storeBtn.container, alpha: 1, scaleX: 1, scaleY: 1, duration: 600, delay: 1050, ease: 'Back.easeOut' });
+    this.tweens.add({ targets: storeBtn.container, alpha: 1, scaleX: 1, scaleY: 1, duration: 600, delay: 950, ease: 'Back.easeOut' });
     if (this.textures.exists('ts_icon3')) {
       const storeIcon = this.add.image(0, 0, 'ts_icon3').setScale(0.85).setDepth(15);
       storeBtn.container.add(storeIcon);
@@ -198,13 +176,27 @@ export class MenuScene extends Phaser.Scene {
         showGuestLoginPrompt('access the store');
         return;
       }
-      const store = new StorePanel();
-      store.open();
+      new StorePanel().open();
     });
 
-    const debugBtn = this.createMedievalButton(width / 2, btn4Y, 340, 54, 'DEBUG MODE', 'yellow', false);
+    // ═══ COSMETICS BUTTON ═══
+    const cosmeticsBtn = this.createMedievalButton(width / 2, btnCosmeticsY, 340, 54, 'COSMETICS', 'red', false);
+    cosmeticsBtn.container.setAlpha(0).setScale(0.5);
+    this.tweens.add({ targets: cosmeticsBtn.container, alpha: 1, scaleX: 1, scaleY: 1, duration: 600, delay: 850, ease: 'Back.easeOut' });
+    if (this.textures.exists('ts_icon4')) {
+      const cosIcon = this.add.image(0, 0, 'ts_icon4').setScale(0.65).setDepth(15);
+      cosmeticsBtn.container.add(cosIcon);
+      cosIcon.setPosition(-120, 0);
+    }
+    cosmeticsBtn.zone.on('pointerdown', () => {
+      import('../ui/CosmeticsHub').then(({ CosmeticsHub }) => {
+        new CosmeticsHub().open();
+      });
+    });
+
+    const debugBtn = this.createMedievalButton(width / 2, btn3Y, 340, 54, 'DEBUG MODE', 'yellow', false);
     debugBtn.container.setAlpha(0).setScale(0.5);
-    this.tweens.add({ targets: debugBtn.container, alpha: 1, scaleX: 1, scaleY: 1, duration: 600, delay: 1150, ease: 'Back.easeOut' });
+    this.tweens.add({ targets: debugBtn.container, alpha: 1, scaleX: 1, scaleY: 1, duration: 600, delay: 1000, ease: 'Back.easeOut' });
     if (this.textures.exists('ts_icon10')) {
       const gearIcon = this.add.image(0, 0, 'ts_icon10').setScale(0.65).setDepth(15);
       debugBtn.container.add(gearIcon);
@@ -219,70 +211,130 @@ export class MenuScene extends Phaser.Scene {
     });
 
     // Keyboard shortcut hint
-    const hint = this.add.text(width / 2, btn4Y + 38, 'Press ENTER to start horde mode', {
+    const hint = this.add.text(width / 2, btn3Y + 38, 'Press ENTER to start horde mode', {
       fontSize: '11px', color: '#5a6a4a', fontFamily: '"Nunito", sans-serif', fontStyle: '600',
       stroke: '#0a0f06', strokeThickness: 2,
     }).setOrigin(0.5).setAlpha(0).setDepth(11);
-    this.tweens.add({ targets: hint, alpha: 0.7, duration: 600, delay: 1200 });
+    this.tweens.add({ targets: hint, alpha: 0.7, duration: 600, delay: 1100 });
     this.input.keyboard!.on('keydown-ENTER', () => { this.playsfx('button_click', 0.4); this.startHordeMode(); });
 
     // Status text (for matchmaking)
-    this.statusText = this.add.text(width / 2, btn4Y + 58, '', {
+    this.statusText = this.add.text(width / 2, btn3Y + 58, '', {
       fontSize: '14px', color: '#FFD93D', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
       stroke: '#0a0f06', strokeThickness: 3,
     }).setOrigin(0.5).setDepth(11);
 
-    // === HOW TO PLAY — clean, readable ===
-    const howContainer = this.add.container(width / 2, howToPlayY).setDepth(11);
+    // ═══ PLAY BUTTON (Phaser, medieval style, massive) ═══
+    const playBtn = this.createMedievalButton(width / 2, playAreaY, 500, 90, 'PLAY', 'green', true);
+    playBtn.container.setAlpha(0).setScale(0.5);
+    this.tweens.add({ targets: playBtn.container, alpha: 1, scaleX: 1, scaleY: 1, duration: 600, delay: 1100, ease: 'Back.easeOut' });
 
-    // Panel background — brighter, more visible
-    const howBg = this.add.graphics();
-    howBg.fillStyle(0x243a18, 0.92);
-    howBg.fillRoundedRect(-230, -16, 460, 140, 12);
-    howBg.lineStyle(2, 0x5a9a4e, 0.8);
-    howBg.strokeRoundedRect(-230, -16, 460, 140, 12);
-    // Inner glow line
-    howBg.lineStyle(1, 0x8BC47A, 0.15);
-    howBg.strokeRoundedRect(-227, -13, 454, 134, 10);
-    howContainer.add(howBg);
+    // Add sword icon to the play button
+    if (this.textures.exists('ts_icon5')) {
+      const playIcon = this.add.image(0, 0, 'ts_icon5').setScale(0.9).setDepth(15);
+      playBtn.container.add(playIcon);
+      playIcon.setPosition(-190, 0);
+    }
 
-    const howTitle = this.add.text(0, 0, 'HOW TO PLAY', {
-      fontSize: '16px', color: '#FFD93D', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
-      letterSpacing: 4, stroke: '#0a0f06', strokeThickness: 2,
-    }).setOrigin(0.5);
-    howContainer.add(howTitle);
-
-    const steps = [
-      { num: '1', text: 'Gather resources and capture camps to grow your army' },
-      { num: '2', text: 'Type or speak commands to control your units' },
-      { num: '3', text: 'Destroy the enemy nexus to win!' },
-    ];
-
-    steps.forEach((step, i) => {
-      const y = 32 + i * 32;
-
-      // Number badge
-      const badge = this.add.graphics();
-      badge.fillStyle(0x4a7a3e, 0.9);
-      badge.fillCircle(-200, y, 12);
-      badge.lineStyle(1.5, 0xFFD93D, 0.5);
-      badge.strokeCircle(-200, y, 12);
-      howContainer.add(badge);
-
-      const num = this.add.text(-200, y, step.num, {
-        fontSize: '14px', color: '#FFD93D', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
-      }).setOrigin(0.5);
-      howContainer.add(num);
-
-      const txt = this.add.text(-178, y, step.text, {
-        fontSize: '14px', color: '#e8e0c8', fontFamily: '"Nunito", sans-serif', fontStyle: '700',
-        stroke: '#0a0f06', strokeThickness: 1,
-      }).setOrigin(0, 0.5);
-      howContainer.add(txt);
+    // Play button opens game mode picker
+    playBtn.zone.on('pointerdown', () => {
+      import('../ui/GameModePicker').then(({ GameModePicker }) => {
+        new GameModePicker().show({
+          onSolo: () => this.startHordeMode(),
+          onUnranked: () => {
+            import('../systems/QueueManager').then(({ QueueManager }) => {
+              QueueManager.getInstance().startQueue('unranked');
+            });
+          },
+          onRanked: () => {
+            import('../systems/QueueManager').then(({ QueueManager }) => {
+              QueueManager.getInstance().startQueue('ranked');
+            });
+          },
+          onFriendly: () => {
+            console.log('Friendly battle');
+          },
+        });
+      });
     });
 
-    howContainer.setAlpha(0);
-    this.tweens.add({ targets: howContainer, alpha: 1, duration: 800, delay: 1300 });
+    // Get reference to play button text for transformation
+    const playBtnText = playBtn.container.list.find(
+      (c: any) => c.type === 'Text'
+    ) as Phaser.GameObjects.Text | undefined;
+    const playBtnIcon = playBtn.container.list.find(
+      (c: any) => c.type === 'Image'
+    ) as Phaser.GameObjects.Image | undefined;
+
+    // Queue timer text (shown inside the button area when searching)
+    const queueTimerText = this.add.text(0, 18, '', {
+      fontSize: '12px', color: '#FFD93D', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
+      stroke: '#000000', strokeThickness: 2,
+    }).setOrigin(0.5).setAlpha(0).setDepth(15);
+    playBtn.container.add(queueTimerText);
+
+    // Cancel button (Phaser, below the play button text)
+    const cancelBtn = this.createMedievalButton(width / 2, playAreaY + 60, 200, 40, 'CANCEL', 'red', false);
+    cancelBtn.container.setAlpha(0).setDepth(12);
+    cancelBtn.zone.on('pointerdown', () => {
+      import('../systems/QueueManager').then(({ QueueManager }) => {
+        QueueManager.getInstance().cancelQueue();
+      });
+    });
+
+    // Queue status text (for old-style status messages)
+    this.queueStatusText = this.add.text(width / 2, playAreaY + 100, '', {
+      fontSize: '13px', color: '#FFD93D', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
+      stroke: '#0a0f06', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(11).setAlpha(0);
+
+    // Listen for queue state changes — transform play button into searching state
+    let isSearching = false;
+    import('../systems/QueueManager').then(({ QueueManager }) => {
+      const qm = QueueManager.getInstance();
+      this._queueUnsub = qm.onChange((state) => {
+        if (state === 'queuing') {
+          if (!isSearching) {
+            isSearching = true;
+            // Transform play button → searching state
+            if (playBtnText) playBtnText.setText('SEARCHING...');
+            if (playBtnIcon) playBtnIcon.setAlpha(0);
+            queueTimerText.setAlpha(1);
+            // Show cancel button
+            cancelBtn.container.setAlpha(1);
+            // Disable play button click
+            playBtn.zone.disableInteractive();
+          }
+          // Update timer
+          queueTimerText.setText(`${qm.getQueueType()?.toUpperCase()} \u2022 ${qm.formatTime()}`);
+        } else {
+          if (isSearching) {
+            isSearching = false;
+            // Revert play button
+            if (playBtnText) playBtnText.setText('PLAY');
+            if (playBtnIcon) playBtnIcon.setAlpha(1);
+            queueTimerText.setAlpha(0);
+            cancelBtn.container.setAlpha(0);
+            playBtn.zone.setInteractive({ useHandCursor: true });
+          }
+        }
+      });
+    });
+
+    // Listen for match accepted
+    window.addEventListener('queue-match-accepted', ((e: CustomEvent) => {
+      const data = e.detail;
+      this.cameras.main.fadeOut(400, 15, 26, 10);
+      this.cameras.main.once('camerafadeoutcomplete', () => {
+        this.cleanupSocialUI();
+        this.scene.start('HordeScene', {
+          isOnline: true,
+          gameId: data.gameId,
+          playerId: AuthManager.getInstance().currentUser?.uid,
+          amPlayer1: data.amPlayer1,
+        });
+      });
+    }) as EventListener);
 
     // Version
     this.add.text(width / 2, height - 18, 'v0.2.0  |  Mark My Hordes', {
@@ -616,6 +668,14 @@ export class MenuScene extends Phaser.Scene {
     return { container, zone };
   }
 
+  private goToAccount(tab: string) {
+    this.cameras.main.fadeOut(300, 15, 26, 10);
+    this.cameras.main.once('camerafadeoutcomplete', () => {
+      this.cleanupSocialUI();
+      this.scene.start('AccountScene', { tab });
+    });
+  }
+
   private async startHordeMode() {
     this.playsfx('wave_start', 0.4);
     try {
@@ -726,146 +786,113 @@ export class MenuScene extends Phaser.Scene {
       font-family:"Nunito",sans-serif;
       opacity:0;transition:opacity 0.6s ease 0.8s;
       box-shadow:${C.panelShadow};
-      overflow:hidden;width:240px;
+      overflow:hidden;width:min(440px, 35vw);
     `;
 
     if (!auth.isGuest && auth.userProfile) {
-      // Profile header — avatar + name + online dot
-      const header = document.createElement('div');
-      header.style.cssText = `
-        display:flex;align-items:center;gap:10px;
-        padding:12px 14px;
-        background:rgba(255,217,61,0.06);
-        border-bottom:1px solid ${C.divider};
+      const profile = auth.userProfile;
+
+      // ── BIG PROFILE CARD ──
+      const avatarUrl = `assets/enemies/avatars/${profile.icon || 'gnome'}.png`;
+
+      // Avatar row
+      const avatarRow = document.createElement('div');
+      avatarRow.style.cssText = `display:flex;align-items:center;gap:12px;padding:14px 16px 10px;`;
+
+      const avatarImg = document.createElement('img');
+      avatarImg.src = avatarUrl;
+      avatarImg.style.cssText = `width:56px;height:56px;border-radius:50%;border:3px solid ${C.gold};image-rendering:pixelated;object-fit:contain;box-shadow:0 0 12px rgba(255,217,61,0.2);`;
+      avatarRow.appendChild(avatarImg);
+
+      const nameBlock = document.createElement('div');
+      nameBlock.style.cssText = 'flex:1;min-width:0;';
+      // Look up equipped title name from catalog
+      let titleDisplay = 'Ready for battle';
+      try {
+        const titleId = InventoryManager.getInstance().getEquipped().profileTitle;
+        if (titleId && titleId !== 'default' && titleId !== 'none') {
+          const titleItem = getCatalogItem(titleId);
+          if (titleItem) titleDisplay = titleItem.name;
+        }
+      } catch {}
+      nameBlock.innerHTML = `
+        <div style="font-family:'Fredoka',sans-serif;font-size:18px;font-weight:700;color:${C.textH1};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${profile.username}</div>
+        <div id="_profile_title" style="font-size:11px;color:${C.textMuted};font-style:italic;margin-top:1px;">${titleDisplay}</div>
       `;
+      avatarRow.appendChild(nameBlock);
 
-      const iconEl = createIconElement(auth.userProfile.icon, 48);
-      iconEl.style.borderRadius = '50%';
-      iconEl.style.border = `2px solid ${C.gold}`;
-      iconEl.style.flexShrink = '0';
-      iconEl.style.boxShadow = '0 0 8px rgba(255,217,61,0.2)';
-      header.appendChild(iconEl);
+      // Gear button
+      const gear = document.createElement('button');
+      gear.textContent = '\u2699\uFE0F';
+      gear.style.cssText = `background:none;border:none;font-size:18px;cursor:pointer;opacity:0.5;transition:opacity 0.15s;padding:4px;`;
+      gear.onmouseenter = () => { gear.style.opacity = '1'; };
+      gear.onmouseleave = () => { gear.style.opacity = '0.5'; };
+      gear.onclick = () => { this.settingsPanel.toggle(); };
+      avatarRow.appendChild(gear);
 
-      const nameWrap = document.createElement('div');
-      nameWrap.style.cssText = `display:flex;flex-direction:column;gap:2px;min-width:0;`;
+      this.profileCardEl.appendChild(avatarRow);
 
-      const nameEl = document.createElement('div');
-      nameEl.textContent = auth.userProfile.username;
-      nameEl.style.cssText = `font-size:15px;font-weight:700;color:${C.textH1};white-space:nowrap;`;
-      nameWrap.appendChild(nameEl);
+      // Level + resources row — level left, currencies right
+      const statsRow = document.createElement('div');
+      statsRow.style.cssText = `display:flex;align-items:center;justify-content:space-between;padding:8px 16px 14px;`;
 
-      const statusRow = document.createElement('div');
-      statusRow.style.cssText = `display:flex;align-items:center;gap:5px;`;
-      const dot = document.createElement('span');
-      dot.style.cssText = `width:6px;height:6px;border-radius:50%;background:#45E6B0;box-shadow:0 0 6px rgba(69,230,176,0.5);`;
-      statusRow.appendChild(dot);
-      const statusText = document.createElement('span');
-      statusText.textContent = 'Online';
-      statusText.style.cssText = `font-size:10px;color:${C.teal};font-weight:600;`;
-      statusRow.appendChild(statusText);
-      nameWrap.appendChild(statusRow);
+      const levelBadge = document.createElement('span');
+      levelBadge.style.cssText = `display:inline-flex;align-items:center;gap:5px;padding:4px 14px;border-radius:14px;background:${C.gold};color:#1a1a0a;font:bold 16px 'Fredoka',sans-serif;box-shadow:0 2px 8px rgba(255,217,61,0.35);`;
+      levelBadge.innerHTML = '<span style="font-size:11px;opacity:0.7;">Lvl</span> <span id="_lvl_num">1</span>';
 
-      header.appendChild(nameWrap);
-      this.profileCardEl.appendChild(header);
+      const currencyWrap = document.createElement('div');
+      currencyWrap.style.cssText = `display:flex;align-items:center;gap:8px;`;
 
-      // Action buttons — distinct styled cards
-      const btnList = document.createElement('div');
-      btnList.style.cssText = `display:flex;flex-direction:column;gap:6px;padding:10px 10px 8px;`;
+      const crownsSpan = document.createElement('span');
+      crownsSpan.style.cssText = `display:inline-flex;align-items:center;gap:4px;padding:4px 12px;border-radius:14px;background:rgba(255,217,61,0.15);border:1.5px solid rgba(255,217,61,0.4);font:bold 15px 'Fredoka',sans-serif;color:${C.gold};`;
+      crownsSpan.textContent = '\uD83D\uDC51 0';
 
-      const makeSocialBtn = (iconSrc: string, label: string, borderColor: string, glowColor: string, hoverBorder: string, onClick: () => void) => {
-        const btn = document.createElement('button');
-        const iconImg = `<img src="${iconSrc}" style="width:32px;height:32px;object-fit:contain;image-rendering:pixelated;flex-shrink:0;">`;
-        btn.innerHTML = `${iconImg}<span style="flex:1;text-align:left;">${label}</span><span style="font-size:11px;color:${C.textMuted};transition:transform 0.15s;">&#x276F;</span>`;
-        btn.style.cssText = `
-          display:flex;align-items:center;gap:10px;
-          padding:10px 12px;font-size:15px;font-weight:700;
-          font-family:"Nunito",sans-serif;
-          background:${C.surface};
-          border:1.5px solid ${borderColor};
-          color:${C.textPrimary};border-radius:8px;cursor:pointer;
-          transition:all 0.2s;text-align:left;width:100%;
-          box-shadow:0 1px 4px rgba(0,0,0,0.15);
-        `;
-        btn.onmouseenter = () => {
-          btn.style.borderColor = hoverBorder;
-          btn.style.background = C.surfaceHover;
-          btn.style.boxShadow = `0 2px 10px ${glowColor}`;
-          btn.style.transform = 'translateX(-2px)';
-        };
-        btn.onmouseleave = () => {
-          btn.style.borderColor = borderColor;
-          btn.style.background = C.surface;
-          btn.style.boxShadow = '0 1px 4px rgba(0,0,0,0.15)';
-          btn.style.transform = 'translateX(0)';
-        };
-        btn.onclick = () => { (window as any).__menuPlaySfx?.('button_click', 0.3); onClick(); };
-        return btn;
+      const glorySpan = document.createElement('span');
+      glorySpan.style.cssText = `display:inline-flex;align-items:center;gap:4px;padding:4px 12px;border-radius:14px;background:rgba(192,192,210,0.12);border:1.5px solid rgba(192,192,210,0.35);font:bold 15px 'Fredoka',sans-serif;color:#C0C0D2;`;
+      glorySpan.textContent = '\u2605 0';
+
+      currencyWrap.append(crownsSpan, glorySpan);
+      statsRow.append(levelBadge, currencyWrap);
+      this.profileCardEl.appendChild(statsRow);
+
+      // Live-update stats
+      const crownIcon = '\uD83D\uDC51';
+      const starIcon = '\u2605'; // filled star (CSS-colorable, not emoji)
+      try {
+        const wm = WalletManager.getInstance();
+        crownsSpan.textContent = `${crownIcon} ${wm.crowns.toLocaleString()}`;
+        glorySpan.textContent = `${starIcon} ${wm.glory.toLocaleString()}`;
+        wm.onChange((w) => {
+          crownsSpan.textContent = `${crownIcon} ${w.crowns.toLocaleString()}`;
+          glorySpan.textContent = `${starIcon} ${w.glory.toLocaleString()}`;
+        });
+      } catch {}
+      try {
+        const lm = PlayerLevelManager.getInstance();
+        const lvlNum = levelBadge.querySelector('#_lvl_num');
+        if (lvlNum) lvlNum.textContent = String(lm.level);
+        lm.onChange(() => { const el = levelBadge.querySelector('#_lvl_num'); if (el) el.textContent = String(lm.level); });
+      } catch {}
+
+      // Make entire profile card clickable → open account panel
+      this.profileCardEl.style.cursor = 'pointer';
+      this.profileCardEl.onmouseenter = () => { if (this.profileCardEl) this.profileCardEl.style.borderColor = C.gold; };
+      this.profileCardEl.onmouseleave = () => { if (this.profileCardEl) this.profileCardEl.style.borderColor = C.panelBorder; };
+      this.profileCardEl.onclick = () => {
+        (window as any).__menuPlaySfx?.('button_click', 0.3);
+        this.openAccountPanel('profile');
       };
 
-      // Make profile header clickable → account page
-      header.style.cursor = 'pointer';
-      header.style.transition = 'background 0.15s';
-      header.onmouseenter = () => { header.style.background = 'rgba(255,217,61,0.12)'; };
-      header.onmouseleave = () => { header.style.background = 'rgba(255,217,61,0.06)'; };
-      header.onclick = () => { (window as any).__menuPlaySfx?.('button_click', 0.3); this.openAccountPanel('profile'); };
-
-      btnList.appendChild(makeSocialBtn(
-        'assets/ui/icons/Icon_06.png', 'Friends',
-        'rgba(69,230,176,0.3)', 'rgba(69,230,176,0.15)', C.teal,
-        () => this.openAccountPanel('friends')
-      ));
-
-      btnList.appendChild(makeSocialBtn(
-        'assets/ui/icons/Icon_11.png', 'History',
-        'rgba(255,217,61,0.25)', 'rgba(255,217,61,0.12)', C.gold,
-        () => this.openAccountPanel('history')
-      ));
-
-      btnList.appendChild(makeSocialBtn(
-        'assets/ui/icons/Icon_05.png', 'Ranked',
-        'rgba(255,107,107,0.25)', 'rgba(255,107,107,0.12)', C.red,
-        () => this.openAccountPanel('ranked')
-      ));
-
-      btnList.appendChild(makeSocialBtn(
-        'assets/ui/icons/Icon_09.png', 'Inventory',
-        'rgba(155,127,212,0.25)', 'rgba(155,127,212,0.12)', '#9B7FD4',
-        () => this.openAccountPanel('inventory')
-      ));
-
-      this.profileCardEl.appendChild(btnList);
-
-      // Settings + Sign out row at bottom
-      const bottomRow = document.createElement('div');
-      bottomRow.style.cssText = `
-        padding:6px 14px 8px;text-align:center;
-        border-top:1px solid ${C.divider};
-        display:flex;justify-content:center;gap:16px;
-      `;
-      const settingsBtn = document.createElement('button');
-      settingsBtn.textContent = '⚙️ Settings';
-      settingsBtn.style.cssText = `
-        font-size:11px;font-weight:600;font-family:"Nunito",sans-serif;
-        background:none;border:none;color:${C.textSecondary};
-        cursor:pointer;transition:color 0.15s;padding:4px 8px;
-      `;
-      settingsBtn.onmouseenter = () => { settingsBtn.style.color = C.gold; };
-      settingsBtn.onmouseleave = () => { settingsBtn.style.color = C.textSecondary; };
-      settingsBtn.onclick = () => { (window as any).__menuPlaySfx?.('button_click', 0.3); this.settingsPanel.toggle(); };
-      bottomRow.appendChild(settingsBtn);
-
-      const signOutBtn = document.createElement('button');
-      signOutBtn.textContent = 'Sign Out';
-      signOutBtn.style.cssText = `
-        font-size:11px;font-weight:600;font-family:"Nunito",sans-serif;
-        background:none;border:none;color:${C.textMuted};
-        cursor:pointer;transition:color 0.15s;padding:4px 8px;
-      `;
-      signOutBtn.onmouseenter = () => { signOutBtn.style.color = C.red; };
-      signOutBtn.onmouseleave = () => { signOutBtn.style.color = C.textMuted; };
-      signOutBtn.onclick = async () => { (window as any).__menuPlaySfx?.('button_click', 0.3); await auth.signOut(); window.location.reload(); };
-      bottomRow.appendChild(signOutBtn);
-      this.profileCardEl.appendChild(bottomRow);
+      // ── SEPARATE FRIENDS PANEL (below profile card) ──
+      const gc = document.getElementById('game-container') ?? document.body;
+      this.friendsSidebar = new FriendsSidebar(
+        this.settingsPanel,
+        (uid: string) => {
+          const popup = new PlayerProfilePopup();
+          popup.show(uid, { isFriend: true });
+        }
+      );
+      this.friendsSidebar.show(gc);
     } else {
       // Guest — compact card with sign in CTA
       const guestHeader = document.createElement('div');
@@ -919,28 +946,6 @@ export class MenuScene extends Phaser.Scene {
       this.profileCardEl.appendChild(signInBtn);
     }
 
-    // Settings button — below all profile card content
-    const settingsRow = document.createElement('div');
-    settingsRow.style.cssText = `
-      padding:6px 12px 8px;display:flex;align-items:center;justify-content:center;
-      border-top:1px solid ${C.divider};
-    `;
-    const settingsBtn = document.createElement('button');
-    settingsBtn.innerHTML = `<span style="font-size:14px;">⚙</span> Settings`;
-    settingsBtn.style.cssText = `
-      display:flex;align-items:center;gap:6px;
-      font-size:12px;font-weight:600;font-family:"Nunito",sans-serif;
-      background:none;border:none;color:${C.textSecondary};
-      cursor:pointer;transition:color 0.15s;padding:4px 8px;
-    `;
-    settingsBtn.onmouseenter = () => { settingsBtn.style.color = C.gold; };
-    settingsBtn.onmouseleave = () => { settingsBtn.style.color = C.textSecondary; };
-    settingsBtn.onclick = () => {
-      (window as any).__menuPlaySfx?.('button_click', 0.3);
-      this.settingsPanel.toggle();
-    };
-    settingsRow.appendChild(settingsBtn);
-    this.profileCardEl.appendChild(settingsRow);
 
     document.body.appendChild(this.profileCardEl);
     requestAnimationFrame(() => { if (this.profileCardEl) this.profileCardEl.style.opacity = '1'; });
@@ -991,7 +996,7 @@ export class MenuScene extends Phaser.Scene {
 
   private accountPanelEl: HTMLDivElement | null = null;
 
-  private openAccountPanel(tab: 'profile' | 'friends' | 'history' | 'ranked' | 'inventory') {
+  private openAccountPanel(tab: 'profile' | 'friends' | 'history' | 'ranked' | 'settings') {
     // If already open, just switch tab
     if (this.accountPanelEl) {
       this.switchAccountTab(tab);
@@ -1082,7 +1087,7 @@ export class MenuScene extends Phaser.Scene {
       { id: 'friends', label: 'Friends', icon: 'assets/ui/icons/Icon_06.png' },
       { id: 'history', label: 'History', icon: 'assets/ui/icons/Icon_11.png' },
       { id: 'ranked', label: 'Ranked', icon: 'assets/ui/icons/Icon_05.png' },
-      { id: 'inventory', label: 'Inventory', icon: 'assets/ui/icons/Icon_09.png' },
+      { id: 'settings', label: 'Settings', icon: 'assets/ui/icons/Icon_10.png' },
     ];
 
     const tabBtns: HTMLButtonElement[] = [];
@@ -1181,6 +1186,9 @@ export class MenuScene extends Phaser.Scene {
       case 'inventory':
         this.renderInventoryTab(content, auth);
         break;
+      case 'settings':
+        this.settingsPanel.renderInto(content);
+        break;
     }
   }
 
@@ -1188,12 +1196,22 @@ export class MenuScene extends Phaser.Scene {
     const profile = auth.userProfile;
     if (!profile) return;
 
+    // Get level data
+    let level = 1, xpInLevel = 0, xpForNext = 200;
+    try {
+      const lm = PlayerLevelManager.getInstance();
+      level = lm.level;
+      xpInLevel = lm.xpInLevel;
+      xpForNext = lm.xpForNext;
+    } catch {}
+    const xpPct = xpForNext > 0 ? Math.min(100, Math.round((xpInLevel / xpForNext) * 100)) : 100;
+
     el.innerHTML = `
-      <div style="display:flex;align-items:center;gap:20px;margin-bottom:24px;">
+      <div style="display:flex;align-items:center;gap:20px;margin-bottom:16px;">
         <div style="width:80px;height:80px;border-radius:50%;overflow:hidden;border:3px solid ${C.gold};box-shadow:0 0 12px rgba(255,217,61,0.2);flex-shrink:0;">
-          <img src="assets/enemies/avatars/${profile.icon}.png" style="width:100%;height:100%;object-fit:cover;">
+          <img src="assets/enemies/avatars/${profile.icon}.png" style="width:100%;height:100%;object-fit:cover;image-rendering:pixelated;">
         </div>
-        <div>
+        <div style="flex:1;">
           <div style="font-size:22px;font-weight:700;color:${C.textH1};font-family:'Fredoka',sans-serif;">${profile.username}</div>
           <div style="font-size:12px;color:${C.teal};font-weight:600;margin-top:4px;">
             <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#45E6B0;margin-right:6px;vertical-align:middle;"></span>Online
@@ -1201,6 +1219,20 @@ export class MenuScene extends Phaser.Scene {
           <div style="font-size:11px;color:${C.textMuted};margin-top:4px;">Joined ${new Date(profile.createdAt).toLocaleDateString()}</div>
         </div>
       </div>
+
+      <!-- Player Level + XP Bar -->
+      <div style="background:${C.surface};border:1px solid ${C.divider};border-radius:12px;padding:14px 16px;margin-bottom:16px;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+          <div style="display:inline-flex;align-items:center;gap:4px;padding:3px 12px;border-radius:12px;background:${C.gold};color:#1a1a0a;font:bold 14px 'Fredoka',sans-serif;box-shadow:0 2px 8px rgba(255,217,61,0.3);">
+            <span style="font-size:10px;opacity:0.7;">Lvl</span> ${level}
+          </div>
+          <div style="flex:1;font-size:12px;color:${C.textMuted};text-align:right;">${xpInLevel} / ${xpForNext} XP</div>
+        </div>
+        <div style="height:10px;background:rgba(139,115,85,0.25);border-radius:5px;overflow:hidden;">
+          <div style="height:100%;width:${xpPct}%;border-radius:5px;background:linear-gradient(90deg,${C.gold},${C.teal});transition:width 0.5s ease;"></div>
+        </div>
+      </div>
+
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
         <div style="background:${C.surface};border:1px solid ${C.divider};border-radius:10px;padding:14px;">
           <div style="font-size:11px;color:${C.textMuted};letter-spacing:1px;margin-bottom:6px;">ACCOUNT</div>
@@ -1654,6 +1686,10 @@ export class MenuScene extends Phaser.Scene {
     this.closeAccountPanel();
     this.profileCardEl?.remove();
     this.profileCardEl = null;
+    this.friendsSidebar?.destroy();
+    this.friendsSidebar = null;
+    this._queueUnsub?.();
+    this._queueUnsub = null;
     this.friendsPanel?.destroy();
     this.friendsPanel = null;
     this.matchHistoryPanel?.destroy();

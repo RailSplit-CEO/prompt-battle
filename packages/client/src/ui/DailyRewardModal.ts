@@ -32,8 +32,8 @@ export class DailyRewardModal {
           to   { opacity:1; transform:scale(1)    translateY(0); }
         }
         @keyframes dr-glory-glow {
-          0%, 100% { text-shadow:0 0 8px rgba(69,230,176,0.4), 0 0 24px rgba(69,230,176,0.15); }
-          50%      { text-shadow:0 0 16px rgba(69,230,176,0.6), 0 0 40px rgba(69,230,176,0.3); }
+          0%, 100% { text-shadow:0 0 8px rgba(192,192,210,0.4), 0 0 24px rgba(192,192,210,0.15); }
+          50%      { text-shadow:0 0 16px rgba(192,192,210,0.6), 0 0 40px rgba(192,192,210,0.3); }
         }
         @keyframes dr-streak-pulse {
           0%, 100% { transform:scale(1); }
@@ -144,10 +144,10 @@ export class DailyRewardModal {
     `;
 
     const gloryAmount = document.createElement('div');
-    gloryAmount.textContent = `+${gloryGranted} \u2B50 Glory`;
+    gloryAmount.textContent = `+${gloryGranted} \u2605 Glory`;
     gloryAmount.style.cssText = `
       font-family:'Fredoka',sans-serif;font-size:32px;font-weight:bold;
-      color:${C.teal};letter-spacing:1px;
+      color:#C0C0D2;letter-spacing:1px;
       animation:dr-glory-glow 2.5s ease-in-out infinite;
     `;
     rewardContainer.appendChild(gloryAmount);

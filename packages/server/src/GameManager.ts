@@ -2,11 +2,17 @@ import { getDb } from './FirebaseAdmin';
 import { GameInstance } from './GameInstance';
 import { GameSimulation } from '../../shared/src/simulation/GameSimulation';
 import { getMapById } from '../../shared/src/data/maps';
+import type { GameWebSocketServer } from './WebSocketServer';
 
 export class GameManager {
   private games: Map<string, GameInstance> = new Map();
   private tickInterval: ReturnType<typeof setInterval> | null = null;
   private lastTickTime = Date.now();
+  private wsServer: GameWebSocketServer | null = null;
+
+  setWebSocketServer(wss: GameWebSocketServer): void {
+    this.wsServer = wss;
+  }
 
   start(): void {
     this.watchForGames();
@@ -72,12 +78,28 @@ export class GameManager {
       const mapDef = getMapById(meta.mapId || 'default');
       const sim = new GameSimulation(mapDef, meta.mapSeed || Date.now(), isSolo);
 
-      const instance = new GameInstance(gameId, meta.player1, meta.player2, sim);
+      const instance = new GameInstance(gameId, meta.player1, meta.player2, sim, this.wsServer);
       this.games.set(gameId, instance);
       console.log(`[GameManager] Game ${gameId} running (${this.games.size} active games)`);
     } catch (err) {
       console.error(`[GameManager] Failed to start game ${gameId}:`, err);
     }
+  }
+
+  /** WebSocket: handle a player joining a game */
+  handleJoin(gameId: string, playerId: string): { team: 1 | 2 } | null {
+    const game = this.games.get(gameId);
+    if (!game) return null;
+    const team = game.getTeamForPlayer(playerId);
+    if (!team) return null;
+    return { team };
+  }
+
+  /** WebSocket: handle a command from a player */
+  handleCommand(gameId: string, team: 1 | 2, orders: any[]): void {
+    const game = this.games.get(gameId);
+    if (!game) return;
+    game.handleCommand(team, orders);
   }
 
   getActiveGameCount(): number {

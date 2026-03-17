@@ -260,35 +260,36 @@ export class LoginOverlay {
         width:100%;max-width:300px;
         height:${googleIsPrimary ? '52px' : '44px'};
         padding:0 24px;
-        background:${googleIsPrimary ? '#4285F4' : 'transparent'};
-        color:${googleIsPrimary ? '#fff' : '#4285F4'};
+        background:transparent;
+        color:${googleIsPrimary ? '#5a9a4e' : '#4285F4'};
         font-size:${googleIsPrimary ? '16px' : '14px'};
         font-family:'Nunito',sans-serif;
         font-weight:bold;
-        border:${googleIsPrimary ? 'none' : '2px solid rgba(66,133,244,0.45)'};
+        border:2px solid ${googleIsPrimary ? 'rgba(90,154,78,0.6)' : 'rgba(66,133,244,0.45)'};
         border-radius:12px;cursor:pointer;
         display:flex;align-items:center;justify-content:center;
         margin-bottom:12px;
         transition:box-shadow 0.2s, transform 0.15s, background 0.2s, border-color 0.2s;
-        box-shadow:${googleIsPrimary ? '0 2px 12px rgba(0,0,0,0.25)' : 'none'};
       `;
       googleBtn.onmouseenter = () => {
         if (googleIsPrimary) {
-          googleBtn.style.boxShadow = '0 4px 24px rgba(0,0,0,0.4), 0 0 0 2px rgba(66,133,244,0.4)';
-          googleBtn.style.transform = 'translateY(-2px)';
+          googleBtn.style.borderColor = 'rgba(90,154,78,0.9)';
+          googleBtn.style.background = 'rgba(90,154,78,0.1)';
+          googleBtn.style.boxShadow = '0 0 16px rgba(90,154,78,0.2)';
         } else {
           googleBtn.style.borderColor = 'rgba(66,133,244,0.8)';
           googleBtn.style.background = 'rgba(66,133,244,0.1)';
-          googleBtn.style.transform = 'translateY(-1px)';
         }
+        googleBtn.style.transform = 'translateY(-2px)';
       };
       googleBtn.onmouseleave = () => {
         if (googleIsPrimary) {
-          googleBtn.style.boxShadow = '0 2px 12px rgba(0,0,0,0.25)';
+          googleBtn.style.borderColor = 'rgba(90,154,78,0.6)';
         } else {
           googleBtn.style.borderColor = 'rgba(66,133,244,0.45)';
-          googleBtn.style.background = 'transparent';
         }
+        googleBtn.style.background = 'transparent';
+        googleBtn.style.boxShadow = 'none';
         googleBtn.style.transform = 'translateY(0)';
       };
       googleBtn.onclick = () => {
@@ -299,18 +300,23 @@ export class LoginOverlay {
         if (this.resolve) this.resolve('google');
       };
 
-      // --- Guest text link ---
-      const guestLink = document.createElement('span');
+      // --- Guest button with outline ---
+      const guestLink = document.createElement('button');
       guestLink.textContent = 'Play as Guest';
       guestLink.style.cssText = `
+        width:100%;max-width:300px;height:44px;
+        padding:0 24px;
+        background:transparent;
         color:${C.textMuted};
-        font-size:13px;font-family:'Nunito',sans-serif;
-        cursor:pointer;
-        transition:color 0.2s;
-        margin-top:4px;margin-bottom:8px;
+        font-size:13px;font-family:'Nunito',sans-serif;font-weight:bold;
+        border:2px solid rgba(139,115,85,0.35);
+        border-radius:12px;cursor:pointer;
+        display:flex;align-items:center;justify-content:center;
+        margin-bottom:8px;
+        transition:all 0.2s;
       `;
-      guestLink.onmouseenter = () => { guestLink.style.color = C.textSecondary; };
-      guestLink.onmouseleave = () => { guestLink.style.color = C.textMuted; };
+      guestLink.onmouseenter = () => { guestLink.style.borderColor = 'rgba(139,115,85,0.6)'; guestLink.style.color = C.textSecondary; guestLink.style.background = 'rgba(139,115,85,0.08)'; guestLink.style.transform = 'translateY(-1px)'; };
+      guestLink.onmouseleave = () => { guestLink.style.borderColor = 'rgba(139,115,85,0.35)'; guestLink.style.color = C.textMuted; guestLink.style.background = 'transparent'; guestLink.style.transform = 'translateY(0)'; };
       guestLink.onclick = () => {
         (window as any).__menuPlaySfx?.('button_click', 0.3);
         guestLink.textContent = 'Signing in...';

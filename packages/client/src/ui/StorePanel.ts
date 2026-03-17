@@ -25,19 +25,9 @@ interface StoreTab {
 }
 
 const TABS: StoreTab[] = [
-  { id: 'all',        label: 'All',        categories: null },
-  { id: 'skins',      label: 'Skins',      categories: ['unit_skin'] },
-  { id: 'portraits',  label: 'Portraits',  categories: ['avatar_portrait', 'portrait_frame'] },
-  { id: 'voices',     label: 'Voices',     categories: ['voice_pack', 'voice_effect'] },
-  { id: 'equipment',  label: 'Equipment',  categories: ['equipment_cosmetic'] },
-  { id: 'buildings',  label: 'Buildings',  categories: ['building_theme'] },
-  { id: 'maps',       label: 'Maps',       categories: ['map_theme'] },
-  { id: 'effects',    label: 'Effects',    categories: ['death_effect', 'spawn_effect', 'attack_trail', 'victory_effect'] },
-  { id: 'emotes',     label: 'Emotes',     categories: ['emote'] },
-  { id: 'profile',    label: 'Profile',    categories: ['profile_badge', 'profile_title', 'profile_border', 'profile_background', 'cursor_pack'] },
-  { id: 'themes',     label: 'Themes',     categories: ['ui_theme'] },
-  { id: 'gems',       label: 'Gems',       categories: null },  // special: crown packages
-  { id: 'bundles',    label: 'Bundles',    categories: null },   // special: bundles
+  { id: 'gems',       label: '\uD83D\uDC51 Crowns',      categories: null },
+  { id: 'battlepass', label: '\uD83C\uDFC6 Battle Pass',  categories: null },
+  { id: 'bundles',    label: '\uD83C\uDF81 Bundles',      categories: null },
 ];
 
 // ── Rarity border colours ───────────────────────────────────────
@@ -72,7 +62,6 @@ const CATEGORY_EMOJI: Partial<Record<ItemCategory, string>> = {
   attack_trail:       '\u2728',          // sparkles
   victory_effect:     '\uD83C\uDF86',   // fireworks
   emote:              '\uD83D\uDE04',   // grinning face
-  profile_badge:      '\uD83C\uDFC5',   // medal
   profile_title:      '\uD83D\uDCDB',   // name badge
   profile_border:     '\uD83D\uDDBC\uFE0F',
   profile_background: '\uD83C\uDF04',   // sunrise
@@ -85,7 +74,7 @@ const CATEGORY_EMOJI: Partial<Record<ItemCategory, string>> = {
 
 export class StorePanel {
   private root: HTMLDivElement | null = null;
-  private activeCategory: string = 'all';
+  private activeCategory: string = 'gems';
   private escHandler: ((e: KeyboardEvent) => void) | null = null;
 
   private gridContainer: HTMLDivElement | null = null;
@@ -351,6 +340,12 @@ export class StorePanel {
       return;
     }
 
+    // Special tab: Battle Pass
+    if (this.activeCategory === 'battlepass') {
+      this.renderBattlePass(container);
+      return;
+    }
+
     // Normal catalog items
     const tab = TABS.find((t) => t.id === this.activeCategory);
     let items: CatalogItem[];
@@ -374,7 +369,7 @@ export class StorePanel {
     const grid = document.createElement('div');
     grid.style.cssText = `
       display:grid;
-      grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));
+      grid-template-columns:repeat(auto-fill, minmax(160px, 1fr));
       gap:12px;
     `;
 
@@ -437,12 +432,22 @@ export class StorePanel {
 
     // ── Preview area ──
     const preview = document.createElement('div');
+    const isPortrait = item.category === 'avatar_portrait';
     preview.style.cssText = `
-      width:100%;height:60px;display:flex;align-items:center;justify-content:center;
-      font-size:28px;
+      width:100%;height:${isPortrait ? '100px' : '60px'};display:flex;align-items:center;justify-content:center;
+      font-size:${isPortrait ? '14px' : '28px'};
       background:rgba(0,0,0,0.15);border-radius:8px;
+      overflow:hidden;
     `;
-    preview.textContent = CATEGORY_EMOJI[item.category] ?? '\uD83C\uDFA8';
+    if (isPortrait && item.id.startsWith('portrait_') && item.unitType) {
+      // Show actual avatar image for unit portraits
+      const img = document.createElement('img');
+      img.src = `assets/enemies/avatars/${item.unitType}.png`;
+      img.style.cssText = 'width:80px;height:80px;object-fit:cover;image-rendering:pixelated;border-radius:50%;';
+      preview.appendChild(img);
+    } else {
+      preview.textContent = CATEGORY_EMOJI[item.category] ?? '\uD83C\uDFA8';
+    }
     card.appendChild(preview);
 
     // ── Item name ──
@@ -456,29 +461,24 @@ export class StorePanel {
     `;
     card.appendChild(name);
 
-    // ── Price line ──
+    // ── Price line (single currency) ──
     if (!owned) {
       const priceLine = document.createElement('div');
       priceLine.style.cssText = `
-        font-size:11px;font-weight:700;
+        font-size:12px;font-weight:700;
         display:flex;align-items:center;gap:4px;justify-content:center;
       `;
 
-      const crownPrice = document.createElement('span');
-      crownPrice.style.cssText = `color:${C.gold};`;
-      crownPrice.textContent = `\u{1F451} ${item.priceCrowns}`;
-      priceLine.appendChild(crownPrice);
-
-      if (item.priceGlory != null) {
-        const sep = document.createElement('span');
-        sep.textContent = '/';
-        sep.style.cssText = `color:${C.textMuted};font-size:10px;`;
-        priceLine.appendChild(sep);
-
+      if (item.priceGlory && item.priceGlory > 0) {
         const gloryPrice = document.createElement('span');
-        gloryPrice.style.cssText = `color:${C.teal};`;
-        gloryPrice.textContent = `\u2B50 ${item.priceGlory}`;
+        gloryPrice.style.cssText = `color:#C0C0D2;`;
+        gloryPrice.textContent = `\u2605 ${item.priceGlory}`;
         priceLine.appendChild(gloryPrice);
+      } else {
+        const crownPrice = document.createElement('span');
+        crownPrice.style.cssText = `color:${C.gold};`;
+        crownPrice.textContent = `\u{1F451} ${item.priceCrowns}`;
+        priceLine.appendChild(crownPrice);
       }
 
       card.appendChild(priceLine);
@@ -510,7 +510,7 @@ export class StorePanel {
     const grid = document.createElement('div');
     grid.style.cssText = `
       display:grid;
-      grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));
+      grid-template-columns:repeat(auto-fill, minmax(160px, 1fr));
       gap:12px;
     `;
 
@@ -673,6 +673,124 @@ export class StorePanel {
   // ────────────────────────────────────────────────────────────────
   //  Bundles tab
   // ────────────────────────────────────────────────────────────────
+
+  private renderBattlePass(container: HTMLDivElement): void {
+    container.style.display = 'flex';
+    container.style.flexDirection = 'column';
+    container.style.alignItems = 'center';
+    container.style.gap = '16px';
+    container.style.padding = '20px';
+
+    // Season banner
+    const banner = document.createElement('div');
+    banner.style.cssText = `
+      width:100%;max-width:500px;text-align:center;
+      background:${C.surface};border:2px solid ${C.panelBorder};border-radius:14px;
+      padding:28px 24px;
+    `;
+    banner.innerHTML = `
+      <div style="font-size:13px;color:${C.gold};font-family:'Fredoka',sans-serif;letter-spacing:2px;margin-bottom:6px;">SEASON 1</div>
+      <div style="font-size:28px;font-weight:700;color:${C.textH1};font-family:'Fredoka',sans-serif;margin-bottom:8px;">Season of the Blade</div>
+      <div style="font-size:13px;color:${C.textMuted};margin-bottom:16px;">50 tiers of exclusive rewards. Earn XP by playing matches and completing challenges.</div>
+      <div style="display:flex;justify-content:center;gap:20px;margin-bottom:16px;">
+        <div style="text-align:center;">
+          <div style="font-size:11px;color:${C.textMuted};letter-spacing:1px;">FREE TRACK</div>
+          <div style="font-size:14px;color:${C.teal};font-weight:700;margin-top:2px;">Always included</div>
+        </div>
+        <div style="width:1px;background:${C.divider};"></div>
+        <div style="text-align:center;">
+          <div style="font-size:11px;color:${C.textMuted};letter-spacing:1px;">PREMIUM</div>
+          <div style="font-size:14px;color:${C.gold};font-weight:700;margin-top:2px;">\uD83D\uDC51 1,000 Crowns</div>
+        </div>
+        <div style="width:1px;background:${C.divider};"></div>
+        <div style="text-align:center;">
+          <div style="font-size:11px;color:${C.textMuted};letter-spacing:1px;">PREMIUM+</div>
+          <div style="font-size:14px;color:${C.gold};font-weight:700;margin-top:2px;">\uD83D\uDC51 2,500 Crowns</div>
+        </div>
+      </div>
+    `;
+
+    // Buy buttons
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:12px;justify-content:center;';
+
+    const premBtn = document.createElement('button');
+    premBtn.textContent = 'BUY PREMIUM — 1,000 \uD83D\uDC51';
+    premBtn.style.cssText = `
+      font-family:'Fredoka',sans-serif;font-size:14px;font-weight:700;
+      color:#1a1a0a;background:${C.gold};border:none;border-radius:10px;
+      padding:12px 24px;cursor:pointer;transition:all 0.15s;
+    `;
+    premBtn.onmouseenter = () => { premBtn.style.filter = 'brightness(1.15)'; premBtn.style.transform = 'scale(1.03)'; };
+    premBtn.onmouseleave = () => { premBtn.style.filter = ''; premBtn.style.transform = ''; };
+    premBtn.onclick = async () => {
+      premBtn.textContent = '...';
+      try {
+        const { getAuth } = await import('firebase/auth');
+        const { getFirebaseApp } = await import('../auth/firebaseApp');
+        const token = await getAuth(getFirebaseApp()).currentUser?.getIdToken();
+        if (!token) return;
+        const baseUrl = (import.meta as any).env?.VITE_FUNCTIONS_URL || '';
+        const res = await fetch(`${baseUrl}/api/store/purchaseBattlePass`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ tier: 'premium' }),
+        });
+        const data = await res.json().catch(() => ({ error: 'Failed' }));
+        premBtn.textContent = data.success ? '\u2713 PREMIUM UNLOCKED' : (data.error || 'Failed');
+        if (data.success) premBtn.style.background = C.teal;
+      } catch { premBtn.textContent = 'Error'; }
+    };
+    btnRow.appendChild(premBtn);
+
+    const premPlusBtn = document.createElement('button');
+    premPlusBtn.textContent = 'BUY PREMIUM+ — 2,500 \uD83D\uDC51';
+    premPlusBtn.style.cssText = `
+      font-family:'Fredoka',sans-serif;font-size:14px;font-weight:700;
+      color:${C.textH1};background:rgba(255,217,61,0.15);
+      border:2px solid ${C.goldDim};border-radius:10px;
+      padding:12px 24px;cursor:pointer;transition:all 0.15s;
+    `;
+    premPlusBtn.onmouseenter = () => { premPlusBtn.style.borderColor = C.gold; premPlusBtn.style.transform = 'scale(1.03)'; };
+    premPlusBtn.onmouseleave = () => { premPlusBtn.style.borderColor = C.goldDim; premPlusBtn.style.transform = ''; };
+    premPlusBtn.onclick = async () => {
+      premPlusBtn.textContent = '...';
+      try {
+        const { getAuth } = await import('firebase/auth');
+        const { getFirebaseApp } = await import('../auth/firebaseApp');
+        const token = await getAuth(getFirebaseApp()).currentUser?.getIdToken();
+        if (!token) return;
+        const baseUrl = (import.meta as any).env?.VITE_FUNCTIONS_URL || '';
+        const res = await fetch(`${baseUrl}/api/store/purchaseBattlePass`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ tier: 'premiumPlus' }),
+        });
+        const data = await res.json().catch(() => ({ error: 'Failed' }));
+        premPlusBtn.textContent = data.success ? '\u2713 PREMIUM+ UNLOCKED' : (data.error || 'Failed');
+        if (data.success) premPlusBtn.style.background = C.teal;
+      } catch { premPlusBtn.textContent = 'Error'; }
+    };
+    btnRow.appendChild(premPlusBtn);
+
+    banner.appendChild(btnRow);
+
+    // View full pass link
+    const viewLink = document.createElement('div');
+    viewLink.style.cssText = `text-align:center;margin-top:14px;font-size:12px;color:${C.teal};cursor:pointer;transition:color 0.15s;`;
+    viewLink.textContent = 'View full Battle Pass \u2192';
+    viewLink.onmouseenter = () => { viewLink.style.color = C.gold; };
+    viewLink.onmouseleave = () => { viewLink.style.color = C.teal; };
+    viewLink.onclick = () => {
+      this.close();
+      import('./BattlePassPanel').then(({ BattlePassPanel }) => {
+        new BattlePassPanel().mount(document.body);
+      });
+    };
+    banner.appendChild(viewLink);
+
+    container.appendChild(banner);
+  }
 
   private renderBundles(container: HTMLDivElement): void {
     const bundles = this.catalog.getBundles();

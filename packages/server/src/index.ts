@@ -1,6 +1,8 @@
+import http from 'http';
 import express from 'express';
 import { initAdmin } from './FirebaseAdmin';
 import { GameManager } from './GameManager';
+import { GameWebSocketServer } from './WebSocketServer';
 
 const PORT = parseInt(process.env.PORT || '8080', 10);
 
@@ -9,7 +11,6 @@ async function main() {
   initAdmin();
 
   const manager = new GameManager();
-  manager.start();
 
   const app = express();
 
@@ -21,14 +22,28 @@ async function main() {
     });
   });
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[Server] Listening on 0.0.0.0:${PORT}`);
+  // Create HTTP server from Express app (needed for WebSocket upgrade)
+  const httpServer = http.createServer(app);
+
+  // Attach WebSocket server to the same HTTP server
+  const wsServer = new GameWebSocketServer(httpServer, {
+    onJoin: (gameId, playerId) => manager.handleJoin(gameId, playerId),
+    onCommand: (gameId, team, orders) => manager.handleCommand(gameId, team, orders),
+  });
+  manager.setWebSocketServer(wsServer);
+
+  // Start game loop
+  manager.start();
+
+  httpServer.listen(PORT, '0.0.0.0', () => {
+    console.log(`[Server] Listening on 0.0.0.0:${PORT} (HTTP + WebSocket)`);
   });
 
   // Graceful shutdown
   process.on('SIGTERM', () => {
     console.log('[Server] SIGTERM received, shutting down...');
     manager.stop();
+    httpServer.close();
     process.exit(0);
   });
 }

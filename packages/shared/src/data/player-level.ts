@@ -95,10 +95,10 @@ export const LEVEL_REWARDS: Record<number, LevelReward> = {
   30: { crowns: 500, itemId: 'spawn_fx_lightning' },
   35: { glory: 200 },
   40: { crowns: 600, itemId: 'frame_shimmer' },
-  50: { crowns: 1000, itemId: 'badge_gold_star' },
-  60: { glory: 800, itemId: 'badge_crown' },
+  50: { crowns: 1000, itemId: 'title_iron_will' },
+  60: { glory: 800, itemId: 'title_beast_tamer' },
   70: { crowns: 1500, itemId: 'title_grand_marshal' },
-  80: { glory: 1000, itemId: 'badge_flames' },
+  80: { glory: 1000, itemId: 'title_doom_bringer' },
   90: { crowns: 2000 },
   100: { crowns: 5000, glory: 2000, itemId: 'frame_celestial' },
 };

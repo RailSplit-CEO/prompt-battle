@@ -17,6 +17,32 @@ export default defineConfig({
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
     },
+    proxy: {
+      // Proxy /api/store/* and /api/auth/* to deployed Firebase Cloud Functions
+      // Mirrors firebase.json hosting rewrites so dev and prod use the same paths
+      '/api/store': {
+        target: 'https://us-central1-prompt-battle-c5e6a.cloudfunctions.net',
+        changeOrigin: true,
+        rewrite: (p: string) => {
+          // /api/store/grantGlory → /grantGlory
+          const fn = p.replace('/api/store/', '');
+          return `/${fn}`;
+        },
+      },
+      '/api/auth': {
+        target: 'https://us-central1-prompt-battle-c5e6a.cloudfunctions.net',
+        changeOrigin: true,
+        rewrite: (p: string) => {
+          const fn = p.replace('/api/auth/', '');
+          return `/${fn}`;
+        },
+      },
+      '/api/processCommand': {
+        target: 'https://us-central1-prompt-battle-c5e6a.cloudfunctions.net',
+        changeOrigin: true,
+        rewrite: () => '/processPlayerCommand',
+      },
+    },
   },
   plugins: [
     {

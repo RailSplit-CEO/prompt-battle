@@ -12,6 +12,7 @@ export { adminGrantItems } from './store/admin';
 export { grantGlory } from './store/glory';
 export { purchaseItem } from './store/purchase-item';
 export { grantXp } from './store/grant-xp';
+export { purchaseBattlePass, grantBattlePassXp, claimBattlePassReward } from './store/battle-pass';
 
 // Auth
 export { itchOAuthCallback } from './auth/itch-auth';

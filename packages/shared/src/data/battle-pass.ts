@@ -21,27 +21,29 @@ export const SEASON_1: BattlePassSeason = {
   }),
 };
 
-function getFreeReward(tier: number): BattlePassReward | undefined {
-  // Every 10 tiers: larger glory rewards
-  // Every 5 tiers: small glory rewards
-  // Specific tiers: items and crowns
-  if (tier % 10 === 0) return { type: 'glory', amount: tier <= 20 ? 50 : tier <= 40 ? 75 : 100 };
-  if (tier % 5 === 0) return { type: 'glory', amount: 25 };
+function getFreeReward(tier: number): BattlePassReward {
+  // Every tier has a reward — items at milestones, currency elsewhere
+  // Milestone items
   if (tier === 3) return { type: 'item', itemId: 'emote_wave' };
   if (tier === 8) return { type: 'item', itemId: 'frame_wooden' };
-  if (tier === 12) return { type: 'crowns', amount: 25 };
   if (tier === 18) return { type: 'item', itemId: 'frame_iron' };
-  if (tier === 22) return { type: 'crowns', amount: 50 };
   if (tier === 28) return { type: 'item', itemId: 'emote_laugh' };
-  if (tier === 32) return { type: 'crowns', amount: 50 };
   if (tier === 38) return { type: 'item', itemId: 'cursor_crystal' };
-  if (tier === 42) return { type: 'crowns', amount: 75 };
   if (tier === 48) return { type: 'glory', amount: 200 };
-  return undefined;
+  // Every 10 tiers: large glory
+  if (tier % 10 === 0) return { type: 'glory', amount: tier <= 20 ? 50 : tier <= 40 ? 75 : 100 };
+  // Every 5 tiers: medium glory
+  if (tier % 5 === 0) return { type: 'glory', amount: 25 };
+  // Alternating crowns and glory for remaining tiers
+  if (tier % 3 === 0) return { type: 'crowns', amount: 15 + Math.floor(tier / 10) * 5 };
+  if (tier % 2 === 0) return { type: 'glory', amount: 10 + Math.floor(tier / 10) * 5 };
+  return { type: 'crowns', amount: 10 + Math.floor(tier / 10) * 5 };
 }
 
-function getPremiumReward(tier: number): BattlePassReward | undefined {
-  if (tier === 1) return { type: 'item', itemId: 'badge_season1' };
+function getPremiumReward(tier: number): BattlePassReward {
+  // Every tier has a premium reward — skins/items at milestones, currency elsewhere
+  // Milestone items
+  if (tier === 1) return { type: 'item', itemId: 'title_recruit' };
   if (tier === 5) return { type: 'item', itemId: 'skin_gnome_frost' };
   if (tier === 10) return { type: 'item', itemId: 'portrait_skull_deluxe' };
   if (tier === 15) return { type: 'item', itemId: 'voice_gnome_hyper' };
@@ -52,10 +54,11 @@ function getPremiumReward(tier: number): BattlePassReward | undefined {
   if (tier === 40) return { type: 'item', itemId: 'frame_dragon' };
   if (tier === 45) return { type: 'item', itemId: 'voice_fx_echo' };
   if (tier === 50) return { type: 'item', itemId: 'skin_troll_frost_king' };
-  // Fill remaining premium tiers with crowns or glory
-  if (tier % 3 === 0) return { type: 'crowns', amount: 25 };
-  if (tier % 7 === 0) return { type: 'glory', amount: 100 };
-  return undefined;
+  // Alternating crowns and glory for remaining tiers
+  if (tier % 4 === 0) return { type: 'glory', amount: 30 + Math.floor(tier / 10) * 10 };
+  if (tier % 3 === 0) return { type: 'crowns', amount: 20 + Math.floor(tier / 10) * 10 };
+  if (tier % 2 === 0) return { type: 'glory', amount: 15 + Math.floor(tier / 10) * 5 };
+  return { type: 'crowns', amount: 15 + Math.floor(tier / 10) * 5 };
 }
 
 export const CURRENT_SEASON = SEASON_1;

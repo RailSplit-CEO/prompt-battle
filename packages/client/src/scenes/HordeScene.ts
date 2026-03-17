@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { FirebaseSync } from '../network/FirebaseSync';
+import { GameSocket, getGameServerUrl } from '../network/GameSocket';
 import { HORDE_SPRITE_CONFIGS, getAnimKeyPrefix, getEffectiveSpriteConfig } from '../sprites/SpriteConfig';
 import { MapDef, MapCampSlot, MapZoneDef, MapTowerSlot, MapBushZone, MapRockDef, MapBoundaryBlock, assignAnimalsToSlots, getMapById, ALL_MAPS, TILE_SIZE, EquipmentType as SharedEquipmentType } from '@prompt-battle/shared';
 import { resolveGrid, ResolvedTile } from '../map/AutoTileResolver';
@@ -19,6 +20,8 @@ import { TalkingPortrait } from '../systems/TalkingPortrait';
 import { SettingsPanel } from '../systems/SettingsPanel';
 import { GameSettings } from '../systems/GameSettings';
 import { AuthManager } from '../auth/AuthManager';
+import { InventoryManager } from '../store/InventoryManager';
+import { CatalogService } from '../store/CatalogService';
 // horde-maps.json loaded at runtime from public/ via fetch (not bundled)
 
 // ═══════════════════════════════════════════════════════════════
@@ -280,6 +283,34 @@ function validateAndFixWorkflow(cmd: HordeCommand): HordeCommand {
   }
 
   return cmd;
+}
+
+// ─── Default unit personalities (used when no voice pack override is equipped) ───
+const DEFAULT_PERSONALITIES: Record<string, string> = {
+  gnome: 'Squeaky, hyper, childlike. Obsessed with food and shiny things. Say "boss" constantly. Laugh with "hehehehe!" or "teeheehee!". Short attention span. "Ooh ooh! Yes boss yes boss! Hehehehe! We go get the shinies boss!"',
+  skull: 'Grim. Hollow. Monotone. Speak of death, graves, the void. No excitement EVER. Flat, ominous, unsettling. Long pauses as "..." between phrases. "...the dead do not rush. We will arrive... when the earth permits."',
+  spider: 'Sinister, whispery, hissing. Stretch S sounds (sssslither, yesss, preciousss). Creepy and predatory. "Yesss... we ssscatter through the dark, sssilent and hungry..."',
+  hyena: 'Absolutely unhinged. Manic laughter spelled out: "AHAHAHA!!" or "HEHEHEHE!!". CAPS. Lives for chaos. Cannot be serious. "AHAHAHA YEAH YEAH YEAH!! LETS GO BREAK STUFF!! HEHEHEHE!!"',
+  turtle: 'Depressed. Exhausted. Everything is too hard, too far, too fast. Spell out sighs as "huuuhhh..." or "uuugghh...". Reluctant compliance. Miserable. "Uuugghh... fine. We\'ll drag ourselves over there. Again."',
+  panda: 'Slow, warm, sleepy. Zen-like calm. Thinks about food and naps. Yawns as "mmmyaaawn..." Unhurried. Gentle. "Mmm... okay. Nice slow walk. Mmmyaaawn... maybe bamboo on the way..."',
+  lizard: 'Cold. Clinical. Zero emotion. Military brevity. No personality flair, no humor. Robotic. "Affirmative. Route plotted. Executing."',
+  minotaur: 'PURE RAGE. ALL CAPS. Roar spelled out: "RAAAAGH!!" or "GRRRAAAH!!". Primal. Wants to smash everything. No subtlety. "RAAAAGH!! MOVE!! SMASH!! GRRRAAAH!! DESTROY EVERYTHING!!"',
+  shaman: 'Cryptic, mystical, speaks in riddles. References spirits, fate, the stars. Ethereal, drawn-out vowels: "oooohhh..." or "ahhhhh...". "Oooohhh... the spirits murmur of this path... fate curls like smoke..."',
+  rogue: 'Sarcastic, dry, too-cool. Eye-rolling energy. Scoffs as "tch" or "pfft". Reluctant competence. Never impressed. "Tch... sure. Whatever. Already three steps ahead of you."',
+  troll: 'Dumb. Third-person speech. Broken grammar. Confused easily. Grunts as "uhhh" or "hrmm". Lovable but slow. "Uhhh... Troll go now. Hrmm. Troll not sure where... but Troll go."',
+};
+
+/** Get the active personality for a hoard type — checks equipped voice pack for override */
+function getActivePersonality(hoardType: string): string {
+  try {
+    const equipped = InventoryManager.getInstance().getEquipped();
+    const packId = (equipped as any).voicePacks?.[hoardType];
+    if (packId && packId !== 'default') {
+      const item = CatalogService.getInstance().getItem(packId);
+      if (item?.personality) return item.personality;
+    }
+  } catch { /* inventory/catalog not initialized */ }
+  return DEFAULT_PERSONALITIES[hoardType] || DEFAULT_PERSONALITIES.gnome;
 }
 
 async function parseWithGemini(
@@ -727,19 +758,9 @@ Your "narration" and "unitReaction" fields MUST be written AS these units speaki
 
 IMPORTANT: Each unit type is ONE specific recurring character the player has a relationship with — not a random member of the group. The gnome is always THE SAME gnome who calls the player "boss" and remembers being sent on errands. The turtle is always THE SAME tired turtle who has been dragging himself around all game. Write as if this character has been with the player the whole match. They can reference past orders, complain about workload, or show familiarity. The player should feel like they're talking to the same friend every time they switch to that unit type.
 
-PERSONALITY REFERENCE (use ONLY the one matching "${ctx.selectedHoard}"):
+PERSONALITY FOR "${ctx.selectedHoard}":
 CRITICAL RULE: NEVER describe sounds or actions — SPELL THEM OUT phonetically so TTS can voice them. No *giggles*, no *sighs*, no *cackles*. Instead write "hehehehe!", "huuuhhh...", "AHAHAHA!" etc. Everything you write will be read aloud by text-to-speech — if it can't be spoken, don't write it.
-  gnome: Squeaky, hyper, childlike. Obsessed with food and shiny things. Say "boss" constantly. Laugh with "hehehehe!" or "teeheehee!". Short attention span. "Ooh ooh! Yes boss yes boss! Hehehehe! We go get the shinies boss!"
-  skull: Grim. Hollow. Monotone. Speak of death, graves, the void. No excitement EVER. Flat, ominous, unsettling. Long pauses as "..." between phrases. "...the dead do not rush. We will arrive... when the earth permits."
-  spider: Sinister, whispery, hissing. Stretch S sounds (sssslither, yesss, preciousss). Creepy and predatory. "Yesss... we ssscatter through the dark, sssilent and hungry..."
-  hyena: Absolutely unhinged. Manic laughter spelled out: "AHAHAHA!!" or "HEHEHEHE!!". CAPS. Lives for chaos. Cannot be serious. "AHAHAHA YEAH YEAH YEAH!! LETS GO BREAK STUFF!! HEHEHEHE!!"
-  turtle: Depressed. Exhausted. Everything is too hard, too far, too fast. Spell out sighs as "huuuhhh..." or "uuugghh...". Reluctant compliance. Miserable. "Uuugghh... fine. We'll drag ourselves over there. Again."
-  panda: Slow, warm, sleepy. Zen-like calm. Thinks about food and naps. Yawns as "mmmyaaawn..." Unhurried. Gentle. "Mmm... okay. Nice slow walk. Mmmyaaawn... maybe bamboo on the way..."
-  lizard: Cold. Clinical. Zero emotion. Military brevity. No personality flair, no humor. Robotic. "Affirmative. Route plotted. Executing."
-  minotaur: PURE RAGE. ALL CAPS. Roar spelled out: "RAAAAGH!!" or "GRRRAAAH!!". Primal. Wants to smash everything. No subtlety. "RAAAAGH!! MOVE!! SMASH!! GRRRAAAH!! DESTROY EVERYTHING!!"
-  shaman: Cryptic, mystical, speaks in riddles. References spirits, fate, the stars. Ethereal, drawn-out vowels: "oooohhh..." or "ahhhhh...". "Oooohhh... the spirits murmur of this path... fate curls like smoke..."
-  rogue: Sarcastic, dry, too-cool. Eye-rolling energy. Scoffs as "tch" or "pfft". Reluctant competence. Never impressed. "Tch... sure. Whatever. Already three steps ahead of you."
-  troll: Dumb. Third-person speech. Broken grammar. Confused easily. Grunts as "uhhh" or "hrmm". Lovable but slow. "Uhhh... Troll go now. Hrmm. Troll not sure where... but Troll go."
+  ${ctx.selectedHoard}: ${getActivePersonality(ctx.selectedHoard)}
 
 PLAYER SAYS: "${rawText}"
 
@@ -2072,6 +2093,8 @@ export class HordeScene extends Phaser.Scene {
   private _bannerAuraCache = new Map<number, { attack: number; speed: number }>();
   // 4f: Reusable formation groups map
   private _formationGroups = new Map<string, HUnit[]>();
+  // Team indicator rings drawn under units
+  private _teamIndicatorGfx: Phaser.GameObjects.Graphics | null = null;
   // 2d: Defended camps set (rebuilt each frame in updateMovement)
   private _defendedCamps = new Set<string>();
   private _tightGroups: Map<string, HUnit[]> | null = null;
@@ -2097,10 +2120,18 @@ export class HordeScene extends Phaser.Scene {
   private gameId: string | null = null;
   private playerId: string | null = null;
   private opponentUid: string | null = null;
+  private opponentSkins: Record<string, string> = {}; // unitType → skinId
   private matchType: string = 'solo';
   private isRanked = false;
   private ratingDelta: { oldRating: number; newRating: number; delta: number } | null = null;
+  private emoteSync: any = null;
+  private emoteRenderer: any = null;
+  private emoteWheel: any = null;
+  private emotePicker: any = null;
+  private lastEmoteTime = 0;
+  private emoteButtonEl: HTMLElement | null = null;
   private firebase: FirebaseSync | null = null;
+  private gameSocket: GameSocket | null = null;
   private syncTimer = 0;
   private readonly SYNC_INTERVAL_MS = 150; // push state 6-7 times/sec
   private _beforeUnloadHandler: (() => void) | null = null;
@@ -2109,9 +2140,70 @@ export class HordeScene extends Phaser.Scene {
     super({ key: 'HordeScene' });
   }
 
-  /** Get the animation key prefix for a unit, using skin for own team */
+  /** Load opponent's equipped skins from Firebase and preload their sprites */
+  private async loadOpponentSkins(uid: string) {
+    try {
+      const { getDatabase, ref, get } = await import('firebase/database');
+      const db = getDatabase();
+      const snap = await get(ref(db, `users/${uid}/equipped/unitSkins`));
+      if (!snap.exists()) return;
+      const skins = snap.val() as Record<string, string>;
+      this.opponentSkins = skins;
+
+      // Dynamically load skin sprite sheets and create animations
+      for (const [unitType, skinId] of Object.entries(skins)) {
+        if (!skinId || skinId === 'default') continue;
+        const skinConfig = getEffectiveSpriteConfig(unitType, skinId);
+        if (!skinConfig) continue;
+
+        for (const state of ['idle', 'walk', 'attack'] as const) {
+          const sheet = skinConfig[state];
+          if (this.textures.exists(sheet.key)) continue;
+
+          // Load sprite sheet dynamically
+          await new Promise<void>((resolve) => {
+            this.load.spritesheet(sheet.key, sheet.path, {
+              frameWidth: sheet.frameWidth,
+              frameHeight: sheet.frameHeight,
+            });
+            this.load.once('complete', () => resolve());
+            this.load.start();
+          });
+        }
+
+        // Create animations for this skin
+        const prefix = `skin_${skinId}`;
+        const rates: Record<string, number> = { idle: 8, walk: 20, attack: 12 };
+        for (const [state, rate] of Object.entries(rates)) {
+          const sheet = skinConfig[state as keyof typeof skinConfig] as any;
+          if (!sheet?.key || !this.textures.exists(sheet.key)) continue;
+          const animKey = `${prefix}_${state}`;
+          if (this.anims.exists(animKey)) continue;
+          const frameCount = this.textures.get(sheet.key).getFrameNames().length ||
+            (sheet.frameCount || 8);
+          this.anims.create({
+            key: animKey,
+            frames: this.anims.generateFrameNumbers(sheet.key, { start: 0, end: frameCount - 1 }),
+            frameRate: rate,
+            repeat: state === 'attack' ? 0 : -1,
+          });
+        }
+      }
+      console.log('[Horde] Opponent skins loaded:', Object.keys(skins).filter(k => skins[k] && skins[k] !== 'default'));
+    } catch (err) {
+      console.warn('[Horde] Failed to load opponent skins:', err);
+    }
+  }
+
+  /** Get the animation key prefix for a unit, using skin for own or opponent team */
   private animPrefix(u: { type: string; team: number }): string {
-    return (u.team === this.myTeam) ? getAnimKeyPrefix(u.type) : `h_${u.type}`;
+    if (u.team === this.myTeam) return getAnimKeyPrefix(u.type);
+    const oppSkin = this.opponentSkins[u.type];
+    if (oppSkin && oppSkin !== 'default') {
+      const prefix = `skin_${oppSkin}`;
+      if (this.anims.exists(`${prefix}_idle`)) return prefix;
+    }
+    return `h_${u.type}`;
   }
 
   /** Returns a snapshot of key metrics for the memory overlay / profiling tests. */
@@ -2285,6 +2377,11 @@ export class HordeScene extends Phaser.Scene {
     // Smooth fade-in from menu transition
     this.cameras.main.fadeIn(600, 15, 26, 10);
 
+    // ─── Load opponent skins (async, non-blocking) ───────────
+    if (this.opponentUid) {
+      this.loadOpponentSkins(this.opponentUid);
+    }
+
     // ─── Init Sound Manager ──────────────────────────────────
     this.sfx = new SoundManager(this);
     this.sfx.init();
@@ -2374,6 +2471,7 @@ export class HordeScene extends Phaser.Scene {
     this.setupFpsCounter();
     this.setupColorblindFilters();
     this.setupFullscreenSync();
+    this.setupEmotes();
     this.events.on('shutdown', () => this.cleanupHTML());
 
     // Save active game ID for reconnection on page reload
@@ -2458,37 +2556,34 @@ export class HordeScene extends Phaser.Scene {
     // ─── ONLINE SETUP ───
     if (this.isOnline && this.gameId) {
       this.firebase = FirebaseSync.getInstance();
-      if (this.isHost) {
-        // Host: listen for guest commands
-        this.firebase.onRemoteOrders(this.gameId, (data) => {
-          if (data.orders) {
-            for (const entry of data.orders) {
-              const cmd = (entry as any).order || entry;
-              if (cmd.parsed && cmd.team) {
-                // New format: pre-parsed commands from client
-                this.pendingRemoteCommands.push({
-                  parsed: cmd.parsed as HordeCommand[],
-                  team: cmd.team as 1 | 2,
-                  selectedHoard: cmd.selectedHoard || 'all',
-                });
-              } else if (cmd.text && cmd.team) {
-                // Legacy format: raw text (fallback)
-                this.pendingRemoteCommands.push({
-                  text: cmd.text,
-                  team: cmd.team as 1 | 2,
-                  selectedHoard: cmd.selectedHoard || 'all',
-                });
-              }
-            }
-          }
-          if (this.gameId) this.firebase!.removeRemoteOrder(this.gameId, data.key);
-        });
-      } else {
-        // Guest: listen for sync state from host
-        this.firebase.onSyncState(this.gameId, (state: any) => {
+      // Try WebSocket first — fall back to Firebase sync if server unreachable
+      const serverUrl = getGameServerUrl();
+      this.gameSocket = new GameSocket(serverUrl, this.gameId, this.playerId || '', {
+        onJoined: (team) => {
+          console.log(`[HordeScene] Joined via WebSocket as team ${team}`);
+          this.myTeam = team;
+        },
+        onSync: (state: any) => {
           this.applyGuestSync(state as HordeSyncState);
-        });
-      }
+        },
+        onGameOver: (winner) => {
+          console.log(`[HordeScene] Game over, winner: team ${winner}`);
+        },
+        onDisconnect: () => {
+          console.log('[HordeScene] WebSocket disconnected');
+        },
+        onError: (err) => {
+          console.warn('[HordeScene] WebSocket error:', err);
+        },
+        onFallback: () => {
+          // WebSocket unreachable — fall back to Firebase host/guest model
+          console.warn('[HordeScene] WebSocket unavailable, falling back to Firebase sync');
+          this.gameSocket?.disconnect();
+          this.gameSocket = null;
+          this.setupFirebaseSync();
+        },
+      });
+      this.gameSocket.connect();
     }
   }
 
@@ -5225,7 +5320,7 @@ export class HordeScene extends Phaser.Scene {
       const nextLevel = level + 1;
 
       // Stars for current level
-      const stars = level > 0 ? '⭐'.repeat(level) : '';
+      const stars = level > 0 ? '★'.repeat(level) : '';
 
       // Check prerequisites
       const prereqs = EQUIPMENT_PREREQS[eq.id as EquipmentType] || [];
@@ -6175,8 +6270,9 @@ export class HordeScene extends Phaser.Scene {
       return;
     }
 
-    if (this.isOnline && !this.isHost) {
-      // Guest: only render, no simulation — state comes from host via sync
+    if (this.isOnline && (this.gameSocket?.isConnected() || !this.isHost)) {
+      // Online with server: render only — server runs simulation, state arrives via WebSocket
+      // Or online guest with Firebase fallback: also render only
       this._frameCount++;
       this.updateUnitSprites();
       if (this._frameCount % 2 === 0) {
@@ -6842,7 +6938,7 @@ export class HordeScene extends Phaser.Scene {
       const eqLevel = this.unlockedEquipment[arm.team].get(arm.equipmentType) || 0;
       const unlocked = eqLevel > 0;
       if (arm.label) {
-        const lvlTag = eqLevel > 0 ? ` ${'⭐'.repeat(eqLevel)}` : '';
+        const lvlTag = eqLevel > 0 ? ` ${'★'.repeat(eqLevel)}` : '';
         const newText = unlocked ? `${name}${lvlTag}` : `${name} 🔒`;
         const newColor = unlocked ? (arm.team === 1 ? '#4499FF' : '#FF5555') : '#888888';
         if (arm.label.text !== newText) arm.label.setText(newText);
@@ -8836,6 +8932,22 @@ export class HordeScene extends Phaser.Scene {
     const camT = cam.scrollY - cullMargin;
     const camB = cam.scrollY + cam.height / cam.zoom + cullMargin;
 
+    // ── Team indicator rings under units ──
+    if (!this._teamIndicatorGfx) {
+      this._teamIndicatorGfx = this.add.graphics().setDepth(50); // just below units (51+)
+    }
+    const tig = this._teamIndicatorGfx;
+    tig.clear();
+    for (const u of this.units) {
+      if (u.dead || !u.sprite?.visible) continue;
+      if (u.x < camL || u.x > camR || u.y < camT || u.y > camB) continue;
+      if (u.team === 1 || u.team === 2) {
+        const color = u.team === 1 ? 0x4499FF : 0xFF5555;
+        tig.fillStyle(color, 0.3);
+        tig.fillEllipse(u.sprite.x, u.sprite.y + 10, 18, 8);
+      }
+    }
+
     for (const u of this.units) {
       if (u.dead) {
         if (u.sprite) {
@@ -8870,7 +8982,7 @@ export class HordeScene extends Phaser.Scene {
       }
       if (!u.sprite) {
         if ((u as any)._fogVisible === undefined) (u as any)._fogVisible = false;
-        const spriteConf = (u.team === this.myTeam) ? getEffectiveSpriteConfig(u.type) : HORDE_SPRITE_CONFIGS[u.type];
+        const spriteConf = (u.team === this.myTeam) ? getEffectiveSpriteConfig(u.type) : (this.opponentSkins[u.type] ? getEffectiveSpriteConfig(u.type, this.opponentSkins[u.type]) : HORDE_SPRITE_CONFIGS[u.type]);
         if (spriteConf) {
           // Create animated sprite at unit's actual position
           // Fall back to default texture if skin texture failed to load
@@ -8897,17 +9009,15 @@ export class HordeScene extends Phaser.Scene {
             u.animState = 'idle';
           }
 
-          // Team tint: subtle coloring to distinguish teams without overwhelming the sprite
+          // Team tint: only special units get tinted — normal team units show original art
           if (u.team === 0 && this.shadowBeasts.includes(u.id)) {
             u.sprite.setTint(0xAA77DD); // purple tint for shadow beasts
           } else if (u.isElite) {
             u.sprite.setTint(0xEEDD88);
           } else if (u.team === 0) {
             u.sprite.setTint(0xDDDD99); // soft warm for neutral
-          } else if (u.team === 1) {
-            u.sprite.setTint(0xAADDAA); // soft green for player
-          } else if (u.team === 2) {
-            u.sprite.setTint(0xDD9999); // soft red for enemy
+          } else {
+            u.sprite.clearTint(); // team units show original sprite colors
           }
 
           // Return to idle after attack animation completes
@@ -9015,7 +9125,7 @@ export class HordeScene extends Phaser.Scene {
       }
 
       // ─── Equipment visual modifiers ───
-      const spriteConf = (u.team === this.myTeam) ? getEffectiveSpriteConfig(u.type) : HORDE_SPRITE_CONFIGS[u.type];
+      const spriteConf = (u.team === this.myTeam) ? getEffectiveSpriteConfig(u.type) : (this.opponentSkins[u.type] ? getEffectiveSpriteConfig(u.type, this.opponentSkins[u.type]) : HORDE_SPRITE_CONFIGS[u.type]);
       const baseScale = spriteConf ? (u.isElite ? spriteConf.displayScale * 1.3 : spriteConf.displayScale) : 1;
 
       // Clean up visuals if equipment changed
@@ -10784,12 +10894,21 @@ export class HordeScene extends Phaser.Scene {
       const { PaymentService } = await import('../store/PaymentService');
       const ps = PaymentService.getInstance();
       const isWin = this.winner === this.myTeam;
+      // Check for glory booster
+      let boosterActive = false;
+      try {
+        const { BoosterManager } = await import('../store/BoosterManager');
+        boosterActive = BoosterManager.getInstance().isActive('glory_2x');
+      } catch {}
+
       const result = await ps.grantGlory('match_complete', {
         matchResult: isWin ? 'win' : 'loss',
         isOnline: this.isOnline,
+        boosterActive,
       });
       if (result.gloryGranted > 0) {
-        this.showFeedback(`+${result.gloryGranted} Glory earned!`, '#45E6B0');
+        const label = boosterActive ? `+${result.gloryGranted} Glory (2x Boost!)` : `+${result.gloryGranted} Glory earned!`;
+        this.showFeedback(label, '#45E6B0');
       }
     } catch (e) {
       // Non-critical — don't break game over screen
@@ -10831,6 +10950,15 @@ export class HordeScene extends Phaser.Scene {
         if (data.xpGranted > 0) {
           this.showFeedback(`+${data.xpGranted} XP${data.leveledUp ? ` — LEVEL UP! Level ${data.newLevel}` : ''}`, '#FFD93D');
         }
+
+        // Also grant battle pass XP (same amount as player XP)
+        try {
+          await fetch(`${functionsUrl}/api/store/grantBattlePassXp`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ xp: data.xpGranted || 0 }),
+          });
+        } catch { /* non-critical */ }
       }
     } catch (e) {
       console.warn('[XP] Failed to grant:', e);
@@ -10870,6 +10998,125 @@ export class HordeScene extends Phaser.Scene {
     }
   }
 
+  /** Setup emote system — HUD button, picker, big screen-side display, sync */
+  private async setupEmotes(): Promise<void> {
+    try {
+      const [{ EmoteSync }, { EmoteRenderer }, { EmoteWheel }, { InGameEmotePicker }, { EMOTE_EMOJIS }] = await Promise.all([
+        import('../systems/EmoteSync'),
+        import('../systems/EmoteRenderer'),
+        import('../ui/EmoteWheel'),
+        import('../ui/InGameEmotePicker'),
+        import('../ui/EmoteWheel'),
+      ]);
+
+      this.emoteRenderer = new EmoteRenderer();
+      this.emotePicker = new InGameEmotePicker();
+
+      // ═══ EMOTE BUTTON in HUD (above forfeit button, bottom-right) ═══
+      const gc = document.getElementById('game-container') ?? document.body;
+      const btn = document.createElement('button');
+      btn.id = 'horde-emote-btn';
+      btn.innerHTML = '\uD83D\uDE04';
+      btn.style.cssText = `
+        position:absolute;
+        bottom:calc(clamp(216px, 22vw, 288px) + 50px);
+        right:8px;
+        z-index:101;pointer-events:all;
+        background:rgba(60,50,30,0.85);
+        backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+        border:2px solid rgba(139,115,85,0.5);border-radius:8px;
+        padding:5px 12px;cursor:pointer;
+        font-size:20px;
+        transition:all 0.2s ease;
+        box-shadow:0 2px 8px rgba(0,0,0,0.3);
+      `;
+      btn.addEventListener('mouseenter', () => { btn.style.borderColor = '#FFD93D'; btn.style.transform = 'scale(1.05)'; });
+      btn.addEventListener('mouseleave', () => { btn.style.borderColor = 'rgba(139,115,85,0.5)'; btn.style.transform = 'scale(1)'; });
+      btn.addEventListener('click', () => {
+        if (this.gameOver) return;
+        if (!this.emotePicker) return;
+        // Calculate anchor position: just above the emote button
+        const rect = btn.getBoundingClientRect();
+        const anchorBottom = window.innerHeight - rect.top + 10;
+        this.emotePicker.show(8, anchorBottom, (emoteId: string) => {
+          this.handleEmoteSend(emoteId, EMOTE_EMOJIS);
+        });
+      });
+      gc.appendChild(btn);
+      this.emoteButtonEl = btn;
+
+      // ═══ T KEY — opens EmoteWheel (full-screen, legacy) ═══
+      this.emoteWheel = new EmoteWheel();
+      this.input.keyboard!.on('keydown-T', () => {
+        if (this.gameOver) return;
+        this.emoteWheel.show((emoteId: string) => {
+          this.handleEmoteSend(emoteId, EMOTE_EMOJIS);
+        });
+      });
+
+      // ═══ ONLINE SYNC — listen for opponent emotes ═══
+      if (this.isOnline && this.gameId) {
+        this.emoteSync = new EmoteSync(this.gameId);
+        this.emoteSync.onEmoteReceived(this.myTeam, (emote: { emoteId: string; team: number }) => {
+          // Opponent emote → show BIG on LEFT side
+          if (this.emoteRenderer) {
+            this.emoteRenderer.showEmote(emote.emoteId, 'left');
+          }
+        });
+      }
+
+      // Cleanup on shutdown
+      this.events.once('shutdown', () => {
+        this.emoteSync?.destroy();
+        this.emoteRenderer?.destroy();
+        this.emoteWheel?.close();
+        this.emotePicker?.close();
+        this.emoteButtonEl?.remove();
+        this.emoteButtonEl = null;
+        document.getElementById('ingame-emote-picker')?.remove();
+      });
+    } catch (err) {
+      console.warn('[Emotes] Setup failed:', err);
+    }
+  }
+
+  /**
+   * Handle sending an emote — cooldown check, local display, Firebase sync, AI echo.
+   * @param emoteId     The emote item ID.
+   * @param emojiLookup The EMOTE_EMOJIS map (passed to avoid extra import).
+   */
+  private handleEmoteSend(emoteId: string, emojiLookup: Record<string, string>): void {
+    // 5-second cooldown
+    const now = Date.now();
+    if (now - this.lastEmoteTime < 5000) {
+      this.showFeedback('Emote cooldown...', '#FF6B6B');
+      return;
+    }
+    this.lastEmoteTime = now;
+
+    // Show YOUR emote BIG on the RIGHT side
+    if (this.emoteRenderer) {
+      this.emoteRenderer.showEmote(emoteId, 'right');
+    }
+
+    // Sync via Firebase (online games)
+    if (this.isOnline && this.gameId && this.emoteSync) {
+      this.emoteSync.sendEmote(emoteId, this.myTeam);
+    }
+
+    // TESTING: In solo/offline mode, AI opponent sends a random emote back after 1-2s
+    if (!this.isOnline) {
+      const delay = 1000 + Math.random() * 1500;
+      setTimeout(() => {
+        const allEmoteIds = Object.keys(emojiLookup).filter(id => id.startsWith('emote_'));
+        const randomEmote = allEmoteIds[Math.floor(Math.random() * allEmoteIds.length)] || 'emote_smile';
+        if (this.emoteRenderer) {
+          this.emoteRenderer.showEmote(randomEmote, 'left');
+        }
+      }, delay);
+    }
+  }
+
   /** Update ranked rating after match */
   private async updateRankedRating(): Promise<void> {
     const auth = AuthManager.getInstance();
@@ -10885,131 +11132,149 @@ export class HordeScene extends Phaser.Scene {
   }
 
   private showGameOver() {
-    const cam = this.cameras.main;
     const win = this.winner === this.myTeam;
     const myT = this.myTeam;
     const enemyT: 1 | 2 = myT === 1 ? 2 : 1;
-    const cx = cam.width / 2;
     const s = Math.floor(this.gameTime / 1000);
     const timeStr = `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
     const stats = this.matchStats;
-
-    // Phase 1: Dark overlay + VICTORY/DEFEAT
-    const overlay = this.add.rectangle(cx, cam.height / 2, cam.width, cam.height, 0x000000, 0)
-      .setScrollFactor(0).setDepth(200);
-    this.tweens.add({ targets: overlay, fillAlpha: 0.8, duration: 800 });
-
-    const titleText = this.add.text(cx, 80, win ? 'VICTORY!' : 'DEFEAT', {
-      fontSize: '52px', color: win ? '#45E6B0' : '#FF6B6B',
-      fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(201).setAlpha(0);
-
-    const timeText = this.add.text(cx, 125, `Time: ${timeStr}`, {
-      fontSize: '16px', color: '#cbb8ee', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(201).setAlpha(0);
-
-    this.tweens.add({ targets: titleText, alpha: 1, scaleX: { from: 0.5, to: 1 }, scaleY: { from: 0.5, to: 1 }, duration: 600, ease: 'Back.easeOut', delay: 400 });
-    this.tweens.add({ targets: timeText, alpha: 1, duration: 400, delay: 800 });
-
-    // Phase 2: Stat cards (delay 1500ms)
-    const headerStyle = { fontSize: '13px', color: '#FFD93D', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold' };
-    const labelStyle = { fontSize: '12px', color: '#a89bba', fontFamily: '"Nunito", sans-serif' };
-    const valueMyStyle = { fontSize: '14px', color: '#45E6B0', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold' };
-    const valueEnStyle = { fontSize: '14px', color: '#FF6B6B', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold' };
-
-    const leftCol = cx - 120;
-    const rightCol = cx + 120;
-    const labelCol = cx;
-    let row = 160;
-    const rowH = 22;
-    const phase2Objects: Phaser.GameObjects.Text[] = [];
-
-    const addHeader = (y: number, text: string) => {
-      phase2Objects.push(this.add.text(labelCol, y, text, headerStyle).setOrigin(0.5).setScrollFactor(0).setDepth(201).setAlpha(0));
-    };
-
-    const addStatRow = (y: number, label: string, myVal: string | number, enVal: string | number) => {
-      phase2Objects.push(this.add.text(leftCol, y, String(myVal), valueMyStyle).setOrigin(0.5).setScrollFactor(0).setDepth(201).setAlpha(0));
-      phase2Objects.push(this.add.text(labelCol, y, label, labelStyle).setOrigin(0.5).setScrollFactor(0).setDepth(201).setAlpha(0));
-      phase2Objects.push(this.add.text(rightCol, y, String(enVal), valueEnStyle).setOrigin(0.5).setScrollFactor(0).setDepth(201).setAlpha(0));
-    };
-
-    // Column headers
-    addStatRow(row, '', 'Your Team', 'Enemy'); row += rowH + 4;
-
-    // Units section
-    addHeader(row, '--- UNITS ---'); row += rowH;
-    addStatRow(row, 'Spawned', stats.unitsSpawned[myT], stats.unitsSpawned[enemyT]); row += rowH;
-    addStatRow(row, 'Lost', stats.unitsLost[myT], stats.unitsLost[enemyT]); row += rowH;
-    addStatRow(row, 'Peak Army', stats.peakArmySize[myT], stats.peakArmySize[enemyT]); row += rowH + 4;
-
-    // Combat section
-    addHeader(row, '--- COMBAT ---'); row += rowH;
-    addStatRow(row, 'Kills', stats.totalKills[myT], stats.totalKills[enemyT]); row += rowH;
     const fmtDmg = (d: number) => d >= 1000 ? `${(d / 1000).toFixed(1)}k` : String(d);
-    addStatRow(row, 'Damage', fmtDmg(stats.totalDamage[myT]), fmtDmg(stats.totalDamage[enemyT])); row += rowH;
-    addStatRow(row, 'Camps Won', stats.campsCaptured[myT], stats.campsCaptured[enemyT]); row += rowH;
-    addStatRow(row, 'Camps Lost', stats.campsLost[myT], stats.campsLost[enemyT]); row += rowH + 4;
-
-    // Economy section
-    addHeader(row, '--- ECONOMY ---'); row += rowH;
-    const myRes = stats.resourcesDelivered[myT];
-    const enRes = stats.resourcesDelivered[enemyT];
-    addStatRow(row, '🥕 Carrots', myRes.carrot, enRes.carrot); row += rowH;
-    addStatRow(row, '🍖 Meat', myRes.meat, enRes.meat); row += rowH;
-    addStatRow(row, '💎 Crystals', myRes.crystal, enRes.crystal); row += rowH;
-    addStatRow(row, '⚙️ Metal', myRes.metal, enRes.metal); row += rowH + 8;
-
-    // Animate stat cards in
-    phase2Objects.forEach((obj, i) => {
-      this.tweens.add({ targets: obj, alpha: 1, y: obj.y, duration: 300, delay: 1500 + i * 40, ease: 'Power2' });
-    });
-
-    // Phase 3: Top Killer card (delay ~4000ms)
-    const tkRow = row;
     const tk = this.topKiller[myT];
     const tkEmoji = tk.type ? (ANIMALS[tk.type]?.emoji || '') : '';
     const tkLabel = tk.kills > 0 ? `${tkEmoji} ${tk.type.charAt(0).toUpperCase() + tk.type.slice(1)} — ${tk.kills} kills` : 'No kills recorded';
-    const tkHeader = this.add.text(cx, tkRow, '⭐ TOP KILLER', {
-      fontSize: '14px', color: '#FFD93D', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(201).setAlpha(0);
-    const tkText = this.add.text(cx, tkRow + 22, tkLabel, {
-      fontSize: '16px', color: '#ffffff', fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(201).setAlpha(0);
+    const myRes = stats.resourcesDelivered[myT];
+    const enRes = stats.resourcesDelivered[enemyT];
 
-    const phase3Delay = 1500 + phase2Objects.length * 40 + 500;
-    this.tweens.add({ targets: tkHeader, alpha: 1, scaleX: { from: 0.8, to: 1 }, scaleY: { from: 0.8, to: 1 }, duration: 400, delay: phase3Delay, ease: 'Back.easeOut' });
-    this.tweens.add({ targets: tkText, alpha: 1, duration: 400, delay: phase3Delay + 200 });
+    // Full-screen DOM overlay for game over
+    const gc = document.getElementById('game-container') ?? document.body;
+    const overlay = document.createElement('div');
+    overlay.id = 'game-over-overlay';
+    overlay.style.cssText = `
+      position:fixed;inset:0;z-index:9999;
+      background:rgba(5,8,3,0.88);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+      display:flex;align-items:center;justify-content:center;
+      opacity:0;transition:opacity 0.8s ease;
+      font-family:'Nunito',sans-serif;
+    `;
 
-    // Phase 4: Buttons (delay ~6000ms)
-    const btnDelay = phase3Delay + 800;
-    const btnY = tkRow + 60;
+    const panel = document.createElement('div');
+    panel.style.cssText = `
+      width:min(860px,92vw);max-height:min(640px,88vh);
+      background:rgba(18,22,14,0.94);
+      border:2px solid rgba(139,115,85,0.45);border-radius:18px;
+      box-shadow:0 16px 64px rgba(0,0,0,0.7),0 0 0 1px rgba(255,217,61,0.06);
+      padding:36px 40px 28px;overflow-y:auto;
+      transform:scale(0.9);transition:transform 0.5s cubic-bezier(0.16,1,0.3,1);
+    `;
 
-    const playAgainBtn = this.add.text(cx - 90, btnY, 'PLAY AGAIN', {
-      fontSize: '18px', color: '#45E6B0', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
-      backgroundColor: '#0d1a0d', padding: { x: 16, y: 8 },
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(201).setAlpha(0).setInteractive({ useHandCursor: true });
-    playAgainBtn.on('pointerdown', () => {
-      this.cameras.main.fadeOut(400, 15, 26, 10);
-      this.cameras.main.once('camerafadeoutcomplete', () => { this.cleanupHTML(); this.scene.restart(); });
-    });
-    playAgainBtn.on('pointerover', () => { playAgainBtn.setColor('#FFD93D'); playAgainBtn.setScale(1.05); });
-    playAgainBtn.on('pointerout', () => { playAgainBtn.setColor('#45E6B0'); playAgainBtn.setScale(1); });
+    const titleColor = win ? '#45E6B0' : '#FF6B6B';
+    const titleText = win ? 'VICTORY!' : 'DEFEAT';
 
-    const menuBtn = this.add.text(cx + 90, btnY, 'BACK TO MENU', {
-      fontSize: '18px', color: '#45E6B0', fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
-      backgroundColor: '#0d1a0d', padding: { x: 16, y: 8 },
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(201).setAlpha(0).setInteractive({ useHandCursor: true });
-    menuBtn.on('pointerdown', () => {
-      localStorage.removeItem('pb_active_game');
-      this.cameras.main.fadeOut(400, 15, 26, 10);
-      this.cameras.main.once('camerafadeoutcomplete', () => { this.cleanupHTML(); this.scene.start('MenuScene'); });
-    });
-    menuBtn.on('pointerover', () => { menuBtn.setColor('#FFD93D'); menuBtn.setScale(1.05); });
-    menuBtn.on('pointerout', () => { menuBtn.setColor('#45E6B0'); menuBtn.setScale(1); });
+    // Build stat row helper
+    const statRow = (label: string, myVal: string | number, enVal: string | number) => `
+      <div style="display:flex;align-items:center;padding:6px 0;border-bottom:1px solid rgba(139,115,85,0.12);">
+        <div style="flex:1;text-align:right;font-size:18px;font-weight:700;color:#45E6B0;font-family:'Fredoka',sans-serif;">${myVal}</div>
+        <div style="width:160px;text-align:center;font-size:13px;color:#a89870;padding:0 12px;">${label}</div>
+        <div style="flex:1;text-align:left;font-size:18px;font-weight:700;color:#FF6B6B;font-family:'Fredoka',sans-serif;">${enVal}</div>
+      </div>`;
 
-    this.tweens.add({ targets: playAgainBtn, alpha: 1, duration: 400, delay: btnDelay });
-    this.tweens.add({ targets: menuBtn, alpha: 1, duration: 400, delay: btnDelay + 100 });
+    const sectionHeader = (text: string) => `
+      <div style="text-align:center;padding:10px 0 4px;font-size:12px;font-weight:700;color:#FFD93D;letter-spacing:2px;font-family:'Fredoka',sans-serif;">${text}</div>`;
+
+    panel.innerHTML = `
+      <!-- Title -->
+      <div style="text-align:center;margin-bottom:8px;">
+        <div style="font-family:'Fredoka',sans-serif;font-size:48px;font-weight:700;color:${titleColor};text-shadow:0 0 20px ${titleColor}44;">${titleText}</div>
+        <div style="font-size:15px;color:#a89870;margin-top:2px;">Time: ${timeStr}</div>
+      </div>
+
+      <!-- Column Headers -->
+      <div style="display:flex;align-items:center;padding:8px 0;border-bottom:2px solid rgba(139,115,85,0.25);">
+        <div style="flex:1;text-align:right;font-size:14px;font-weight:700;color:#45E6B0;font-family:'Fredoka',sans-serif;">YOUR TEAM</div>
+        <div style="width:160px;text-align:center;font-size:11px;color:#7a6e56;">VS</div>
+        <div style="flex:1;text-align:left;font-size:14px;font-weight:700;color:#FF6B6B;font-family:'Fredoka',sans-serif;">ENEMY</div>
+      </div>
+
+      <!-- Stats Grid -->
+      <div style="display:flex;gap:24px;margin-top:4px;">
+        <!-- Left column: Units + Combat -->
+        <div style="flex:1;">
+          ${sectionHeader('UNITS')}
+          ${statRow('Spawned', stats.unitsSpawned[myT], stats.unitsSpawned[enemyT])}
+          ${statRow('Lost', stats.unitsLost[myT], stats.unitsLost[enemyT])}
+          ${statRow('Peak Army', stats.peakArmySize[myT], stats.peakArmySize[enemyT])}
+
+          ${sectionHeader('COMBAT')}
+          ${statRow('Kills', stats.totalKills[myT], stats.totalKills[enemyT])}
+          ${statRow('Damage', fmtDmg(stats.totalDamage[myT]), fmtDmg(stats.totalDamage[enemyT]))}
+          ${statRow('Camps Won', stats.campsCaptured[myT], stats.campsCaptured[enemyT])}
+          ${statRow('Camps Lost', stats.campsLost[myT], stats.campsLost[enemyT])}
+        </div>
+
+        <!-- Right column: Economy + Awards -->
+        <div style="flex:1;">
+          ${sectionHeader('ECONOMY')}
+          ${statRow('🥕 Carrots', myRes.carrot, enRes.carrot)}
+          ${statRow('🍖 Meat', myRes.meat, enRes.meat)}
+          ${statRow('💎 Crystals', myRes.crystal, enRes.crystal)}
+          ${statRow('⚙️ Metal', myRes.metal, enRes.metal)}
+
+          ${sectionHeader('AWARDS')}
+          <div style="text-align:center;padding:12px 0;">
+            <div style="font-size:12px;color:#C0C0D2;font-family:'Fredoka',sans-serif;letter-spacing:1px;">★ TOP KILLER</div>
+            <div style="font-size:18px;color:#f0e8d0;font-weight:700;margin-top:4px;">${tkLabel}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Buttons -->
+      <div style="display:flex;justify-content:center;gap:16px;margin-top:20px;padding-top:16px;border-top:2px solid rgba(139,115,85,0.25);">
+        <button id="go-play-again" style="
+          font-family:'Fredoka',sans-serif;font-size:17px;font-weight:700;
+          color:#45E6B0;background:rgba(69,230,176,0.1);
+          border:2px solid rgba(69,230,176,0.4);border-radius:12px;
+          padding:12px 32px;cursor:pointer;transition:all 0.15s;
+        ">PLAY AGAIN</button>
+        <button id="go-menu" style="
+          font-family:'Fredoka',sans-serif;font-size:17px;font-weight:700;
+          color:#a89870;background:rgba(139,115,85,0.1);
+          border:2px solid rgba(139,115,85,0.3);border-radius:12px;
+          padding:12px 32px;cursor:pointer;transition:all 0.15s;
+        ">BACK TO MENU</button>
+      </div>
+    `;
+
+    overlay.appendChild(panel);
+    gc.appendChild(overlay);
+
+    // Animate in
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      overlay.style.opacity = '1';
+      panel.style.transform = 'scale(1)';
+    }));
+
+    // Button hover effects
+    const playBtn = panel.querySelector('#go-play-again') as HTMLButtonElement;
+    const menuBtnEl = panel.querySelector('#go-menu') as HTMLButtonElement;
+    if (playBtn) {
+      playBtn.onmouseenter = () => { playBtn.style.background = 'rgba(69,230,176,0.2)'; playBtn.style.borderColor = 'rgba(69,230,176,0.7)'; };
+      playBtn.onmouseleave = () => { playBtn.style.background = 'rgba(69,230,176,0.1)'; playBtn.style.borderColor = 'rgba(69,230,176,0.4)'; };
+      playBtn.onclick = () => {
+        overlay.remove();
+        this.cameras.main.fadeOut(400, 15, 26, 10);
+        this.cameras.main.once('camerafadeoutcomplete', () => { this.cleanupHTML(); this.scene.restart(); });
+      };
+    }
+    if (menuBtnEl) {
+      menuBtnEl.onmouseenter = () => { menuBtnEl.style.background = 'rgba(139,115,85,0.2)'; menuBtnEl.style.borderColor = 'rgba(139,115,85,0.5)'; };
+      menuBtnEl.onmouseleave = () => { menuBtnEl.style.background = 'rgba(139,115,85,0.1)'; menuBtnEl.style.borderColor = 'rgba(139,115,85,0.3)'; };
+      menuBtnEl.onclick = () => {
+        localStorage.removeItem('pb_active_game');
+        overlay.remove();
+        this.cameras.main.fadeOut(400, 15, 26, 10);
+        this.cameras.main.once('camerafadeoutcomplete', () => { this.cleanupHTML(); this.scene.start('MenuScene'); });
+      };
+    }
   }
 
   // ─── UNIT MANAGEMENT ────────────────────────────────────────
@@ -11186,6 +11451,52 @@ export class HordeScene extends Phaser.Scene {
   }
 
   /** Host pushes full game state to Firebase for guest to render */
+  /** Fall back to Firebase host/guest sync when WebSocket server is unavailable */
+  private setupFirebaseSync(): void {
+    if (!this.firebase || !this.gameId) return;
+    if (this.isHost) {
+      // Host: listen for guest commands via Firebase
+      this.firebase.onRemoteOrders(this.gameId, (data) => {
+        if (data.orders) {
+          for (const entry of data.orders) {
+            const cmd = (entry as any).order || entry;
+            if (cmd.parsed && cmd.team) {
+              this.pendingRemoteCommands.push({
+                parsed: cmd.parsed as HordeCommand[],
+                team: cmd.team as 1 | 2,
+                selectedHoard: cmd.selectedHoard || 'all',
+              });
+            } else if (cmd.text && cmd.team) {
+              this.pendingRemoteCommands.push({
+                text: cmd.text,
+                team: cmd.team as 1 | 2,
+                selectedHoard: cmd.selectedHoard || 'all',
+              });
+            }
+          }
+        }
+        if (this.gameId) this.firebase!.removeRemoteOrder(this.gameId, data.key);
+      });
+    } else {
+      // Guest: listen for sync state from host via Firebase
+      this.firebase.onSyncState(this.gameId, (state: any) => {
+        this.applyGuestSync(state as HordeSyncState);
+      });
+    }
+  }
+
+  /** Recursively strip undefined values from an object (Firebase rejects them) */
+  private static stripUndefined(obj: any): any {
+    if (obj === null || obj === undefined) return null;
+    if (typeof obj !== 'object') return obj;
+    if (Array.isArray(obj)) return obj.map(v => HordeScene.stripUndefined(v));
+    const clean: Record<string, any> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (v !== undefined) clean[k] = HordeScene.stripUndefined(v);
+    }
+    return clean;
+  }
+
   private pushHostSync() {
     if (!this.firebase || !this.gameId) return;
     const syncUnits: HordeSyncUnit[] = this.units.filter(u => !u.dead).map(u => ({
@@ -11195,7 +11506,11 @@ export class HordeScene extends Phaser.Scene {
       dead: false, campId: u.campId,
       carrying: u.carrying, equipment: u.equipment, equipLevel: u.equipLevel,
       animState: u.animState,
-      loop: u.loop ? { steps: u.loop.steps.map(s => ({ ...(s as any) })), currentStep: u.loop.currentStep } : null,
+      loop: u.loop ? { steps: u.loop.steps.map(s => {
+        const obj: Record<string, any> = {};
+        for (const [k, v] of Object.entries(s)) { if (v !== undefined) obj[k] = v; }
+        return obj as { action: string };
+      }), currentStep: u.loop.currentStep } : null,
     }));
     const syncCamps = this.camps.map(c => ({
       id: c.id, owner: c.owner, spawnTimer: c.spawnTimer, storedFood: c.storedFood,
@@ -11233,7 +11548,7 @@ export class HordeScene extends Phaser.Scene {
         data: { hp: e.data.hp, maxHp: e.data.maxHp, kills: e.data.kills, deliveries: e.data.deliveries, sacrifices: e.data.sacrifices, fedAmount: e.data.fedAmount, bearSize: e.data.bearSize, targetType: e.data.targetType, targetCount: e.data.targetCount, cost: e.data.cost, sacrificesNeeded: e.data.sacrificesNeeded },
       })),
     };
-    this.firebase.pushSyncState(this.gameId, state as any);
+    this.firebase.pushSyncState(this.gameId, HordeScene.stripUndefined(state) as any);
   }
 
   /** Guest applies state snapshot from host */
@@ -11553,16 +11868,24 @@ export class HordeScene extends Phaser.Scene {
         const gCmd = validateAndFixWorkflow(geminiResult[0]);
         console.log('[Gemini] Validated command:', JSON.stringify(gCmd));
 
-        // Online mode: send parsed command to server instead of executing locally
+        // Online mode: send parsed command to server via WebSocket (or Firebase fallback)
         if (this.isOnline && this.gameId) {
-          this.firebase!.sendRemoteOrders(this.gameId, this.playerId || '', [{
-            heroId: '',
-            order: {
+          if (this.gameSocket?.isConnected()) {
+            this.gameSocket.sendCommand([{
               parsed: [gCmd],
               team,
               selectedHoard: this.selectedHoard,
-            } as any,
-          }]);
+            }]);
+          } else if (this.firebase && !this.isHost) {
+            // Firebase fallback: guest sends via remoteOrders
+            this.firebase.sendRemoteOrders(this.gameId, this.playerId || '', [{
+              heroId: '',
+              order: { parsed: [gCmd], team, selectedHoard: this.selectedHoard } as any,
+            }]);
+          } else {
+            // Firebase fallback: host executes locally
+            this.executeGeminiCommand(gCmd, team);
+          }
           this.showFeedback('Command sent!', '#6CC4FF');
           if (gCmd.narration) this.showAIResponse(gCmd.narration);
           this.sfx.playGlobal('voice_recognized');
@@ -14571,6 +14894,12 @@ export class HordeScene extends Phaser.Scene {
   // ─── CLEANUP ────────────────────────────────────────────────
 
   private cleanupHTML() {
+    // Disconnect WebSocket
+    if (this.gameSocket) {
+      this.gameSocket.disconnect();
+      this.gameSocket = null;
+    }
+    document.getElementById('game-over-overlay')?.remove();
     if (this._beforeUnloadHandler) {
       window.removeEventListener('beforeunload', this._beforeUnloadHandler);
       this._beforeUnloadHandler = null;
@@ -14609,6 +14938,12 @@ export class HordeScene extends Phaser.Scene {
     this.minimapEl = null; this.minimapCtx = null; this.minimapTerrainCanvas = null;
     this.forfeitBtnEl?.remove(); this.forfeitBtnEl = null;
     document.getElementById('forfeit-overlay')?.remove();
+    // Emote system cleanup
+    this.emoteRenderer?.destroy(); this.emoteRenderer = null;
+    this.emoteSync?.destroy(); this.emoteSync = null;
+    this.emotePicker?.close(); this.emotePicker = null;
+    this.emoteButtonEl?.remove(); this.emoteButtonEl = null;
+    document.getElementById('ingame-emote-picker')?.remove();
     this.settingsPanel.close();
     // Cleanup FPS counter and colorblind filters
     this.fpsEl?.remove(); this.fpsEl = null;

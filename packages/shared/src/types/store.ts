@@ -14,7 +14,6 @@ export type ItemCategory =
   | 'attack_trail'
   | 'victory_effect'
   | 'emote'
-  | 'profile_badge'
   | 'profile_title'
   | 'profile_border'
   | 'profile_background'
@@ -47,13 +46,16 @@ export interface CatalogItem {
   description: string;
   rarity: Rarity;
   priceCrowns: number;
-  priceGlory: number | null;       // null = crown-only
+  priceGlory: number | null;       // null = crowns-only
   previewAsset?: string;            // path to preview image
   unitType?: HordeUnitType;         // for unit-specific items
   equipType?: EquipmentType;        // for equipment-specific items
   seasonal?: string;                // e.g. 'winter_2026', undefined if permanent
   limited?: boolean;                // limited-time availability
   battlePassExclusive?: boolean;    // only obtainable via battle pass
+  voiceId?: string;                 // ElevenLabs voice ID override for voice packs
+  sampleText?: string;              // Text for audio preview generation
+  personality?: string;             // Gemini personality prompt override for voice packs
 }
 
 // ─── Crown Packages (real-money purchases) ──────────────────────
@@ -116,7 +118,6 @@ export interface EquippedCosmetics {
   attackTrail: string;
   victoryEffect: string;
   profileBorder: string;
-  profileBadge: string;
   profileTitle: string;
   profileBackground: string;
   cursor: string;
@@ -137,7 +138,6 @@ export const DEFAULT_EQUIPPED: EquippedCosmetics = {
   attackTrail: 'default',
   victoryEffect: 'default',
   profileBorder: 'none',
-  profileBadge: 'none',
   profileTitle: 'none',
   profileBackground: 'none',
   cursor: 'default',

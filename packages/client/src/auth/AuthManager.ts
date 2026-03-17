@@ -61,6 +61,8 @@ export interface FriendEntry {
   status: 'accepted' | 'pending_sent' | 'pending_received';
   online: boolean;
   lastSeen: number;
+  profileTitle?: string;
+  profileBorder?: string;
 }
 
 export interface MatchInvite {
@@ -508,12 +510,19 @@ export class AuthManager {
 
       const fetchPromises = Object.entries(raw).map(async ([friendUid, data]) => {
         let profile = this.profileCache.get(friendUid);
-        if (!profile) {
-          profile = (await this.getProfile(friendUid)) ?? undefined;
-          if (profile) {
-            this.profileCache.set(friendUid, profile);
-          }
-        }
+        const profilePromise = profile
+          ? Promise.resolve(profile)
+          : this.getProfile(friendUid).then((p) => {
+              if (p) this.profileCache.set(friendUid, p);
+              return p ?? undefined;
+            });
+
+        const equippedPromise = get(ref(this.db, `users/${friendUid}/equipped`))
+          .then((snap) => (snap.exists() ? snap.val() : null))
+          .catch(() => null);
+
+        const [resolvedProfile, equipped] = await Promise.all([profilePromise, equippedPromise]);
+        profile = resolvedProfile;
 
         entries.push({
           uid: friendUid,
@@ -522,6 +531,8 @@ export class AuthManager {
           status: data.status as FriendEntry['status'],
           online: profile?.online ?? false,
           lastSeen: profile?.lastSeen ?? 0,
+          profileTitle: equipped?.profileTitle ?? undefined,
+          profileBorder: equipped?.profileBorder ?? undefined,
         });
       });
 

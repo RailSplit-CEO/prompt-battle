@@ -5,8 +5,9 @@
 
 import { C } from './UIColors';
 import { InventoryManager } from '../store/InventoryManager';
+import { CatalogService } from '../store/CatalogService';
 
-// ── Emote definitions ────────────────────────────────────────────
+// ── Emote definitions — loaded from catalog ──────────────────────
 
 interface EmoteDef {
   id: string;
@@ -14,23 +15,48 @@ interface EmoteDef {
   label: string;
 }
 
-const EMOTE_DEFS: EmoteDef[] = [
-  { id: 'emote_gg', emoji: '🤝', label: 'GG' },
-  { id: 'emote_wow', emoji: '😮', label: 'WOW' },
-  { id: 'emote_lol', emoji: '😂', label: 'LOL' },
-  { id: 'emote_cry', emoji: '😢', label: 'Cry' },
-  { id: 'emote_rage', emoji: '😡', label: 'Rage' },
-  { id: 'emote_heart', emoji: '❤️', label: 'Heart' },
-  { id: 'emote_crown', emoji: '👑', label: 'Crown' },
-  { id: 'emote_wave', emoji: '👋', label: 'Wave' },
-  { id: 'emote_dancing', emoji: '💃', label: 'Dance' },
-  { id: 'emote_flexing', emoji: '💪', label: 'Flex' },
-  { id: 'emote_laughing', emoji: '🤣', label: 'Laugh' },
-  { id: 'emote_sleeping', emoji: '😴', label: 'Sleep' },
-  { id: 'emote_battle_cry', emoji: '⚔️', label: 'Battle!' },
-  { id: 'emote_mock', emoji: '🤪', label: 'Mock' },
-  { id: 'emote_cheer', emoji: '🎉', label: 'Cheer' },
-];
+// Emoji lookup for emotes (maps item ID → display emoji)
+export const EMOTE_EMOJIS: Record<string, string> = {
+  emote_gg: '\uD83E\uDD1D', emote_wave: '\uD83D\uDC4B', emote_wow: '\uD83D\uDE2E',
+  emote_thumbsup: '\uD83D\uDC4D', emote_thumbsdown: '\uD83D\uDC4E', emote_clap: '\uD83D\uDC4F',
+  emote_smile: '\uD83D\uDE04', emote_wink: '\uD83D\uDE09', emote_think: '\uD83E\uDD14',
+  emote_shrug: '\uD83E\uDD37', emote_pray: '\uD83D\uDE4F', emote_ok: '\uD83D\uDC4C',
+  emote_peace: '\u270C\uFE0F', emote_salute: '\uD83E\uDEE1', emote_eyes: '\uD83D\uDC40',
+  emote_lol: '\uD83D\uDE02', emote_cry: '\uD83D\uDE22', emote_rage: '\uD83D\uDE21',
+  emote_heart: '\u2764\uFE0F', emote_broken: '\uD83D\uDC94', emote_sleepy: '\uD83D\uDE34',
+  emote_sweat: '\uD83D\uDE05', emote_scream: '\uD83D\uDE31', emote_cool: '\uD83D\uDE0E',
+  emote_nerd: '\uD83E\uDD13', emote_dizzy: '\uD83D\uDE35', emote_sick: '\uD83E\uDD22',
+  emote_hot: '\uD83E\uDD75', emote_cold: '\uD83E\uDD76', emote_mindblown: '\uD83E\uDD2F',
+  emote_crown: '\uD83D\uDC51', emote_skull: '\uD83D\uDC80', emote_fire: '\uD83D\uDD25',
+  emote_sword: '\u2694\uFE0F', emote_shield: '\uD83D\uDEE1\uFE0F', emote_trophy: '\uD83C\uDFC6',
+  emote_medal: '\uD83C\uDFC5', emote_muscle: '\uD83D\uDCAA', emote_fist: '\uD83E\uDD1C',
+  emote_handshake: '\uD83E\uDD1D', emote_target: '\uD83C\uDFAF', emote_bomb: '\uD83D\uDCA3',
+  emote_lightning: '\u26A1', emote_tornado: '\uD83C\uDF2A\uFE0F', emote_ghost: '\uD83D\uDC7B',
+  emote_alien: '\uD83D\uDC7D', emote_robot: '\uD83E\uDD16', emote_devil: '\uD83D\uDE08',
+  emote_angel: '\uD83D\uDE07', emote_money: '\uD83D\uDCB0',
+  emote_dragon: '\uD83D\uDC09', emote_wolf: '\uD83D\uDC3A', emote_snake: '\uD83D\uDC0D',
+  emote_eagle: '\uD83E\uDD85', emote_bear: '\uD83D\uDC3B', emote_spider_e: '\uD83D\uDD77\uFE0F',
+  emote_bat: '\uD83E\uDD87', emote_octopus: '\uD83D\uDC19', emote_phoenix: '\uD83D\uDD25',
+  emote_unicorn: '\uD83E\uDD84',
+  emote_dancing: '\uD83D\uDD7A', emote_flexing: '\uD83E\uDDD8', emote_laughing: '\uD83E\uDD23',
+  emote_sleeping: '\uD83D\uDE34', emote_explosion: '\uD83D\uDCA5', emote_sparkles: '\u2728',
+  emote_rainbow: '\uD83C\uDF08', emote_star: '\u2B50', emote_moon: '\uD83C\uDF19',
+  emote_sun: '\u2600\uFE0F', emote_comet: '\u2604\uFE0F', emote_crystal: '\uD83D\uDD2E',
+  emote_magic: '\uD83E\uDE84', emote_potion: '\uD83E\uDDEA', emote_dice: '\uD83C\uDFB2',
+  emote_battle_cry: '\uD83D\uDDE3\uFE0F', emote_mock: '\uD83E\uDD2A', emote_cheer: '\uD83C\uDF89',
+  emote_rip: '\uD83E\uDEA6', emote_clown: '\uD83E\uDD21',
+  emote_infinity: '\u267E\uFE0F', emote_diamond: '\uD83D\uDC8E', emote_trident: '\uD83D\uDD31',
+  emote_eye_of_ra: '\uD83D\uDC41\uFE0F', emote_yin_yang: '\u262F\uFE0F',
+};
+
+function getEmoteDefs(): EmoteDef[] {
+  const catalog = CatalogService.getInstance();
+  return catalog.getByCategory('emote').map(item => ({
+    id: item.id,
+    emoji: EMOTE_EMOJIS[item.id] || '\u2753',
+    label: item.name,
+  }));
+}
 
 /** Emotes available to all players regardless of inventory. */
 const FREE_EMOTE_IDS = new Set(['emote_gg', 'emote_wave', 'emote_wow']);
@@ -111,7 +137,8 @@ export class EmoteWheel {
       width: '100%',
     } satisfies Partial<CSSStyleDeclaration>);
 
-    for (const def of EMOTE_DEFS) {
+    const emoteDefs = getEmoteDefs();
+    for (const def of emoteDefs) {
       const owned = FREE_EMOTE_IDS.has(def.id) || inventory.owns(def.id);
       const btn = this.createEmoteButton(def, owned);
       grid.appendChild(btn);

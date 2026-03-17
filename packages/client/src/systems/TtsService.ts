@@ -1,4 +1,5 @@
 import { InventoryManager } from '../store/InventoryManager';
+import { CatalogService } from '../store/CatalogService';
 
 // ElevenLabs TTS — text-to-speech via streaming API
 const TTS_BASE = 'https://api.elevenlabs.io/v1/text-to-speech';
@@ -106,7 +107,19 @@ export class TtsService {
       console.warn('[TTS] Skipped — disabled or no key');
       return;
     }
-    const voiceId = this.assignVoice(charId);
+    // Check for equipped voice pack with a different ElevenLabs voice ID
+    let voiceId = this.assignVoice(charId);
+    try {
+      const equipped = InventoryManager.getInstance().getEquipped();
+      const packId = (equipped as any).voicePacks?.[charId as any];
+      if (packId && packId !== 'default') {
+        const catalogItem = CatalogService.getInstance().getItem(packId);
+        if (catalogItem?.voiceId) {
+          voiceId = catalogItem.voiceId;
+          console.log(`[TTS] Using equipped voice pack "${packId}" → voiceId=${voiceId}`);
+        }
+      }
+    } catch { /* inventory/catalog not ready */ }
     this.queue.push({ text, voiceId, charId });
     console.log(`[TTS] Queued. Queue length: ${this.queue.length}, playing: ${this.playing}`);
     this.processQueue();
