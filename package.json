@@ -4,7 +4,8 @@
   "workspaces": [
     "packages/shared",
     "packages/client",
-    "packages/functions"
+    "packages/functions",
+    "packages/server"
   ],
   "scripts": {
     "dev": "npm run dev --workspace=packages/client",

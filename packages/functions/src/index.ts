@@ -3,6 +3,14 @@ import * as admin from 'firebase-admin';
 import { matchPlayers } from './matchmaking';
 import { processCommand } from './game-authority';
 
+// Store / Monetization
+export { createOrder } from './store/create-order';
+export { completePayment } from './store/complete-payment';
+export { redeemItchKey } from './store/itch-redeem';
+export { squareWebhook } from './store/webhook';
+export { adminGrantItems } from './store/admin';
+export { grantGlory } from './store/glory';
+
 admin.initializeApp();
 
 // Matchmaking: triggered when a player joins the queue

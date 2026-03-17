@@ -15,6 +15,30 @@
         "function": "processPlayerCommand"
       },
       {
+        "source": "/api/store/createOrder",
+        "function": "createOrder"
+      },
+      {
+        "source": "/api/store/completePayment",
+        "function": "completePayment"
+      },
+      {
+        "source": "/api/store/redeemItchKey",
+        "function": "redeemItchKey"
+      },
+      {
+        "source": "/api/store/adminGrant",
+        "function": "adminGrantItems"
+      },
+      {
+        "source": "/api/store/webhook/square",
+        "function": "squareWebhook"
+      },
+      {
+        "source": "/api/store/grantGlory",
+        "function": "grantGlory"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

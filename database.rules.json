@@ -13,6 +13,26 @@
         },
         "provider": {
           ".validate": "newData.val() === 'google' || newData.val() === 'anonymous'"
+        },
+        "wallet": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": false
+        },
+        "inventory": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": false
+        },
+        "equipped": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid"
+        },
+        "battlePass": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": false
+        },
+        "dailyRewards": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": false
         }
       }
     },
@@ -54,6 +74,18 @@
         ".read": "auth != null",
         ".write": "auth != null"
       }
+    },
+    "transactions": {
+      ".read": false,
+      ".write": false
+    },
+    "redeemedKeys": {
+      ".read": false,
+      ".write": false
+    },
+    "catalog": {
+      ".read": "auth != null",
+      ".write": false
     }
   }
 }
