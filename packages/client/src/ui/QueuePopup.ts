@@ -26,8 +26,13 @@ export class QueuePopup {
       display:flex;align-items:center;justify-content:center;
       opacity:0;transition:opacity 0.3s ease;
       font-family:'Nunito',sans-serif;
+      pointer-events:all;
     `;
     this.overlay = overlay;
+
+    // Block all clicks from reaching elements behind the overlay
+    overlay.addEventListener('mousedown', (e) => e.stopPropagation());
+    overlay.addEventListener('pointerdown', (e) => e.stopPropagation());
 
     const panel = document.createElement('div');
     panel.style.cssText = `

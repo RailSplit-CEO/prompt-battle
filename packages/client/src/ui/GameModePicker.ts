@@ -32,9 +32,13 @@ export class GameModePicker {
     `;
     this.overlay = overlay;
 
-    // Block ALL clicks behind the overlay
+    // Block ALL clicks/pointers from reaching Phaser canvas behind the overlay
     overlay.addEventListener('click', (e) => e.stopPropagation());
     overlay.addEventListener('mousedown', (e) => {
+      if (e.target === overlay) this.close();
+      e.stopPropagation();
+    });
+    overlay.addEventListener('pointerdown', (e) => {
       if (e.target === overlay) this.close();
       e.stopPropagation();
     });
