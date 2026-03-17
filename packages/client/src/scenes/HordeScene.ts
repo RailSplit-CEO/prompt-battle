@@ -245,10 +245,10 @@ function validateAndFixWorkflow(cmd: HordeCommand): HordeCommand {
     const animal = campStep.targetAnimal || campStep.targetType;
     if (animal) {
       const CAMP_RESOURCE: Record<string, string> = {
-        spider: 'carrot', gnome: 'carrot', turtle: 'carrot',
-        hyena: 'meat', lizard: 'meat', skull: 'meat',
+        spider: 'carrot', gnome: 'carrot', turtle: 'carrot', snake: 'carrot',
+        hyena: 'meat', lizard: 'meat', skull: 'meat', thief: 'meat',
         rogue: 'crystal', shaman: 'crystal',
-        panda: 'metal', minotaur: 'crystal',
+        panda: 'metal', minotaur: 'crystal', bear: 'meat', harpoon_fish: 'crystal',
       };
       const res = CAMP_RESOURCE[animal] || 'carrot';
       const gatherAction = res === 'metal' ? 'mine' : 'seek_resource';
@@ -338,13 +338,13 @@ async function parseWithGemini(
 Resources: 🥕 Carrots (spawn on ground everywhere), 🍖 Meat (drops from killed wild animals), 💎 Crystals (drops from elite prey), ⚙️ Metal (mined from mine nodes on the map)
 
 SPAWN COSTS — each unit type requires a specific resource delivered to its camp:
-  Tier 1: gnome (🧝) = 2 carrots, turtle (🐢) = 5 carrots
-  Tier 2: skull (💀) = 5 meat, spider (🕷️) = 5 meat, hyena (🐺) = 5 meat, rogue (🗡️) = 5 meat
-  Tier 3: panda (🐼) = 8 meat, lizard (🦎) = 8 meat
-  Tier 4: minotaur (🐂) = 12 crystals, shaman (🔮) = 12 crystals
-  Tier 5: troll (👹) = 20 crystals
+  Tier 1: gnome (🧝) = 2 carrots, snake (🐍) = 2 carrots
+  Tier 2: turtle (🐢) = 4 carrots + 2 meat, skull (💀) = 4 meat, spider (🕷️) = 5 meat, hyena (🐺) = 4 meat, rogue (🗡️) = 5 meat, thief (🥷) = 4 meat
+  Tier 3: panda (🐼) = 6 meat + 3 carrots, lizard (🦎) = 6 meat + 2 carrots, bear (🐻) = 7 meat + 3 carrots, harpoon fish (🐡) = 5 meat + 3 crystals
+  Tier 4: minotaur (🐂) = 8 crystals + 4 meat, shaman (🔮) = 8 crystals + 3 meat
+  Tier 5: troll (👹) = 12 crystals + 6 meat
 
-HOW SPAWNING WORKS: Units gather a resource → carry it to a camp of the desired type → camp uses it to spawn that unit type. E.g. "make gnomes" means gather carrots and deliver to a gnome camp. "make skulls" means gather meat and deliver to a skull camp. Base stores resources but does NOT spawn units — only camps spawn units. Each team gets 1 free gnome from base every 30 seconds automatically.
+HOW SPAWNING WORKS: Units gather a resource → carry it to a camp of the desired type → camp uses it to spawn that unit type. E.g. "make gnomes" means gather carrots and deliver to a gnome camp. "make skulls" means gather meat and deliver to a skull camp. Base stores resources but does NOT spawn units — only camps spawn units. Each team gets 1 free gnome + 1 free snake from base every 45 seconds automatically.
 
 BASE STOCKPILE: Units can WITHDRAW resources from the base stockpile using {"action":"withdraw_base","resourceType":"carrot|meat|crystal|metal"}. This lets you redistribute stored resources — e.g. take carrots from base and deliver to a gnome camp. Use this when base has surplus resources and you want to feed camps directly.
 
@@ -353,21 +353,27 @@ To produce a unit, you MUST own a camp of that type. Camps start neutral with de
 ARMORY: 🏛️ Each team has an Armory building on their side of the map. Players unlock equipment with resources ("unlock swords"), then units walk to the Armory to pick items up. Equipment is permanent (doesn't drop on death). Units can carry a resource AND have equipment. One equipment per unit.
 
 EQUIPMENT (unlock/upgrade, unlimited pickups — costs scale by level: ×1.0/×2.5/×5.0):
-  ⛏️ Pickaxe (40🥕): Required to mine metal. +25% gather speed.
-  ⚔️ Sword (40🍖+15⚙️+10💎): +50% attack, +25% attack speed.
-  🛡️ Shield (35🍖+15⚙️+10💎): +60% HP, -25% damage taken, -15% speed.
-  👢 Boots (35🥕+10⚙️+5💎): +60% move speed, +50% pickup range.
-  🚩 Banner (50🍖+20⚙️+15💎): Aura — nearby allies +20% atk, +15% speed.
-  Max level 3. Level multiplier stacks: Lvl2=×2.5, Lvl3=×5.0. E.g. Lvl2 Pickaxe = 100🥕, Lvl3 Banner = 250🍖+100⚙️+75💎.
+  ⛏️ Pickaxe (40🥕): Required to mine metal. +25% gather speed. Any unit.
+  ⚔️ Sword (40🍖+15⚙️+10💎): +50% attack, +25% attack speed. MELEE ONLY.
+  🛡️ Shield (35🍖+15⚙️+10💎): +60% HP, -25% damage taken, -15% speed. MELEE ONLY.
+  🏹 Bow (35🍖+15⚙️+10💎): +40% attack, +30% range. RANGED ONLY.
+  🎯 Quiver (30🍖+10⚙️+10💎): +40% attack speed, 15% dodge. RANGED ONLY.
+  👢 Boots (35🥕+10⚙️+5💎): +60% move speed, +50% pickup range. Any unit.
+  🚩 Banner (50🍖+20⚙️+15💎): Aura — nearby allies +20% atk, +15% speed. Any unit.
+  Max level 3. Level multiplier stacks: Lvl2=×2.5, Lvl3=×5.0.
+  MELEE units (gnome, turtle, skull, spider, panda, lizard, bear, rogue, minotaur, troll) use Sword+Shield.
+  RANGED units (snake, hyena, thief, harpoon_fish, shaman) use Bow+Quiver.
 
 MINES: ⛏️ Mine nodes on the map. Only units with a Pickaxe can mine metal. Metal is used to unlock equipment.
 
-To equip: include {"action":"equip","equipmentType":"pickaxe|sword|shield|boots|banner"} step BEFORE other steps. Unit walks to Armory, picks up item, then continues.
-To upgrade: include {"action":"upgrade","equipmentType":"pickaxe|sword|shield|boots|banner"} step. Deducts resources from base stockpile instantly. Use when player says "upgrade swords", "unlock shields", "research boots".
+To equip: include {"action":"equip","equipmentType":"pickaxe|sword|shield|boots|banner|bow|quiver"} step BEFORE other steps. Unit walks to Armory, picks up item, then continues.
+To upgrade: include {"action":"upgrade","equipmentType":"pickaxe|sword|shield|boots|banner|bow|quiver"} step. Deducts resources from base stockpile instantly. Use when player says "upgrade swords", "unlock shields", "research bows".
 Example: "get pickaxes then mine" → [{"action":"equip","equipmentType":"pickaxe"},{"action":"mine"},{"action":"deliver","target":"base"}]
 Example: "get swords and attack" → [{"action":"equip","equipmentType":"sword"},{"action":"attack_camp","targetAnimal":"hyena","qualifier":"nearest"}]
 Example: "upgrade swords then attack" → [{"action":"upgrade","equipmentType":"sword"},{"action":"equip","equipmentType":"sword"},{"action":"attack_enemies"}], loopFrom:2
-Example: "upgrade everything" → [{"action":"upgrade","equipmentType":"pickaxe"},{"action":"upgrade","equipmentType":"sword"},{"action":"upgrade","equipmentType":"shield"},{"action":"upgrade","equipmentType":"boots"},{"action":"upgrade","equipmentType":"banner"}], loopFrom:0
+Example: "upgrade everything" → [{"action":"upgrade","equipmentType":"pickaxe"},{"action":"upgrade","equipmentType":"sword"},{"action":"upgrade","equipmentType":"shield"},{"action":"upgrade","equipmentType":"bow"},{"action":"upgrade","equipmentType":"quiver"},{"action":"upgrade","equipmentType":"boots"},{"action":"upgrade","equipmentType":"banner"}], loopFrom:0
+Example: "get bows for archers" → [{"action":"equip","equipmentType":"bow"},{"action":"attack_enemies"}] — ranged units get bow
+Example: "equip swords and attack" → [{"action":"equip","equipmentType":"sword"},{"action":"attack_enemies"}] — melee units get sword
 
 ═══ CURRENT GAME STATE ═══
 Time: ${Math.floor(ctx.gameTime / 1000)}s
@@ -463,8 +469,8 @@ Available step types:
   {"action": "kill_only", "targetType": "skull|spider|..."} — hunt and kill wild animals but IGNORE resource drops (pure combat, no pickup)
   {"action": "mine"} — go to nearest mine node and extract metal, then carry it back (requires Pickaxe equipment)
   {"action": "contest_event"} — move to nearest active map event and interact (gather, deliver, attack, sacrifice, feed). Use when player says "go to event", "contest the event", "help with the bear", etc.
-  {"action": "equip", "equipmentType": "pickaxe|sword|shield|boots|banner"} — go to team Armory and equip item (must be unlocked first)
-  {"action": "upgrade", "equipmentType": "pickaxe|sword|shield|boots|banner"} — unlock or upgrade equipment. Deducts resources from base stockpile. Use when player says "upgrade swords", "unlock shields", "research boots". Can chain: upgrade then equip then action.
+  {"action": "equip", "equipmentType": "pickaxe|sword|shield|bow|quiver|boots|banner"} — go to team Armory and equip item (must be unlocked first). Sword/Shield=melee only. Bow/Quiver=ranged only.
+  {"action": "upgrade", "equipmentType": "pickaxe|sword|shield|bow|quiver|boots|banner"} — unlock or upgrade equipment. Deducts resources from base stockpile. Use when player says "upgrade swords", "unlock shields", "research bows".
   {"action": "withdraw_base", "resourceType": "carrot|meat|crystal|metal"} — go to base and take 1 resource from stockpile (unit carries it, then deliver to camp)
 
 The workflow LOOPS automatically. Design the steps so they make a sensible repeating cycle.
@@ -479,17 +485,21 @@ SPECIAL: Turtles carry 10x resources per trip — they're slow but incredibly ef
 ═══ UNIT TRAITS & ROLES ═══
 Each unit has unique strengths — use these to make smart workflow decisions:
 
-GNOME (T1, 🧝): Fast, nimble, 2x pickup range. BEST gatherer for carrots. Cheap (1 carrot). Weak fighter — keep gathering, not fighting.
-TURTLE (T1, 🐢): Slow but carries 10x resources per trip! Ultimate hauler. 1 carrot. Taunts nearby enemies (forces them to attack the turtle). Always prefer turtles for any gather/deliver workflow.
-SKULL (T2, 💀): Cheats death once (survives lethal at 1 HP). Good fighter. 3 meat. Can self-sustain: hunt → pick meat → deliver to own camp.
-SPIDER (T2, 🕷️): Fast ambusher. Great for raiding and hit-and-run. 3 meat.
-HYENA (T2, 🐺): Ranged attacker (120 range vs normal 60). Excellent for defense and kiting. 5 meat.
-ROGUE (T2, 🗡️): Fast assassin. 3x damage on first hit against a new target (Backstab). Invisible to neutral enemies — can sneak past camp defenders! Great for hit-and-run. 3 meat.
-PANDA (T3, 🐼): Tanky brawler, high HP. Excellent frontline defender. 5 meat.
-LIZARD (T3, 🦎): Agile, good damage. Great raider. 5 meat.
-MINOTAUR (T4, 🐂): Massive HP and damage. Late-game powerhouse. 8 crystals.
-SHAMAN (T4, 🔮): Support/caster. Strong but expensive. 8 crystals.
-TROLL (T5, 👹): Ultimate unit — enormous stats. Only 1 camp at map center. 12 crystals. Game-ender.
+GNOME (T1, 🧝): Fast melee gatherer, 2x pickup range. BEST gatherer for carrots. Cheap (2 carrots). Weak fighter — keep gathering.
+SNAKE (T1, 🐍): Ranged T1 (110 range). Venom spit poisons targets. Cheap (2 carrots). Fragile but safe DPS from behind.
+TURTLE (T2, 🐢): Slow but carries 10x resources per trip! Ultimate hauler. Taunts nearby enemies. Always prefer turtles for gather/deliver.
+SKULL (T2, 💀): Cheats death once (survives lethal at 1 HP). Good fighter. Can self-sustain: hunt → pick meat → deliver.
+SPIDER (T2, 🕷️): Fast ambusher. Venom shreds tanks (+5% max HP per hit). Web Trap slows on first hit.
+HYENA (T2, 🐺): Ranged attacker (120 range). Excellent for defense and kiting. Pack bonus with other hyenas.
+ROGUE (T2, 🗡️): Fast assassin. 3x damage on first hit (Backstab). Invisible to neutrals — sneaks past defenders.
+THIEF (T2, 🥷): Ranged (100 range) dagger thrower. Kills drop +50% resources (Pilfer). Smoke Bomb escape.
+PANDA (T3, 🐼): Tanky brawler, high HP, regenerates 1.5% HP/sec. Blocks projectiles for units behind.
+LIZARD (T3, 🦎): Cold Blood deals 3x damage to targets below 40% HP. Tail Whip cleaves behind target.
+BEAR (T3, 🐻): Berserker — gets stronger as HP drops (Rage). Maul stuns targets. Huge HP pool.
+HARPOON FISH (T3, 🐡): Longest range in game (160). Pierces through first target. Anchor Shot slows 50%.
+MINOTAUR (T4, 🐂): Commander — nearby allies +25% attack. Bull Rush charges for 2x impact. 8 crystals.
+SHAMAN (T4, 🔮): All attacks splash 60px. Hex Ward reduces splash damage to allies. 8 crystals.
+TROLL (T5, 👹): Ultimate unit — enormous stats, 90px splash slam. Only 1 camp at map center. 12 crystals.
 
 ═══ RESOURCE FLOW ═══
 Carrots → spawn on ground naturally (slow). Gnomes/turtles eat these.
@@ -969,9 +979,11 @@ interface HUnit {
   prevSpriteY: number;
   // Special mechanic flags
   gnomeShield: number;   // gnome: survives this many lethal hits (starts at 1)
-  hasRebirth: boolean;   // skull: cheats death once (survives at 1 HP)
+  hasRebirth: boolean;   // skull: cheats death once / snake: shed skin once
   diveReady: boolean;    // (unused, kept for interface compat)
   diveTimer: number;     // (unused, kept for interface compat)
+  slowUntil: number;     // timestamp (this.time.now) when slow expires (0 = not slowed)
+  slowMult: number;      // speed multiplier while slowed (e.g. 0.5 = 50% speed)
   lastAttackTarget: number; // rogue backstab: id of last target attacked (-1 = none, first hit = 3x)
   // Resource economy
   carrying: ResourceType | null;
@@ -1141,6 +1153,7 @@ interface HordeSyncState {
   groupWorkflows?: Record<string, any>;
   groupModifiers?: Record<string, any>;
   freeGnomeTimer?: number;
+  freeSnakeTimer?: number;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1249,20 +1262,25 @@ const P2_BASE = { x: WORLD_W - 250, y: 250 };
 // ─── UNIT ROSTER ──────────────────────────────────────────
 // Each unit has a distinct role, stat profile, and unique ability.
 //
-// T1 WORKERS — cheap, resource gatherers
-//   🧝 Gnome   "Nimble Hands" — Fastest gatherer. 2x pickup range. Born to gather.
-//   🐢 Turtle  "Shell Stance" — Slowest unit but tankiest T1. 60% DR when stationary + taunts nearby foes.
+// T1 STARTERS — cheap, always available
+//   🧝 Gnome   "Nimble Hands" — Fastest melee gatherer. 2x pickup range.
+//   🐍 Snake   "Venom Spit"   — Ranged T1. Poison stacks. Shed Skin escape.
 //
-// T2 FIGHTERS — mid-game combat specialists
+// T2 FIGHTERS — mid-game combat specialists (pool: 4 of 6 per game)
+//   🐢 Turtle  "Shell Stance" — Tanky hauler. 60% DR stationary + taunts. 10x carry.
 //   💀 Skull   "Undying"      — Cheats death once (survives at 1 HP).
-//   🕷️ Spider  "Venom Bite"   — Slow assassin. +5% target max HP per hit.
-//   🐺 Hyena   "Bone Toss"    — Extended range (120 vs 80).
+//   🕷️ Spider  "Venom Bite"   — +5% target max HP per hit. Web Trap.
+//   🐺 Hyena   "Bone Toss"    — Ranged (120 range). Pack Frenzy bonus.
+//   🗡️ Rogue   "Backstab"     — 3x first hit. Invisible to neutrals.
+//   🥷 Thief   "Pilfer"       — Ranged (100). +50% loot on kills. Smoke Bomb.
 //
-// T3 HEAVIES — expensive powerhouses
-//   🐼 Panda   "Thick Hide"   — Regenerates 1% max HP/sec. Very tanky.
-//   🦎 Lizard  "Cold Blood"   — 3x dmg to targets below 40% HP.
+// T3 HEAVIES — expensive powerhouses (pool: 2 of 4 per game)
+//   🐼 Panda   "Thick Hide"   — Regenerates 1.5% max HP/sec. Bamboo Wall.
+//   🦎 Lizard  "Cold Blood"   — 3x dmg to targets below 40% HP. Tail Whip.
+//   🐻 Bear    "Rage"         — +2% atk per 1% missing HP. Maul stuns.
+//   🐡 Harpoon "Harpoon"      — Longest range (160). Pierces. Anchor Shot slows.
 //
-// T4 ELITES — game-changers
+// T4 ELITES — game-changers (pool: 1 of 3 per game... not yet implemented)
 //   🐂 Minotaur "War Cry"     — Commander. Nearby allies +25% attack.
 //   🔮 Shaman   "Arcane Blast" — All attacks splash 60px.
 //
@@ -1295,33 +1313,43 @@ function avatarImg(type: string, size = 24): string {
 // Supply costs per tier: T1=1, T2=2, T3=3, T4=5, T5=8.
 // Hard counters do 2x dmg. Soft counters emerge from abilities (venom vs tanks, execute vs wounded).
 const ANIMALS: Record<string, AnimalDef> = {
-  gnome:     { type: 'gnome',     emoji: '🧝', hp: 20,    attack: 4,    speed: 210, tier: 1, ability: 'Nimble Hands', desc: '2x pickup range, fastest gatherer', ability2: 'Plucky', desc2: 'Survives 1 lethal hit (scales with era)', mineSpeed: 2.0 },
-  turtle:    { type: 'turtle',    emoji: '🐢', hp: 80,    attack: 5,    speed: 55,  tier: 1, ability: 'Shell Stance', desc: '60% DR when stationary + taunts nearby foes', ability2: 'Iron Shell', desc2: 'Carries 10x resources; nearby allies take 15% less damage', mineSpeed: 1.5 },
-  skull:     { type: 'skull',     emoji: '💀', hp: 90,    attack: 16,   speed: 155, tier: 2, ability: 'Undying',      desc: 'Cheats death once (survives at 1 HP)', ability2: 'Dread Aura', desc2: 'Enemies nearby attack 15% slower', mineSpeed: 0.8 },
-  spider:    { type: 'spider',    emoji: '🕷️', hp: 110,   attack: 20,   speed: 140, tier: 2, ability: 'Venom Bite',   desc: '+5% target max HP per hit', ability2: 'Web Trap', desc2: 'First attack slows target 40% for 3s', mineSpeed: 0.6 },
-  hyena:     { type: 'hyena',     emoji: '🐺', hp: 65,    attack: 24,   speed: 175, tier: 2, ability: 'Bone Toss',    desc: 'Extended range (120 vs 80)', ability2: 'Pack Frenzy', desc2: '+10% atk per nearby allied hyena (max +50%)', mineSpeed: 0.8 },
-  panda:     { type: 'panda',     emoji: '🐼', hp: 280,   attack: 32,   speed: 80,  tier: 3, ability: 'Thick Hide',   desc: 'Regenerates 1.5% max HP/sec', ability2: 'Bamboo Wall', desc2: 'Blocks projectiles for units behind', mineSpeed: 0.5 },
-  lizard:    { type: 'lizard',    emoji: '🦎', hp: 200,   attack: 55,   speed: 110, tier: 3, ability: 'Cold Blood',   desc: '3x dmg to targets below 40% HP', ability2: 'Tail Whip', desc2: 'Attacks hit enemies in 50px arc behind target', mineSpeed: 0.7 },
-  minotaur:  { type: 'minotaur',  emoji: '🐂', hp: 550,   attack: 85,   speed: 105, tier: 4, ability: 'War Cry',      desc: 'Nearby allies +25% attack', ability2: 'Bull Rush', desc2: 'Charges at targets >200px away for 2x impact', mineSpeed: 0.4 },
-  shaman:    { type: 'shaman',    emoji: '🔮', hp: 350,   attack: 120,  speed: 95,  tier: 4, ability: 'Arcane Blast', desc: 'All attacks splash 60px', ability2: 'Hex Ward', desc2: 'Nearby allies take 20% less splash damage', mineSpeed: 0.5 },
-  troll:     { type: 'troll',     emoji: '👹', hp: 1200,  attack: 200,  speed: 50,  tier: 5, ability: 'Club Slam',    desc: 'Massive 90px splash, slows enemies', ability2: 'Regeneration', desc2: '0.5% HP/s regen, doubles below 30% HP', mineSpeed: 0.3 },
-  rogue:     { type: 'rogue',     emoji: '🗡️', hp: 70,    attack: 40,   speed: 200, tier: 2, ability: 'Backstab',    desc: '3x first hit + invisible to neutrals', ability2: 'Shadow Step', desc2: 'Invisible to neutral enemies, sneaks past defenders', mineSpeed: 1.0 },
+  gnome:        { type: 'gnome',        emoji: '🧝', hp: 20,    attack: 4,    speed: 210, tier: 1, ability: 'Nimble Hands', desc: '2x pickup range, fastest gatherer', ability2: 'Plucky', desc2: 'Survives 1 lethal hit (scales with era)', mineSpeed: 2.0 },
+  snake:        { type: 'snake',        emoji: '🐍', hp: 30,    attack: 6,    speed: 190, tier: 1, ability: 'Venom Spit',   desc: 'Ranged attack (110 range), +3% max HP poison', ability2: 'Shed Skin', desc2: 'Drops aggro once when hit below 30% HP', mineSpeed: 1.5 },
+  turtle:       { type: 'turtle',       emoji: '🐢', hp: 80,    attack: 5,    speed: 55,  tier: 2, ability: 'Shell Stance', desc: '60% DR when stationary + taunts nearby foes', ability2: 'Iron Shell', desc2: 'Carries 10x resources; nearby allies take 15% less damage', mineSpeed: 1.5 },
+  skull:        { type: 'skull',        emoji: '💀', hp: 90,    attack: 16,   speed: 155, tier: 2, ability: 'Undying',      desc: 'Cheats death once (survives at 1 HP)', ability2: 'Dread Aura', desc2: 'Enemies nearby attack 15% slower', mineSpeed: 0.8 },
+  spider:       { type: 'spider',       emoji: '🕷️', hp: 110,   attack: 20,   speed: 140, tier: 2, ability: 'Venom Bite',   desc: '+5% target max HP per hit', ability2: 'Web Trap', desc2: 'First attack slows target 40% for 3s', mineSpeed: 0.6 },
+  hyena:        { type: 'hyena',        emoji: '🐺', hp: 65,    attack: 24,   speed: 175, tier: 2, ability: 'Bone Toss',    desc: 'Extended range (120 vs 80)', ability2: 'Pack Frenzy', desc2: '+10% atk per nearby allied hyena (max +50%)', mineSpeed: 0.8 },
+  rogue:        { type: 'rogue',        emoji: '🗡️', hp: 70,    attack: 40,   speed: 200, tier: 2, ability: 'Backstab',    desc: '3x first hit + invisible to neutrals', ability2: 'Shadow Step', desc2: 'Invisible to neutral enemies, sneaks past defenders', mineSpeed: 1.0 },
+  thief:        { type: 'thief',        emoji: '🥷', hp: 55,    attack: 18,   speed: 195, tier: 2, ability: 'Pilfer',       desc: 'Ranged (100 range), kills drop +50% resources', ability2: 'Smoke Bomb', desc2: 'Untargetable 2s when below 40% HP', mineSpeed: 1.2 },
+  panda:        { type: 'panda',        emoji: '🐼', hp: 280,   attack: 32,   speed: 80,  tier: 3, ability: 'Thick Hide',   desc: 'Regenerates 1.5% max HP/sec', ability2: 'Bamboo Wall', desc2: 'Blocks projectiles for units behind', mineSpeed: 0.5 },
+  lizard:       { type: 'lizard',       emoji: '🦎', hp: 200,   attack: 55,   speed: 110, tier: 3, ability: 'Cold Blood',   desc: '3x dmg to targets below 40% HP', ability2: 'Tail Whip', desc2: 'Attacks hit enemies in 50px arc behind target', mineSpeed: 0.7 },
+  bear:         { type: 'bear',         emoji: '🐻', hp: 320,   attack: 45,   speed: 90,  tier: 3, ability: 'Rage',         desc: '+2% atk per 1% missing HP', ability2: 'Maul', desc2: 'Attacks stun for 0.5s', mineSpeed: 0.5 },
+  harpoon_fish: { type: 'harpoon_fish', emoji: '🐡', hp: 150,   attack: 65,   speed: 70,  tier: 3, ability: 'Harpoon',      desc: 'Longest range (160), pierces first target', ability2: 'Anchor Shot', desc2: 'Slows target 50% for 2s', mineSpeed: 0.4 },
+  minotaur:     { type: 'minotaur',     emoji: '🐂', hp: 550,   attack: 85,   speed: 105, tier: 4, ability: 'War Cry',      desc: 'Nearby allies +25% attack', ability2: 'Bull Rush', desc2: 'Charges at targets >200px away for 2x impact', mineSpeed: 0.4 },
+  shaman:       { type: 'shaman',       emoji: '🔮', hp: 350,   attack: 120,  speed: 95,  tier: 4, ability: 'Arcane Blast', desc: 'All attacks splash 60px', ability2: 'Hex Ward', desc2: 'Nearby allies take 20% less splash damage', mineSpeed: 0.5 },
+  troll:        { type: 'troll',        emoji: '👹', hp: 1200,  attack: 200,  speed: 50,  tier: 5, ability: 'Club Slam',    desc: 'Massive 90px splash, slows enemies', ability2: 'Regeneration', desc2: '0.5% HP/s regen, doubles below 30% HP', mineSpeed: 0.3 },
 };
+
+const RANGED_UNITS = new Set(['snake', 'hyena', 'thief', 'harpoon_fish', 'shaman']);
 
 // Hard counter map: attacker → types it deals 2x damage to
 // Designed around the ability matchups:
 const HARD_COUNTERS: Record<string, string[]> = {
-  gnome:     [],                       // pure worker, wins by speed
-  turtle:    ['gnome'],                // shell absorbs weak hits
-  skull:     ['hyena', 'spider'],      // undying outlasts fragile specialists
-  spider:    ['panda', 'turtle'],      // venom shreds tanky slow targets
-  hyena:     ['spider', 'gnome'],      // ranged picks off slow/fragile targets
-  panda:     ['skull', 'lizard'],      // regen too tanky to burst or execute
-  lizard:    ['panda', 'minotaur'],    // cold blood executes the biggest targets
-  minotaur:  ['skull', 'shaman'],      // war cry + stats overwhelm undying and casters
-  shaman:    ['troll', 'minotaur'],    // arcane blast burns down big slow targets
-  troll:     ['shaman', 'hyena'],      // club slam crushes casters and ranged
-  rogue:     ['gnome', 'shaman'],     // backstab bursts down fragile targets
+  gnome:        [],                          // pure worker, wins by speed
+  snake:        ['spider', 'gnome'],         // ranged picks off slow/fragile targets
+  turtle:       ['gnome', 'snake'],          // shell absorbs weak hits
+  skull:        ['hyena', 'spider'],         // undying outlasts fragile specialists
+  spider:       ['panda', 'turtle'],         // venom shreds tanky slow targets
+  hyena:        ['spider', 'gnome'],         // ranged picks off slow/fragile targets
+  rogue:        ['gnome', 'shaman'],         // backstab bursts down fragile targets
+  thief:        ['gnome', 'snake'],          // pilfer exploits weak workers
+  panda:        ['skull', 'lizard'],         // regen too tanky to burst or execute
+  lizard:       ['panda', 'minotaur'],       // cold blood executes the biggest targets
+  bear:         ['skull', 'spider'],         // rage + maul overwhelms fragile fighters
+  harpoon_fish: ['panda', 'bear'],           // long range shreds slow melee tanks
+  minotaur:     ['skull', 'shaman'],         // war cry + stats overwhelm undying and casters
+  shaman:       ['troll', 'minotaur'],       // arcane blast burns down big slow targets
+  troll:        ['shaman', 'hyena'],         // club slam crushes casters and ranged
 };
 
 const UNIT_STRENGTHS: Record<string, string[]> = {
@@ -1331,6 +1359,10 @@ const UNIT_STRENGTHS: Record<string, string[]> = {
   spider:   ['Shreds tanks — % HP damage scales', 'Web opener cripples fast units', 'Great vs Panda, Turtle, Troll'],
   hyena:    ['Outranges every other unit', 'Pack bonus makes hyena balls deadly', 'Fast — good for hit-and-run raids'],
   rogue:    ['Massive burst on first hit', 'Fastest combat unit — great assassin', 'Sneaks past defenders for captures'],
+  snake:        ['Ranged T1 — safe DPS from behind', 'Poison stacks melt tanks over time', 'Shed Skin provides escape'],
+  thief:        ['Ranged + bonus loot on kills', 'Smoke Bomb escape at low HP', 'Fast — great hit-and-run raids'],
+  bear:         ['Gets STRONGER as HP drops — reverse tank', 'Maul stuns lock down targets', 'Huge HP pool absorbs punishment'],
+  harpoon_fish: ['Longest attack range in the game', 'Harpoon pierces through front line', 'Anchor Shot slows fleeing enemies'],
   panda:    ['Insane regen — wins wars of attrition', 'Huge HP pool soaks damage', 'Shields backline from ranged attacks'],
   lizard:   ['Execute damage deletes wounded units', 'Cleave hits clustered enemies', 'Strong balanced stats for T3'],
   minotaur: ['Massive team-wide damage buff', 'Charge obliterates backlines', 'Tanky enough to lead from the front'],
@@ -1441,12 +1473,12 @@ function makeCamps(): CampDef[] {
   for (const k of Object.keys(usedNames)) delete usedNames[k];
 
   const GUARD_COUNT: Record<string, number> = {
-    gnome: 1, turtle: 1, skull: 1, spider: 1, hyena: 1, rogue: 1,
-    panda: 1, lizard: 1, minotaur: 1, shaman: 1, troll: 1,
+    gnome: 1, snake: 1, turtle: 1, skull: 1, spider: 1, hyena: 1, rogue: 1, thief: 1,
+    panda: 1, lizard: 1, bear: 1, harpoon_fish: 1, minotaur: 1, shaman: 1, troll: 1,
   };
   const SPAWN_MS: Record<string, number> = {
-    gnome: 4000, turtle: 4500, skull: 6000, spider: 6000, hyena: 5500, rogue: 5500,
-    panda: 7500, lizard: 7500, minotaur: 10000, shaman: 10000, troll: 15000,
+    gnome: 4000, snake: 4000, turtle: 4500, skull: 6000, spider: 6000, hyena: 5500, rogue: 5500, thief: 5500,
+    panda: 7500, lizard: 7500, bear: 7500, harpoon_fish: 8000, minotaur: 10000, shaman: 10000, troll: 15000,
   };
 
   const cx = WORLD_W / 2, cy = WORLD_H / 2;
@@ -1524,12 +1556,12 @@ function makeCampsFromMap(mapDef: MapDef, seed: number): CampDef[] {
   for (const k of Object.keys(usedNames)) delete usedNames[k];
 
   const GUARD_COUNT: Record<string, number> = {
-    gnome: 1, turtle: 1, skull: 1, spider: 1, hyena: 1, rogue: 1,
-    panda: 1, lizard: 1, minotaur: 1, shaman: 1, troll: 1,
+    gnome: 1, snake: 1, turtle: 1, skull: 1, spider: 1, hyena: 1, rogue: 1, thief: 1,
+    panda: 1, lizard: 1, bear: 1, harpoon_fish: 1, minotaur: 1, shaman: 1, troll: 1,
   };
   const SPAWN_MS: Record<string, number> = {
-    gnome: 4000, turtle: 4500, skull: 6000, spider: 6000, hyena: 5500, rogue: 5500,
-    panda: 7500, lizard: 7500, minotaur: 10000, shaman: 10000, troll: 15000,
+    gnome: 4000, snake: 4000, turtle: 4500, skull: 6000, spider: 6000, hyena: 5500, rogue: 5500, thief: 5500,
+    panda: 7500, lizard: 7500, bear: 7500, harpoon_fish: 8000, minotaur: 10000, shaman: 10000, troll: 15000,
   };
 
   // Assign random animals to slots
@@ -1576,9 +1608,9 @@ function makeCampsFromMap(mapDef: MapDef, seed: number): CampDef[] {
 const NEXUS_MAX_HP = 20000;
 const MAX_SUPPLY = 80; // hard supply cap per team
 const SUPPLY_COST: Record<string, number> = {
-  gnome: 1, turtle: 1,
-  skull: 2, spider: 2, hyena: 2, rogue: 2,
-  panda: 3, lizard: 3,
+  gnome: 1, snake: 1,
+  turtle: 2, skull: 2, spider: 2, hyena: 2, rogue: 2, thief: 2,
+  panda: 3, lizard: 3, bear: 3, harpoon_fish: 3,
   minotaur: 5, shaman: 5,
   troll: 8,
 };
@@ -1592,6 +1624,7 @@ const UPKEEP_THRESHOLDS = [
 ];
 const BASE_SPAWN_MS = 5000; // (legacy, unused)
 const FREE_GNOME_MS = 45000; // free gnome from base every 45s (was 30s, slower to reduce passive snowball)
+const FREE_SNAKE_MS = 45000; // free snake from base every 45s (ranged starter)
 const ATTACK_CD_MS = 1500;
 const COMBAT_RANGE = 80;
 const TURTLE_TAUNT_RANGE = 100; // turtles force nearby foes to attack them
@@ -1634,17 +1667,21 @@ const GOLDEN_ANGLE = 2.39996;
 // Multi-resource costs keep all resources relevant throughout the game.
 // Primary resource is what the camp type produces; secondary cost creates cross-resource demand.
 const SPAWN_COSTS: Record<string, { type: ResourceType; amount: number; secondary?: { type: ResourceType; amount: number } }> = {
-  gnome:     { type: 'carrot',  amount: 2 },
-  turtle:    { type: 'carrot',  amount: 4 },
-  skull:     { type: 'meat',    amount: 4 },
-  spider:    { type: 'meat',    amount: 5 },
-  hyena:     { type: 'meat',    amount: 4 },
-  rogue:     { type: 'meat',    amount: 5 },
-  panda:     { type: 'meat',    amount: 6, secondary: { type: 'carrot', amount: 3 } },
-  lizard:    { type: 'meat',    amount: 6, secondary: { type: 'carrot', amount: 2 } },
-  minotaur:  { type: 'crystal', amount: 8, secondary: { type: 'meat', amount: 4 } },
-  shaman:    { type: 'crystal', amount: 8, secondary: { type: 'meat', amount: 3 } },
-  troll:     { type: 'crystal', amount: 12, secondary: { type: 'meat', amount: 6 } },
+  gnome:        { type: 'carrot',  amount: 2 },
+  snake:        { type: 'carrot',  amount: 2 },
+  turtle:       { type: 'carrot',  amount: 4, secondary: { type: 'meat', amount: 2 } },
+  skull:        { type: 'meat',    amount: 4 },
+  spider:       { type: 'meat',    amount: 5 },
+  hyena:        { type: 'meat',    amount: 4 },
+  rogue:        { type: 'meat',    amount: 5 },
+  thief:        { type: 'meat',    amount: 4 },
+  panda:        { type: 'meat',    amount: 6, secondary: { type: 'carrot', amount: 3 } },
+  lizard:       { type: 'meat',    amount: 6, secondary: { type: 'carrot', amount: 2 } },
+  bear:         { type: 'meat',    amount: 7, secondary: { type: 'carrot', amount: 3 } },
+  harpoon_fish: { type: 'meat',    amount: 5, secondary: { type: 'crystal', amount: 3 } },
+  minotaur:     { type: 'crystal', amount: 8, secondary: { type: 'meat', amount: 4 } },
+  shaman:       { type: 'crystal', amount: 8, secondary: { type: 'meat', amount: 3 } },
+  troll:        { type: 'crystal', amount: 12, secondary: { type: 'meat', amount: 6 } },
 };
 const RESOURCE_EMOJI: Record<ResourceType, string> = { carrot: '🥕', meat: '🍖', crystal: '💎', metal: '⚙️' };
 
@@ -1665,8 +1702,10 @@ const EQUIP_LEVEL_COST_MULT = [0, 1.0, 2.5, 5.0]; // cost multiplier per level u
 
 const EQUIPMENT: EquipmentDef[] = [
   { id: 'pickaxe', name: 'Pickaxe', emoji: '⛏️', cost: { carrot: 40 }, effect: 'Can mine metal, +25% gather speed' },
-  { id: 'sword',   name: 'Sword',   emoji: '⚔️', cost: { meat: 40, metal: 15, crystal: 10 }, effect: '+50% attack, +25% attack speed' },
-  { id: 'shield',  name: 'Shield',  emoji: '🛡️', cost: { meat: 35, metal: 15, crystal: 10 }, effect: '+60% HP, -25% damage taken, -15% speed' },
+  { id: 'sword',   name: 'Sword',   emoji: '⚔️', cost: { meat: 40, metal: 15, crystal: 10 }, effect: '+50% attack, +25% attack speed (melee only)' },
+  { id: 'shield',  name: 'Shield',  emoji: '🛡️', cost: { meat: 35, metal: 15, crystal: 10 }, effect: '+60% HP, -25% damage taken, -15% speed (melee only)' },
+  { id: 'bow',     name: 'Bow',     emoji: '🏹', cost: { meat: 35, metal: 15, crystal: 10 }, effect: '+40% attack, +30% range (ranged only)' },
+  { id: 'quiver',  name: 'Quiver',  emoji: '🎯', cost: { meat: 30, metal: 10, crystal: 10 }, effect: '+40% attack speed, 15% dodge (ranged only)' },
   { id: 'boots',   name: 'Boots',   emoji: '👢', cost: { carrot: 35, metal: 10, crystal: 5 }, effect: '+60% move speed, +50% pickup range' },
   { id: 'banner',  name: 'Banner',  emoji: '🚩', cost: { meat: 50, metal: 20, crystal: 15 }, effect: 'Aura: nearby allies +20% atk, +15% speed' },
 ];
@@ -1676,6 +1715,8 @@ const EQUIPMENT_PREREQS: Record<EquipmentType, EquipmentType[]> = {
   pickaxe: [],
   sword:   ['pickaxe'],
   shield:  ['pickaxe'],
+  bow:     ['pickaxe'],
+  quiver:  ['pickaxe'],
   boots:   ['pickaxe'],
   banner:  ['pickaxe'],
 };
@@ -1724,6 +1765,8 @@ const ARMORY_BUILDING: Record<string, string> = {
   pickaxe: 'house1',
   sword: 'barracks',
   shield: 'house3',
+  bow: 'archery',
+  quiver: 'archery',
   boots: 'monastery',
   banner: 'archery',
 };
@@ -1792,6 +1835,7 @@ export class HordeScene extends Phaser.Scene {
   private carrotSpawnTimer = 0;
   private wildRespawnTimer = 0;
   private freeGnomeTimer = 0;
+  private freeSnakeTimer = 0;
   private lastTurtleGuardSfx = 0;
   // Era progression — goal-based unlocks
   private currentEra = 1;
@@ -2405,6 +2449,7 @@ export class HordeScene extends Phaser.Scene {
     this.carrotSpawnTimer = 0;
     this.wildRespawnTimer = 0;
     this.freeGnomeTimer = 0;
+    this.freeSnakeTimer = 0;
     this.mapEvents = [];
     this.eventCycleTimer = 0;
     this.eventCycleCount = 0;
@@ -2516,9 +2561,9 @@ export class HordeScene extends Phaser.Scene {
     // Set custom pixel art cursor
     this.input.setDefaultCursor('url(assets/ui/cursors/Cursor_01.png) 0 0, auto');
 
-    // Pre-capture T1 camps (gnome + turtle) for each team at game start
+    // Pre-capture T1 camps (gnome + snake) for each team at game start
     if (!this.isOnline || this.isHost) {
-      for (const animalType of ['gnome', 'turtle']) {
+      for (const animalType of ['gnome', 'snake']) {
         const campsOfType = this.camps.filter(c => c.animalType === animalType);
         const p1Camp = campsOfType.slice().sort((a, b) => pdist2(a, P1_BASE) - pdist2(b, P1_BASE))[0];
         const p2Camp = campsOfType.filter(c => c !== p1Camp).sort((a, b) => pdist2(a, P2_BASE) - pdist2(b, P2_BASE))[0];
@@ -2532,15 +2577,19 @@ export class HordeScene extends Phaser.Scene {
         }
       }
 
-      // Starting gnomes
+      // Starting units: 3 gnomes + 2 snakes
       for (let i = 0; i < 3; i++) {
         this.spawnUnit('gnome', 1, P1_BASE.x + 50 + i * 20, P1_BASE.y - 50);
         this.spawnUnit('gnome', 2, P2_BASE.x - 50 - i * 20, P2_BASE.y + 50);
       }
+      for (let i = 0; i < 2; i++) {
+        this.spawnUnit('snake', 1, P1_BASE.x + 30 + i * 20, P1_BASE.y - 80);
+        this.spawnUnit('snake', 2, P2_BASE.x - 30 - i * 20, P2_BASE.y + 80);
+      }
 
       // Debug mode: spawn 3 of every unit type for both teams
       if (this.isDebug) {
-        const allTypes = ['turtle','skull','spider','hyena','panda','lizard','minotaur','shaman','troll','rogue'];
+        const allTypes = ['snake','turtle','skull','spider','hyena','rogue','thief','panda','lizard','bear','harpoon_fish','minotaur','shaman','troll'];
         for (const uType of allTypes) {
           for (let i = 0; i < 3; i++) {
             this.spawnUnit(uType, 1, P1_BASE.x + 30 + i * 25, P1_BASE.y - 80 - allTypes.indexOf(uType) * 30);
@@ -3593,12 +3642,13 @@ export class HordeScene extends Phaser.Scene {
         attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
         campId: camp.id, lungeX: 0, lungeY: 0,
         gnomeShield: camp.animalType === 'gnome' ? 1 : 0,
-        hasRebirth: camp.animalType === 'skull',
+        hasRebirth: camp.animalType === 'skull' || camp.animalType === 'snake',
         diveReady: false,
         diveTimer: 0,
         lastAttackTarget: -1, attackFaceX: null, pathWaypoints: null, pathAge: 0, pathTargetX: 0, pathTargetY: 0, lastCheckX: 0, lastCheckY: 0, stuckFrames: 0, stuckCooldown: 0, mods: { ...DEFAULT_MODS },
         carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
         equipment: null, equipLevel: 0, equipSprite: null, equipDragSprite: null, equipVisualApplied: null,
+        slowUntil: 0, slowMult: 1,
       });
     }
   }
@@ -3766,6 +3816,7 @@ export class HordeScene extends Phaser.Scene {
         gnomeShield: 0, hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, attackFaceX: null, pathWaypoints: null, pathAge: 0, pathTargetX: 0, pathTargetY: 0, lastCheckX: 0, lastCheckY: 0, stuckFrames: 0, stuckCooldown: 0, mods: { ...DEFAULT_MODS },
         carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
         equipment: null, equipLevel: 0, equipSprite: null, equipDragSprite: null, equipVisualApplied: null,
+        slowUntil: 0, slowMult: 1,
       });
     }
   }
@@ -3784,6 +3835,7 @@ export class HordeScene extends Phaser.Scene {
         gnomeShield: 0, hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, attackFaceX: null, pathWaypoints: null, pathAge: 0, pathTargetX: 0, pathTargetY: 0, lastCheckX: 0, lastCheckY: 0, stuckFrames: 0, stuckCooldown: 0, mods: { ...DEFAULT_MODS },
         carrying: null, carrySprite: null, loop: null, isElite: true, idleTimer: 0, claimItemId: -1,
         equipment: null, equipLevel: 0, equipSprite: null, equipDragSprite: null, equipVisualApplied: null,
+        slowUntil: 0, slowMult: 1,
       });
     }
   }
@@ -5283,17 +5335,15 @@ export class HordeScene extends Phaser.Scene {
       const cur = def.target ? Math.min(def.target, Math.round(progress * def.target)) : (progress >= 1 ? 1 : 0);
       const counter = def.target ? `${cur}/${def.target}` : '';
       const barColor = pct >= 100 ? '#45E6B0' : '#c4a96a';
-      html += `<div style="background:rgba(245,235,220,0.92);border:1px solid rgba(139,115,85,0.35);border-radius:8px;padding:6px 8px;display:flex;align-items:center;gap:6px;">
-        <span style="font-size:18px;line-height:1;">${def.icon}</span>
+      html += `<div style="background:rgba(245,235,220,0.92);border:1px solid rgba(139,115,85,0.35);border-radius:8px;padding:8px 10px;display:flex;align-items:center;gap:8px;">
+        <span style="font-size:26px;line-height:1;">${def.icon}</span>
         <div style="flex:1;min-width:0;">
-          <div style="font-size:11px;font-weight:700;color:#2a1a0a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${def.title}</div>
-          <div style="font-size:9px;color:#6a5a4a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${def.desc}</div>
-          ${'reward' in def ? `<div style="font-size:8px;color:#45886a;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${(def as any).reward?.desc || ''}</div>` : ''}
-          <div style="margin-top:3px;height:5px;background:rgba(0,0,0,0.1);border-radius:3px;overflow:hidden;">
+          <div style="font-size:13px;font-weight:800;color:#2a1a0a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:'Fredoka',sans-serif;">${def.title}</div>
+          <div style="margin-top:4px;height:6px;background:rgba(0,0,0,0.1);border-radius:3px;overflow:hidden;">
             <div style="height:100%;width:${pct}%;background:${barColor};border-radius:3px;transition:width 0.3s;"></div>
           </div>
         </div>
-        ${counter ? `<span style="font-size:10px;font-weight:700;color:#4a3520;white-space:nowrap;">${counter}</span>` : ''}
+        ${counter ? `<span style="font-size:14px;font-weight:800;color:#4a3520;white-space:nowrap;font-family:'Fredoka',sans-serif;">${counter}</span>` : ''}
       </div>`;
     }
     if (html !== this._prevQuestHTML) {
@@ -6161,7 +6211,7 @@ export class HordeScene extends Phaser.Scene {
 
   private formatWorkflowStep(step: WorkflowStep): string {
     const RESOURCE_ICONS: Record<string, string> = { carrot: '\u{1F955}', meat: '\u{1F356}', crystal: '\u{1F48E}', metal: '\u2699\uFE0F' };
-    const EQUIP_ICONS: Record<string, string> = { pickaxe: '\u26CF\uFE0F', sword: '\u2694\uFE0F', shield: '\u{1F6E1}\uFE0F', boots: '\u{1F462}', banner: '\u{1F6A9}' };
+    const EQUIP_ICONS: Record<string, string> = { pickaxe: '\u26CF\uFE0F', sword: '\u2694\uFE0F', shield: '\u{1F6E1}\uFE0F', bow: '\u{1F3F9}', quiver: '\u{1F3AF}', boots: '\u{1F462}', banner: '\u{1F6A9}' };
     switch (step.action) {
       case 'seek_resource': return `${RESOURCE_ICONS[step.resourceType] || ''} Gather ${step.resourceType}`;
       case 'deliver': { const t = step.target.replace('nearest_', '').replace('_camp', ' camp'); return `\u{1F4E6} Deliver \u2192 ${t}`; }
@@ -6505,17 +6555,30 @@ export class HordeScene extends Phaser.Scene {
 
   // ─── SPAWNING ────────────────────────────────────────────────
 
-  /** Free gnome from base every 30 seconds for both teams */
+  /** Free gnome from base every 45 seconds for both teams */
   private updateFreeGnomes(delta: number) {
     this.freeGnomeTimer += delta;
-    if (this.freeGnomeTimer < FREE_GNOME_MS) return;
-    this.freeGnomeTimer -= FREE_GNOME_MS;
-    for (const team of [1, 2] as const) {
-      if (this.getTeamSupply(team) + 1 > this.getMaxSupply(team)) continue; // gnome costs 1 supply
-      const b = team === 1 ? P1_BASE : P2_BASE;
-      const gx = b.x + (team === 1 ? 60 : -60), gy = b.y + (team === 1 ? -30 : 30);
-      this.spawnUnit('gnome', team, gx, gy);
-      if (team === this.myTeam) this.sfx.playAt('gnome_spawn', gx, gy);
+    if (this.freeGnomeTimer >= FREE_GNOME_MS) {
+      this.freeGnomeTimer -= FREE_GNOME_MS;
+      for (const team of [1, 2] as const) {
+        if (this.getTeamSupply(team) + 1 > this.getMaxSupply(team)) continue; // gnome costs 1 supply
+        const b = team === 1 ? P1_BASE : P2_BASE;
+        const gx = b.x + (team === 1 ? 60 : -60), gy = b.y + (team === 1 ? -30 : 30);
+        this.spawnUnit('gnome', team, gx, gy);
+        if (team === this.myTeam) this.sfx.playAt('gnome_spawn', gx, gy);
+      }
+    }
+    // Free snake from base every 45s (ranged starter unit)
+    this.freeSnakeTimer += delta;
+    if (this.freeSnakeTimer >= FREE_SNAKE_MS) {
+      this.freeSnakeTimer -= FREE_SNAKE_MS;
+      for (const team of [1, 2] as const) {
+        if (this.getTeamSupply(team) + 1 > this.getMaxSupply(team)) continue; // snake costs 1 supply
+        const b = team === 1 ? P1_BASE : P2_BASE;
+        const sx = b.x + (team === 1 ? 50 : -50), sy = b.y + (team === 1 ? -50 : 50);
+        this.spawnUnit('snake', team, sx, sy);
+        if (team === this.myTeam) this.sfx.playAt('gnome_spawn', sx, sy);
+      }
     }
   }
 
@@ -6892,6 +6955,8 @@ export class HordeScene extends Phaser.Scene {
       case 'pickaxe': gatherSpeed = 1 + 0.25 * lm; break;
       case 'sword': attack = 0.50 * lm; atkSpeedMult = 1 - 0.25 * lm; break;
       case 'shield': hp = 0.60 * lm; damageTaken = 1 - 0.25 * lm; speed = -0.15; break;
+      case 'bow': attack = 0.40 * lm; break;
+      case 'quiver': atkSpeedMult = 1 - 0.40 * lm; break;
       case 'boots': speed = 0.60 * lm; pickupRange = 1 + 0.5 * lm; break;
       case 'banner': break;
     }
@@ -7290,7 +7355,11 @@ export class HordeScene extends Phaser.Scene {
       if (this.isNight && u.team !== 0 && !this.isNearFriendlyBuilding(u as any)) {
         buffMult *= NIGHT_SPEED_PENALTY;
       }
-      const spd = u.speed * buffMult;
+      let spd = u.speed * buffMult;
+      // Apply slow debuff (Harpoon Anchor Shot, Bear Maul stun)
+      if (u.slowUntil > 0 && this.time.now < u.slowUntil) {
+        spd *= u.slowMult;
+      }
       const finalSpeed = spd * dt;
       const step = Math.min(finalSpeed, d);
       const prevX = u.x, prevY = u.y;
@@ -7833,7 +7902,7 @@ export class HordeScene extends Phaser.Scene {
       }
 
       if (u.carrying && u.team !== 0) {
-        const combatRange = u.type === 'hyena' ? 120 : u.type === 'shaman' ? 100 : COMBAT_RANGE;
+        const combatRange = u.type === 'harpoon_fish' ? 160 : u.type === 'hyena' ? 120 : u.type === 'snake' ? 110 : u.type === 'shaman' ? 100 : u.type === 'thief' ? 100 : COMBAT_RANGE;
         const onCombatStep = !this.isNonCombatStep(u);
         // Include neutral defenders as threats when on attack_camp step
         const isAttackingCamp = u.loop?.steps[u.loop.currentStep]?.action === 'attack_camp';
@@ -7885,7 +7954,7 @@ export class HordeScene extends Phaser.Scene {
       // Find closest enemy: team 0 attacks anyone, team 1/2 attack each other AND team 0
       // HYENA "Bone Toss": extended combat range (120 vs 80)
       // Caution: aggressive — engage enemies from 200px even mid-delivery (but not through nexus area)
-      const baseCombatRange = u.type === 'hyena' ? 120 : u.type === 'shaman' ? 100 : COMBAT_RANGE;
+      const baseCombatRange = u.type === 'harpoon_fish' ? 160 : u.type === 'hyena' ? 120 : u.type === 'snake' ? 110 : u.type === 'shaman' ? 100 : u.type === 'thief' ? 100 : COMBAT_RANGE;
       const unitCombatRange = u.mods.caution === 'aggressive' ? Math.max(baseCombatRange, 200) : baseCombatRange;
       let best: HUnit | null = null, bestD2 = Infinity;
       const unitCombatRange2 = unitCombatRange * unitCombatRange;
@@ -7953,6 +8022,17 @@ export class HordeScene extends Phaser.Scene {
         // ─── SPIDER VENOM BITE: +5% of target's max HP as bonus damage ───
         if (u.type === 'spider') {
           atk += best.maxHp * 0.05;
+        }
+
+        // ─── SNAKE VENOM SPIT: +3% of target's max HP as bonus damage ───
+        if (u.type === 'snake') {
+          atk += best.maxHp * 0.03;
+        }
+
+        // ─── BEAR RAGE: +2% attack per 1% missing HP ───
+        if (u.type === 'bear') {
+          const rageMult = 1 + ((1 - u.hp / u.maxHp) * 2);
+          atk *= rageMult;
         }
 
         // ─── LIZARD COLD BLOOD: 3x to targets below 40% HP ───
@@ -8025,7 +8105,7 @@ export class HordeScene extends Phaser.Scene {
         if (best.team !== 0) primaryDmg *= this.getUnitEquipBuffs(best).damageTaken;
 
         // Queue delayed damage — animation plays now, damage lands later
-        const ranged = u.type === 'hyena' || u.type === 'shaman';
+        const ranged = u.type === 'hyena' || u.type === 'shaman' || u.type === 'snake' || u.type === 'thief' || u.type === 'harpoon_fish';
         const proj = ranged ? this.spawnProjectile(u, best.x, best.y) : null;
         if (ranged) this.sfx.playAt('ranged_throw', u.x, u.y);
         this.pendingHits.push({
@@ -8116,15 +8196,17 @@ export class HordeScene extends Phaser.Scene {
       container.setPosition(attacker.x, attacker.y).setVisible(true).setActive(true);
     } else {
       container = this.add.container(attacker.x, attacker.y).setDepth(50);
-      const isShaman = attacker.type === 'shaman';
-      if (isShaman) {
-        const glow = this.add.circle(0, 0, 8, 0xBB66FF, 0.6);
-        const core = this.add.circle(0, 0, 4, 0xEEAAFF, 1.0);
-        container.add([glow, core]);
+      const t = attacker.type;
+      if (t === 'shaman') {
+        container.add([this.add.circle(0, 0, 8, 0xBB66FF, 0.6), this.add.circle(0, 0, 4, 0xEEAAFF, 1.0)]);
+      } else if (t === 'snake') {
+        container.add([this.add.circle(0, 0, 4, 0x66CC44, 0.8), this.add.circle(1, 0, 2, 0xAAFF66, 1.0)]);
+      } else if (t === 'thief') {
+        container.add([this.add.circle(0, 0, 3, 0x888888, 1.0), this.add.circle(2, 0, 2, 0xCCCCCC, 0.9)]);
+      } else if (t === 'harpoon_fish') {
+        container.add([this.add.circle(0, 0, 6, 0x4488AA, 0.9), this.add.circle(3, 0, 3, 0x88CCDD, 1.0)]);
       } else {
-        const bone = this.add.circle(0, 0, 5, 0xDDCC88, 1.0);
-        const tip = this.add.circle(2, 0, 3, 0xFFEEAA, 0.9);
-        container.add([bone, tip]);
+        container.add([this.add.circle(0, 0, 5, 0xDDCC88, 1.0), this.add.circle(2, 0, 3, 0xFFEEAA, 0.9)]);
       }
     }
     const angle = Math.atan2(ty - attacker.y, tx - attacker.x);
@@ -8268,6 +8350,44 @@ export class HordeScene extends Phaser.Scene {
           target.attackTimer += ATTACK_CD_MS;
         }
 
+        // ─── BEAR MAUL: 0.5s stun on hit (can't attack or move briefly) ───
+        if (attacker && attacker.type === 'bear' && !target.dead) {
+          target.attackTimer = Math.max(target.attackTimer, 500);
+          target.slowUntil = this.time.now + 500;
+          target.slowMult = 0; // full stop during stun
+        }
+
+        // ─── HARPOON FISH ANCHOR SHOT: 50% slow for 2s on all attacks ───
+        if (attacker && attacker.type === 'harpoon_fish' && !target.dead) {
+          target.slowUntil = this.time.now + 2000;
+          target.slowMult = 0.5;
+        }
+
+        // ─── SNAKE SHED SKIN: drop aggro once when below 30% HP ───
+        if (target.type === 'snake' && target.hasRebirth && target.hp > 0 && target.hp / target.maxHp < 0.3) {
+          target.hasRebirth = false;
+          // Drop aggro: clear all enemies targeting this snake
+          for (const other of this.units) {
+            if (other.dead || other.team === target.team) continue;
+            if (other.lastAttackTarget === target.id) {
+              other.lastAttackTarget = -1;
+            }
+            // If enemy is walking toward this snake (targetX/Y near snake), nudge them away
+            const toSnakeDx = other.targetX - target.x, toSnakeDy = other.targetY - target.y;
+            if (toSnakeDx * toSnakeDx + toSnakeDy * toSnakeDy < 100 * 100) {
+              other.targetX = other.x; other.targetY = other.y; // stop chasing
+            }
+          }
+          // Flash effect
+          if (target.sprite) {
+            this.tweens.killTweensOf(target.sprite);
+            target.sprite.setAlpha(0.3);
+            this.tweens.add({
+              targets: target.sprite, alpha: 1, duration: 300,
+            });
+          }
+        }
+
         // Gnome Plucky — survives 2 lethal hits
         if (target.hp <= 0 && target.type === 'gnome' && target.gnomeShield > 0) {
           target.hp = 1;
@@ -8317,10 +8437,16 @@ export class HordeScene extends Phaser.Scene {
             const deathTier = ANIMALS[target.type]?.tier ?? 1;
             this.sfx.playAt(deathTier >= 3 ? 'death_heavy' : 'death_small', target.x, target.y);
           }
-          this.spawnGroundItem('meat', target.x + (Math.random() - 0.5) * 20, target.y + (Math.random() - 0.5) * 20);
+          // ─── THIEF PILFER: kills drop +50% resources ───
+          const pilferMult = (attacker && attacker.type === 'thief') ? 1.5 : 1;
+          const meatDrops = pilferMult === 1 ? 1 : (Math.random() < 0.5 ? 2 : 1); // 1.5x avg
+          for (let mi = 0; mi < meatDrops; mi++) {
+            this.spawnGroundItem('meat', target.x + (Math.random() - 0.5) * 20, target.y + (Math.random() - 0.5) * 20);
+          }
           if (target.isElite) {
             this.eliteKillCount++;
-            for (let ci = 0; ci < 3; ci++) {
+            const crystalDrops = pilferMult === 1 ? 3 : Math.round(3 * 1.5); // 3 -> 4-5 (rounded 4.5 = 5)
+            for (let ci = 0; ci < crystalDrops; ci++) {
               this.spawnGroundItem('crystal', target.x + (Math.random() - 0.5) * 40, target.y + (Math.random() - 0.5) * 40);
             }
           }
@@ -8377,10 +8503,16 @@ export class HordeScene extends Phaser.Scene {
               this.topKiller[atkTeam] = { type: attacker.type, kills: kc };
             }
           }
-          this.spawnGroundItem('meat', sTarget.x + (Math.random() - 0.5) * 20, sTarget.y + (Math.random() - 0.5) * 20);
+          // ─── THIEF PILFER: splash kills also drop +50% resources ───
+          const sPilferMult = (attacker && attacker.type === 'thief') ? 1.5 : 1;
+          const sMeatDrops = sPilferMult === 1 ? 1 : (Math.random() < 0.5 ? 2 : 1);
+          for (let mi = 0; mi < sMeatDrops; mi++) {
+            this.spawnGroundItem('meat', sTarget.x + (Math.random() - 0.5) * 20, sTarget.y + (Math.random() - 0.5) * 20);
+          }
           if (sTarget.isElite) {
             this.eliteKillCount++;
-            for (let ci = 0; ci < 3; ci++) {
+            const sCrystalDrops = sPilferMult === 1 ? 3 : Math.round(3 * 1.5);
+            for (let ci = 0; ci < sCrystalDrops; ci++) {
               this.spawnGroundItem('crystal', sTarget.x + (Math.random() - 0.5) * 40, sTarget.y + (Math.random() - 0.5) * 40);
             }
           }
@@ -9280,7 +9412,7 @@ export class HordeScene extends Phaser.Scene {
     const dTierColors: Record<number, string> = { 1: '#2E8B2E', 2: '#2266BB', 3: '#CC6A00', 4: '#BB2222', 5: '#B8860B' };
     const dTc = dTierColors[def?.tier || 1] || '#555';
     const gnomeShieldStr = u.type === 'gnome' ? ` | Plucky: ${u.gnomeShield} hits left` : '';
-    const rebirthStr = u.type === 'skull' ? ` | Undying: ${u.hasRebirth ? 'ready' : 'spent'}` : '';
+    const rebirthStr = u.type === 'skull' ? ` | Undying: ${u.hasRebirth ? 'ready' : 'spent'}` : u.type === 'snake' ? ` | Shed Skin: ${u.hasRebirth ? 'ready' : 'spent'}` : '';
     content.innerHTML = `
       <div style="display:flex;gap:14px;margin-bottom:10px;">
         <div style="flex-shrink:0;width:72px;height:72px;background:rgba(255,255,255,0.06);border:3px solid ${dTc};border-radius:12px;display:flex;align-items:center;justify-content:center;overflow:hidden;">
@@ -10267,6 +10399,12 @@ export class HordeScene extends Phaser.Scene {
               const mineSpeedMul = ANIMALS[u.type]?.mineSpeed || 1.0;
               const tickMs = MINE_TICK_MS / mineSpeedMul;
               u.idleTimer += this.game.loop.delta;
+              // Play attack anim periodically to show mining swing
+              if (u.sprite && u.animState !== 'attack' && HORDE_SPRITE_CONFIGS[u.type]) {
+                u.animState = 'attack';
+                u.sprite.play(`h_${u.type}_attack`);
+                u.attackFaceX = nearestMine.x;
+              }
               if (u.idleTimer >= tickMs) {
                 u.idleTimer -= tickMs;
                 u.carrying = 'metal';
@@ -10286,6 +10424,10 @@ export class HordeScene extends Phaser.Scene {
           // Skip if not unlocked, or already equipped at current team level
           if (!eqType || (u.equipment === eqType && u.equipLevel >= teamEqLevel)) { this.advanceWorkflow(u); break; }
           if (!this.unlockedEquipment[team].has(eqType)) { this.advanceWorkflow(u); break; }
+          // Equipment class validation: sword/shield are melee-only, bow/quiver are ranged-only
+          const isRanged = RANGED_UNITS.has(u.type);
+          if ((eqType === 'sword' || eqType === 'shield') && isRanged) { this.advanceWorkflow(u); break; }
+          if ((eqType === 'bow' || eqType === 'quiver') && !isRanged) { this.advanceWorkflow(u); break; }
           const armory = this.armories.find(a => a.team === team && a.equipmentType === eqType);
           if (!armory) { this.advanceWorkflow(u); break; }
           u.targetX = armory.x; u.targetY = armory.y;
@@ -10473,6 +10615,7 @@ export class HordeScene extends Phaser.Scene {
         gnomeShield: 0, hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, attackFaceX: null, pathWaypoints: null, pathAge: 0, pathTargetX: 0, pathTargetY: 0, lastCheckX: 0, lastCheckY: 0, stuckFrames: 0, stuckCooldown: 0, mods: { ...DEFAULT_MODS },
         carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
         equipment: null, equipLevel: 0, equipSprite: null, equipDragSprite: null, equipVisualApplied: null,
+        slowUntil: 0, slowMult: 1,
       });
     }
     // Elite golden prey — very strong, drops crystals
@@ -10489,6 +10632,7 @@ export class HordeScene extends Phaser.Scene {
         gnomeShield: 0, hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, attackFaceX: null, pathWaypoints: null, pathAge: 0, pathTargetX: 0, pathTargetY: 0, lastCheckX: 0, lastCheckY: 0, stuckFrames: 0, stuckCooldown: 0, mods: { ...DEFAULT_MODS },
         carrying: null, carrySprite: null, loop: null, isElite: true, idleTimer: 0, claimItemId: -1,
         equipment: null, equipLevel: 0, equipSprite: null, equipDragSprite: null, equipVisualApplied: null,
+        slowUntil: 0, slowMult: 1,
       });
     }
   }
@@ -10516,6 +10660,7 @@ export class HordeScene extends Phaser.Scene {
           gnomeShield: 0, hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, attackFaceX: null, pathWaypoints: null, pathAge: 0, pathTargetX: 0, pathTargetY: 0, lastCheckX: 0, lastCheckY: 0, stuckFrames: 0, stuckCooldown: 0, mods: { ...DEFAULT_MODS },
           carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
           equipment: null, equipLevel: 0, equipSprite: null, equipDragSprite: null, equipVisualApplied: null,
+          slowUntil: 0, slowMult: 1,
         });
       }
       if (this.currentEra >= 4 && elites.length < ELITE_PREY_COUNT) {
@@ -10531,6 +10676,7 @@ export class HordeScene extends Phaser.Scene {
           gnomeShield: 0, hasRebirth: false, diveReady: false, diveTimer: 0, lastAttackTarget: -1, attackFaceX: null, pathWaypoints: null, pathAge: 0, pathTargetX: 0, pathTargetY: 0, lastCheckX: 0, lastCheckY: 0, stuckFrames: 0, stuckCooldown: 0, mods: { ...DEFAULT_MODS },
           carrying: null, carrySprite: null, loop: null, isElite: true, idleTimer: 0, claimItemId: -1,
           equipment: null, equipLevel: 0, equipSprite: null, equipDragSprite: null, equipVisualApplied: null,
+          slowUntil: 0, slowMult: 1,
         });
       }
     }
@@ -10635,7 +10781,7 @@ export class HordeScene extends Phaser.Scene {
     el.innerHTML = `
       <span class="dn-icon">\u2600\uFE0F</span>
       <span class="dn-text">DAY</span>
-      <div class="dn-bar"><div class="dn-bar-fill" style="width:100%;background:#FFD93D;"></div></div>
+      <div class="dn-bar"><div class="dn-bar-fill" style="width:100%;background:#B8952E;"></div></div>
       <span class="dn-timer">4:00</span>
     `;
     gc.appendChild(el);
@@ -10735,7 +10881,7 @@ export class HordeScene extends Phaser.Scene {
       el.classList.remove('night');
       const nightProgress = (cyclePos - DAY_DURATION) / NIGHT_DURATION;
       barFillEl.style.width = `${Math.max(0, (1 - nightProgress) * 100)}%`;
-      barFillEl.style.background = '#FF4444';
+      barFillEl.style.background = '#B84030';
       const remaining = Math.max(0, NIGHT_DURATION - (cyclePos - DAY_DURATION));
       const mins = Math.floor(remaining / 60000);
       const secs = Math.floor((remaining % 60000) / 1000);
@@ -10747,7 +10893,7 @@ export class HordeScene extends Phaser.Scene {
       el.classList.remove('blood-moon');
       const nightProgress = (cyclePos - DAY_DURATION) / NIGHT_DURATION;
       barFillEl.style.width = `${Math.max(0, (1 - nightProgress) * 100)}%`;
-      barFillEl.style.background = '#6B5BFF';
+      barFillEl.style.background = '#6B5B8A';
       const remaining = Math.max(0, NIGHT_DURATION - (cyclePos - DAY_DURATION));
       const mins = Math.floor(remaining / 60000);
       const secs = Math.floor((remaining % 60000) / 1000);
@@ -10759,7 +10905,7 @@ export class HordeScene extends Phaser.Scene {
       el.classList.remove('blood-moon');
       const dayProgress = cyclePos / DAY_DURATION;
       barFillEl.style.width = `${Math.max(0, (1 - dayProgress) * 100)}%`;
-      barFillEl.style.background = '#FFD93D';
+      barFillEl.style.background = '#B8952E';
       const remaining = Math.max(0, DAY_DURATION - cyclePos);
       const mins = Math.floor(remaining / 60000);
       const secs = Math.floor((remaining % 60000) / 1000);
@@ -10811,11 +10957,12 @@ export class HordeScene extends Phaser.Scene {
         x, y, targetX: x + Math.random() * 80 - 40, targetY: y + Math.random() * 80 - 40,
         attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
         campId: null, lungeX: 0, lungeY: 0,
-        gnomeShield: 0, hasRebirth: beastType === 'skull', diveReady: false, diveTimer: 0,
+        gnomeShield: 0, hasRebirth: beastType === 'skull' || beastType === 'snake', diveReady: false, diveTimer: 0,
         lastAttackTarget: -1, attackFaceX: null, pathWaypoints: null, pathAge: 0, pathTargetX: 0, pathTargetY: 0,
         lastCheckX: 0, lastCheckY: 0, stuckFrames: 0, stuckCooldown: 0, mods: { ...DEFAULT_MODS },
         carrying: null, carrySprite: null, loop: null, isElite: true, idleTimer: 0, claimItemId: -1,
         equipment: null, equipLevel: 0, equipSprite: null, equipDragSprite: null, equipVisualApplied: null,
+        slowUntil: 0, slowMult: 1,
       });
       this.shadowBeasts.push(this.nextId - 1);
     }
@@ -10838,6 +10985,7 @@ export class HordeScene extends Phaser.Scene {
           lastCheckX: 0, lastCheckY: 0, stuckFrames: 0, stuckCooldown: 0, mods: { ...DEFAULT_MODS },
           carrying: null, carrySprite: null, loop: null, isElite: true, idleTimer: 0, claimItemId: -1,
           equipment: null, equipLevel: 0, equipSprite: null, equipDragSprite: null, equipVisualApplied: null,
+          slowUntil: 0, slowMult: 1,
         });
         this.shadowBeasts.push(this.nextId - 1);
       }
@@ -11325,7 +11473,7 @@ export class HordeScene extends Phaser.Scene {
       attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
       campId: null, lungeX: 0, lungeY: 0,
       gnomeShield: type === 'gnome' ? 1 : 0,
-      hasRebirth: type === 'skull',
+      hasRebirth: type === 'skull' || type === 'snake',
       diveReady: false,
       diveTimer: 0,
       lastAttackTarget: -1, attackFaceX: null, pathWaypoints: null, pathAge: 0, pathTargetX: 0, pathTargetY: 0,
@@ -11343,6 +11491,7 @@ export class HordeScene extends Phaser.Scene {
       equipSprite: null,
       equipDragSprite: null,
       equipVisualApplied: null,
+      slowUntil: 0, slowMult: 1,
       mods: this.groupModifiers[`${type}_${team}`]
         ? { ...this.groupModifiers[`${type}_${team}`] }
         : { ...DEFAULT_MODS },
@@ -11535,6 +11684,7 @@ export class HordeScene extends Phaser.Scene {
       groupWorkflows: this.groupWorkflows,
       groupModifiers: this.groupModifiers,
       freeGnomeTimer: this.freeGnomeTimer,
+      freeSnakeTimer: this.freeSnakeTimer,
       unlockedEquipment: {
         1: Object.fromEntries(this.unlockedEquipment[1]),
         2: Object.fromEntries(this.unlockedEquipment[2]),
@@ -11622,6 +11772,7 @@ export class HordeScene extends Phaser.Scene {
     if (state.groupWorkflows) this.groupWorkflows = state.groupWorkflows as any;
     if (state.groupModifiers) this.groupModifiers = state.groupModifiers as any;
     if (state.freeGnomeTimer !== undefined) this.freeGnomeTimer = state.freeGnomeTimer;
+    if (state.freeSnakeTimer !== undefined) this.freeSnakeTimer = state.freeSnakeTimer;
 
     // Sync nexuses
     for (const sn of syncNexuses) {
@@ -11690,12 +11841,13 @@ export class HordeScene extends Phaser.Scene {
           attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
           campId: su.campId, lungeX: 0, lungeY: 0,
           gnomeShield: su.type === 'gnome' ? 1 : 0,
-          hasRebirth: su.type === 'skull',
+          hasRebirth: su.type === 'skull' || su.type === 'snake',
           diveReady: false,
           diveTimer: 0,
           lastAttackTarget: -1, attackFaceX: null, pathWaypoints: null, pathAge: 0, pathTargetX: 0, pathTargetY: 0, lastCheckX: 0, lastCheckY: 0, stuckFrames: 0, stuckCooldown: 0, mods: { ...DEFAULT_MODS },
           carrying: (su.carrying || null) as ResourceType | null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
           equipment: (su.equipment || null) as any, equipLevel: su.equipLevel || 0, equipSprite: null, equipDragSprite: null, equipVisualApplied: null,
+          slowUntil: 0, slowMult: 1,
         });
       }
     }
@@ -14817,7 +14969,7 @@ export class HordeScene extends Phaser.Scene {
       html += `<div data-event-ids="${eventIds}" data-event-id="${ev.id}" style="
         background:linear-gradient(180deg, rgba(255,248,230,0.95) 0%, rgba(240,228,200,0.95) 100%);
         border:2px solid rgba(139,115,85,0.5);border-radius:10px;
-        padding:8px 10px;cursor:pointer;pointer-events:auto;
+        padding:10px 12px;cursor:pointer;pointer-events:auto;
         box-shadow:0 2px 8px rgba(0,0,0,0.15), inset 0 0 8px ${color}15;
         border-left:4px solid ${color};
         transition:all 0.15s ease;${urgentPulse}
@@ -14827,10 +14979,12 @@ export class HordeScene extends Phaser.Scene {
             <span style="font-size:18px;">${def.emoji}</span>
             <span style="font-size:12px;font-weight:800;color:#4a3520;font-family:'Fredoka',sans-serif;letter-spacing:0.5px;">${def.name.toUpperCase()}${multiLabel}</span>
           </div>
-          <span style="font-size:11px;font-weight:700;color:${timerColor};font-family:'Fredoka',sans-serif;">${secs}s</span>
+          <span style="font-size:13px;font-weight:800;color:${timerColor};font-family:'Fredoka',sans-serif;">${secs}s</span>
         </div>
 
-        <div style="background:rgba(139,115,85,0.15);border-radius:4px;height:4px;overflow:hidden;margin-bottom:5px;">
+        <div style="font-size:13px;color:#4a3520;font-weight:700;margin-bottom:6px;">${progressStr}</div>
+
+        <div style="background:rgba(139,115,85,0.15);border-radius:4px;height:5px;overflow:hidden;">
           <div style="background:${timerColor};height:100%;width:${(pctTime * 100).toFixed(1)}%;border-radius:4px;transition:width 0.5s;"></div>
         </div>
 
@@ -14850,8 +15004,8 @@ export class HordeScene extends Phaser.Scene {
     if (nextIn <= 30) {
       html += `<div style="
         background:rgba(255,248,230,0.8);border:1px solid rgba(139,115,85,0.3);border-radius:8px;
-        padding:6px 10px;text-align:center;
-      "><span style="font-size:10px;color:#8B7355;font-weight:700;font-family:'Fredoka',sans-serif;">\u26A1 Next event in ${nextIn}s</span></div>`;
+        padding:8px 10px;text-align:center;
+      "><span style="font-size:12px;color:#8B7355;font-weight:700;font-family:'Fredoka',sans-serif;">\u26A1 Next event in ${nextIn}s</span></div>`;
     }
 
     // No-events placeholder
@@ -15285,7 +15439,7 @@ export class HordeScene extends Phaser.Scene {
       g.strokeCircle(u.x, u.y, 20);
       // Attack range
       g.lineStyle(1, 0xFF3333, 0.25);
-      const atkRange = u.type === 'hyena' ? 120 : u.type === 'shaman' ? 100 : COMBAT_RANGE;
+      const atkRange = u.type === 'harpoon_fish' ? 160 : u.type === 'hyena' ? 120 : u.type === 'snake' ? 110 : u.type === 'shaman' ? 100 : u.type === 'thief' ? 100 : COMBAT_RANGE;
       g.strokeCircle(u.x, u.y, atkRange);
     }
   }
@@ -15483,11 +15637,12 @@ export class HordeScene extends Phaser.Scene {
         targetY: camp.y + Math.sin(wanderAngle) * wanderR,
         attackTimer: 0, sprite: null, dead: false, animState: 'idle' as const, prevSpriteX: 0, prevSpriteY: 0,
         campId: null, lungeX: 0, lungeY: 0,
-        gnomeShield: 0, hasRebirth: type === 'skull', diveReady: false, diveTimer: 0,
+        gnomeShield: 0, hasRebirth: type === 'skull' || type === 'snake', diveReady: false, diveTimer: 0,
         lastAttackTarget: -1, attackFaceX: null, pathWaypoints: null, pathAge: 0, pathTargetX: 0, pathTargetY: 0,
         lastCheckX: 0, lastCheckY: 0, stuckFrames: 0, stuckCooldown: 0, mods: { ...DEFAULT_MODS },
         carrying: null, carrySprite: null, loop: null, isElite: false, idleTimer: 0, claimItemId: -1,
         equipment: null, equipLevel: 0, equipSprite: null, equipDragSprite: null, equipVisualApplied: null,
+        slowUntil: 0, slowMult: 1,
       });
       camp.defenders.push(unitId);
     }

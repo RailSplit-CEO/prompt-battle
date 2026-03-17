@@ -478,20 +478,23 @@
       box-shadow: 0 0 16px rgba(200,50,50,0.25);
     }
     #horde-daynight .dn-icon {
-      font-size: 18px;
+      font-size: 16px;
       transition: transform 0.5s ease;
     }
     #horde-daynight .dn-text {
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 700;
       color: #4a3a28;
       letter-spacing: 1px;
     }
+    #horde-daynight.night .dn-text { color: rgba(30,20,50,0.85); }
+    #horde-daynight.blood-moon .dn-text { color: rgba(100,20,15,0.9); }
     #horde-daynight .dn-timer {
-      font-size: 11px;
+      font-size: 10px;
       font-weight: 600;
       color: rgba(74,58,40,0.55);
     }
+    #horde-daynight.night .dn-timer { color: rgba(50,40,70,0.6); }
     #horde-daynight .dn-bar {
       width: 60px; height: 4px;
       background: rgba(139,115,85,0.25);
@@ -501,7 +504,7 @@
     #horde-daynight .dn-bar-fill {
       height: 100%;
       border-radius: 2px;
-      transition: width 1s linear, background 1s ease;
+      transition: width 1s linear, background 0.8s ease;
     }
 
     /* ─── HORDE MODE FLOATING OVERLAY PANELS ──────────────── */

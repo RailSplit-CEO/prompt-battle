@@ -59,7 +59,7 @@ export interface MapBoundaryBlock {
 // ─── TILE GRID TYPES ──────────────────────────────────────
 export const TILE_SIZE = 64;
 export type TileValue = 0 | 1 | 2 | 3; // 0=normal(grass), 1=high_ground, 2=water, 3=rock(impassable)
-export type EquipmentType = 'pickaxe' | 'sword' | 'shield' | 'boots' | 'banner';
+export type EquipmentType = 'pickaxe' | 'sword' | 'shield' | 'boots' | 'banner' | 'bow' | 'quiver';
 
 export interface MapEventCircle {
   x: number;
@@ -101,9 +101,9 @@ export interface MapDef {
 
 export const TIER_POOLS: Record<number, string[]> = {
   0: ['gnome'],
-  1: ['gnome', 'turtle'],
-  2: ['skull', 'spider', 'hyena', 'rogue', 'turtle'],
-  3: ['panda', 'lizard'],
+  1: ['gnome', 'snake'],
+  2: ['turtle', 'skull', 'spider', 'hyena', 'rogue', 'thief'],
+  3: ['panda', 'lizard', 'bear', 'harpoon_fish'],
   4: ['minotaur', 'shaman'],
 };
 
@@ -143,7 +143,7 @@ export function assignAnimalsToSlots(
     let pool = TIER_POOLS[tier] || [];
     if (pool.length === 0) continue;
 
-    // For T1, exclude gnome since slot 0 already has it
+    // For T1, exclude gnome since slot 0 already has it; snake fills the ranged starter role
     if (tier === 1) pool = pool.filter(a => a !== 'gnome');
 
     const shuffled = seededShuffle(pool, rng);

@@ -6,7 +6,7 @@ const mapFilePath = path.resolve(__dirname, 'src/map/maps/default.json');
 const hordeMapFilePath = path.resolve(__dirname, 'src/map/maps/horde-maps.json');
 
 export default defineConfig({
-  base: './',
+  base: '/',
   resolve: {
     alias: {
       '@prompt-battle/shared': path.resolve(__dirname, '../shared/src'),

@@ -155,6 +155,24 @@ export const HORDE_SPRITE_CONFIGS: Record<string, EnemySpriteConfig> = {
     originY: 0.5,
   },
 
+  // ─── Tier 1 (ranged) ────────────────────────────────────
+  snake: {
+    idle: { key: 'h_snake_idle', path: 'assets/enemies/snake/Snake_Idle.png', frameWidth: 192, frameHeight: 192, frameCount: 8 },
+    walk: { key: 'h_snake_walk', path: 'assets/enemies/snake/Snake_Run.png', frameWidth: 192, frameHeight: 192, frameCount: 8 },
+    attack: { key: 'h_snake_attack', path: 'assets/enemies/snake/Snake_Attack.png', frameWidth: 192, frameHeight: 192, frameCount: 6 },
+    displayScale: 1.0,
+    originY: 0.5,
+  },
+
+  // ─── Tier 2 (ranged) ──────────────────────────────────
+  thief: {
+    idle: { key: 'h_thief_idle', path: 'assets/enemies/thief/Thief_Idle.png', frameWidth: 192, frameHeight: 192, frameCount: 8 },
+    walk: { key: 'h_thief_walk', path: 'assets/enemies/thief/Thief_Run.png', frameWidth: 192, frameHeight: 192, frameCount: 6 },
+    attack: { key: 'h_thief_attack', path: 'assets/enemies/thief/Thief_Attack.png', frameWidth: 192, frameHeight: 192, frameCount: 7 },
+    displayScale: 1.0,
+    originY: 0.5,
+  },
+
   // ─── Tier 3 ────────────────────────────────────────────
   panda: {
     idle: { key: 'h_panda_idle', path: 'assets/enemies/panda/Panda_Idle.png', frameWidth: 256, frameHeight: 256, frameCount: 10 },
@@ -168,6 +186,20 @@ export const HORDE_SPRITE_CONFIGS: Record<string, EnemySpriteConfig> = {
     walk: { key: 'h_lizard_walk', path: 'assets/enemies/lizard/Lizard_Run.png', frameWidth: 192, frameHeight: 192, frameCount: 6 },
     attack: { key: 'h_lizard_attack', path: 'assets/enemies/lizard/Lizard_Attack.png', frameWidth: 192, frameHeight: 192, frameCount: 9 },
     displayScale: 1.3,
+    originY: 0.5,
+  },
+  bear: {
+    idle: { key: 'h_bear_idle', path: 'assets/enemies/bear/Bear_Idle.png', frameWidth: 192, frameHeight: 192, frameCount: 8 },
+    walk: { key: 'h_bear_walk', path: 'assets/enemies/bear/Bear_Run.png', frameWidth: 192, frameHeight: 192, frameCount: 6 },
+    attack: { key: 'h_bear_attack', path: 'assets/enemies/bear/Bear_Attack.png', frameWidth: 192, frameHeight: 192, frameCount: 7 },
+    displayScale: 1.1,
+    originY: 0.5,
+  },
+  harpoon_fish: {
+    idle: { key: 'h_harpoon_fish_idle', path: 'assets/enemies/harpoon_fish/HarpoonFish_Idle.png', frameWidth: 192, frameHeight: 192, frameCount: 8 },
+    walk: { key: 'h_harpoon_fish_walk', path: 'assets/enemies/harpoon_fish/HarpoonFish_Run.png', frameWidth: 192, frameHeight: 192, frameCount: 6 },
+    attack: { key: 'h_harpoon_fish_attack', path: 'assets/enemies/harpoon_fish/HarpoonFish_Throw.png', frameWidth: 192, frameHeight: 192, frameCount: 8 },
+    displayScale: 1.1,
     originY: 0.5,
   },
 
