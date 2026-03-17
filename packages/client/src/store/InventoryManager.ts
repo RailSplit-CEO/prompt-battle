@@ -67,6 +67,7 @@ export class InventoryManager {
           avatar: data.avatar ?? 'default',
           portraitFrame: data.portraitFrame ?? 'none',
           voicePack: data.voicePack ?? 'default',
+          voicePacks: data.voicePacks ?? {},
           buildingTheme: data.buildingTheme ?? 'default',
           mapTheme: data.mapTheme ?? 'default',
           deathEffect: data.deathEffect ?? 'default',

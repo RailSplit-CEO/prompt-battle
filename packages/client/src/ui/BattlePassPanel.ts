@@ -99,16 +99,14 @@ export class BattlePassPanel {
     const player = getPlayerBattlePass();
     const currentTier = this.computeCurrentTier(player.xp);
 
-    // ── Root container ──
+    // ── Root container — warm earthy style matching in-game HUD ──
     const root = document.createElement('div');
     root.id = 'bp-sidebar';
     root.style.cssText = `
-      position:fixed;top:16px;left:16px;bottom:16px;
-      width:clamp(220px, 20vw, 280px);
-      background:${C.panelBg};
-      border:2px solid ${C.panelBorder};border-radius:16px;
-      backdrop-filter:${C.panelBlur};-webkit-backdrop-filter:${C.panelBlur};
-      box-shadow:${C.panelShadow};
+      position:fixed;top:0;left:0;bottom:0;
+      width:clamp(260px, 22vw, 320px);
+      background:linear-gradient(180deg, rgba(42,34,22,0.97) 0%, rgba(28,22,14,0.98) 100%);
+      border-right:2px solid rgba(139,115,85,0.5);
       display:flex;flex-direction:column;overflow:hidden;
       font-family:"Nunito",sans-serif;
       z-index:90;
@@ -119,8 +117,9 @@ export class BattlePassPanel {
     // ── Header ──
     const header = document.createElement('div');
     header.style.cssText = `
-      padding:14px 14px 10px;
-      border-bottom:1px solid ${C.divider};
+      padding:18px 18px 14px;
+      background:linear-gradient(180deg, rgba(139,115,85,0.15) 0%, transparent 100%);
+      border-bottom:2px solid rgba(139,115,85,0.3);
       flex-shrink:0;
     `;
 
@@ -128,29 +127,30 @@ export class BattlePassPanel {
     titleRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;';
 
     const titleLeft = document.createElement('div');
-    titleLeft.style.cssText = 'display:flex;align-items:center;gap:6px;';
+    titleLeft.style.cssText = 'display:flex;align-items:center;gap:8px;';
 
     const titleIcon = document.createElement('span');
     titleIcon.textContent = '\u2694\uFE0F';
-    titleIcon.style.cssText = 'font-size:16px;';
+    titleIcon.style.cssText = 'font-size:20px;';
     titleLeft.appendChild(titleIcon);
 
     const title = document.createElement('span');
     title.textContent = 'BATTLE PASS';
     title.style.cssText = `
-      font-family:"Fredoka",sans-serif;font-weight:700;font-size:13px;
-      color:${C.gold};letter-spacing:1.5px;
+      font-family:"Fredoka",sans-serif;font-weight:700;font-size:16px;
+      color:${C.gold};letter-spacing:2px;
     `;
     titleLeft.appendChild(title);
     titleRow.appendChild(titleLeft);
 
     const tierBadge = document.createElement('span');
-    tierBadge.textContent = `T${currentTier}`;
+    tierBadge.textContent = `TIER ${currentTier}`;
     tierBadge.style.cssText = `
       background:linear-gradient(135deg, ${C.gold}, ${C.goldDark});
       color:${C.textDark};font-family:"Fredoka",sans-serif;font-weight:700;
-      font-size:11px;padding:3px 8px;border-radius:6px;
+      font-size:12px;padding:4px 10px;border-radius:8px;
       letter-spacing:0.5px;
+      box-shadow:0 2px 6px rgba(255,217,61,0.2);
     `;
     titleRow.appendChild(tierBadge);
     header.appendChild(titleRow);
@@ -158,9 +158,9 @@ export class BattlePassPanel {
     // Season info
     const daysLeft = Math.max(0, Math.ceil((season.endDate - Date.now()) / (24 * 60 * 60 * 1000)));
     const seasonInfo = document.createElement('div');
-    seasonInfo.textContent = `${season.name} \u2022 ${daysLeft}d left`;
+    seasonInfo.textContent = `${season.name} \u2022 ${daysLeft} days left`;
     seasonInfo.style.cssText = `
-      font-size:10px;color:${C.textMuted};margin-top:4px;
+      font-size:12px;color:${C.textSecondary};margin-top:6px;
     `;
     header.appendChild(seasonInfo);
 
@@ -174,25 +174,26 @@ export class BattlePassPanel {
     const progressFrac = xpRange > 0 ? Math.min(1, xpIntoTier / xpRange) : 1;
 
     const progressWrap = document.createElement('div');
-    progressWrap.style.cssText = 'margin-top:8px;';
+    progressWrap.style.cssText = 'margin-top:10px;';
 
     const progressBar = document.createElement('div');
     progressBar.style.cssText = `
-      width:100%;height:8px;background:${C.sliderTrack};border-radius:4px;overflow:hidden;
+      width:100%;height:10px;background:rgba(139,115,85,0.25);border-radius:5px;overflow:hidden;
+      border:1px solid rgba(139,115,85,0.2);
     `;
     const progressFill = document.createElement('div');
     progressFill.style.cssText = `
       width:${progressFrac * 100}%;height:100%;
       background:linear-gradient(90deg, ${C.gold}, ${C.goldDark});
-      border-radius:4px;transition:width 0.5s ease;
+      border-radius:5px;transition:width 0.5s ease;
     `;
     progressBar.appendChild(progressFill);
     progressWrap.appendChild(progressBar);
 
     const xpLabel = document.createElement('div');
     xpLabel.style.cssText = `
-      display:flex;justify-content:space-between;margin-top:3px;
-      font-size:9px;color:${C.textMuted};
+      display:flex;justify-content:space-between;margin-top:4px;
+      font-size:11px;color:${C.textMuted};font-weight:600;
     `;
     const xpCur = document.createElement('span');
     xpCur.textContent = `${player.xp} XP`;
@@ -208,22 +209,23 @@ export class BattlePassPanel {
     // ── Track labels row ──
     const labelsRow = document.createElement('div');
     labelsRow.style.cssText = `
-      display:flex;align-items:center;padding:6px 14px;
-      border-bottom:1px solid ${C.divider};flex-shrink:0;
-      gap:4px;
+      display:flex;align-items:center;padding:8px 18px;
+      border-bottom:2px solid rgba(139,115,85,0.3);flex-shrink:0;
+      gap:6px;
+      background:rgba(139,115,85,0.06);
     `;
     const tierLabel = document.createElement('span');
-    tierLabel.style.cssText = `width:28px;font-size:9px;font-weight:700;color:${C.textMuted};font-family:"Fredoka",sans-serif;text-align:center;flex-shrink:0;`;
+    tierLabel.style.cssText = `width:32px;font-size:11px;font-weight:700;color:${C.textMuted};font-family:"Fredoka",sans-serif;text-align:center;flex-shrink:0;`;
     tierLabel.textContent = '#';
     labelsRow.appendChild(tierLabel);
 
     const freeLabel = document.createElement('span');
-    freeLabel.style.cssText = `flex:1;font-size:9px;font-weight:700;color:${C.teal};font-family:"Fredoka",sans-serif;text-align:center;letter-spacing:0.5px;`;
+    freeLabel.style.cssText = `flex:1;font-size:11px;font-weight:700;color:${C.teal};font-family:"Fredoka",sans-serif;text-align:center;letter-spacing:1px;`;
     freeLabel.textContent = 'FREE';
     labelsRow.appendChild(freeLabel);
 
     const premLabel = document.createElement('span');
-    premLabel.style.cssText = `flex:1;font-size:9px;font-weight:700;color:${C.gold};font-family:"Fredoka",sans-serif;text-align:center;letter-spacing:0.5px;`;
+    premLabel.style.cssText = `flex:1;font-size:11px;font-weight:700;color:${C.gold};font-family:"Fredoka",sans-serif;text-align:center;letter-spacing:1px;`;
     premLabel.textContent = 'PREMIUM';
     labelsRow.appendChild(premLabel);
 
@@ -251,11 +253,12 @@ export class BattlePassPanel {
     if (!player.premium) {
       const footer = document.createElement('div');
       footer.style.cssText = `
-        padding:10px 14px;border-top:1px solid ${C.divider};flex-shrink:0;
+        padding:12px 18px;border-top:2px solid rgba(139,115,85,0.3);flex-shrink:0;
+        background:rgba(139,115,85,0.06);
       `;
 
       const buyBtn = document.createElement('button');
-      buyBtn.innerHTML = `\u{1F451} <span style="font-size:12px;">UPGRADE</span> <span style="font-size:10px;opacity:0.7;">${season.premiumPriceCrowns} Crowns</span>`;
+      buyBtn.innerHTML = `\u{1F451} <span style="font-size:14px;">UPGRADE</span> <span style="font-size:11px;opacity:0.7;">${season.premiumPriceCrowns} Crowns</span>`;
       buyBtn.style.cssText = `
         width:100%;padding:8px 10px;border-radius:10px;font-weight:700;
         font-family:"Fredoka",sans-serif;cursor:pointer;transition:all 0.15s;
@@ -311,21 +314,21 @@ export class BattlePassPanel {
     row.dataset.tier = String(tier);
     row.style.cssText = `
       display:flex;align-items:stretch;
-      padding:4px 10px;gap:4px;
-      border-bottom:1px solid ${C.divider};
-      min-height:42px;
+      padding:6px 14px;gap:6px;
+      border-bottom:1px solid rgba(139,115,85,0.15);
+      min-height:52px;
       transition:background 0.15s;
-      ${isFuture ? 'opacity:0.4;' : ''}
-      ${isCurrent ? `background:rgba(255,217,61,0.06);border-left:3px solid ${C.gold};padding-left:7px;` : ''}
+      ${isFuture ? 'opacity:0.35;' : ''}
+      ${isCurrent ? `background:rgba(255,217,61,0.08);border-left:4px solid ${C.gold};padding-left:10px;box-shadow:inset 0 0 12px rgba(255,217,61,0.04);` : ''}
     `;
 
     // Tier number
     const tierNum = document.createElement('div');
     tierNum.textContent = String(tier);
     tierNum.style.cssText = `
-      width:24px;flex-shrink:0;
+      width:32px;flex-shrink:0;
       display:flex;align-items:center;justify-content:center;
-      font-size:11px;font-weight:700;
+      font-size:14px;font-weight:700;
       color:${isCurrent ? C.gold : C.textMuted};
       font-family:"Fredoka",sans-serif;
     `;
@@ -366,16 +369,17 @@ export class BattlePassPanel {
   ): HTMLDivElement {
     const cell = document.createElement('div');
     cell.style.cssText = `
-      flex:1;display:flex;align-items:center;gap:4px;
-      padding:3px 6px;border-radius:6px;min-width:0;
-      background:${isPremium ? 'rgba(255,217,61,0.04)' : 'rgba(69,230,176,0.04)'};
+      flex:1;display:flex;align-items:center;gap:6px;
+      padding:4px 8px;border-radius:8px;min-width:0;
+      background:${isPremium ? 'rgba(255,217,61,0.05)' : 'rgba(69,230,176,0.05)'};
+      border:1px solid ${isPremium ? 'rgba(255,217,61,0.08)' : 'rgba(69,230,176,0.08)'};
       position:relative;
     `;
 
     if (!reward) {
       const dash = document.createElement('span');
       dash.textContent = '\u2014';
-      dash.style.cssText = `font-size:12px;color:${C.textMuted};opacity:0.3;margin:auto;`;
+      dash.style.cssText = `font-size:14px;color:${C.textMuted};opacity:0.2;margin:auto;`;
       cell.appendChild(dash);
       return cell;
     }
@@ -384,7 +388,7 @@ export class BattlePassPanel {
     const icon = document.createElement('span');
     icon.textContent = rewardEmoji(reward);
     icon.style.cssText = `
-      font-size:14px;line-height:1;flex-shrink:0;
+      font-size:18px;line-height:1;flex-shrink:0;
       ${isPremium && !isUnlocked ? 'filter:grayscale(1) brightness(0.5);' : ''}
     `;
     cell.appendChild(icon);
@@ -393,7 +397,7 @@ export class BattlePassPanel {
     const label = document.createElement('span');
     label.textContent = rewardLabel(reward);
     label.style.cssText = `
-      font-size:10px;font-weight:600;
+      font-size:12px;font-weight:600;
       color:${isPremium ? C.gold : C.textPrimary};
       white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
       flex:1;min-width:0;
@@ -405,22 +409,20 @@ export class BattlePassPanel {
       const check = document.createElement('span');
       check.textContent = '\u2713';
       check.style.cssText = `
-        font-size:10px;font-weight:700;color:${C.green};flex-shrink:0;
+        font-size:13px;font-weight:700;color:${C.green};flex-shrink:0;
       `;
       cell.appendChild(check);
     } else if (isClaimable) {
       const claimBtn = document.createElement('button');
-      claimBtn.textContent = '\u2193';
-      claimBtn.title = 'Claim';
+      claimBtn.textContent = 'CLAIM';
       claimBtn.style.cssText = `
-        width:20px;height:20px;border-radius:5px;font-size:11px;font-weight:700;
+        padding:3px 8px;border-radius:6px;font-size:10px;font-weight:700;
         cursor:pointer;transition:all 0.15s;flex-shrink:0;
         background:${C.green};border:none;color:#fff;
-        display:flex;align-items:center;justify-content:center;
-        padding:0;
+        font-family:"Fredoka",sans-serif;letter-spacing:0.5px;
       `;
-      claimBtn.onmouseenter = () => { claimBtn.style.background = C.greenDark; };
-      claimBtn.onmouseleave = () => { claimBtn.style.background = C.green; };
+      claimBtn.onmouseenter = () => { claimBtn.style.background = C.greenDark; claimBtn.style.transform = 'scale(1.05)'; };
+      claimBtn.onmouseleave = () => { claimBtn.style.background = C.green; claimBtn.style.transform = ''; };
       claimBtn.onclick = (e) => {
         e.stopPropagation();
         this.handleClaim(tier, isPremium);
@@ -429,7 +431,7 @@ export class BattlePassPanel {
     } else if (isPremium && !isUnlocked) {
       const lock = document.createElement('span');
       lock.textContent = '\uD83D\uDD12';
-      lock.style.cssText = 'font-size:10px;opacity:0.4;flex-shrink:0;';
+      lock.style.cssText = 'font-size:12px;opacity:0.35;flex-shrink:0;';
       cell.appendChild(lock);
     }
 
@@ -554,7 +556,7 @@ export class BattlePassPanel {
       const listHeight = this.tierList.clientHeight;
       const rowTop = tierRow.offsetTop;
       const rowHeight = tierRow.offsetHeight;
-      this.tierList.scrollTo({ top: Math.max(0, rowTop - listHeight / 2 + rowHeight / 2), behavior: 'smooth' });
+      this.tierList.scrollTop = Math.max(0, rowTop - listHeight / 2 + rowHeight / 2);
     }
   }
 

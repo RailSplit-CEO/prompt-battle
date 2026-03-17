@@ -284,56 +284,6 @@ export class MenuScene extends Phaser.Scene {
     howContainer.setAlpha(0);
     this.tweens.add({ targets: howContainer, alpha: 1, duration: 800, delay: 1300 });
 
-    // Settings gear button (top-right area, left of profile card)
-    const gearContainer = this.add.container(36, 36).setDepth(20);
-    const gearBg = this.add.graphics();
-    gearBg.fillStyle(0x243a18, 0.85);
-    gearBg.fillCircle(0, 0, 22);
-    gearBg.lineStyle(2, 0x5a9a4e, 0.6);
-    gearBg.strokeCircle(0, 0, 22);
-    gearContainer.add(gearBg);
-
-    const gearText = this.add.text(0, 0, '\u2699', {
-      fontSize: '22px', color: '#a89870',
-    }).setOrigin(0.5);
-    gearContainer.add(gearText);
-
-    const gearZone = this.add.zone(36, 36, 48, 48)
-      .setInteractive({ useHandCursor: true }).setDepth(21);
-    gearZone.on('pointerover', () => {
-      gearText.setColor('#FFD93D');
-      gearBg.clear();
-      gearBg.fillStyle(0x3a5a28, 0.95);
-      gearBg.fillCircle(0, 0, 22);
-      gearBg.lineStyle(2, 0xFFD93D, 0.8);
-      gearBg.strokeCircle(0, 0, 22);
-    });
-    gearZone.on('pointerout', () => {
-      gearText.setColor('#a89870');
-      gearBg.clear();
-      gearBg.fillStyle(0x243a18, 0.85);
-      gearBg.fillCircle(0, 0, 22);
-      gearBg.lineStyle(2, 0x5a9a4e, 0.6);
-      gearBg.strokeCircle(0, 0, 22);
-    });
-    gearZone.on('pointerdown', () => {
-      this.playsfx('button_click', 0.4);
-      this.settingsPanel.toggle();
-      if (this.settingsPanel.isOpen) {
-        this.blockGameInput();
-        // Watch for settings panel close to unblock
-        const checkClose = setInterval(() => {
-          if (!this.settingsPanel.isOpen) {
-            clearInterval(checkClose);
-            this.unblockGameInput();
-          }
-        }, 200);
-      }
-    });
-
-    gearContainer.setAlpha(0);
-    this.tweens.add({ targets: gearContainer, alpha: 1, duration: 600, delay: 1400 });
-
     // Version
     this.add.text(width / 2, height - 18, 'v0.2.0  |  Mark My Hordes', {
       fontSize: '10px', color: '#3a4a2a', fontFamily: '"Nunito", sans-serif',
@@ -885,12 +835,25 @@ export class MenuScene extends Phaser.Scene {
 
       this.profileCardEl.appendChild(btnList);
 
-      // Sign out — small text link at bottom
-      const signOutRow = document.createElement('div');
-      signOutRow.style.cssText = `
-        padding:4px 14px 8px;text-align:center;
+      // Settings + Sign out row at bottom
+      const bottomRow = document.createElement('div');
+      bottomRow.style.cssText = `
+        padding:6px 14px 8px;text-align:center;
         border-top:1px solid ${C.divider};
+        display:flex;justify-content:center;gap:16px;
       `;
+      const settingsBtn = document.createElement('button');
+      settingsBtn.textContent = '⚙️ Settings';
+      settingsBtn.style.cssText = `
+        font-size:11px;font-weight:600;font-family:"Nunito",sans-serif;
+        background:none;border:none;color:${C.textSecondary};
+        cursor:pointer;transition:color 0.15s;padding:4px 8px;
+      `;
+      settingsBtn.onmouseenter = () => { settingsBtn.style.color = C.gold; };
+      settingsBtn.onmouseleave = () => { settingsBtn.style.color = C.textSecondary; };
+      settingsBtn.onclick = () => { (window as any).__menuPlaySfx?.('button_click', 0.3); this.settingsPanel.toggle(); };
+      bottomRow.appendChild(settingsBtn);
+
       const signOutBtn = document.createElement('button');
       signOutBtn.textContent = 'Sign Out';
       signOutBtn.style.cssText = `
@@ -901,8 +864,8 @@ export class MenuScene extends Phaser.Scene {
       signOutBtn.onmouseenter = () => { signOutBtn.style.color = C.red; };
       signOutBtn.onmouseleave = () => { signOutBtn.style.color = C.textMuted; };
       signOutBtn.onclick = async () => { (window as any).__menuPlaySfx?.('button_click', 0.3); await auth.signOut(); window.location.reload(); };
-      signOutRow.appendChild(signOutBtn);
-      this.profileCardEl.appendChild(signOutRow);
+      bottomRow.appendChild(signOutBtn);
+      this.profileCardEl.appendChild(bottomRow);
     } else {
       // Guest — compact card with sign in CTA
       const guestHeader = document.createElement('div');
@@ -923,7 +886,7 @@ export class MenuScene extends Phaser.Scene {
       this.profileCardEl.appendChild(guestHeader);
 
       const signInBtn = document.createElement('button');
-      signInBtn.innerHTML = `<span style="font-size:14px;">&#x1F511;</span> Sign in with Google`;
+      signInBtn.innerHTML = `<span style="font-size:14px;">&#x1F511;</span> Sign In`;
       signInBtn.style.cssText = `
         display:flex;align-items:center;gap:8px;justify-content:center;
         margin:10px 12px 12px;padding:10px 14px;font-size:13px;font-weight:700;
@@ -936,22 +899,57 @@ export class MenuScene extends Phaser.Scene {
       signInBtn.onmouseleave = () => { signInBtn.style.background = 'rgba(255,217,61,0.1)'; signInBtn.style.borderColor = C.goldDim; signInBtn.style.transform = 'translateY(0)'; };
       signInBtn.onclick = async () => {
         (window as any).__menuPlaySfx?.('button_click', 0.3);
-        try { await auth.linkGuestToGoogle(); window.location.reload(); } catch { /* cancelled */ }
+        // Show the full login overlay (with Google, itch.io options)
+        const { LoginOverlay } = await import('../ui/LoginOverlay');
+        const overlay = new LoginOverlay();
+        const choice = await overlay.show();
+        try {
+          if (choice === 'google') {
+            await auth.linkGuestToGoogle();
+          } else if (choice === 'itch') {
+            // itch.io auth handled by LoginOverlay internally
+            await auth.linkGuestToGoogle(); // fallback
+          }
+          overlay.hide();
+          window.location.reload();
+        } catch {
+          overlay.hide();
+        }
       };
       this.profileCardEl.appendChild(signInBtn);
     }
 
+    // Settings button — below all profile card content
+    const settingsRow = document.createElement('div');
+    settingsRow.style.cssText = `
+      padding:6px 12px 8px;display:flex;align-items:center;justify-content:center;
+      border-top:1px solid ${C.divider};
+    `;
+    const settingsBtn = document.createElement('button');
+    settingsBtn.innerHTML = `<span style="font-size:14px;">⚙</span> Settings`;
+    settingsBtn.style.cssText = `
+      display:flex;align-items:center;gap:6px;
+      font-size:12px;font-weight:600;font-family:"Nunito",sans-serif;
+      background:none;border:none;color:${C.textSecondary};
+      cursor:pointer;transition:color 0.15s;padding:4px 8px;
+    `;
+    settingsBtn.onmouseenter = () => { settingsBtn.style.color = C.gold; };
+    settingsBtn.onmouseleave = () => { settingsBtn.style.color = C.textSecondary; };
+    settingsBtn.onclick = () => {
+      (window as any).__menuPlaySfx?.('button_click', 0.3);
+      this.settingsPanel.toggle();
+    };
+    settingsRow.appendChild(settingsBtn);
+    this.profileCardEl.appendChild(settingsRow);
+
     document.body.appendChild(this.profileCardEl);
     requestAnimationFrame(() => { if (this.profileCardEl) this.profileCardEl.style.opacity = '1'; });
 
-    // === BATTLE PASS LEFT SIDEBAR ===
-    this.battlePassPanel = new BattlePassPanel(() => {
-      // Login request callback
-      if (auth.isGuest) {
-        auth.linkGuestToGoogle().then(() => window.location.reload()).catch(() => {});
-      }
-    });
-    this.battlePassPanel.mount(document.body);
+    // === BATTLE PASS LEFT SIDEBAR (logged-in users only) ===
+    if (!auth.isGuest && auth.currentUser) {
+      this.battlePassPanel = new BattlePassPanel();
+      this.battlePassPanel.mount(document.body);
+    }
 
     // === DAILY LOGIN REWARD (logged-in users only) ===
     if (!auth.isGuest && auth.currentUser) {

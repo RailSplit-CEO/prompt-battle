@@ -409,94 +409,45 @@ export class LoginOverlay {
  * Show a prompt asking guests to sign in to access a feature.
  * Returns true if user signed in, false if they dismissed.
  */
+/**
+ * Show the full login overlay as a prompt for guests trying to access gated features.
+ * Displays the same sign-in page (Google, itch.io) with a contextual message.
+ */
 export function showGuestLoginPrompt(featureName: string): void {
   import('../auth/AuthManager').then(({ AuthManager }) => {
     const auth = AuthManager.getInstance();
 
-    const overlay = document.createElement('div');
-    overlay.style.cssText = `
-      position:fixed;inset:0;z-index:10001;
-      background:rgba(5,8,3,0.82);backdrop-filter:blur(16px);
-      display:flex;align-items:center;justify-content:center;
-      font-family:'Nunito',sans-serif;
-      opacity:0;transition:opacity 0.25s ease;
+    // Brief context message before the login overlay
+    const banner = document.createElement('div');
+    banner.style.cssText = `
+      position:fixed;top:0;left:0;right:0;z-index:10002;
+      background:rgba(255,217,61,0.12);border-bottom:2px solid rgba(255,217,61,0.3);
+      padding:10px 20px;text-align:center;
+      font-family:'Nunito',sans-serif;font-size:14px;font-weight:700;
+      color:#FFD93D;
+      opacity:0;transition:opacity 0.3s ease;
     `;
+    banner.innerHTML = `<span style="margin-right:8px;">\u{1F512}</span> Sign in to ${featureName}`;
+    document.body.appendChild(banner);
+    requestAnimationFrame(() => { banner.style.opacity = '1'; });
 
-    const panel = document.createElement('div');
-    panel.style.cssText = `
-      max-width:380px;width:90%;padding:32px 28px;text-align:center;
-      background:rgba(18,22,14,0.94);border:2px solid rgba(139,115,85,0.45);
-      border-radius:16px;box-shadow:0 12px 48px rgba(0,0,0,0.6);
-    `;
-
-    // Icon
-    const icon = document.createElement('div');
-    icon.textContent = '\u{1F512}';
-    icon.style.cssText = 'font-size:40px;margin-bottom:16px;';
-    panel.appendChild(icon);
-
-    // Title
-    const title = document.createElement('div');
-    title.textContent = `Sign in to ${featureName}`;
-    title.style.cssText = `
-      font-family:'Fredoka',sans-serif;font-size:20px;font-weight:700;
-      color:#FFD93D;letter-spacing:2px;margin-bottom:10px;
-    `;
-    panel.appendChild(title);
-
-    // Message
-    const msg = document.createElement('div');
-    msg.textContent = 'Create an account to unlock purchases, rewards, match history, and social features.';
-    msg.style.cssText = 'font-size:13px;color:#a89870;margin-bottom:24px;line-height:1.5;';
-    panel.appendChild(msg);
-
-    // Sign in button (Google)
-    const signInBtn = document.createElement('button');
-    signInBtn.textContent = 'Sign in with Google';
-    signInBtn.style.cssText = `
-      width:100%;padding:12px;font-size:15px;font-weight:700;
-      font-family:'Nunito',sans-serif;
-      background:#fff;color:#333;border:none;border-radius:10px;
-      cursor:pointer;margin-bottom:10px;transition:all 0.2s;
-      box-shadow:0 2px 8px rgba(0,0,0,0.2);
-    `;
-    signInBtn.onmouseenter = () => { signInBtn.style.transform = 'translateY(-1px)'; };
-    signInBtn.onmouseleave = () => { signInBtn.style.transform = 'translateY(0)'; };
-    signInBtn.onclick = async () => {
-      signInBtn.textContent = 'Signing in...';
-      signInBtn.disabled = true;
+    // Show the full login overlay
+    const overlay = new LoginOverlay();
+    overlay.show().then(async (choice) => {
+      banner.style.opacity = '0';
+      setTimeout(() => banner.remove(), 300);
       try {
-        await auth.linkGuestToGoogle();
-        window.location.reload();
+        if (choice === 'google' || choice === 'itch') {
+          await auth.linkGuestToGoogle();
+          overlay.hide();
+          window.location.reload();
+        } else {
+          // Guest chose "Play as Guest" again — just dismiss
+          overlay.hide();
+        }
       } catch {
-        signInBtn.textContent = 'Sign in with Google';
-        signInBtn.disabled = false;
+        overlay.hide();
       }
-    };
-    panel.appendChild(signInBtn);
-
-    // Not now button
-    const notNowBtn = document.createElement('button');
-    notNowBtn.textContent = 'Not Now';
-    notNowBtn.style.cssText = `
-      width:100%;padding:10px;font-size:13px;font-weight:600;
-      font-family:'Nunito',sans-serif;
-      background:transparent;color:#7a6e56;border:1.5px solid rgba(139,115,85,0.3);
-      border-radius:10px;cursor:pointer;transition:all 0.15s;
-    `;
-    notNowBtn.onmouseenter = () => { notNowBtn.style.borderColor = 'rgba(139,115,85,0.6)'; };
-    notNowBtn.onmouseleave = () => { notNowBtn.style.borderColor = 'rgba(139,115,85,0.3)'; };
-    notNowBtn.onclick = () => dismiss();
-    panel.appendChild(notNowBtn);
-
-    overlay.appendChild(panel);
-    overlay.onclick = (e) => { if (e.target === overlay) dismiss(); };
-    document.body.appendChild(overlay);
-    requestAnimationFrame(() => { overlay.style.opacity = '1'; });
-
-    function dismiss() {
-      overlay.style.opacity = '0';
-      setTimeout(() => overlay.remove(), 250);
-    }
+    });
   });
 }
