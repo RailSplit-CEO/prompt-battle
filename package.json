@@ -15,5 +15,8 @@
   },
   "devDependencies": {
     "@sparktory/context-search": "^0.2.0"
+  },
+  "dependencies": {
+    "obscenity": "^0.4.6"
   }
 }
