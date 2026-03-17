@@ -67,6 +67,10 @@
         "function": "claimBattlePassReward"
       },
       {
+        "source": "/api/store/exchangeStars",
+        "function": "exchangeStars"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

@@ -1066,9 +1066,36 @@ export class CharacterHub {
   };
 
   private async playVoicePreview(packId: string, unitType: HordeUnitType, btn: HTMLButtonElement): Promise<void> {
+    // Stop any currently playing preview
+    if (this._previewAudio) {
+      this._previewAudio.pause();
+      this._previewAudio.currentTime = 0;
+      this._previewAudio = null;
+    }
+
+    // Determine the static file name
+    const fileKey = packId === 'default' ? `default_${unitType}` : packId;
+    const staticUrl = `assets/audio/voice_samples/${fileKey}.mp3`;
+
+    // Try static file first (no API call)
+    try {
+      const audio = new Audio(staticUrl);
+      audio.volume = 0.8;
+      await new Promise<void>((resolve, reject) => {
+        audio.oncanplaythrough = () => resolve();
+        audio.onerror = () => reject();
+        audio.load();
+      });
+      this._previewAudio = audio;
+      audio.play().catch(() => {});
+      return;
+    } catch {
+      // Static file not available — fall back to API generation
+    }
+
+    // Resolve voice ID and sample text for API fallback
     let voiceId: string | undefined;
     let sampleText: string | undefined;
-
     if (packId === 'default') {
       const def = CharacterHub.DEFAULT_VOICES[unitType];
       if (def) { voiceId = def.voiceId; sampleText = def.sample; }
@@ -1079,14 +1106,7 @@ export class CharacterHub {
     }
     if (!voiceId || !sampleText) return;
 
-    // Stop any currently playing preview
-    if (this._previewAudio) {
-      this._previewAudio.pause();
-      this._previewAudio.currentTime = 0;
-      this._previewAudio = null;
-    }
-
-    // Check cache
+    // Check in-memory cache
     const cached = this._previewCache[packId];
     if (cached) {
       const audio = new Audio(cached);
@@ -1096,7 +1116,7 @@ export class CharacterHub {
       return;
     }
 
-    // Generate — show loading
+    // Generate via API — show loading
     const origText = btn.textContent;
     btn.textContent = '\u23F3';
     btn.style.pointerEvents = 'none';

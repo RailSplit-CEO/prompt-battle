@@ -26,6 +26,7 @@ interface StoreTab {
 
 const TABS: StoreTab[] = [
   { id: 'gems',       label: '\uD83D\uDC51 Crowns',      categories: null },
+  { id: 'stars',      label: '\u2605 Stars',              categories: null },
   { id: 'battlepass', label: '\uD83C\uDFC6 Battle Pass',  categories: null },
   { id: 'bundles',    label: '\uD83C\uDF81 Bundles',      categories: null },
 ];
@@ -327,10 +328,22 @@ export class StorePanel {
     const container = this.gridContainer;
     if (!container) return;
     container.innerHTML = '';
+    // Reset container styles that special tabs may have set
+    container.style.display = '';
+    container.style.flexDirection = '';
+    container.style.alignItems = '';
+    container.style.gap = '';
+    container.style.padding = '16px 22px 16px';
 
     // Special tab: Gems (crown packages)
     if (this.activeCategory === 'gems') {
       this.renderCrownPackages(container);
+      return;
+    }
+
+    // Special tab: Stars (crowns → glory exchange)
+    if (this.activeCategory === 'stars') {
+      this.renderStarsExchange(container);
       return;
     }
 
@@ -545,10 +558,11 @@ export class StorePanel {
       card.style.boxShadow = 'none';
     };
 
-    // ── First purchase bonus badge ──
-    if (isFirstPurchase) {
+    // ── Bonus badge — show actual bonus %, skip if 0% ──
+    const effectiveBonus = pkg.bonusPercent + (isFirstPurchase ? 50 : 0);
+    if (effectiveBonus > 0 && pkg.id !== 'pouch') {
       const bonusBadge = document.createElement('div');
-      bonusBadge.textContent = '+50% BONUS';
+      bonusBadge.textContent = `+${effectiveBonus}% BONUS`;
       bonusBadge.style.cssText = `
         position:absolute;top:-8px;right:-6px;
         font-size:9px;font-weight:700;font-family:"Fredoka",sans-serif;
@@ -585,17 +599,6 @@ export class StorePanel {
     `;
     amount.textContent = `${pkg.crowns.toLocaleString()} Crowns`;
     card.appendChild(amount);
-
-    // ── Bonus info ──
-    if (pkg.bonusPercent > 0) {
-      const bonus = document.createElement('div');
-      bonus.textContent = `+${pkg.bonusPercent}% bonus`;
-      bonus.style.cssText = `
-        font-size:10px;font-weight:600;color:${C.teal};
-        font-family:"Nunito",sans-serif;
-      `;
-      card.appendChild(bonus);
-    }
 
     // ── Price ──
     const price = document.createElement('div');
@@ -791,6 +794,188 @@ export class StorePanel {
 
     container.appendChild(banner);
   }
+
+  // ────────────────────────────────────────────────────────────────
+  //  Stars Exchange (crowns → glory at a terrible rate)
+  // ────────────────────────────────────────────────────────────────
+
+  private static readonly STAR_PACKAGES = [
+    { id: 'stars_tiny',   name: 'Handful of Stars', crowns: 100,   stars: 5,    icon: '\u2B50' },
+    { id: 'stars_small',  name: 'Star Pouch',       crowns: 250,   stars: 15,   icon: '\uD83C\uDF1F' },
+    { id: 'stars_medium', name: 'Star Crate',       crowns: 500,   stars: 35,   icon: '\u2728' },
+    { id: 'stars_large',  name: 'Star Chest',       crowns: 1000,  stars: 80,   icon: '\uD83D\uDCAB' },
+    { id: 'stars_mega',   name: 'Star Vault',       crowns: 2500,  stars: 220,  icon: '\uD83C\uDF20' },
+    { id: 'stars_ultra',  name: 'Cosmic Haul',      crowns: 5000,  stars: 500,  icon: '\uD83C\uDF0C' },
+  ];
+
+  private renderStarsExchange(container: HTMLDivElement): void {
+    // Disclaimer banner
+    const disclaimer = document.createElement('div');
+    disclaimer.style.cssText = `
+      text-align:center;margin-bottom:14px;padding:10px 16px;
+      background:rgba(192,192,210,0.08);border:1px solid rgba(192,192,210,0.15);
+      border-radius:10px;
+    `;
+    disclaimer.innerHTML = `
+      <div style="font-size:12px;color:#C0C0D2;font-family:'Fredoka',sans-serif;font-weight:700;letter-spacing:1px;margin-bottom:4px;">\u2605 STAR EXCHANGE</div>
+      <div style="font-size:11px;color:${C.textMuted};font-family:'Nunito',sans-serif;">Convert Crowns into Stars. Stars can buy exclusive glory-priced cosmetics.<br><span style="color:${C.red};font-weight:600;">Warning: exchange rates are not great.</span></div>
+    `;
+    container.appendChild(disclaimer);
+
+    const grid = document.createElement('div');
+    grid.style.cssText = `
+      display:grid;
+      grid-template-columns:repeat(auto-fill, minmax(160px, 1fr));
+      gap:12px;
+    `;
+
+    for (const pkg of StorePanel.STAR_PACKAGES) {
+      grid.appendChild(this.createStarPackageCard(pkg));
+    }
+
+    container.appendChild(grid);
+  }
+
+  private createStarPackageCard(pkg: { id: string; name: string; crowns: number; stars: number; icon: string }): HTMLDivElement {
+    const rate = (pkg.crowns / pkg.stars).toFixed(1);
+    const card = document.createElement('div');
+    card.style.cssText = `
+      background:${C.surface};
+      border:2px solid rgba(192,192,210,0.25);
+      border-radius:12px;
+      padding:12px 10px 12px;
+      display:flex;flex-direction:column;align-items:center;gap:6px;
+      cursor:pointer;transition:all 0.15s;
+      position:relative;
+    `;
+    card.onmouseenter = () => {
+      card.style.background = C.surfaceActive;
+      card.style.transform = 'translateY(-2px)';
+      card.style.borderColor = 'rgba(192,192,210,0.5)';
+      card.style.boxShadow = '0 4px 12px rgba(192,192,210,0.15)';
+    };
+    card.onmouseleave = () => {
+      card.style.background = C.surface;
+      card.style.transform = 'translateY(0)';
+      card.style.borderColor = 'rgba(192,192,210,0.25)';
+      card.style.boxShadow = 'none';
+    };
+
+    // Icon
+    const icon = document.createElement('div');
+    icon.textContent = pkg.icon;
+    icon.style.cssText = 'font-size:32px;line-height:1;';
+    card.appendChild(icon);
+
+    // Name
+    const name = document.createElement('div');
+    name.textContent = pkg.name;
+    name.style.cssText = `
+      font-size:12px;font-weight:700;color:${C.textPrimary};
+      font-family:"Nunito",sans-serif;text-align:center;
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:100%;
+    `;
+    card.appendChild(name);
+
+    // Stars amount
+    const amount = document.createElement('div');
+    amount.style.cssText = `font-size:14px;font-weight:700;color:#C0C0D2;font-family:"Fredoka",sans-serif;`;
+    amount.textContent = `\u2605 ${pkg.stars} Stars`;
+    card.appendChild(amount);
+
+    // Rate
+    const rateEl = document.createElement('div');
+    rateEl.textContent = `${rate} crowns/star`;
+    rateEl.style.cssText = `font-size:9px;font-weight:600;color:${C.textMuted};font-family:"Nunito",sans-serif;`;
+    card.appendChild(rateEl);
+
+    // Price
+    const price = document.createElement('div');
+    price.style.cssText = `font-size:12px;font-weight:700;color:${C.gold};font-family:"Nunito",sans-serif;`;
+    price.textContent = `\u{1F451} ${pkg.crowns.toLocaleString()}`;
+    card.appendChild(price);
+
+    // BUY button
+    const buyBtn = document.createElement('button');
+    buyBtn.textContent = 'EXCHANGE';
+    buyBtn.style.cssText = `
+      width:100%;padding:7px 0;border-radius:8px;font-size:11px;font-weight:700;
+      font-family:"Fredoka",sans-serif;cursor:pointer;transition:all 0.15s;
+      background:rgba(192,192,210,0.2);border:1px solid rgba(192,192,210,0.3);color:#C0C0D2;
+      letter-spacing:1px;
+    `;
+    buyBtn.onmouseenter = () => {
+      buyBtn.style.background = 'rgba(192,192,210,0.3)';
+      buyBtn.style.borderColor = 'rgba(192,192,210,0.5)';
+    };
+    buyBtn.onmouseleave = () => {
+      buyBtn.style.background = 'rgba(192,192,210,0.2)';
+      buyBtn.style.borderColor = 'rgba(192,192,210,0.3)';
+    };
+    buyBtn.onclick = async (e) => {
+      e.stopPropagation();
+      if (AuthManager.getInstance().isGuest) {
+        showGuestLoginPrompt('exchange crowns for stars');
+        return;
+      }
+      const wallet = this.wallet;
+      if (wallet.crowns < pkg.crowns) {
+        showPurchaseConfirm({
+          itemName: pkg.name,
+          priceCrowns: pkg.crowns,
+          onConfirm: async () => {},
+          onCancel: () => {},
+        });
+        return;
+      }
+      showPurchaseConfirm({
+        itemName: `${pkg.name} (\u2605 ${pkg.stars} Stars)`,
+        priceCrowns: pkg.crowns,
+        onConfirm: async () => {
+          buyBtn.textContent = '...';
+          try {
+            const { getAuth } = await import('firebase/auth');
+            const { getFirebaseApp } = await import('../auth/firebaseApp');
+            const token = await getAuth(getFirebaseApp()).currentUser?.getIdToken();
+            if (!token) return;
+            const baseUrl = (import.meta as any).env?.VITE_FUNCTIONS_URL || '';
+            const res = await fetch(`${baseUrl}/api/store/exchangeStars`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+              body: JSON.stringify({ packageId: pkg.id }),
+            });
+            const data = await res.json().catch(() => ({ error: 'Failed' }));
+            if (data.success) {
+              buyBtn.textContent = `\u2713 +${pkg.stars} \u2605`;
+              buyBtn.style.background = C.teal;
+              buyBtn.style.color = C.textDark;
+              buyBtn.style.borderColor = C.teal;
+              setTimeout(() => {
+                buyBtn.textContent = 'EXCHANGE';
+                buyBtn.style.background = 'rgba(192,192,210,0.2)';
+                buyBtn.style.color = '#C0C0D2';
+                buyBtn.style.borderColor = 'rgba(192,192,210,0.3)';
+              }, 2000);
+            } else {
+              buyBtn.textContent = data.error || 'Failed';
+              setTimeout(() => { buyBtn.textContent = 'EXCHANGE'; }, 2000);
+            }
+          } catch {
+            buyBtn.textContent = 'Error';
+            setTimeout(() => { buyBtn.textContent = 'EXCHANGE'; }, 2000);
+          }
+        },
+        onCancel: () => {},
+      });
+    };
+    card.appendChild(buyBtn);
+
+    return card;
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  //  Bundles tab
+  // ────────────────────────────────────────────────────────────────
 
   private renderBundles(container: HTMLDivElement): void {
     const bundles = this.catalog.getBundles();
