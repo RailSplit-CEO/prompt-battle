@@ -1,5 +1,50 @@
 {
   "rules": {
+    "users": {
+      ".indexOn": ["username"],
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid === $uid",
+        "username": {
+          ".validate": "newData.isString() && newData.val().length >= 2 && newData.val().length <= 16"
+        },
+        "icon": {
+          ".validate": "newData.isString()"
+        },
+        "provider": {
+          ".validate": "newData.val() === 'google' || newData.val() === 'anonymous'"
+        }
+      }
+    },
+    "usernames": {
+      "$name": {
+        ".read": "auth != null",
+        ".write": "auth != null && (!data.exists() || data.child('uid').val() === auth.uid)",
+        ".validate": "newData.hasChild('uid') && newData.child('uid').val() === auth.uid"
+      }
+    },
+    "friends": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        "$friendUid": {
+          ".write": "auth != null && (auth.uid === $uid || auth.uid === $friendUid)"
+        }
+      }
+    },
+    "invites": {
+      "$targetUid": {
+        ".read": "auth != null && auth.uid === $targetUid",
+        "$inviteId": {
+          ".write": "auth != null"
+        }
+      }
+    },
+    "matchHistory": {
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
     "matchmaking": {
       ".read": "auth != null",
       ".write": "auth != null"

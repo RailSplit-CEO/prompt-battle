@@ -1,17 +1,8 @@
-import { initializeApp, FirebaseApp } from 'firebase/app';
+import { FirebaseApp } from 'firebase/app';
 import { getAuth, signInAnonymously, Auth, User } from 'firebase/auth';
 import { getDatabase, ref, set, get, push, onValue, onChildAdded, update, remove, Database, off, runTransaction, onDisconnect } from 'firebase/database';
 import { Hero, HeroOrder, CommandResponse, GameState } from '@prompt-battle/shared';
-
-const firebaseConfig = {
-  apiKey: "AIzaSyAT4zIS0piAqGfW5ZTCWnbkQPzyLHNDRHY",
-  authDomain: "prompt-battle-c5e6a.firebaseapp.com",
-  databaseURL: "https://prompt-battle-c5e6a-default-rtdb.firebaseio.com",
-  projectId: "prompt-battle-c5e6a",
-  storageBucket: "prompt-battle-c5e6a.firebasestorage.app",
-  messagingSenderId: "329010584107",
-  appId: "1:329010584107:web:c8b08fe0487459e1c1286e",
-};
+import { getFirebaseApp } from '../auth/firebaseApp';
 
 export class FirebaseSync {
   private static instance: FirebaseSync;
@@ -33,10 +24,19 @@ export class FirebaseSync {
     if (this.initialized) return;
 
     try {
-      this.app = initializeApp(firebaseConfig);
+      this.app = getFirebaseApp();
       this.auth = getAuth(this.app);
       this.db = getDatabase(this.app);
 
+      // If already authenticated (e.g. by AuthManager), use that user
+      if (this.auth.currentUser) {
+        this.user = this.auth.currentUser;
+        this.initialized = true;
+        console.log('[Firebase] Using existing auth:', this.user.uid);
+        return;
+      }
+
+      // Fallback: anonymous sign-in (legacy path)
       console.log('[Firebase] Signing in anonymously...');
       const cred = await signInAnonymously(this.auth);
       this.user = cred.user;
@@ -47,6 +47,18 @@ export class FirebaseSync {
       throw new Error('Firebase connection failed: ' + (err as Error).message);
     }
   }
+
+  /** Set user from external auth (AuthManager) */
+  setUser(user: User): void {
+    this.user = user;
+  }
+
+  /** Expose Firebase app for other services */
+  getApp(): FirebaseApp { return this.app; }
+  /** Expose RTDB instance */
+  getDb(): Database { return this.db; }
+  /** Expose Auth instance */
+  getAuthInstance(): Auth { return this.auth; }
 
   getPlayerId(): string {
     return this.user?.uid || 'local_player';

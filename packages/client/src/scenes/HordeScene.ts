@@ -18,6 +18,7 @@ import { VoiceOrb } from '../systems/VoiceOrb';
 import { TalkingPortrait } from '../systems/TalkingPortrait';
 import { SettingsPanel } from '../systems/SettingsPanel';
 import { GameSettings } from '../systems/GameSettings';
+import { AuthManager } from '../auth/AuthManager';
 // horde-maps.json loaded at runtime from public/ via fetch (not bundled)
 
 // ═══════════════════════════════════════════════════════════════
@@ -1081,6 +1082,7 @@ interface HordeSceneData {
   mapId?: string;
   mapDef?: MapDef; // direct map definition from editor live sync
   isDebug?: boolean;
+  opponentUid?: string;
 }
 
 interface HordeSyncUnit {
@@ -2092,6 +2094,7 @@ export class HordeScene extends Phaser.Scene {
   private myTeam: 1 | 2 = 1;
   private gameId: string | null = null;
   private playerId: string | null = null;
+  private opponentUid: string | null = null;
   private firebase: FirebaseSync | null = null;
   private syncTimer = 0;
   private readonly SYNC_INTERVAL_MS = 150; // push state 6-7 times/sec
@@ -2231,6 +2234,7 @@ export class HordeScene extends Phaser.Scene {
     this.myTeam = this.isHost ? 1 : 2;
     this.isDebug = data?.isDebug || false;
     if (this.isDebug) this.fogDisabled = true;
+    this.opponentUid = data?.opponentUid || null;
 
     // Map selection: direct mapDef from editor, or editor-saved file, or hardcoded, or default
     if (data?.mapDef) {
@@ -3173,7 +3177,13 @@ export class HordeScene extends Phaser.Scene {
     // Hide/show enemy and neutral unit sprites (with bush visibility)
     for (const u of this.units) {
       if (u.team === this.myTeam) continue; // always show own units
+      const wasVisible = (u as any)._fogVisible ?? false;
       let visible = this.fogDisabled || this.isInVision(u.x, u.y);
+
+      // Hysteresis: if unit was visible, use relaxed radius to prevent edge-of-vision flicker
+      if (!visible && wasVisible && !this.fogDisabled) {
+        visible = this.isInVisionRelaxed(u.x, u.y, 20);
+      }
 
       // Bush visibility: if enemy is in a bush, they are hidden unless
       // our team also has a unit in that same bush
@@ -3185,6 +3195,7 @@ export class HordeScene extends Phaser.Scene {
         }
       }
 
+      (u as any)._fogVisible = visible;
       if (u.sprite) u.sprite.setVisible(visible);
       if (u.carrySprite) u.carrySprite.setVisible(visible);
     }
@@ -3298,6 +3309,16 @@ export class HordeScene extends Phaser.Scene {
     for (const s of this.visionSources) {
       const dx = x - s.x, dy = y - s.y;
       if (dx * dx + dy * dy < s.r * s.r && this.hasLineOfSight(s.x, s.y, x, y)) return true;
+    }
+    return false;
+  }
+
+  /** Relaxed vision check with extra buffer radius — used for hysteresis to prevent edge flicker */
+  private isInVisionRelaxed(x: number, y: number, buffer: number): boolean {
+    for (const s of this.visionSources) {
+      const dx = x - s.x, dy = y - s.y;
+      const r = s.r + buffer;
+      if (dx * dx + dy * dy < r * r && this.hasLineOfSight(s.x, s.y, x, y)) return true;
     }
     return false;
   }
@@ -4637,10 +4658,18 @@ export class HordeScene extends Phaser.Scene {
       mm.style.height = s.minimapSize + 'px';
     }
 
-    // HUD scale
-    const hudEls = [this.topBarEl, this.resourcePanelEl, this.cmdLogPanelEl, this.charStatsPanelEl];
-    for (const el of hudEls) {
-      if (el) el.style.transform = s.hudScale !== 1 ? `scale(${s.hudScale})` : '';
+    // HUD scale (transform-origin set per-element so scaling expands inward)
+    const hudScaleTargets: [HTMLElement | null, string][] = [
+      [this.topBarEl, 'top center'],
+      [this.resourcePanelEl, 'top right'],
+      [this.cmdLogPanelEl, 'top left'],
+      [this.charStatsPanelEl, 'top left'],
+    ];
+    for (const [el, origin] of hudScaleTargets) {
+      if (el) {
+        el.style.transformOrigin = origin;
+        el.style.transform = s.hudScale !== 1 ? `scale(${s.hudScale})` : '';
+      }
     }
 
     // Command log visibility
@@ -5098,7 +5127,7 @@ export class HordeScene extends Phaser.Scene {
         <div style="flex:1;min-width:0;overflow:hidden;">
           <div style="font-size:9px;font-weight:700;color:#2a1a0a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${eq.name} ${stars}</div>
           <div style="font-size:8px;color:#6a5a4a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:-1px;">${eq.effect}</div>
-          <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${costHtml}</div>
+          <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;">${costHtml}</div>
         </div>
       </div>`;
     }
@@ -5111,14 +5140,23 @@ export class HordeScene extends Phaser.Scene {
   }
 
   // ─── SETUP: MINIMAP ───────────────────────────────────────────
+  private static readonly MM_SIZE = 240;
+
   private setupMinimap(gc: HTMLElement) {
+    const MM = HordeScene.MM_SIZE;
     const wrapper = document.createElement('div');
     wrapper.id = 'horde-minimap';
     const canvas = document.createElement('canvas');
-    canvas.width = 200;
-    canvas.height = 200;
+    canvas.width = MM;
+    canvas.height = MM;
     canvas.style.cssText = 'width:100%;height:100%;display:block;';
     wrapper.appendChild(canvas);
+
+    // Tooltip element
+    const tip = document.createElement('div');
+    tip.id = 'horde-minimap-tip';
+    wrapper.appendChild(tip);
+
     gc.appendChild(wrapper);
     this.minimapEl = canvas;
     this.minimapCtx = canvas.getContext('2d');
@@ -5143,28 +5181,115 @@ export class HordeScene extends Phaser.Scene {
       if (dragging) panTo(e);
     });
     window.addEventListener('mouseup', () => { dragging = false; });
+
+    // Hover tooltip
+    canvas.addEventListener('mousemove', (e) => {
+      if (dragging) { tip.style.display = 'none'; return; }
+      const rect = canvas.getBoundingClientRect();
+      const mx = (e.clientX - rect.left) / rect.width;
+      const my = (e.clientY - rect.top) / rect.height;
+      const wx = mx * WORLD_W, wy = my * WORLD_H;
+      const threshold = 200;
+      const myTeam = this.myTeam;
+
+      let label = '';
+      let bestDist = threshold;
+
+      // Events (highest priority)
+      for (const ev of this.mapEvents) {
+        if (ev.state !== 'active') continue;
+        const d = Math.hypot(ev.x - wx, ev.y - wy);
+        if (d < bestDist) {
+          const def = MAP_EVENT_DEFS[ev.type];
+          const secs = Math.max(0, Math.round(ev.timer / 1000));
+          label = `${def?.emoji ?? ''} ${def?.name ?? ev.type} (${secs}s)`;
+          bestDist = d;
+        }
+      }
+      // Nexuses
+      for (const n of this.nexuses) {
+        const d = Math.hypot(n.x - wx, n.y - wy);
+        if (d < bestDist) {
+          const side = n.team === myTeam ? 'Allied' : 'Enemy';
+          const pct = n.maxHp > 0 ? Math.round(100 * n.hp / n.maxHp) : 100;
+          label = `${side} Nexus (${pct}% HP)`;
+          bestDist = d;
+        }
+      }
+      // Towers
+      for (const t of this.towers) {
+        if (!t.alive) continue;
+        const d = Math.hypot(t.x - wx, t.y - wy);
+        if (d < bestDist) {
+          const side = t.team === myTeam ? 'Allied' : 'Enemy';
+          const pct = t.maxHp > 0 ? Math.round(100 * t.hp / t.maxHp) : 100;
+          label = `${side} Tower (${pct}% HP)`;
+          bestDist = d;
+        }
+      }
+      // Armories
+      for (const arm of this.armories) {
+        const d = Math.hypot(arm.x - wx, arm.y - wy);
+        if (d < bestDist) {
+          const eqName = arm.equipmentType.charAt(0).toUpperCase() + arm.equipmentType.slice(1);
+          const lvl = this.unlockedEquipment[arm.team]?.get(arm.equipmentType) ?? 0;
+          const status = lvl > 0 ? `Lv${lvl}` : 'Locked';
+          label = `${eqName} Armory (${status})`;
+          bestDist = d;
+        }
+      }
+      // Camps
+      for (const c of this.camps) {
+        const d = Math.hypot(c.x - wx, c.y - wy);
+        if (d < bestDist) {
+          const owner = c.owner === myTeam ? 'Friendly' : c.owner === 0 ? 'Neutral' : 'Enemy';
+          label = `${c.name || 'Camp'} (${owner})`;
+          bestDist = d;
+        }
+      }
+      // Mines
+      for (const mine of this.mineNodes) {
+        const d = Math.hypot(mine.x - wx, mine.y - wy);
+        if (d < bestDist) {
+          label = 'Gold Mine';
+          bestDist = d;
+        }
+      }
+
+      if (label) {
+        tip.textContent = label;
+        tip.style.display = 'block';
+        const wrapRect = wrapper.getBoundingClientRect();
+        tip.style.left = (e.clientX - wrapRect.left) + 'px';
+        tip.style.top = (e.clientY - wrapRect.top) + 'px';
+      } else {
+        tip.style.display = 'none';
+      }
+    });
+    canvas.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
   }
 
   private preRenderMinimapTerrain() {
     const tc = document.createElement('canvas');
-    tc.width = 200;
-    tc.height = 200;
+    tc.width = HordeScene.MM_SIZE;
+    tc.height = HordeScene.MM_SIZE;
     const ctx = tc.getContext('2d')!;
     const map = this.mapDef;
-    const mmScaleX = 200 / WORLD_W;
-    const mmScaleY = 200 / WORLD_H;
+    const MM = HordeScene.MM_SIZE;
+    const mmScaleX = MM / WORLD_W;
+    const mmScaleY = MM / WORLD_H;
 
     // Base grass fill
     ctx.fillStyle = '#3d6b3d';
-    ctx.fillRect(0, 0, 200, 200);
+    ctx.fillRect(0, 0, MM, MM);
 
     // Tile grid (handles water, high ground, rock if present)
     const tiles = map?.tiles;
     if (tiles) {
       const cols = tiles[0]?.length || 0;
       const rows = tiles.length;
-      const sx = 200 / (cols * TILE_SIZE);
-      const sy = 200 / (rows * TILE_SIZE);
+      const sx = MM / (cols * TILE_SIZE);
+      const sy = MM / (rows * TILE_SIZE);
       const tw = Math.ceil(TILE_SIZE * sx);
       const th = Math.ceil(TILE_SIZE * sy);
       for (let r = 0; r < rows; r++) {
@@ -5184,8 +5309,8 @@ export class HordeScene extends Phaser.Scene {
     if (grassTint && tiles) {
       const cols = grassTint[0]?.length || 0;
       const rows = grassTint.length;
-      const sx = 200 / (cols * TILE_SIZE);
-      const sy = 200 / (rows * TILE_SIZE);
+      const sx = MM / (cols * TILE_SIZE);
+      const sy = MM / (rows * TILE_SIZE);
       const tw = Math.ceil(TILE_SIZE * sx);
       const th = Math.ceil(TILE_SIZE * sy);
       const tintColors: Record<number, string> = {
@@ -5251,8 +5376,9 @@ export class HordeScene extends Phaser.Scene {
 
     // Layer 1: cached terrain
     ctx.drawImage(this.minimapTerrainCanvas, 0, 0);
-    const scaleX = 200 / WORLD_W;
-    const scaleY = 200 / WORLD_H;
+    const MM = HordeScene.MM_SIZE;
+    const scaleX = MM / WORLD_W;
+    const scaleY = MM / WORLD_H;
     const myTeam = this.myTeam;
 
     // Layer 2: camps — only friendly/neutral, scouted enemy camps show last-seen state
@@ -5265,7 +5391,7 @@ export class HordeScene extends Phaser.Scene {
         ctx.shadowBlur = 6;
         ctx.fillStyle = '#4af0e0';
         ctx.beginPath();
-        ctx.arc(cx, cy, 3.5, 0, Math.PI * 2);
+        ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
         ctx.fill();
         ctx.shadowBlur = 0;
       } else if (c.owner === 0) {
@@ -5273,34 +5399,82 @@ export class HordeScene extends Phaser.Scene {
         ctx.strokeStyle = 'rgba(180,180,180,0.6)';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+        ctx.arc(cx, cy, 2, 0, Math.PI * 2);
         ctx.stroke();
       } else if (c.scouted) {
         // Enemy camp (scouted) — dim red dot, no glow
         ctx.fillStyle = 'rgba(255,80,80,0.4)';
         ctx.beginPath();
-        ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+        ctx.arc(cx, cy, 2, 0, Math.PI * 2);
         ctx.fill();
       }
     }
 
-    // Layer 3: towers
+    // Layer 2b: armories — small triangles, glow only if unlocked
+    for (const arm of this.armories) {
+      const ax = arm.x * scaleX, ay = arm.y * scaleY;
+      if (arm.team === myTeam) {
+        const unlocked = (this.unlockedEquipment[arm.team]?.get(arm.equipmentType) ?? 0) > 0;
+        if (unlocked) {
+          ctx.shadowColor = '#4af0e0';
+          ctx.shadowBlur = 4;
+          ctx.fillStyle = '#4af0e0';
+        } else {
+          ctx.fillStyle = 'rgba(74,240,224,0.35)';
+        }
+      } else {
+        ctx.fillStyle = 'rgba(255,80,80,0.4)';
+      }
+      ctx.beginPath();
+      ctx.moveTo(ax, ay - 2);
+      ctx.lineTo(ax - 2.5, ay + 2);
+      ctx.lineTo(ax + 2.5, ay + 2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+
+    // Layer 2c: mines — tiny yellow dots
+    for (const mine of this.mineNodes) {
+      ctx.fillStyle = '#ffd700';
+      ctx.beginPath();
+      ctx.arc(mine.x * scaleX, mine.y * scaleY, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Layer 3: towers — tower-shaped polygon outline
     for (const t of this.towers) {
       if (!t.alive) continue;
       const tx = t.x * scaleX, ty = t.y * scaleY;
       if (t.team === myTeam) {
         ctx.shadowColor = '#4af0e0';
         ctx.shadowBlur = 4;
-        ctx.fillStyle = '#4af0e0';
+        ctx.strokeStyle = '#4af0e0';
       } else {
-        ctx.fillStyle = 'rgba(255,80,80,0.4)';
+        ctx.strokeStyle = 'rgba(255,80,80,0.4)';
       }
+      ctx.lineWidth = 1;
+      // Crown (crenellated top)
       ctx.beginPath();
-      ctx.moveTo(tx, ty - 4);
-      ctx.lineTo(tx - 3, ty + 2);
-      ctx.lineTo(tx + 3, ty + 2);
+      ctx.moveTo(tx - 3, ty - 3);
+      ctx.lineTo(tx - 3, ty - 2);
+      ctx.lineTo(tx - 1, ty - 2);
+      ctx.lineTo(tx - 1, ty - 3);
+      ctx.moveTo(tx + 1, ty - 3);
+      ctx.lineTo(tx + 1, ty - 2);
+      ctx.lineTo(tx + 3, ty - 2);
+      ctx.lineTo(tx + 3, ty - 3);
+      ctx.stroke();
+      // Body (crossbar down to base)
+      ctx.beginPath();
+      ctx.moveTo(tx - 3, ty - 2);
+      ctx.lineTo(tx + 3, ty - 2);
+      ctx.lineTo(tx + 2, ty + 1);
+      ctx.lineTo(tx + 2, ty + 4);
+      ctx.lineTo(tx - 2, ty + 4);
+      ctx.lineTo(tx - 2, ty + 1);
       ctx.closePath();
-      ctx.fill();
+      ctx.stroke();
       ctx.shadowBlur = 0;
     }
 
@@ -5340,7 +5514,20 @@ export class HordeScene extends Phaser.Scene {
     }
     ctx.shadowBlur = 0;
 
-    // Layer 6: camera viewport — use Phaser's worldView for accuracy
+    // Layer 7: active map events — yellow rings
+    ctx.shadowColor = '#ffd700';
+    ctx.shadowBlur = 5;
+    ctx.strokeStyle = '#ffd700';
+    ctx.lineWidth = 1.5;
+    for (const ev of this.mapEvents) {
+      if (ev.state !== 'active') continue;
+      ctx.beginPath();
+      ctx.arc(ev.x * scaleX, ev.y * scaleY, 4, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.shadowBlur = 0;
+
+    // Layer 8: camera viewport — use Phaser's worldView for accuracy
     const wv = this.cameras.main.worldView;
     const vLeft = Math.max(0, wv.x) * scaleX;
     const vTop = Math.max(0, wv.y) * scaleY;
@@ -8455,14 +8642,15 @@ export class HordeScene extends Phaser.Scene {
         if (u.equipSprite) u.equipSprite.setVisible(false);
         if (u.equipDragSprite) u.equipDragSprite.setVisible(false);
       } else if (u.sprite) {
-        // Non-own on-screen units: respect fog of war
-        const fogVisible = this.fogDisabled || this.isInVision(u.x, u.y);
+        // Non-own on-screen units: use cached fog visibility (set by updateFogVisibility)
+        const fogVisible = this.fogDisabled || (u as any)._fogVisible;
         u.sprite.setVisible(fogVisible);
         if (u.carrySprite) u.carrySprite.setVisible(fogVisible);
         if (u.equipSprite) u.equipSprite.setVisible(fogVisible);
         if (u.equipDragSprite) u.equipDragSprite.setVisible(fogVisible);
       }
       if (!u.sprite) {
+        if ((u as any)._fogVisible === undefined) (u as any)._fogVisible = false;
         const spriteConf = HORDE_SPRITE_CONFIGS[u.type];
         if (spriteConf) {
           // Create animated sprite at unit's actual position
@@ -10351,9 +10539,43 @@ export class HordeScene extends Phaser.Scene {
         this.sfx.playAt('nexus_destroyed', n.x, n.y);
         this.sfx.playGlobal(this.winner === this.myTeam ? 'victory' : 'defeat');
         this.profilingRecorder?.finalize();
+        this.writeMatchHistory();
         this.showGameOver();
         return;
       }
+    }
+  }
+
+  /** Write match result to Firebase for signed-in users */
+  private async writeMatchHistory(): Promise<void> {
+    if (!this.isOnline || !this.gameId || !this.winner) return;
+    const auth = AuthManager.getInstance();
+    if (auth.isGuest || !auth.currentUser) return;
+
+    try {
+      const opponentUid = this.opponentUid || 'unknown';
+      let opponentName = 'Unknown';
+      let opponentIcon = 'gnome';
+
+      if (opponentUid !== 'unknown') {
+        const profile = await auth.getProfile(opponentUid);
+        if (profile) {
+          opponentName = profile.username;
+          opponentIcon = profile.icon;
+        }
+      }
+
+      await auth.writeMatchResult({
+        result: this.winner === this.myTeam ? 'win' : 'loss',
+        opponentName,
+        opponentIcon,
+        opponentUid,
+        durationMs: this.gameTime,
+        datePlayed: Date.now(),
+        mapName: this.mapDef?.name || 'Unknown',
+      });
+    } catch (err) {
+      console.warn('[MatchHistory] Failed to write:', err);
     }
   }
 
@@ -10909,6 +11131,7 @@ export class HordeScene extends Phaser.Scene {
       this.gameOver = true;
       this.winner = state.winner as 1 | 2 | null;
       this.sfx.playGlobal(this.winner === this.myTeam ? 'victory' : 'defeat');
+      this.writeMatchHistory();
       this.showGameOver();
     }
   }

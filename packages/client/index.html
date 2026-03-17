@@ -24,6 +24,15 @@
       position: relative;
       width: 100%;
       height: 100%;
+      overflow: hidden;
+    }
+    #game-container > canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100% !important;
+      height: 100% !important;
+      z-index: 0;
     }
     #hud-overlay {
       position: absolute;
@@ -446,8 +455,8 @@
 
     /* ─── DAY/NIGHT CYCLE INDICATOR ────────────────────────── */
     #horde-daynight {
-      position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
-      margin-top: 70px; /* below the top bar */
+      position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+      margin-top: 62px; /* below the top bar */
       display: flex; align-items: center; gap: 8px;
       padding: 6px 14px;
       background: rgba(20, 15, 40, 0.85);
@@ -498,9 +507,10 @@
 
     /* Top control group bar */
     #horde-top-bar {
-      position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+      position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
       display: flex; gap: 4px; z-index: 101; pointer-events: all;
       font-family: 'Nunito', sans-serif;
+      max-width: calc(100vw - 16px); flex-wrap: wrap; justify-content: center;
     }
     #horde-top-bar .ctrl-card {
       background: rgba(212,196,160,0.88); backdrop-filter: blur(8px);
@@ -544,22 +554,19 @@
     /* ─── RIGHT SIDEBAR (resources + quests) ─────────────── */
     #horde-right-sidebar {
       position: absolute; top: 8px; right: 8px;
-      width: clamp(180px, 18vw, 240px);
+      width: min(clamp(180px, 18vw, 240px), calc(50vw - 16px));
+      max-width: calc(100vw - 16px);
       display: flex; flex-direction: column; gap: 8px;
       z-index: 101; pointer-events: none;
       max-height: calc(100vh - clamp(170px, 16vw, 220px) - 24px);
-      overflow-y: auto; overflow-x: hidden;
+      overflow: hidden;
       box-sizing: border-box;
-      scrollbar-width: thin; scrollbar-color: rgba(139,115,85,0.4) transparent;
     }
-    #horde-right-sidebar::-webkit-scrollbar { width: 5px; }
-    #horde-right-sidebar::-webkit-scrollbar-track { background: transparent; }
-    #horde-right-sidebar::-webkit-scrollbar-thumb { background: rgba(139,115,85,0.4); border-radius: 3px; }
 
     /* Resource panel (right sidebar child — includes equipment) */
     #horde-resource-panel {
       width: 100%; box-sizing: border-box;
-      max-height: min(55vh, 420px); overflow-y: auto; overflow-x: hidden;
+      flex: 1 1 0; min-height: 80px; overflow-y: auto; overflow-x: hidden;
       background: rgba(212,196,160,0.88); backdrop-filter: blur(10px);
       border: 2px solid rgba(139,115,85,0.5); border-radius: 12px;
       padding: 10px 12px; pointer-events: all;
@@ -573,17 +580,14 @@
     /* ─── LEFT SIDEBAR (portrait + stats + cmd log) ────── */
     #horde-left-sidebar {
       position: absolute; top: 8px; left: 8px;
-      width: clamp(180px, 18vw, 240px);
+      width: min(clamp(180px, 18vw, 240px), calc(50vw - 16px));
+      max-width: calc(100vw - 16px);
       display: flex; flex-direction: column; gap: 8px;
       z-index: 101; pointer-events: none;
       max-height: calc(100vh - 16px);
-      overflow-y: auto; overflow-x: hidden;
+      overflow: hidden;
       box-sizing: border-box;
-      scrollbar-width: thin; scrollbar-color: rgba(139,115,85,0.4) transparent;
     }
-    #horde-left-sidebar::-webkit-scrollbar { width: 5px; }
-    #horde-left-sidebar::-webkit-scrollbar-track { background: transparent; }
-    #horde-left-sidebar::-webkit-scrollbar-thumb { background: rgba(139,115,85,0.4); border-radius: 3px; }
 
     /* Character stats card */
     #horde-char-stats {
@@ -593,12 +597,13 @@
       padding: 6px 10px; pointer-events: all;
       font-family: 'Nunito', sans-serif;
       overflow: hidden;
+      flex-shrink: 0;
     }
 
     /* Command log panel */
     #horde-cmd-log {
       width: 100%; box-sizing: border-box;
-      max-height: min(calc(100vh - 100px), 400px); overflow-y: auto; overflow-x: hidden;
+      flex: 1 1 0; min-height: 60px; overflow-y: auto; overflow-x: hidden;
       background: rgba(212,196,160,0.88); backdrop-filter: blur(10px);
       border: 2px solid rgba(139,115,85,0.5); border-radius: 12px;
       padding: 10px 12px; pointer-events: all;
@@ -643,12 +648,21 @@
     /* Bottom-right minimap */
     #horde-minimap {
       position: absolute; bottom: 8px; right: 8px;
-      width: clamp(150px, 15vw, 200px); height: clamp(150px, 15vw, 200px);
+      width: clamp(180px, 18vw, 240px); height: clamp(180px, 18vw, 240px);
       background: #0d1a0d;
       border: 1px solid rgba(106,180,255,0.25);
       border-radius: 10px; z-index: 101; pointer-events: all;
       cursor: pointer; overflow: hidden;
       box-shadow: 0 0 12px rgba(0,0,0,0.6), inset 0 0 8px rgba(0,0,0,0.4);
+    }
+    #horde-minimap-tip {
+      position: absolute; pointer-events: none;
+      background: rgba(0,0,0,0.85); color: #eee;
+      font: 11px/1.3 monospace; padding: 3px 6px;
+      border-radius: 4px; white-space: nowrap;
+      border: 1px solid rgba(106,180,255,0.3);
+      display: none; z-index: 102;
+      transform: translate(-50%, -100%); margin-top: -6px;
     }
 
     /* Always-on voice pulsing */
@@ -797,7 +811,8 @@
     /* ─── TALKING PORTRAIT (left sidebar child) ────────── */
     #talking-portrait {
       position: relative;
-      width: 75%; box-sizing: border-box;
+      width: 60%; box-sizing: border-box;
+      align-self: center;
       aspect-ratio: 1;
       overflow: hidden;
       border-radius: 12px;
@@ -807,6 +822,7 @@
       opacity: 1;
       transition: opacity 0.3s ease;
       pointer-events: none;
+      flex-shrink: 0;
     }
     #talking-portrait .portrait-frame {
       position: absolute; top: -16%; left: -16%; width: 132%; height: 132%;
@@ -842,7 +858,7 @@
     /* Voice name label below portrait */
     #talking-portrait .portrait-voice-label {
       position: absolute;
-      bottom: -22px;
+      bottom: 4px;
       left: 0;
       width: 100%;
       text-align: center;
@@ -851,11 +867,13 @@
       font-family: 'Press Start 2P', monospace;
       text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
       pointer-events: none;
+      background: linear-gradient(transparent, rgba(0,0,0,0.5));
+      padding: 4px 0 2px;
     }
   </style>
 </head>
 <body>
-  <div id="game-container">
+  <div id="game-container" style="display:none">
     <div id="hud-overlay">
       <div id="status-bar"></div>
       <div id="ability-panel"></div>

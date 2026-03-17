@@ -3,6 +3,12 @@ import { FirebaseSync } from '../network/FirebaseSync';
 import { Matchmaking } from '../network/Matchmaking';
 import { SettingsPanel } from '../systems/SettingsPanel';
 import { GameSettings } from '../systems/GameSettings';
+import { AuthManager } from '../auth/AuthManager';
+import { FriendsPanel } from '../ui/FriendsPanel';
+import { MatchHistoryPanel } from '../ui/MatchHistoryPanel';
+import { MatchInvitePopup } from '../ui/MatchInvitePopup';
+import { createIconElement } from '../ui/FriendsPanel';
+import { C } from '../ui/UIColors';
 
 export class MenuScene extends Phaser.Scene {
   private matchmaking!: Matchmaking;
@@ -12,6 +18,12 @@ export class MenuScene extends Phaser.Scene {
   private settingsPanel = new SettingsPanel();
   private _resizeTimer: number | null = null;
   private _resizeHandler: (() => void) | null = null;
+  private profileCardEl: HTMLDivElement | null = null;
+  private friendsPanel: FriendsPanel | null = null;
+  private matchHistoryPanel: MatchHistoryPanel | null = null;
+  private matchInvitePopup: MatchInvitePopup | null = null;
+  private friendsUnsub: (() => void) | null = null;
+  private invitesUnsub: (() => void) | null = null;
 
   constructor() {
     super({ key: 'MenuScene' });
@@ -27,6 +39,7 @@ export class MenuScene extends Phaser.Scene {
     this.events.once('shutdown', () => {
       if (this._resizeHandler) this.scale.off('resize', this._resizeHandler);
       if (this._resizeTimer !== null) clearTimeout(this._resizeTimer);
+      this.cleanupSocialUI();
     });
     const { width, height } = this.cameras.main;
 
@@ -278,6 +291,9 @@ export class MenuScene extends Phaser.Scene {
       stroke: '#0a0f06', strokeThickness: 2,
     }).setOrigin(0.5).setDepth(11);
 
+    // === SOCIAL UI (DOM overlay) ===
+    this.setupSocialUI();
+
     // Castle decorations in corners
     if (this.textures.exists('ts_castle_blue')) {
       this.add.image(80, height - 60, 'ts_castle_blue').setScale(0.3).setAlpha(0.15).setDepth(2);
@@ -485,7 +501,15 @@ export class MenuScene extends Phaser.Scene {
 
         this.cameras.main.flash(300, 107, 155, 94, false);
 
+        // Fetch opponent UID from game meta for match history
+        let opponentUid: string | undefined;
+        try {
+          const meta = await firebase.getGameMeta(matchResult.gameId);
+          opponentUid = matchResult.amPlayer1 ? meta.player2 : meta.player1;
+        } catch { /* non-critical */ }
+
         this.time.delayedCall(800, () => {
+          this.cleanupSocialUI();
           this.cameras.main.fadeOut(400, 15, 26, 10);
           this.cameras.main.once('camerafadeoutcomplete', () => {
             this.scene.start('HordeScene', {
@@ -493,6 +517,7 @@ export class MenuScene extends Phaser.Scene {
               gameId: matchResult.gameId,
               playerId: firebase.getPlayerId(),
               amPlayer1: matchResult.amPlayer1,
+              opponentUid,
             });
           });
         });
@@ -501,6 +526,227 @@ export class MenuScene extends Phaser.Scene {
       this.statusText.setText('Error: ' + (err as Error).message);
       this.statusText.setColor('#BB4444');
     }
+  }
+
+  private setupSocialUI() {
+    const auth = AuthManager.getInstance();
+
+    // === TOP-RIGHT ACCOUNT BAR (DOM overlay) ===
+    this.profileCardEl = document.createElement('div');
+    this.profileCardEl.id = 'menu-profile-card';
+    this.profileCardEl.style.cssText = `
+      position:fixed;top:16px;right:70px;z-index:100;
+      display:flex;align-items:center;gap:8px;
+      padding:8px 16px;
+      background:rgba(36,58,24,0.85);
+      border:2px solid rgba(90,154,78,0.5);border-radius:22px;
+      backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+      font-family:"Nunito",sans-serif;
+      opacity:0;transition:opacity 0.6s ease 0.8s;
+      box-shadow:0 2px 12px rgba(0,0,0,0.3);
+    `;
+
+    if (!auth.isGuest && auth.userProfile) {
+      // Signed-in user: icon + name + online dot + social buttons
+      const iconEl = createIconElement(auth.userProfile.icon, 28);
+      iconEl.style.borderRadius = '50%';
+      iconEl.style.border = `2px solid ${C.gold}`;
+      iconEl.style.flexShrink = '0';
+      this.profileCardEl.appendChild(iconEl);
+
+      const nameEl = document.createElement('span');
+      nameEl.textContent = auth.userProfile.username;
+      nameEl.style.cssText = `font-size:13px;font-weight:700;color:${C.textPrimary};`;
+      this.profileCardEl.appendChild(nameEl);
+
+      const dot = document.createElement('span');
+      dot.style.cssText = `width:7px;height:7px;border-radius:50%;background:#45E6B0;flex-shrink:0;box-shadow:0 0 6px rgba(69,230,176,0.5);`;
+      this.profileCardEl.appendChild(dot);
+
+      // Divider
+      const sep = document.createElement('span');
+      sep.style.cssText = `width:1px;height:20px;background:rgba(139,115,85,0.3);margin:0 4px;`;
+      this.profileCardEl.appendChild(sep);
+
+      // Social buttons inline
+      const makeSocialBtn = (label: string, onClick: () => void) => {
+        const btn = document.createElement('button');
+        btn.textContent = label;
+        btn.style.cssText = `
+          padding:4px 10px;font-size:11px;font-weight:700;
+          font-family:"Fredoka",sans-serif;letter-spacing:1px;
+          background:transparent;border:1.5px solid rgba(139,115,85,0.3);
+          color:${C.textSecondary};border-radius:6px;cursor:pointer;
+          transition:all 0.15s;white-space:nowrap;
+        `;
+        btn.onmouseenter = () => { btn.style.borderColor = C.gold; btn.style.color = C.gold; btn.style.background = 'rgba(255,217,61,0.08)'; };
+        btn.onmouseleave = () => { btn.style.borderColor = 'rgba(139,115,85,0.3)'; btn.style.color = C.textSecondary; btn.style.background = 'transparent'; };
+        btn.onclick = onClick;
+        return btn;
+      };
+
+      this.profileCardEl.appendChild(makeSocialBtn('FRIENDS', () => this.openFriendsPanel()));
+      this.profileCardEl.appendChild(makeSocialBtn('HISTORY', () => this.openMatchHistory()));
+
+      // Sign out button (subtle)
+      const signOutBtn = document.createElement('button');
+      signOutBtn.textContent = 'Sign Out';
+      signOutBtn.style.cssText = `
+        padding:4px 8px;font-size:10px;font-weight:600;
+        font-family:"Nunito",sans-serif;
+        background:transparent;border:none;
+        color:${C.textMuted};cursor:pointer;
+        transition:color 0.15s;
+      `;
+      signOutBtn.onmouseenter = () => { signOutBtn.style.color = C.red; };
+      signOutBtn.onmouseleave = () => { signOutBtn.style.color = C.textMuted; };
+      signOutBtn.onclick = async () => {
+        await auth.signOut();
+        window.location.reload();
+      };
+      this.profileCardEl.appendChild(signOutBtn);
+    } else {
+      // Guest user: guest icon + label + sign in button
+      const guestIcon = document.createElement('span');
+      guestIcon.textContent = '\u2694'; // crossed swords
+      guestIcon.style.cssText = `font-size:18px;opacity:0.5;`;
+      this.profileCardEl.appendChild(guestIcon);
+
+      const guestLabel = document.createElement('span');
+      guestLabel.textContent = 'Guest';
+      guestLabel.style.cssText = `font-size:13px;font-weight:700;color:${C.textMuted};`;
+      this.profileCardEl.appendChild(guestLabel);
+
+      // Divider
+      const sep = document.createElement('span');
+      sep.style.cssText = `width:1px;height:20px;background:rgba(139,115,85,0.3);margin:0 4px;`;
+      this.profileCardEl.appendChild(sep);
+
+      const signInBtn = document.createElement('button');
+      signInBtn.textContent = 'Sign In';
+      signInBtn.style.cssText = `
+        padding:5px 14px;font-size:12px;font-weight:700;
+        font-family:"Fredoka",sans-serif;letter-spacing:1px;
+        background:rgba(255,217,61,0.12);border:1.5px solid rgba(255,217,61,0.35);
+        color:${C.gold};border-radius:6px;cursor:pointer;
+        transition:all 0.15s;
+      `;
+      signInBtn.onmouseenter = () => { signInBtn.style.background = 'rgba(255,217,61,0.2)'; signInBtn.style.borderColor = C.gold; };
+      signInBtn.onmouseleave = () => { signInBtn.style.background = 'rgba(255,217,61,0.12)'; signInBtn.style.borderColor = 'rgba(255,217,61,0.35)'; };
+      signInBtn.onclick = async () => {
+        try {
+          await auth.linkGuestToGoogle();
+          window.location.reload();
+        } catch { /* user cancelled popup */ }
+      };
+      this.profileCardEl.appendChild(signInBtn);
+    }
+
+    document.body.appendChild(this.profileCardEl);
+    requestAnimationFrame(() => { if (this.profileCardEl) this.profileCardEl.style.opacity = '1'; });
+
+    // === INVITE POPUP LISTENER (signed-in users only) ===
+    if (!auth.isGuest && auth.userProfile) {
+      this.matchInvitePopup = new MatchInvitePopup({
+        onAccept: async (inviteId: string) => {
+          const gameId = await auth.acceptInvite(inviteId);
+          this.cleanupSocialUI();
+          this.cameras.main.fadeOut(400, 15, 26, 10);
+          this.cameras.main.once('camerafadeoutcomplete', () => {
+            this.scene.start('HordeScene', {
+              isOnline: true,
+              gameId,
+              playerId: auth.currentUser?.uid,
+              amPlayer1: false,
+            });
+          });
+          return gameId;
+        },
+        onDecline: async (inviteId: string) => {
+          await auth.declineInvite(inviteId);
+        },
+      });
+
+      this.invitesUnsub = auth.onIncomingInvites((invite) => {
+        this.matchInvitePopup?.show({
+          inviteId: invite.inviteId,
+          fromUsername: invite.fromUsername,
+          fromIcon: invite.fromIcon,
+        });
+      });
+    }
+  }
+
+  private openFriendsPanel() {
+    if (this.friendsPanel?.isOpen) { this.friendsPanel.close(); return; }
+    const auth = AuthManager.getInstance();
+
+    this.friendsPanel = new FriendsPanel({
+      onAddFriend: async (username: string) => {
+        try {
+          const target = await auth.searchByUsername(username);
+          if (!target) return { success: false, error: 'User not found' };
+          if (target.uid === auth.currentUser?.uid) return { success: false, error: "That's you!" };
+          await auth.sendFriendRequest(target.uid);
+          return { success: true };
+        } catch (e) { return { success: false, error: (e as Error).message }; }
+      },
+      onAcceptRequest: (uid) => auth.acceptRequest(uid),
+      onDeclineRequest: (uid) => auth.declineRequest(uid),
+      onRemoveFriend: (uid) => auth.removeFriend(uid),
+      onInvite: async (friendUid) => {
+        const { inviteId, gameId } = await auth.sendInvite(friendUid);
+        const response = await auth.waitForInviteResponse(friendUid, inviteId);
+        if (response === 'accepted') {
+          this.friendsPanel?.close();
+          this.cleanupSocialUI();
+          this.cameras.main.fadeOut(400, 15, 26, 10);
+          this.cameras.main.once('camerafadeoutcomplete', () => {
+            this.scene.start('HordeScene', {
+              isOnline: true,
+              gameId,
+              playerId: auth.currentUser?.uid,
+              amPlayer1: true,
+              opponentUid: friendUid,
+            });
+          });
+        }
+      },
+    });
+    this.friendsPanel.open();
+
+    // Feed friends data
+    if (this.friendsUnsub) this.friendsUnsub();
+    this.friendsUnsub = auth.onFriendsChanged((friends) => {
+      this.friendsPanel?.updateFriends(friends);
+    });
+  }
+
+  private async openMatchHistory() {
+    if (this.matchHistoryPanel?.isOpen) { this.matchHistoryPanel.close(); return; }
+    const auth = AuthManager.getInstance();
+    this.matchHistoryPanel = new MatchHistoryPanel();
+    this.matchHistoryPanel.openLoading();
+
+    try {
+      const entries = await auth.getMatchHistory(20);
+      this.matchHistoryPanel.setEntries(entries);
+    } catch {
+      this.matchHistoryPanel.setEntries([]);
+    }
+  }
+
+  private cleanupSocialUI() {
+    this.profileCardEl?.remove();
+    this.profileCardEl = null;
+    this.friendsPanel?.destroy();
+    this.friendsPanel = null;
+    this.matchHistoryPanel?.destroy();
+    this.matchHistoryPanel = null;
+    this.matchInvitePopup?.destroy();
+    this.matchInvitePopup = null;
+    if (this.friendsUnsub) { this.friendsUnsub(); this.friendsUnsub = null; }
+    if (this.invitesUnsub) { this.invitesUnsub(); this.invitesUnsub = null; }
   }
 
   private playsfx(key: string, volume = 0.5) {
