@@ -174,8 +174,8 @@ export class MenuScene extends Phaser.Scene {
       });
     });
 
-    if (this.textures.exists('ts_icon3')) {
-      const charIcon = this.add.image(0, 0, 'ts_icon3').setScale(0.85).setDepth(15);
+    if (this.textures.exists('ts_icon1')) {
+      const charIcon = this.add.image(0, 0, 'ts_icon1').setScale(0.65).setDepth(15);
       charBtn.container.add(charIcon);
       charIcon.setPosition(-120, 0);
     }
@@ -184,8 +184,8 @@ export class MenuScene extends Phaser.Scene {
     const storeBtn = this.createMedievalButton(width / 2, btnStoreY, 340, 54, 'STORE', 'yellow', false);
     storeBtn.container.setAlpha(0).setScale(0.5);
     this.tweens.add({ targets: storeBtn.container, alpha: 1, scaleX: 1, scaleY: 1, duration: 600, delay: 1050, ease: 'Back.easeOut' });
-    if (this.textures.exists('ts_icon1')) {
-      const storeIcon = this.add.image(0, 0, 'ts_icon1').setScale(0.65).setDepth(15);
+    if (this.textures.exists('ts_icon3')) {
+      const storeIcon = this.add.image(0, 0, 'ts_icon3').setScale(0.85).setDepth(15);
       storeBtn.container.add(storeIcon);
       storeIcon.setPosition(-120, 0);
     }
@@ -752,6 +752,7 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private setupSocialUI() {
+    this.exposePlaySfx();
     const auth = AuthManager.getInstance();
 
     // === TOP-RIGHT VERTICAL ACCOUNT PANEL (DOM overlay) ===
@@ -839,20 +840,39 @@ export class MenuScene extends Phaser.Scene {
           btn.style.boxShadow = '0 1px 4px rgba(0,0,0,0.15)';
           btn.style.transform = 'translateX(0)';
         };
-        btn.onclick = onClick;
+        btn.onclick = () => { (window as any).__menuPlaySfx?.('button_click', 0.3); onClick(); };
         return btn;
       };
+
+      // Make profile header clickable → account page
+      header.style.cursor = 'pointer';
+      header.style.transition = 'background 0.15s';
+      header.onmouseenter = () => { header.style.background = 'rgba(255,217,61,0.12)'; };
+      header.onmouseleave = () => { header.style.background = 'rgba(255,217,61,0.06)'; };
+      header.onclick = () => { (window as any).__menuPlaySfx?.('button_click', 0.3); this.openAccountPanel('profile'); };
 
       btnList.appendChild(makeSocialBtn(
         'assets/ui/icons/Icon_06.png', 'Friends',
         'rgba(69,230,176,0.3)', 'rgba(69,230,176,0.15)', C.teal,
-        () => this.openFriendsPanel()
+        () => this.openAccountPanel('friends')
       ));
 
       btnList.appendChild(makeSocialBtn(
         'assets/ui/icons/Icon_11.png', 'History',
         'rgba(255,217,61,0.25)', 'rgba(255,217,61,0.12)', C.gold,
-        () => this.openMatchHistory()
+        () => this.openAccountPanel('history')
+      ));
+
+      btnList.appendChild(makeSocialBtn(
+        'assets/ui/icons/Icon_05.png', 'Ranked',
+        'rgba(255,107,107,0.25)', 'rgba(255,107,107,0.12)', C.red,
+        () => this.openAccountPanel('ranked')
+      ));
+
+      btnList.appendChild(makeSocialBtn(
+        'assets/ui/icons/Icon_09.png', 'Inventory',
+        'rgba(155,127,212,0.25)', 'rgba(155,127,212,0.12)', '#9B7FD4',
+        () => this.openAccountPanel('inventory')
       ));
 
       this.profileCardEl.appendChild(btnList);
@@ -872,7 +892,7 @@ export class MenuScene extends Phaser.Scene {
       `;
       signOutBtn.onmouseenter = () => { signOutBtn.style.color = C.red; };
       signOutBtn.onmouseleave = () => { signOutBtn.style.color = C.textMuted; };
-      signOutBtn.onclick = async () => { await auth.signOut(); window.location.reload(); };
+      signOutBtn.onclick = async () => { (window as any).__menuPlaySfx?.('button_click', 0.3); await auth.signOut(); window.location.reload(); };
       signOutRow.appendChild(signOutBtn);
       this.profileCardEl.appendChild(signOutRow);
     } else {
@@ -907,6 +927,7 @@ export class MenuScene extends Phaser.Scene {
       signInBtn.onmouseenter = () => { signInBtn.style.background = 'rgba(255,217,61,0.18)'; signInBtn.style.borderColor = C.gold; signInBtn.style.transform = 'translateY(-1px)'; };
       signInBtn.onmouseleave = () => { signInBtn.style.background = 'rgba(255,217,61,0.1)'; signInBtn.style.borderColor = C.goldDim; signInBtn.style.transform = 'translateY(0)'; };
       signInBtn.onclick = async () => {
+        (window as any).__menuPlaySfx?.('button_click', 0.3);
         try { await auth.linkGuestToGoogle(); window.location.reload(); } catch { /* cancelled */ }
       };
       this.profileCardEl.appendChild(signInBtn);
@@ -945,6 +966,588 @@ export class MenuScene extends Phaser.Scene {
         });
       });
     }
+  }
+
+  private accountPanelEl: HTMLDivElement | null = null;
+
+  private openAccountPanel(tab: 'profile' | 'friends' | 'history' | 'ranked' | 'inventory') {
+    // If already open, just switch tab
+    if (this.accountPanelEl) {
+      this.switchAccountTab(tab);
+      return;
+    }
+
+    this.blockGameInput();
+
+    const overlay = document.createElement('div');
+    this.accountPanelEl = overlay;
+    overlay.style.cssText = `
+      position:fixed;inset:0;z-index:9997;
+      background:${C.overlay};backdrop-filter:${C.panelBlur};-webkit-backdrop-filter:${C.panelBlur};
+      display:flex;align-items:center;justify-content:center;
+      opacity:0;transition:opacity 0.25s ease;
+      font-family:"Nunito",sans-serif;
+    `;
+    overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) this.closeAccountPanel(); });
+
+    const panel = document.createElement('div');
+    panel.setAttribute('data-account-panel', '');
+    panel.style.cssText = `
+      width:min(680px,94vw);max-height:min(520px,88vh);
+      background:${C.panelBg};border:2px solid ${C.panelBorder};border-radius:16px;
+      box-shadow:${C.panelShadow};display:flex;overflow:hidden;
+      transform:scale(0.96);transition:transform 0.3s cubic-bezier(0.16,1,0.3,1);
+    `;
+
+    // Paper texture overlay for account panel
+    const acctTexture = document.createElement('div');
+    acctTexture.style.cssText = `
+      position:absolute;inset:0;
+      background-image:url('assets/ui/panels/RegularPaper.png');
+      background-size:cover;opacity:0.06;
+      pointer-events:none;border-radius:inherit;
+    `;
+    panel.insertBefore(acctTexture, panel.firstChild);
+
+    // Decorative top gold line
+    const acctTopBar = document.createElement('div');
+    acctTopBar.style.cssText = `
+      position:absolute;top:-1px;left:15%;right:15%;height:3px;
+      background:linear-gradient(90deg, transparent, ${C.gold}, transparent);
+      border-radius:0 0 4px 4px;z-index:1;
+    `;
+    panel.appendChild(acctTopBar);
+
+    // Left sidebar — tabs
+    const sidebar = document.createElement('div');
+    sidebar.style.cssText = `
+      width:180px;flex-shrink:0;
+      background:rgba(255,248,230,0.03);
+      border-right:1px solid ${C.divider};
+      display:flex;flex-direction:column;padding:12px 0;
+      position:relative;
+    `;
+
+    // Wood texture overlay for sidebar
+    const sidebarTexture = document.createElement('div');
+    sidebarTexture.style.cssText = `
+      position:absolute;inset:0;
+      background-image:url('assets/ui/panels/WoodTable.png');
+      background-size:cover;opacity:0.04;
+      pointer-events:none;border-radius:inherit;
+    `;
+    sidebar.appendChild(sidebarTexture);
+
+    const auth = AuthManager.getInstance();
+    if (auth.userProfile) {
+      const profileMini = document.createElement('div');
+      profileMini.style.cssText = `
+        display:flex;align-items:center;gap:10px;padding:12px 16px 16px;
+        border-bottom:1px solid ${C.divider};margin-bottom:8px;
+      `;
+      const icon = createIconElement(auth.userProfile.icon, 36);
+      icon.style.borderRadius = '50%';
+      icon.style.border = `2px solid ${C.gold}`;
+      profileMini.appendChild(icon);
+      const name = document.createElement('div');
+      name.textContent = auth.userProfile.username;
+      name.style.cssText = `font-size:14px;font-weight:700;color:${C.textH1};`;
+      profileMini.appendChild(name);
+      sidebar.appendChild(profileMini);
+    }
+
+    const tabs: { id: string; label: string; icon: string }[] = [
+      { id: 'profile', label: 'Profile', icon: 'assets/ui/icons/Icon_08.png' },
+      { id: 'friends', label: 'Friends', icon: 'assets/ui/icons/Icon_06.png' },
+      { id: 'history', label: 'History', icon: 'assets/ui/icons/Icon_11.png' },
+      { id: 'ranked', label: 'Ranked', icon: 'assets/ui/icons/Icon_05.png' },
+      { id: 'inventory', label: 'Inventory', icon: 'assets/ui/icons/Icon_09.png' },
+    ];
+
+    const tabBtns: HTMLButtonElement[] = [];
+    for (const t of tabs) {
+      const btn = document.createElement('button');
+      btn.setAttribute('data-tab', t.id);
+      btn.innerHTML = `<img src="${t.icon}" style="width:20px;height:20px;object-fit:contain;image-rendering:pixelated;"><span>${t.label}</span>`;
+      btn.style.cssText = `
+        display:flex;align-items:center;gap:10px;padding:10px 16px;
+        font-size:13px;font-weight:600;font-family:"Nunito",sans-serif;
+        background:transparent;border:none;color:${C.textSecondary};
+        cursor:pointer;transition:all 0.15s;text-align:left;width:100%;
+        border-left:3px solid transparent;
+      `;
+      btn.onmouseenter = () => { if (!btn.classList.contains('active')) btn.style.background = C.surfaceHover; };
+      btn.onmouseleave = () => { if (!btn.classList.contains('active')) btn.style.background = 'transparent'; };
+      btn.onclick = () => { (window as any).__menuPlaySfx?.('button_click', 0.3); this.switchAccountTab(t.id as any); };
+      tabBtns.push(btn);
+      sidebar.appendChild(btn);
+    }
+
+    // Content area
+    const content = document.createElement('div');
+    content.setAttribute('data-account-content', '');
+    content.style.cssText = `
+      flex:1;padding:24px;overflow-y:auto;min-height:0;
+      scrollbar-width:thin;scrollbar-color:rgba(139,115,85,0.4) transparent;
+    `;
+
+    // Close button
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = '\u2715';
+    closeBtn.style.cssText = `
+      position:absolute;top:12px;right:12px;
+      background:${C.inputBg};border:1px solid ${C.inputBorder};color:${C.textSecondary};
+      width:32px;height:32px;border-radius:8px;font-size:15px;cursor:pointer;
+      display:flex;align-items:center;justify-content:center;transition:all 0.15s;z-index:1;
+    `;
+    closeBtn.onmouseenter = () => { closeBtn.style.borderColor = C.red; closeBtn.style.color = C.red; };
+    closeBtn.onmouseleave = () => { closeBtn.style.borderColor = C.inputBorder; closeBtn.style.color = C.textSecondary; };
+    closeBtn.onclick = () => { (window as any).__menuPlaySfx?.('button_click', 0.3); this.closeAccountPanel(); };
+
+    panel.style.position = 'relative';
+    panel.appendChild(closeBtn);
+    panel.appendChild(sidebar);
+    panel.appendChild(content);
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+
+    // ESC to close
+    const escHandler = (e: KeyboardEvent) => { if (e.key === 'Escape') this.closeAccountPanel(); };
+    window.addEventListener('keydown', escHandler);
+    (overlay as any)._escHandler = escHandler;
+
+    requestAnimationFrame(() => {
+      overlay.style.opacity = '1';
+      panel.style.transform = 'scale(1)';
+    });
+
+    // Switch to requested tab
+    this.switchAccountTab(tab);
+  }
+
+  private switchAccountTab(tab: string) {
+    if (!this.accountPanelEl) return;
+    const content = this.accountPanelEl.querySelector('[data-account-content]') as HTMLDivElement;
+    if (!content) return;
+
+    // Update tab button styles
+    const btns = this.accountPanelEl.querySelectorAll('[data-tab]') as NodeListOf<HTMLButtonElement>;
+    for (const btn of btns) {
+      const isActive = btn.getAttribute('data-tab') === tab;
+      btn.classList.toggle('active', isActive);
+      btn.style.background = isActive ? C.surfaceActive : 'transparent';
+      btn.style.color = isActive ? C.gold : C.textSecondary;
+      btn.style.borderLeftColor = isActive ? C.gold : 'transparent';
+    }
+
+    // Clear and render tab content
+    content.innerHTML = '';
+    const auth = AuthManager.getInstance();
+
+    switch (tab) {
+      case 'profile':
+        this.renderProfileTab(content, auth);
+        break;
+      case 'friends':
+        this.renderFriendsTab(content, auth);
+        break;
+      case 'history':
+        this.renderHistoryTab(content, auth);
+        break;
+      case 'ranked':
+        this.renderRankedTab(content, auth);
+        break;
+      case 'inventory':
+        this.renderInventoryTab(content, auth);
+        break;
+    }
+  }
+
+  private renderProfileTab(el: HTMLDivElement, auth: AuthManager) {
+    const profile = auth.userProfile;
+    if (!profile) return;
+
+    el.innerHTML = `
+      <div style="display:flex;align-items:center;gap:20px;margin-bottom:24px;">
+        <div style="width:80px;height:80px;border-radius:50%;overflow:hidden;border:3px solid ${C.gold};box-shadow:0 0 12px rgba(255,217,61,0.2);flex-shrink:0;">
+          <img src="assets/enemies/avatars/${profile.icon}.png" style="width:100%;height:100%;object-fit:cover;">
+        </div>
+        <div>
+          <div style="font-size:22px;font-weight:700;color:${C.textH1};font-family:'Fredoka',sans-serif;">${profile.username}</div>
+          <div style="font-size:12px;color:${C.teal};font-weight:600;margin-top:4px;">
+            <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#45E6B0;margin-right:6px;vertical-align:middle;"></span>Online
+          </div>
+          <div style="font-size:11px;color:${C.textMuted};margin-top:4px;">Joined ${new Date(profile.createdAt).toLocaleDateString()}</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div style="background:${C.surface};border:1px solid ${C.divider};border-radius:10px;padding:14px;">
+          <div style="font-size:11px;color:${C.textMuted};letter-spacing:1px;margin-bottom:6px;">ACCOUNT</div>
+          <div style="font-size:14px;color:${C.textPrimary};">Provider: <span style="color:${C.gold};">${profile.provider}</span></div>
+        </div>
+        <div style="background:${C.surface};border:1px solid ${C.divider};border-radius:10px;padding:14px;">
+          <div style="font-size:11px;color:${C.textMuted};letter-spacing:1px;margin-bottom:6px;">UID</div>
+          <div style="font-size:11px;color:${C.textSecondary};word-break:break-all;">${profile.uid}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  private renderRankedTab(el: HTMLDivElement, _auth: AuthManager) {
+    el.innerHTML = `
+      <div style="font-size:20px;font-weight:700;color:${C.gold};font-family:'Fredoka',sans-serif;letter-spacing:2px;margin-bottom:16px;">RANKED</div>
+      <div style="display:flex;align-items:center;gap:16px;background:${C.surface};border:1px solid ${C.divider};border-radius:12px;padding:20px;margin-bottom:16px;">
+        <img src="assets/ui/icons/Icon_05.png" style="width:48px;height:48px;object-fit:contain;image-rendering:pixelated;">
+        <div>
+          <div style="font-size:18px;font-weight:700;color:${C.textH1};">Unranked</div>
+          <div style="font-size:12px;color:${C.textMuted};margin-top:4px;">Play ranked matches to earn a rank</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">
+        <div style="background:${C.surface};border:1px solid ${C.divider};border-radius:8px;padding:12px;text-align:center;">
+          <div style="font-size:24px;font-weight:700;color:${C.teal};">0</div>
+          <div style="font-size:11px;color:${C.textMuted};margin-top:4px;">Wins</div>
+        </div>
+        <div style="background:${C.surface};border:1px solid ${C.divider};border-radius:8px;padding:12px;text-align:center;">
+          <div style="font-size:24px;font-weight:700;color:${C.red};">0</div>
+          <div style="font-size:11px;color:${C.textMuted};margin-top:4px;">Losses</div>
+        </div>
+        <div style="background:${C.surface};border:1px solid ${C.divider};border-radius:8px;padding:12px;text-align:center;">
+          <div style="font-size:24px;font-weight:700;color:${C.gold};">—</div>
+          <div style="font-size:11px;color:${C.textMuted};margin-top:4px;">Win Rate</div>
+        </div>
+      </div>
+      <div style="font-size:12px;color:${C.textMuted};text-align:center;margin-top:20px;font-style:italic;">Ranked seasons coming soon</div>
+    `;
+  }
+
+  private renderInventoryTab(el: HTMLDivElement, _auth: AuthManager) {
+    el.innerHTML = `
+      <div style="font-size:20px;font-weight:700;color:${C.gold};font-family:'Fredoka',sans-serif;letter-spacing:2px;margin-bottom:16px;">INVENTORY</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(100px, 1fr));gap:12px;">
+    `;
+
+    // Show unlocked unit avatars as inventory items
+    const unitTypes = ['gnome','turtle','skull','spider','hyena','rogue','panda','lizard','minotaur','shaman','troll'];
+    for (const type of unitTypes) {
+      const card = document.createElement('div');
+      card.style.cssText = `
+        background:${C.surface};border:1px solid ${C.divider};border-radius:10px;
+        padding:10px;display:flex;flex-direction:column;align-items:center;
+        cursor:pointer;transition:all 0.15s;
+      `;
+      card.onmouseenter = () => { card.style.borderColor = C.gold; card.style.background = C.surfaceHover; };
+      card.onmouseleave = () => { card.style.borderColor = C.divider; card.style.background = C.surface; };
+
+      const img = document.createElement('img');
+      img.src = `assets/enemies/avatars/${type}.png`;
+      img.style.cssText = `width:56px;height:56px;object-fit:cover;border-radius:8px;image-rendering:pixelated;`;
+      card.appendChild(img);
+
+      const label = document.createElement('div');
+      label.textContent = type.charAt(0).toUpperCase() + type.slice(1);
+      label.style.cssText = `font-size:11px;font-weight:600;color:${C.textSecondary};margin-top:6px;text-transform:capitalize;`;
+      card.appendChild(label);
+
+      const badge = document.createElement('div');
+      badge.textContent = 'Owned';
+      badge.style.cssText = `font-size:9px;color:${C.teal};font-weight:700;margin-top:3px;`;
+      card.appendChild(badge);
+
+      el.appendChild(card);
+    }
+  }
+
+  private renderFriendsTab(el: HTMLDivElement, auth: AuthManager) {
+    el.innerHTML = `
+      <div style="font-size:20px;font-weight:700;color:${C.gold};font-family:'Fredoka',sans-serif;letter-spacing:2px;margin-bottom:16px;">FRIENDS</div>
+    `;
+
+    // Add friend search bar
+    const searchRow = document.createElement('div');
+    searchRow.style.cssText = `display:flex;gap:8px;margin-bottom:16px;`;
+    const searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.placeholder = 'Add friend by username...';
+    searchInput.style.cssText = `
+      flex:1;padding:10px 14px;font-size:13px;font-family:"Nunito",sans-serif;
+      background:${C.inputBg};border:1px solid ${C.inputBorder};border-radius:8px;
+      color:${C.textPrimary};outline:none;transition:border-color 0.15s;
+    `;
+    searchInput.onfocus = () => { searchInput.style.borderColor = C.inputBorderHi; };
+    searchInput.onblur = () => { searchInput.style.borderColor = C.inputBorder; };
+
+    const addBtn = document.createElement('button');
+    addBtn.textContent = 'Add';
+    addBtn.style.cssText = `
+      padding:10px 18px;font-size:13px;font-weight:700;font-family:"Fredoka",sans-serif;
+      background:${C.gold};color:${C.textDark};border:none;border-radius:8px;
+      cursor:pointer;transition:all 0.15s;white-space:nowrap;
+    `;
+    addBtn.onmouseenter = () => { addBtn.style.background = '#ffe566'; };
+    addBtn.onmouseleave = () => { addBtn.style.background = C.gold; };
+
+    const feedback = document.createElement('div');
+    feedback.style.cssText = `font-size:12px;min-height:18px;margin-bottom:12px;`;
+
+    addBtn.onclick = async () => {
+      (window as any).__menuPlaySfx?.('button_click', 0.3);
+      const username = searchInput.value.trim();
+      if (!username) return;
+      addBtn.textContent = 'Adding...';
+      addBtn.disabled = true;
+      feedback.textContent = 'Searching...';
+      feedback.style.color = C.textMuted;
+      try {
+        const target = await auth.searchByUsername(username);
+        if (!target) { feedback.textContent = 'User not found'; feedback.style.color = C.red; return; }
+        if (target.uid === auth.currentUser?.uid) { feedback.textContent = "That's you!"; feedback.style.color = C.red; return; }
+        await auth.sendFriendRequest(target.uid);
+        feedback.textContent = 'Friend request sent!'; feedback.style.color = C.teal;
+        searchInput.value = '';
+      } catch (e) { feedback.textContent = (e as Error).message; feedback.style.color = C.red; }
+      finally { addBtn.textContent = 'Add'; addBtn.disabled = false; }
+    };
+
+    searchRow.appendChild(searchInput);
+    searchRow.appendChild(addBtn);
+    el.appendChild(searchRow);
+    el.appendChild(feedback);
+
+    // Friends list container
+    const listEl = document.createElement('div');
+    listEl.style.cssText = `display:flex;flex-direction:column;gap:8px;`;
+    const emptyMsg = document.createElement('div');
+    emptyMsg.textContent = 'No friends yet. Add someone by username above!';
+    emptyMsg.style.cssText = `font-size:13px;color:${C.textMuted};text-align:center;padding:24px;font-style:italic;`;
+    listEl.appendChild(emptyMsg);
+    el.appendChild(listEl);
+
+    // Subscribe to friends updates
+    if (this.friendsUnsub) this.friendsUnsub();
+    this.friendsUnsub = auth.onFriendsChanged((friends) => {
+      listEl.innerHTML = '';
+      if (friends.length === 0) {
+        listEl.appendChild(emptyMsg);
+        return;
+      }
+
+      // Separate accepted vs pending
+      const accepted = friends.filter(f => f.status === 'accepted');
+      const incoming = friends.filter(f => f.status === 'pending_received');
+      const outgoing = friends.filter(f => f.status === 'pending_sent');
+
+      if (incoming.length > 0) {
+        const header = document.createElement('div');
+        header.textContent = `REQUESTS (${incoming.length})`;
+        header.style.cssText = `font-size:11px;font-weight:700;color:${C.gold};letter-spacing:1px;margin-bottom:6px;`;
+        listEl.appendChild(header);
+        for (const req of incoming) {
+          listEl.appendChild(this.buildFriendRow(req, auth, 'incoming'));
+        }
+      }
+
+      if (accepted.length > 0) {
+        const header = document.createElement('div');
+        header.textContent = `FRIENDS (${accepted.length})`;
+        header.style.cssText = `font-size:11px;font-weight:700;color:${C.teal};letter-spacing:1px;margin:${incoming.length > 0 ? '12px' : '0'} 0 6px;`;
+        listEl.appendChild(header);
+        for (const f of accepted.sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0))) {
+          listEl.appendChild(this.buildFriendRow(f, auth, 'accepted'));
+        }
+      }
+
+      if (outgoing.length > 0) {
+        const header = document.createElement('div');
+        header.textContent = 'PENDING';
+        header.style.cssText = `font-size:11px;font-weight:700;color:${C.textMuted};letter-spacing:1px;margin:12px 0 6px;`;
+        listEl.appendChild(header);
+        for (const f of outgoing) {
+          listEl.appendChild(this.buildFriendRow(f, auth, 'outgoing'));
+        }
+      }
+    });
+  }
+
+  private buildFriendRow(friend: { uid: string; username: string; icon: string; online: boolean; status: string }, auth: AuthManager, type: 'accepted' | 'incoming' | 'outgoing'): HTMLDivElement {
+    const row = document.createElement('div');
+    row.style.cssText = `
+      display:flex;align-items:center;gap:12px;padding:10px 14px;
+      background:${C.surface};border:1px solid ${C.divider};border-radius:10px;
+      transition:all 0.15s;
+    `;
+    row.onmouseenter = () => { row.style.background = C.surfaceHover; };
+    row.onmouseleave = () => { row.style.background = C.surface; };
+
+    const icon = createIconElement(friend.icon, 40);
+    icon.style.borderRadius = '50%';
+    icon.style.flexShrink = '0';
+    row.appendChild(icon);
+
+    const info = document.createElement('div');
+    info.style.cssText = `flex:1;min-width:0;`;
+    const name = document.createElement('div');
+    name.textContent = friend.username;
+    name.style.cssText = `font-size:14px;font-weight:700;color:${C.textPrimary};`;
+    info.appendChild(name);
+
+    if (type === 'accepted') {
+      const status = document.createElement('div');
+      status.style.cssText = `font-size:11px;color:${friend.online ? C.teal : C.textMuted};font-weight:600;display:flex;align-items:center;gap:4px;`;
+      status.innerHTML = `<span style="width:6px;height:6px;border-radius:50%;background:${friend.online ? '#45E6B0' : '#555'};"></span>${friend.online ? 'Online' : 'Offline'}`;
+      info.appendChild(status);
+    }
+    row.appendChild(info);
+
+    const actions = document.createElement('div');
+    actions.style.cssText = `display:flex;gap:6px;flex-shrink:0;`;
+
+    if (type === 'incoming') {
+      const acceptBtn = document.createElement('button');
+      acceptBtn.textContent = 'Accept';
+      acceptBtn.style.cssText = `padding:6px 12px;font-size:11px;font-weight:700;background:${C.green};color:#fff;border:none;border-radius:6px;cursor:pointer;transition:all 0.15s;`;
+      acceptBtn.onclick = () => auth.acceptRequest(friend.uid);
+
+      const declineBtn = document.createElement('button');
+      declineBtn.textContent = 'Decline';
+      declineBtn.style.cssText = `padding:6px 12px;font-size:11px;font-weight:700;background:transparent;color:${C.red};border:1px solid ${C.red};border-radius:6px;cursor:pointer;transition:all 0.15s;`;
+      declineBtn.onclick = () => auth.declineRequest(friend.uid);
+
+      actions.appendChild(acceptBtn);
+      actions.appendChild(declineBtn);
+    } else if (type === 'accepted') {
+      if (friend.online) {
+        const inviteBtn = document.createElement('button');
+        inviteBtn.textContent = 'Invite';
+        inviteBtn.style.cssText = `padding:6px 12px;font-size:11px;font-weight:700;background:${C.gold};color:${C.textDark};border:none;border-radius:6px;cursor:pointer;transition:all 0.15s;`;
+        inviteBtn.onclick = async () => {
+          inviteBtn.textContent = 'Inviting...';
+          inviteBtn.style.opacity = '0.5';
+          try {
+            const { inviteId, gameId } = await auth.sendInvite(friend.uid);
+            const response = await auth.waitForInviteResponse(friend.uid, inviteId);
+            if (response === 'accepted') {
+              this.closeAccountPanel();
+              this.cleanupSocialUI();
+              this.cameras.main.fadeOut(400, 15, 26, 10);
+              this.cameras.main.once('camerafadeoutcomplete', () => {
+                this.scene.start('HordeScene', { isOnline: true, gameId, playerId: auth.currentUser?.uid, amPlayer1: true, opponentUid: friend.uid });
+              });
+            } else {
+              inviteBtn.textContent = 'Declined';
+              setTimeout(() => { inviteBtn.textContent = 'Invite'; inviteBtn.style.opacity = '1'; }, 2000);
+            }
+          } catch { inviteBtn.textContent = 'Invite'; inviteBtn.style.opacity = '1'; }
+        };
+        actions.appendChild(inviteBtn);
+      }
+      const removeBtn = document.createElement('button');
+      removeBtn.textContent = 'Remove';
+      removeBtn.style.cssText = `padding:6px 10px;font-size:10px;font-weight:600;background:transparent;color:${C.textMuted};border:1px solid ${C.divider};border-radius:6px;cursor:pointer;transition:all 0.15s;`;
+      removeBtn.onmouseenter = () => { removeBtn.style.color = C.red; removeBtn.style.borderColor = C.red; };
+      removeBtn.onmouseleave = () => { removeBtn.style.color = C.textMuted; removeBtn.style.borderColor = C.divider; };
+      removeBtn.onclick = () => auth.removeFriend(friend.uid);
+      actions.appendChild(removeBtn);
+    } else {
+      const pendingLabel = document.createElement('span');
+      pendingLabel.textContent = 'Pending...';
+      pendingLabel.style.cssText = `font-size:11px;color:${C.textMuted};font-style:italic;`;
+      actions.appendChild(pendingLabel);
+    }
+
+    row.appendChild(actions);
+    return row;
+  }
+
+  private async renderHistoryTab(el: HTMLDivElement, auth: AuthManager) {
+    el.innerHTML = `
+      <div style="font-size:20px;font-weight:700;color:${C.gold};font-family:'Fredoka',sans-serif;letter-spacing:2px;margin-bottom:16px;">MATCH HISTORY</div>
+      <div style="text-align:center;padding:20px;color:${C.textMuted};">Loading...</div>
+    `;
+
+    try {
+      const entries = await auth.getMatchHistory(20);
+      // Clear loading
+      el.innerHTML = `
+        <div style="font-size:20px;font-weight:700;color:${C.gold};font-family:'Fredoka',sans-serif;letter-spacing:2px;margin-bottom:16px;">MATCH HISTORY</div>
+      `;
+
+      if (entries.length === 0) {
+        el.innerHTML += `<div style="text-align:center;padding:30px;color:${C.textMuted};font-style:italic;">No matches yet. Play PvP to see your history!</div>`;
+        return;
+      }
+
+      // Stats summary
+      const wins = entries.filter(e => e.result === 'win').length;
+      const losses = entries.length - wins;
+      const statsRow = document.createElement('div');
+      statsRow.style.cssText = `
+        display:flex;gap:12px;margin-bottom:16px;
+      `;
+      statsRow.innerHTML = `
+        <div style="flex:1;background:${C.surface};border:1px solid ${C.divider};border-radius:8px;padding:12px;text-align:center;">
+          <div style="font-size:22px;font-weight:700;color:${C.teal};">${wins}</div>
+          <div style="font-size:11px;color:${C.textMuted};">Wins</div>
+        </div>
+        <div style="flex:1;background:${C.surface};border:1px solid ${C.divider};border-radius:8px;padding:12px;text-align:center;">
+          <div style="font-size:22px;font-weight:700;color:${C.red};">${losses}</div>
+          <div style="font-size:11px;color:${C.textMuted};">Losses</div>
+        </div>
+        <div style="flex:1;background:${C.surface};border:1px solid ${C.divider};border-radius:8px;padding:12px;text-align:center;">
+          <div style="font-size:22px;font-weight:700;color:${C.gold};">${entries.length > 0 ? Math.round(wins / entries.length * 100) : 0}%</div>
+          <div style="font-size:11px;color:${C.textMuted};">Win Rate</div>
+        </div>
+      `;
+      el.appendChild(statsRow);
+
+      // Match list
+      for (const entry of entries) {
+        const row = document.createElement('div');
+        row.style.cssText = `
+          display:flex;align-items:center;gap:12px;padding:10px 14px;
+          background:${C.surface};border:1px solid ${C.divider};border-radius:8px;
+          margin-bottom:6px;
+        `;
+
+        // Date
+        const date = new Date(entry.datePlayed);
+        const dateStr = `${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+
+        // Duration
+        const mins = Math.floor(entry.durationMs / 60000);
+        const secs = Math.floor((entry.durationMs % 60000) / 1000);
+
+        // W/L badge
+        const isWin = entry.result === 'win';
+
+        row.innerHTML = `
+          <div style="font-size:11px;color:${C.textMuted};width:90px;flex-shrink:0;">${dateStr}</div>
+          <div style="width:32px;height:32px;border-radius:50%;overflow:hidden;flex-shrink:0;">
+            <img src="assets/enemies/avatars/${entry.opponentIcon || 'gnome'}.png" style="width:100%;height:100%;object-fit:cover;">
+          </div>
+          <div style="flex:1;font-size:13px;font-weight:700;color:${C.textPrimary};min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${entry.opponentName}</div>
+          <div style="padding:3px 10px;border-radius:4px;font-size:11px;font-weight:700;color:#fff;background:${isWin ? C.teal : C.red};">${isWin ? 'W' : 'L'}</div>
+          <div style="font-size:11px;color:${C.textMuted};width:40px;text-align:right;">${mins}:${secs.toString().padStart(2, '0')}</div>
+        `;
+        el.appendChild(row);
+      }
+    } catch {
+      el.innerHTML += `<div style="text-align:center;padding:20px;color:${C.red};">Failed to load match history</div>`;
+    }
+  }
+
+  private closeAccountPanel() {
+    if (!this.accountPanelEl) return;
+    const el = this.accountPanelEl;
+    const escHandler = (el as any)._escHandler;
+    if (escHandler) window.removeEventListener('keydown', escHandler);
+
+    el.style.opacity = '0';
+    const panel = el.querySelector('[data-account-panel]') as HTMLElement;
+    if (panel) panel.style.transform = 'scale(0.96)';
+    setTimeout(() => el.remove(), 250);
+    this.accountPanelEl = null;
+    this.unblockGameInput();
   }
 
   /** Block Phaser canvas interaction while a DOM overlay is open */
@@ -1027,6 +1630,7 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private cleanupSocialUI() {
+    this.closeAccountPanel();
     this.profileCardEl?.remove();
     this.profileCardEl = null;
     this.friendsPanel?.destroy();
@@ -1043,6 +1647,13 @@ export class MenuScene extends Phaser.Scene {
   private playsfx(key: string, volume = 0.5) {
     if (this.muted || !this.cache.audio.exists(key)) return;
     this.sound.play(key, { volume });
+  }
+
+  /** Expose sfx to DOM onclick handlers via window global */
+  private exposePlaySfx() {
+    (window as any).__menuPlaySfx = (key: string, vol?: number) => {
+      this.playsfx(key, vol ?? 0.3);
+    };
   }
 
 }

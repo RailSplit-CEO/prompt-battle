@@ -988,6 +988,16 @@
     #talking-portrait .portrait-voice-label {
       display: none;
     }
+
+    /* ─── GLOBAL BUTTON ACTIVE / DISABLED STATES ───────── */
+    button:active:not(:disabled) {
+      transform: scale(0.96) !important;
+      transition-duration: 0.05s !important;
+    }
+    button:disabled {
+      opacity: 0.4 !important;
+      cursor: not-allowed !important;
+    }
   </style>
 </head>
 <body>

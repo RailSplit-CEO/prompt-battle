@@ -96,6 +96,16 @@ export class LoginOverlay {
         animation: login-panel-in 0.6s ease-out, login-glow 4s ease-in-out infinite;
       `;
 
+      // Paper texture overlay
+      const texture = document.createElement('div');
+      texture.style.cssText = `
+        position:absolute;inset:0;
+        background-image:url('assets/ui/panels/SpecialPaper.png');
+        background-size:cover;opacity:0.08;
+        pointer-events:none;border-radius:inherit;
+      `;
+      panel.appendChild(texture);
+
       // Decorative top gold line
       const topBar = document.createElement('div');
       topBar.style.cssText = `
@@ -195,76 +205,123 @@ export class LoginOverlay {
       // Platform detection for itch.io
       const isItchPlatform = (import.meta as any).env?.VITE_PLATFORM === 'itch' || window.location.hostname.includes('itch.zone');
 
-      // itch.io sign-in button
+      // --- itch.io sign-in button ---
       const itchBtn = document.createElement('button');
       itchBtn.textContent = 'Sign in with itch.io';
+      const itchIsPrimary = isItchPlatform;
       itchBtn.style.cssText = `
-        width:100%;max-width:300px;padding:13px 24px;
-        background:#FA5C5C;color:#fff;font-size:15px;
-        font-family:'Fredoka',sans-serif;font-weight:bold;
-        border:none;border-radius:10px;cursor:pointer;
+        width:100%;max-width:300px;
+        height:${itchIsPrimary ? '52px' : '44px'};
+        padding:0 24px;
+        background:${itchIsPrimary ? '#FA5C5C' : 'transparent'};
+        color:${itchIsPrimary ? '#fff' : '#FA5C5C'};
+        font-size:${itchIsPrimary ? '16px' : '14px'};
+        font-family:'Fredoka',sans-serif;
+        font-weight:bold;
+        border:${itchIsPrimary ? 'none' : '2px solid rgba(250,92,92,0.45)'};
+        border-radius:12px;cursor:pointer;
         display:flex;align-items:center;justify-content:center;
         margin-bottom:12px;
-        transition:box-shadow 0.2s, transform 0.15s;
-        box-shadow:0 2px 12px rgba(0,0,0,0.25);
+        transition:box-shadow 0.2s, transform 0.15s, background 0.2s, border-color 0.2s;
+        box-shadow:${itchIsPrimary ? '0 2px 12px rgba(0,0,0,0.25)' : 'none'};
       `;
       itchBtn.onmouseenter = () => {
-        itchBtn.style.boxShadow = '0 4px 24px rgba(0,0,0,0.4), 0 0 0 2px rgba(250,92,92,0.4)';
-        itchBtn.style.transform = 'translateY(-2px)';
+        if (itchIsPrimary) {
+          itchBtn.style.boxShadow = '0 4px 24px rgba(0,0,0,0.4), 0 0 0 2px rgba(250,92,92,0.4)';
+          itchBtn.style.transform = 'translateY(-2px)';
+        } else {
+          itchBtn.style.borderColor = 'rgba(250,92,92,0.8)';
+          itchBtn.style.background = 'rgba(250,92,92,0.1)';
+          itchBtn.style.transform = 'translateY(-1px)';
+        }
       };
       itchBtn.onmouseleave = () => {
-        itchBtn.style.boxShadow = '0 2px 12px rgba(0,0,0,0.25)';
+        if (itchIsPrimary) {
+          itchBtn.style.boxShadow = '0 2px 12px rgba(0,0,0,0.25)';
+        } else {
+          itchBtn.style.borderColor = 'rgba(250,92,92,0.45)';
+          itchBtn.style.background = 'transparent';
+        }
         itchBtn.style.transform = 'translateY(0)';
       };
-      itchBtn.onclick = () => { if (this.resolve) this.resolve('itch'); };
+      itchBtn.onclick = () => {
+        (window as any).__menuPlaySfx?.('button_click', 0.3);
+        itchBtn.textContent = 'Signing in...';
+        itchBtn.disabled = true;
+        googleBtn.disabled = true;
+        if (this.resolve) this.resolve('itch');
+      };
 
-      // Google sign-in button
+      // --- Google sign-in button ---
       const googleBtn = document.createElement('button');
+      const googleIsPrimary = !isItchPlatform;
       googleBtn.innerHTML = `${GOOGLE_SVG} Sign in with Google`;
       googleBtn.style.cssText = `
-        width:100%;max-width:300px;padding:13px 24px;
-        background:#fff;color:#333;font-size:15px;
-        font-family:'Nunito',sans-serif;font-weight:bold;
-        border:none;border-radius:10px;cursor:pointer;
+        width:100%;max-width:300px;
+        height:${googleIsPrimary ? '52px' : '44px'};
+        padding:0 24px;
+        background:${googleIsPrimary ? '#4285F4' : 'transparent'};
+        color:${googleIsPrimary ? '#fff' : '#4285F4'};
+        font-size:${googleIsPrimary ? '16px' : '14px'};
+        font-family:'Nunito',sans-serif;
+        font-weight:bold;
+        border:${googleIsPrimary ? 'none' : '2px solid rgba(66,133,244,0.45)'};
+        border-radius:12px;cursor:pointer;
         display:flex;align-items:center;justify-content:center;
         margin-bottom:12px;
-        transition:box-shadow 0.2s, transform 0.15s;
-        box-shadow:0 2px 12px rgba(0,0,0,0.25);
+        transition:box-shadow 0.2s, transform 0.15s, background 0.2s, border-color 0.2s;
+        box-shadow:${googleIsPrimary ? '0 2px 12px rgba(0,0,0,0.25)' : 'none'};
       `;
       googleBtn.onmouseenter = () => {
-        googleBtn.style.boxShadow = '0 4px 24px rgba(0,0,0,0.4), 0 0 0 2px rgba(255,217,61,0.2)';
-        googleBtn.style.transform = 'translateY(-2px)';
+        if (googleIsPrimary) {
+          googleBtn.style.boxShadow = '0 4px 24px rgba(0,0,0,0.4), 0 0 0 2px rgba(66,133,244,0.4)';
+          googleBtn.style.transform = 'translateY(-2px)';
+        } else {
+          googleBtn.style.borderColor = 'rgba(66,133,244,0.8)';
+          googleBtn.style.background = 'rgba(66,133,244,0.1)';
+          googleBtn.style.transform = 'translateY(-1px)';
+        }
       };
       googleBtn.onmouseleave = () => {
-        googleBtn.style.boxShadow = '0 2px 12px rgba(0,0,0,0.25)';
+        if (googleIsPrimary) {
+          googleBtn.style.boxShadow = '0 2px 12px rgba(0,0,0,0.25)';
+        } else {
+          googleBtn.style.borderColor = 'rgba(66,133,244,0.45)';
+          googleBtn.style.background = 'transparent';
+        }
         googleBtn.style.transform = 'translateY(0)';
       };
-      googleBtn.onclick = () => { if (this.resolve) this.resolve('google'); };
+      googleBtn.onclick = () => {
+        (window as any).__menuPlaySfx?.('button_click', 0.3);
+        googleBtn.innerHTML = 'Signing in...';
+        googleBtn.disabled = true;
+        itchBtn.disabled = true;
+        if (this.resolve) this.resolve('google');
+      };
 
-      // Guest button — green tinted like the horde solo button
-      const guestBtn = document.createElement('button');
-      guestBtn.textContent = 'Play as Guest';
-      guestBtn.style.cssText = `
-        width:100%;max-width:300px;padding:13px 24px;
-        background:rgba(58,106,46,0.2);color:${C.textSecondary};
-        font-size:15px;font-family:'Nunito',sans-serif;font-weight:bold;
-        border:2px solid rgba(90,154,78,0.35);border-radius:10px;cursor:pointer;
-        transition:all 0.2s;margin-bottom:8px;
+      // --- Guest text link ---
+      const guestLink = document.createElement('span');
+      guestLink.textContent = 'Play as Guest';
+      guestLink.style.cssText = `
+        color:${C.textMuted};
+        font-size:13px;font-family:'Nunito',sans-serif;
+        cursor:pointer;
+        transition:color 0.2s;
+        margin-top:4px;margin-bottom:8px;
       `;
-      guestBtn.onmouseenter = () => {
-        guestBtn.style.borderColor = 'rgba(90,154,78,0.7)';
-        guestBtn.style.color = C.textPrimary;
-        guestBtn.style.background = 'rgba(58,106,46,0.3)';
+      guestLink.onmouseenter = () => { guestLink.style.color = C.textSecondary; };
+      guestLink.onmouseleave = () => { guestLink.style.color = C.textMuted; };
+      guestLink.onclick = () => {
+        (window as any).__menuPlaySfx?.('button_click', 0.3);
+        guestLink.textContent = 'Signing in...';
+        guestLink.style.pointerEvents = 'none';
+        itchBtn.disabled = true;
+        googleBtn.disabled = true;
+        if (this.resolve) this.resolve('guest');
       };
-      guestBtn.onmouseleave = () => {
-        guestBtn.style.borderColor = 'rgba(90,154,78,0.35)';
-        guestBtn.style.color = C.textSecondary;
-        guestBtn.style.background = 'rgba(58,106,46,0.2)';
-      };
-      guestBtn.onclick = () => { if (this.resolve) this.resolve('guest'); };
 
-      // On itch.io platform: itch first, then Google, then Guest
-      // On own website: Google first, then itch, then Guest
+      // On itch.io platform: itch (primary) -> Google (secondary) -> Guest
+      // On own website: Google (primary) -> itch (secondary) -> Guest
       if (isItchPlatform) {
         panel.appendChild(itchBtn);
         panel.appendChild(googleBtn);
@@ -272,7 +329,7 @@ export class LoginOverlay {
         panel.appendChild(googleBtn);
         panel.appendChild(itchBtn);
       }
-      panel.appendChild(guestBtn);
+      panel.appendChild(guestLink);
 
       // Error area
       this.errorEl = document.createElement('div');

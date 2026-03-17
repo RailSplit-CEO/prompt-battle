@@ -27,37 +27,49 @@ async function boot() {
   const existingUser = await auth.waitForExistingSession();
 
   if (!existingUser) {
-    // 3. Show login screen — loop until successful sign-in
-    const loginOverlay = new LoginOverlay();
-    let signedIn = false;
-
-    while (!signedIn) {
-      const choice = await loginOverlay.show();
-
+    // Try itch.io desktop app auto-auth (zero clicks, no UI)
+    const itchApiKey = (window as any).Itch?.env?.ITCHIO_API_KEY;
+    if (itchApiKey) {
       try {
-        if (choice === 'google') {
-          await auth.signInWithGoogle();
-        } else if (choice === 'itch') {
-          await auth.signInWithItch();
-        } else {
-          await auth.signInAsGuest();
-        }
-        signedIn = true;
-      } catch (err: any) {
-        const msg = (err as Error).message;
-        if (msg === 'POPUP_BLOCKED') {
-          loginOverlay.showError('Popup blocked — please allow popups for this site and try again.');
-        } else if (msg === 'POPUP_CANCELLED') {
-          loginOverlay.showError(''); // clear error, user just closed the popup
-        } else {
-          loginOverlay.showError('Sign-in failed. Please try again.');
-          console.warn('[Boot] Sign-in error:', err);
-        }
-        // Stay on login screen, let user retry
+        await auth.signInWithItchApp();
+        console.log('[Boot] Auto-signed in via itch.io desktop app');
+      } catch (err) {
+        console.warn('[Boot] itch.io app auto-auth failed, falling back to login:', err);
       }
     }
 
-    loginOverlay.hide();
+    // If still not signed in (no itch app, or itch app auth failed), show LoginOverlay
+    if (!auth.currentUser) {
+      const loginOverlay = new LoginOverlay();
+      let signedIn = false;
+
+      while (!signedIn) {
+        const choice = await loginOverlay.show();
+
+        try {
+          if (choice === 'google') {
+            await auth.signInWithGoogle();
+          } else if (choice === 'itch') {
+            await auth.signInWithItch();
+          } else {
+            await auth.signInAsGuest();
+          }
+          signedIn = true;
+        } catch (err: any) {
+          const msg = (err as Error).message;
+          if (msg === 'POPUP_BLOCKED') {
+            loginOverlay.showError('Popup blocked — please allow popups for this site and try again.');
+          } else if (msg === 'POPUP_CANCELLED') {
+            loginOverlay.showError('');
+          } else {
+            loginOverlay.showError('Sign-in failed. Please try again.');
+            console.warn('[Boot] Sign-in error:', err);
+          }
+        }
+      }
+
+      loginOverlay.hide();
+    }
   }
 
   // 4. For Google users, try loading/creating profile (gracefully handle permission errors)

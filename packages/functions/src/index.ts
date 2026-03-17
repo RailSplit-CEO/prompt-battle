@@ -14,6 +14,7 @@ export { purchaseItem } from './store/purchase-item';
 
 // Auth
 export { itchOAuthCallback } from './auth/itch-auth';
+export { itchAppAuth } from './auth/itch-auth';
 
 admin.initializeApp();
 

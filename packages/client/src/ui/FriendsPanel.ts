@@ -246,7 +246,7 @@ export class FriendsPanel {
       closeBtn.style.color = C.textSecondary;
       closeBtn.style.background = C.inputBg;
     };
-    closeBtn.onclick = () => this.close();
+    closeBtn.onclick = () => { (window as any).__menuPlaySfx?.('button_click', 0.3); this.close(); };
     header.appendChild(closeBtn);
 
     // ── Search bar ──
@@ -302,10 +302,11 @@ export class FriendsPanel {
     };
 
     const doAdd = async () => {
+      (window as any).__menuPlaySfx?.('button_click', 0.3);
       const username = searchInput.value.trim();
       if (!username) return;
-      addBtn.style.opacity = '0.6';
-      addBtn.style.pointerEvents = 'none';
+      addBtn.textContent = 'Adding...';
+      addBtn.disabled = true;
       try {
         const result = await this.callbacks.onAddFriend(username);
         if (result.success) {
@@ -317,8 +318,8 @@ export class FriendsPanel {
       } catch {
         showFeedback('Something went wrong', true);
       } finally {
-        addBtn.style.opacity = '1';
-        addBtn.style.pointerEvents = 'auto';
+        addBtn.textContent = 'Add';
+        addBtn.disabled = false;
       }
     };
 
@@ -360,6 +361,7 @@ export class FriendsPanel {
         if (btn.dataset.tab !== this.activeTab) btn.style.color = C.textMuted;
       };
       btn.onclick = () => {
+        (window as any).__menuPlaySfx?.('button_click', 0.3);
         this.activeTab = tab.id as Tab;
         this.applyTabStyles();
         this.renderList();

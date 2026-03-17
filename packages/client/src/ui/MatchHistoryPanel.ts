@@ -3,6 +3,7 @@
 
 import { C } from './UIColors';
 import { createIconElement, renderBadgeHTML } from './FriendsPanel';
+import { createSkeletonList, staggerIn } from './Skeleton';
 
 // ─── Interfaces ─────────────────────────────────────────────────────
 export interface MatchHistoryEntry {
@@ -274,6 +275,9 @@ export class MatchHistoryPanel {
       row.appendChild(right);
       container.appendChild(row);
     }
+
+    // Stagger-animate rows in
+    staggerIn(container);
   }
 
   private renderStats(): void {
@@ -311,29 +315,8 @@ export class MatchHistoryPanel {
   }
 
   private renderLoading(container: HTMLDivElement): void {
-    const wrapper = document.createElement('div');
-    wrapper.style.cssText = `
-      display:flex;flex-direction:column;align-items:center;justify-content:center;
-      padding:48px 20px;gap:14px;
-    `;
-
-    const spinner = document.createElement('div');
-    spinner.className = 'history-spinner';
-    spinner.style.cssText = `
-      width:24px;height:24px;border:3px solid ${C.inputBg};
-      border-top-color:${C.gold};border-radius:50%;
-      animation:history-spin 0.8s linear infinite;
-    `;
-    wrapper.appendChild(spinner);
-
-    const text = document.createElement('span');
-    text.textContent = 'Loading...';
-    text.style.cssText = `
-      font-size:13px;color:${C.textMuted};font-family:"Nunito",sans-serif;
-    `;
-    wrapper.appendChild(text);
-
-    container.appendChild(wrapper);
+    const skeletonList = createSkeletonList(5);
+    container.appendChild(skeletonList);
   }
 
   private renderEmpty(container: HTMLDivElement): void {

@@ -47,6 +47,10 @@
         "function": "itchOAuthCallback"
       },
       {
+        "source": "/api/auth/itchAppAuth",
+        "function": "itchAppAuth"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

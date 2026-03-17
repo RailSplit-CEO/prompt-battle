@@ -85,6 +85,33 @@ export class ProfileSetupOverlay {
         overflowY: 'auto',
       });
 
+      // Paper texture overlay
+      const texturePSO = document.createElement('div');
+      Object.assign(texturePSO.style, {
+        position: 'absolute',
+        inset: '0',
+        backgroundImage: "url('assets/ui/panels/RegularPaper.png')",
+        backgroundSize: 'cover',
+        opacity: '0.06',
+        pointerEvents: 'none',
+        borderRadius: 'inherit',
+      });
+      panel.style.position = 'relative';
+      panel.insertBefore(texturePSO, panel.firstChild);
+
+      // Decorative top gold line
+      const topBarPSO = document.createElement('div');
+      Object.assign(topBarPSO.style, {
+        position: 'absolute',
+        top: '-1px',
+        left: '15%',
+        right: '15%',
+        height: '3px',
+        background: `linear-gradient(90deg, transparent, ${C.gold}, transparent)`,
+        borderRadius: '0 0 4px 4px',
+      });
+      panel.appendChild(topBarPSO);
+
       // Title
       const title = document.createElement('div');
       title.textContent = 'CREATE YOUR PROFILE';
@@ -374,8 +401,13 @@ export class ProfileSetupOverlay {
       });
 
       this.createBtn.addEventListener('click', () => {
+        (window as any).__menuPlaySfx?.('button_click', 0.3);
         if (!this.isFormValid()) return;
         if (!this.resolvePromise) return;
+        if (this.createBtn) {
+          this.createBtn.textContent = 'Creating...';
+          this.createBtn.disabled = true;
+        }
         const username = usernameInput.value.trim();
         this.resolvePromise({ username, icon: this.selectedIcon! });
       });

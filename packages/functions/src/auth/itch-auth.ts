@@ -85,3 +85,47 @@ export const itchOAuthCallback = functions.https.onRequest(async (req, res) => {
     res.status(500).json({ error: 'OAuth processing failed' });
   }
 });
+
+/**
+ * Authenticates an itch.io desktop app user via their injected API key.
+ * Zero-click login — no OAuth needed.
+ */
+export const itchAppAuth = functions.https.onRequest(async (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  if (req.method !== 'POST') { res.status(405).json({ error: 'Method not allowed' }); return; }
+
+  const { itchApiKey } = req.body;
+  if (!itchApiKey) { res.status(400).json({ error: 'Missing itchApiKey' }); return; }
+
+  try {
+    // Use the injected API key to get user profile
+    const meRes = await fetch(`https://itch.io/api/1/${itchApiKey}/me`);
+    if (!meRes.ok) { res.status(401).json({ error: 'Invalid itch.io API key' }); return; }
+
+    const meData = await meRes.json();
+    const itchUser = meData.user;
+    if (!itchUser?.id) { res.status(400).json({ error: 'Invalid user data' }); return; }
+
+    const firebaseUid = `itch_${itchUser.id}`;
+    const firebaseToken = await admin.auth().createCustomToken(firebaseUid, {
+      itchId: itchUser.id,
+      itchUsername: itchUser.username,
+      provider: 'itch',
+    });
+
+    res.json({
+      firebaseToken,
+      itchUser: {
+        id: itchUser.id,
+        username: itchUser.username,
+        displayName: itchUser.display_name || itchUser.username,
+      },
+    });
+  } catch (err: any) {
+    console.error('itch.io app auth error:', err);
+    res.status(500).json({ error: 'Auth failed' });
+  }
+});

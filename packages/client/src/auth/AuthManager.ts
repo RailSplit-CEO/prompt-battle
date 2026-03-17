@@ -262,6 +262,29 @@ export class AuthManager {
     });
   }
 
+  /** Zero-click sign-in for itch.io desktop app users */
+  async signInWithItchApp(): Promise<User> {
+    if (!this.auth) throw new Error('Auth not initialized');
+
+    const apiKey = (window as any).Itch?.env?.ITCHIO_API_KEY;
+    if (!apiKey) throw new Error('Not in itch.io desktop app');
+
+    const res = await fetch('/api/auth/itchAppAuth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ itchApiKey: apiKey }),
+    });
+
+    if (!res.ok) throw new Error('itch.io app auth failed');
+    const data = await res.json();
+    if (!data.firebaseToken) throw new Error('No token received');
+
+    const credential = await signInWithCustomToken(this.auth, data.firebaseToken);
+    this.currentUser = credential.user;
+    (this as any)._pendingItchUser = data.itchUser;
+    return credential.user;
+  }
+
   /** Get pending itch user info (used during profile creation after itch sign-in) */
   getPendingItchUser(): { id: number; username: string; displayName: string } | null {
     return (this as any)._pendingItchUser || null;
