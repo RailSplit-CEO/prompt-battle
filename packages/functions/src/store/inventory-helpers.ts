@@ -2,6 +2,22 @@ import * as admin from 'firebase-admin';
 
 const db = () => admin.database();
 
+function stripUndefined<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => stripUndefined(item)) as T;
+  }
+  if (value && typeof value === 'object') {
+    const clean: Record<string, unknown> = {};
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      if (nested !== undefined) {
+        clean[key] = stripUndefined(nested);
+      }
+    }
+    return clean as T;
+  }
+  return value;
+}
+
 // ─── Currency Operations (atomic via transaction) ───────────────
 
 export async function addCrowns(uid: string, amount: number): Promise<number> {
@@ -136,11 +152,11 @@ export async function logTransaction(data: {
   status: string;
 }): Promise<string> {
   const txnRef = db().ref('transactions').push();
-  await txnRef.set({
+  await txnRef.set(stripUndefined({
     ...data,
     createdAt: admin.database.ServerValue.TIMESTAMP,
     completedAt: data.status === 'completed' ? admin.database.ServerValue.TIMESTAMP : null,
-  });
+  }));
   return txnRef.key!;
 }
 

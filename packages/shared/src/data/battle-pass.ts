@@ -51,6 +51,9 @@ function getFreeReward(tier: number): BattlePassReward {
   if (tier === 28) return { type: 'item', itemId: 'emote_laughing' };
   if (tier === 38) return { type: 'item', itemId: 'cursor_crystal' };
   if (tier === 48) return { type: 'glory', amount: 200 };
+  // Crate tiers: every 7th tier gets a Bronze Crate, tier 50 gets Silver
+  if (tier === 50) return { type: 'crate', crateTier: 'silver' };
+  if (tier % 7 === 0) return { type: 'crate', crateTier: 'bronze' };
   // Every 10 tiers: large glory
   if (tier % 10 === 0) return { type: 'glory', amount: tier <= 20 ? 50 : tier <= 40 ? 75 : 100 };
   // Every 5 tiers: medium glory
@@ -75,6 +78,8 @@ function getPremiumReward(tier: number): BattlePassReward {
   if (tier === 40) return { type: 'item', itemId: 'frame_dragon' };
   if (tier === 45) return { type: 'item', itemId: 'voice_fx_echo' };
   if (tier === 50) return { type: 'item', itemId: 'skin_troll_frost_king' };
+  // Silver Crate every 8 tiers
+  if (tier % 8 === 0) return { type: 'crate', crateTier: 'silver' };
   // Alternating crowns and glory for remaining tiers
   if (tier % 4 === 0) return { type: 'glory', amount: 30 + Math.floor(tier / 10) * 10 };
   if (tier % 3 === 0) return { type: 'crowns', amount: 20 + Math.floor(tier / 10) * 10 };

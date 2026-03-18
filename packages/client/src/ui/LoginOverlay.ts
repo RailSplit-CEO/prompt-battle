@@ -64,7 +64,7 @@ export class LoginOverlay {
       const root = document.createElement('div');
       this.root = root;
       root.style.cssText = `
-        position:fixed;inset:0;z-index:10000;
+        position:fixed;inset:0;z-index:10005;
         background:#0f1a0a;
         display:flex;align-items:center;justify-content:center;
         font-family:'Nunito',sans-serif;
@@ -426,7 +426,7 @@ export function showGuestLoginPrompt(featureName: string): void {
     // Brief context message before the login overlay
     const banner = document.createElement('div');
     banner.style.cssText = `
-      position:fixed;top:0;left:0;right:0;z-index:10002;
+      position:fixed;top:0;left:0;right:0;z-index:10007;
       background:rgba(255,217,61,0.12);border-bottom:2px solid rgba(255,217,61,0.3);
       padding:10px 20px;text-align:center;
       font-family:'Nunito',sans-serif;font-size:14px;font-weight:700;

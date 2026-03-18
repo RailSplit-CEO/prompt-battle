@@ -4,6 +4,8 @@
 import { C } from './UIColors';
 import { PaymentService } from '../store/PaymentService';
 import { CROWN_PACKAGES } from '@prompt-battle/shared';
+import { CurrencyDisplay } from './CurrencyDisplay';
+import { playCurrencyFly } from './CurrencyFlyAnimation';
 
 export interface ItchRedeemOptions {
   onSuccess: (crownsGranted: number) => void;
@@ -282,6 +284,20 @@ export class ItchRedeemModal {
         msgEl.style.opacity = '1';
         redeemBtn.textContent = 'Done!';
         redeemBtn.style.opacity = '1';
+
+        // Fly crowns to the HUD counter
+        const display = CurrencyDisplay.getActive();
+        const crownsTarget = display?.getCrownsEl();
+        if (crownsTarget && crownsGranted > 0) {
+          const srcRect = msgEl.getBoundingClientRect();
+          playCurrencyFly({
+            type: 'crowns',
+            amount: crownsGranted,
+            fromX: srcRect.left + srcRect.width / 2,
+            fromY: srcRect.top + srcRect.height / 2,
+            toElement: crownsTarget,
+          });
+        }
 
         // Close after 2s and notify
         setTimeout(() => {

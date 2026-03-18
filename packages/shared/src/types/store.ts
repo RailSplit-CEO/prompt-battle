@@ -23,6 +23,8 @@ export type ItemCategory =
 
 export type Rarity = 'common' | 'rare' | 'epic' | 'legendary';
 
+export type CrateTier = 'bronze' | 'silver' | 'gold';
+
 export type HordeUnitType =
   | 'gnome' | 'snake' | 'turtle' | 'skull' | 'spider' | 'hyena'
   | 'rogue' | 'panda' | 'lizard' | 'bear' | 'harpoon_fish'
@@ -156,7 +158,8 @@ export type TransactionType =
   | 'itch_redeem'      // redeemed itch.io key
   | 'glory_earn'       // earned glory from gameplay
   | 'battle_pass'      // bought battle pass
-  | 'bundle_purchase'; // bought a bundle
+  | 'bundle_purchase'  // bought a bundle
+  | 'crate_open';      // opened a loot crate
 
 export interface TransactionRecord {
   uid: string;
@@ -176,9 +179,10 @@ export interface TransactionRecord {
 // ─── Battle Pass ────────────────────────────────────────────────
 
 export interface BattlePassReward {
-  type: 'item' | 'crowns' | 'glory';
+  type: 'item' | 'crowns' | 'glory' | 'crate';
   itemId?: string;
   amount?: number;                 // for crowns/glory rewards
+  crateTier?: CrateTier;           // for crate rewards
 }
 
 export interface BattlePassTier {
@@ -222,4 +226,29 @@ export type BoosterType = 'glory_2x' | 'xp_2x' | 'quest_refresh' | 'tier_skip';
 export interface ActiveBooster {
   type: BoosterType;
   expiresAt: number;
+}
+
+// ─── Loot Crates ──────────────────────────────────────────────
+
+export interface CrateDef {
+  tier: CrateTier;
+  name: string;
+  icon: string;
+  priceCrowns: number;
+  priceGlory: number | null;       // null = crowns-only
+  itemCount: number;
+  clicksRequired: number;
+  rarityWeights: Record<Rarity, number>;   // must sum to 100
+  eligibleCategories: ItemCategory[];
+  currencyFallback: number;                // crowns granted if loot pool exhausted
+}
+
+export interface CrateReward {
+  itemId: string | null;            // null = currency fallback
+  fallbackCrowns?: number;
+}
+
+export interface CrateOpenResult {
+  rewards: CrateReward[];
+  items: CatalogItem[];             // resolved catalog items for display
 }

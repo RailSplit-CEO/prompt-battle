@@ -5,6 +5,8 @@
 import { C } from './UIColors';
 import { WalletManager } from '../store/WalletManager';
 import { PaymentService } from '../store/PaymentService';
+import { CurrencyDisplay } from './CurrencyDisplay';
+import { playCurrencyFly } from './CurrencyFlyAnimation';
 
 export class DailyRewardModal {
   private overlay: HTMLDivElement | null = null;
@@ -212,7 +214,22 @@ export class DailyRewardModal {
     claimBtn.onmouseleave = () => { claimBtn.style.filter = 'brightness(1)'; };
     claimBtn.onmousedown = () => { claimBtn.style.transform = 'scale(0.97)'; };
     claimBtn.onmouseup = () => { claimBtn.style.transform = 'scale(1)'; };
-    claimBtn.onclick = () => this.close();
+    claimBtn.onclick = () => {
+      // Fly glory icons from the reward text to the HUD counter
+      const display = CurrencyDisplay.getActive();
+      const gloryTarget = display?.getGloryEl();
+      if (gloryTarget && gloryGranted > 0) {
+        const srcRect = gloryAmount.getBoundingClientRect();
+        playCurrencyFly({
+          type: 'glory',
+          amount: gloryGranted,
+          fromX: srcRect.left + srcRect.width / 2,
+          fromY: srcRect.top + srcRect.height / 2,
+          toElement: gloryTarget,
+        });
+      }
+      this.close();
+    };
     panel.appendChild(claimBtn);
 
     // -- 10. Hint --------------------------------------------------------

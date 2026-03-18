@@ -5,6 +5,9 @@
 import { C } from './UIColors';
 import { WalletManager } from '../store/WalletManager';
 
+/** Global singleton so animation callers can find the active display */
+let activeInstance: CurrencyDisplay | null = null;
+
 export class CurrencyDisplay {
   private el: HTMLDivElement;
   private crownsEl: HTMLSpanElement;
@@ -13,6 +16,7 @@ export class CurrencyDisplay {
 
   constructor() {
     const wallet = WalletManager.getInstance();
+    activeInstance = this;
 
     // Root container
     this.el = document.createElement('div');
@@ -72,8 +76,24 @@ export class CurrencyDisplay {
     return this.el;
   }
 
+  /** Get the crowns number element (fly animation target) */
+  getCrownsEl(): HTMLElement {
+    return this.crownsEl;
+  }
+
+  /** Get the glory number element (fly animation target) */
+  getGloryEl(): HTMLElement {
+    return this.gloryEl;
+  }
+
   destroy(): void {
     this.unsubscribe?.();
     this.unsubscribe = null;
+    if (activeInstance === this) activeInstance = null;
+  }
+
+  /** Get the currently mounted CurrencyDisplay instance (if any) */
+  static getActive(): CurrencyDisplay | null {
+    return activeInstance;
   }
 }

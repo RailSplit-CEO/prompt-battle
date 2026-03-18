@@ -76,12 +76,13 @@ async function boot() {
     }
   }
 
-  // 4. For Google users, try loading/creating profile (gracefully handle permission errors)
-  if (!auth.isGuest && auth.currentUser) {
+  // 4. Load or create profile for ALL users (including guests)
+  if (auth.currentUser) {
     try {
       await auth.loadMyProfile();
       if (!auth.userProfile) {
-        const itchUser = auth.getPendingItchUser();
+        const provider = auth.isGuest ? 'anonymous' : 'google';
+        const itchUser = auth.isGuest ? null : auth.getPendingItchUser();
         if (itchUser) {
           // Auto-create profile from itch.io info
           try {
@@ -99,12 +100,12 @@ async function boot() {
             await auth.loadMyProfile();
           }
         } else {
-          // Normal Google profile setup flow
+          // Profile setup for Google and guest users — pick a username
           const profileSetup = new ProfileSetupOverlay(
             (username) => auth.checkUsernameAvailable(username)
           );
           const { username, icon } = await profileSetup.show();
-          await auth.createProfile(auth.currentUser.uid, username, icon, 'google');
+          await auth.createProfile(auth.currentUser.uid, username, icon, provider);
           profileSetup.hide();
           await auth.loadMyProfile();
         }
@@ -115,8 +116,8 @@ async function boot() {
     }
   }
 
-  // 5. Set up online presence tracking (only for users with a profile)
-  if (auth.currentUser && !auth.isGuest && auth.userProfile) {
+  // 5. Set up online presence tracking (for all users with a profile)
+  if (auth.currentUser && auth.userProfile) {
     try { auth.setupPresence(); } catch { /* non-critical */ }
   }
 

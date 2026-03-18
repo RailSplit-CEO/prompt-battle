@@ -232,15 +232,21 @@ export const claimBattlePassReward = functions.https.onRequest(async (req, res) 
     // Mark claimed
     await bpRef.child(`${claimedKey}/${tier}`).set(true);
 
-    // Log transaction
-    await logTransaction({
-      uid,
-      type: 'battle_pass_claim',
-      itemIds: reward.itemId ? [reward.itemId] : [],
-      crownsChange: reward.type === 'crowns' ? reward.amount : undefined,
-      gloryChange: reward.type === 'glory' ? reward.amount : undefined,
-      status: 'completed',
-    });
+    // Transaction logging is non-critical. Do not turn a successful claim into
+    // a client-visible failure if analytics/audit logging throws.
+    try {
+      const txn: Parameters<typeof logTransaction>[0] = {
+        uid,
+        type: 'battle_pass_claim',
+        itemIds: reward.itemId ? [reward.itemId] : [],
+        status: 'completed',
+      };
+      if (reward.type === 'crowns' && reward.amount) txn.crownsChange = reward.amount;
+      if (reward.type === 'glory' && reward.amount) txn.gloryChange = reward.amount;
+      await logTransaction(txn);
+    } catch (err) {
+      console.error('claimBattlePassReward logTransaction error:', err);
+    }
 
     res.json({ success: true, reward });
   } catch (err: any) {

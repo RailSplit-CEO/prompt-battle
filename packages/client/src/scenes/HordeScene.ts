@@ -11043,6 +11043,22 @@ export class HordeScene extends Phaser.Scene {
       if (result.gloryGranted > 0) {
         const label = boosterActive ? `+${result.gloryGranted} Glory (2x Boost!)` : `+${result.gloryGranted} Glory earned!`;
         this.showFeedback(label, '#45E6B0');
+        // Fly glory icons from center screen to HUD counter
+        try {
+          const { CurrencyDisplay } = await import('../ui/CurrencyDisplay');
+          const { playCurrencyFly } = await import('../ui/CurrencyFlyAnimation');
+          const display = CurrencyDisplay.getActive();
+          const gloryTarget = display?.getGloryEl();
+          if (gloryTarget) {
+            playCurrencyFly({
+              type: 'glory',
+              amount: result.gloryGranted,
+              fromX: window.innerWidth / 2,
+              fromY: window.innerHeight / 2,
+              toElement: gloryTarget,
+            });
+          }
+        } catch {}
       }
     } catch (e) {
       // Non-critical — don't break game over screen

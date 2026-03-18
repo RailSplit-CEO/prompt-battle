@@ -14,12 +14,15 @@ export { purchaseItem } from './store/purchase-item';
 export { grantXp } from './store/grant-xp';
 export { purchaseBattlePass, grantBattlePassXp, claimBattlePassReward } from './store/battle-pass';
 export { exchangeStars } from './store/exchange-stars';
+export { openCrate } from './store/open-crate';
 
 // Auth
 export { itchOAuthCallback } from './auth/itch-auth';
 export { itchAppAuth } from './auth/itch-auth';
 
-admin.initializeApp();
+admin.initializeApp({
+  databaseURL: 'https://prompt-battle-c5e6a-default-rtdb.firebaseio.com',
+});
 
 // Matchmaking: triggered when a player joins the queue
 export const onPlayerJoinQueue = functions.database

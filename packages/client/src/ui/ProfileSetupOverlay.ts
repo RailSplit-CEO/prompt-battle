@@ -254,8 +254,8 @@ export class ProfileSetupOverlay {
 
       panel.appendChild(usernameSection);
 
-      // Auto-assign a random icon (no selection)
-      this.selectedIcon = PROFILE_ICONS[Math.floor(Math.random() * PROFILE_ICONS.length)].key;
+      // Default icon is always gnome
+      this.selectedIcon = 'gnome';
 
       // Show assigned icon preview
       const iconPreview = document.createElement('div');

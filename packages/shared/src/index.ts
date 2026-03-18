@@ -12,3 +12,4 @@ export * from './data/skin-defs';
 export * from './data/challenge-defs';
 export * from './data/battle-pass';
 export * from './data/player-level';
+export * from './data/crate-defs';

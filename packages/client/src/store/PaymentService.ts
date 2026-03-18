@@ -150,6 +150,26 @@ export class PaymentService {
     }
   }
 
+  // ── Loot crate opening ─────────────────────────────────────────
+
+  async openCrate(
+    tier: string,
+    currency?: 'crowns' | 'glory',
+    free?: boolean,
+    source?: string,
+  ): Promise<{ rewards: any[]; items: any[] }> {
+    try {
+      const body: Record<string, any> = { tier };
+      if (free) { body.free = true; body.source = source; }
+      else { body.currency = currency; }
+      const { res, data } = await apiPost('/api/store/openCrate', body);
+      if (!res.ok) throw new Error(data.error || 'Crate open failed');
+      return data;
+    } catch (err: any) {
+      throw new Error(err.message || 'Crate open request failed');
+    }
+  }
+
   // ── Glory grants ────────────────────────────────────────────────
 
   async grantGlory(

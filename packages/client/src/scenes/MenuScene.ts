@@ -804,7 +804,7 @@ export class MenuScene extends Phaser.Scene {
       overflow:hidden;width:min(440px, 35vw);
     `;
 
-    if (!auth.isGuest && auth.userProfile) {
+    if (auth.userProfile) {
       const profile = auth.userProfile;
 
       // ── BIG PROFILE CARD ──
@@ -909,7 +909,7 @@ export class MenuScene extends Phaser.Scene {
       );
       this.friendsSidebar.show(gc);
     } else {
-      // Guest — compact card with sign in CTA
+      // No profile (fallback) — compact card with sign in CTA
       const guestHeader = document.createElement('div');
       guestHeader.style.cssText = `
         display:flex;align-items:center;gap:10px;
@@ -941,6 +941,9 @@ export class MenuScene extends Phaser.Scene {
       signInBtn.onmouseleave = () => { signInBtn.style.background = 'rgba(255,217,61,0.1)'; signInBtn.style.borderColor = C.goldDim; signInBtn.style.transform = 'translateY(0)'; };
       signInBtn.onclick = async () => {
         (window as any).__menuPlaySfx?.('button_click', 0.3);
+        // Disable menu interaction while login overlay is open
+        this.input.enabled = false;
+        if (this.profileCardEl) this.profileCardEl.style.pointerEvents = 'none';
         // Show the full login overlay (with Google, itch.io options)
         const { LoginOverlay } = await import('../ui/LoginOverlay');
         const overlay = new LoginOverlay();
@@ -957,6 +960,9 @@ export class MenuScene extends Phaser.Scene {
         } catch {
           overlay.hide();
         }
+        // Re-enable menu interaction
+        this.input.enabled = true;
+        if (this.profileCardEl) this.profileCardEl.style.pointerEvents = 'auto';
       };
       this.profileCardEl.appendChild(signInBtn);
     }
@@ -977,8 +983,8 @@ export class MenuScene extends Phaser.Scene {
       this.time.delayedCall(1200, () => dailyModal.show());
     }
 
-    // === INVITE POPUP LISTENER (signed-in users only) ===
-    if (!auth.isGuest && auth.userProfile) {
+    // === INVITE POPUP LISTENER (users with profiles) ===
+    if (auth.userProfile) {
       this.matchInvitePopup = new MatchInvitePopup({
         onAccept: async (inviteId: string) => {
           const gameId = await auth.acceptInvite(inviteId);

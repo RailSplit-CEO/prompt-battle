@@ -4,6 +4,7 @@
 
 import { C } from './UIColors';
 import { CurrencyDisplay } from './CurrencyDisplay';
+import { playCurrencyFly } from './CurrencyFlyAnimation';
 import { WalletManager } from '../store/WalletManager';
 import { InventoryManager } from '../store/InventoryManager';
 import { CatalogService } from '../store/CatalogService';
@@ -636,6 +637,18 @@ export class StorePanel {
         PaymentService.getInstance().purchaseItem(pkg.id, 'crowns').catch(() => {});
         // Or use dev tools
         (window as any).__devAddCrowns?.(pkg.crowns);
+        // Fly animation
+        const crownsTarget = this.currencyDisplay?.getCrownsEl();
+        if (crownsTarget) {
+          const btnRect = buyBtn.getBoundingClientRect();
+          playCurrencyFly({
+            type: 'crowns',
+            amount: pkg.crowns,
+            fromX: btnRect.left + btnRect.width / 2,
+            fromY: btnRect.top + btnRect.height / 2,
+            toElement: crownsTarget,
+          });
+        }
       } else if (platform === 'itch') {
         const modal = new ItchRedeemModal();
         modal.show({ onSuccess: () => {}, onCancel: () => {} });
@@ -653,8 +666,18 @@ export class StorePanel {
               payModal.close();
               const result = await PaymentService.getInstance().completePayment(order.orderId, sourceId, pkg.id);
               if (result.success) {
-                // Show success feedback - wallet updates automatically via listener
-                alert(`+${result.crownsGranted} Crowns!`);
+                // Fly crowns to the counter
+                const crownsTarget = this.currencyDisplay?.getCrownsEl();
+                if (crownsTarget && result.crownsGranted) {
+                  const btnRect = buyBtn.getBoundingClientRect();
+                  playCurrencyFly({
+                    type: 'crowns',
+                    amount: result.crownsGranted,
+                    fromX: btnRect.left + btnRect.width / 2,
+                    fromY: btnRect.top + btnRect.height / 2,
+                    toElement: crownsTarget,
+                  });
+                }
               } else {
                 alert(result.error || 'Payment failed');
               }
@@ -910,6 +933,18 @@ export class StorePanel {
               buyBtn.style.background = C.teal;
               buyBtn.style.color = C.textDark;
               buyBtn.style.borderColor = C.teal;
+              // Fly stars to the glory counter
+              const gloryTarget = this.currencyDisplay?.getGloryEl();
+              if (gloryTarget) {
+                const btnRect = buyBtn.getBoundingClientRect();
+                playCurrencyFly({
+                  type: 'glory',
+                  amount: pkg.stars,
+                  fromX: btnRect.left + btnRect.width / 2,
+                  fromY: btnRect.top + btnRect.height / 2,
+                  toElement: gloryTarget,
+                });
+              }
               setTimeout(() => {
                 buyBtn.textContent = 'EXCHANGE';
                 buyBtn.style.background = 'rgba(192,192,210,0.2)';

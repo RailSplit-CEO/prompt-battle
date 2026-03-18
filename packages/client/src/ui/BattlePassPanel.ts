@@ -10,6 +10,9 @@ import { showGuestLoginPrompt } from './LoginOverlay';
 import { BattlePassManager } from '../store/BattlePassManager';
 import { getAuth } from 'firebase/auth';
 import { getFirebaseApp } from '../auth/firebaseApp';
+import { showToast } from './Toast';
+import { CurrencyDisplay } from './CurrencyDisplay';
+import { playCurrencyFly } from './CurrencyFlyAnimation';
 
 // ── Reward display helpers ──────────────────────────────────────
 
@@ -37,6 +40,12 @@ function formatItemId(id: string): string {
   return id.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
+function rewardToastText(r: BattlePassReward): string {
+  if (r.type === 'crowns') return `Claimed ${r.amount ?? 0} Crowns`;
+  if (r.type === 'glory') return `Claimed ${r.amount ?? 0} Glory`;
+  return `Claimed ${formatItemId(r.itemId ?? 'reward')}`;
+}
+
 // ── Live player state from Firebase ──────────────────────────────
 
 function getPlayerBattlePass(): PlayerBattlePass {
@@ -49,6 +58,21 @@ export class BattlePassPanel {
   private root: HTMLDivElement | null = null;
   private tierList: HTMLDivElement | null = null;
   private onLoginRequest: (() => void) | null = null;
+
+  // DOM refs for targeted updates
+  private tierBadgeEl: HTMLElement | null = null;
+  private xpCurEl: HTMLElement | null = null;
+  private xpNextEl: HTMLElement | null = null;
+  private progressFillEl: HTMLElement | null = null;
+  private footerEl: HTMLElement | null = null;
+  private cardMap: Map<string, HTMLDivElement> = new Map();
+
+  // Live subscription
+  private unsubscribeBP: (() => void) | null = null;
+  private lastPlayerData: PlayerBattlePass | null = null;
+
+  // Claim animation guard
+  private animatingCards: Set<string> = new Set();
 
   constructor(onLoginRequest?: () => void) {
     this.onLoginRequest = onLoginRequest ?? null;
@@ -66,19 +90,27 @@ export class BattlePassPanel {
 
   /** Remove the sidebar */
   unmount(): void {
+    this.unsubscribeBP?.();
+    this.unsubscribeBP = null;
     if (this.root) {
       this.root.remove();
       this.root = null;
       this.tierList = null;
+      this.tierBadgeEl = null;
+      this.xpCurEl = null;
+      this.xpNextEl = null;
+      this.progressFillEl = null;
+      this.footerEl = null;
+      this.cardMap.clear();
+      this.lastPlayerData = null;
+      this.animatingCards.clear();
     }
   }
 
-  /** Refresh display (call after XP changes) */
+  /** Refresh display — uses in-place updates when possible */
   refresh(): void {
-    const parent = this.root?.parentElement;
-    if (parent) {
-      this.unmount();
-      this.mount(parent);
+    if (this.root?.parentElement) {
+      this.updatePanel(getPlayerBattlePass());
     }
   }
 
@@ -91,6 +123,7 @@ export class BattlePassPanel {
 
     const season = CURRENT_SEASON;
     const player = getPlayerBattlePass();
+    this.lastPlayerData = { ...player, claimedFree: { ...player.claimedFree }, claimedPremium: { ...player.claimedPremium } };
     const currentTier = this.computeCurrentTier(player.xp);
 
     // ── Root container — warm earthy style matching in-game HUD ──
@@ -181,6 +214,7 @@ export class BattlePassPanel {
       letter-spacing:1px;
       box-shadow:0 2px 8px rgba(255,217,61,0.3);
     `;
+    this.tierBadgeEl = tierBadge;
     titleRow.appendChild(tierBadge);
     header.appendChild(titleRow);
 
@@ -216,6 +250,7 @@ export class BattlePassPanel {
       background:linear-gradient(90deg, ${C.gold}, ${C.goldDark});
       border-radius:5px;transition:width 0.5s ease;
     `;
+    this.progressFillEl = progressFill;
     progressBar.appendChild(progressFill);
     progressWrap.appendChild(progressBar);
 
@@ -226,8 +261,10 @@ export class BattlePassPanel {
     `;
     const xpCur = document.createElement('span');
     xpCur.textContent = `${player.xp} XP`;
+    this.xpCurEl = xpCur;
     const xpNext = document.createElement('span');
     xpNext.textContent = currentTier < season.tiers.length ? `${nextTierXp} XP` : 'MAX';
+    this.xpNextEl = xpNext;
     xpLabel.appendChild(xpCur);
     xpLabel.appendChild(xpNext);
     progressWrap.appendChild(xpLabel);
@@ -284,7 +321,10 @@ export class BattlePassPanel {
       footer.style.cssText = `
         padding:12px 18px;border-top:2px solid rgba(139,115,85,0.3);flex-shrink:0;
         background:rgba(139,115,85,0.06);
+        transition:opacity 0.3s ease, max-height 0.3s ease;
+        max-height:80px;overflow:hidden;
       `;
+      this.footerEl = footer;
 
       const buyBtn = document.createElement('button');
       buyBtn.innerHTML = `\u{1F451} <span style="font-size:14px;">UPGRADE</span> <span style="font-size:11px;opacity:0.7;">${season.premiumPriceCrowns} Crowns</span>`;
@@ -343,6 +383,81 @@ export class BattlePassPanel {
 
     // Scroll to current tier — delay to ensure DOM layout is computed
     setTimeout(() => this.scrollToCurrentTier(currentTier), 100);
+
+    // ── Subscribe to live data updates ──
+    this.unsubscribeBP = BattlePassManager.getInstance().onChange((newData) => {
+      this.updatePanel(newData);
+    });
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  //  In-place panel update (no DOM rebuild)
+  // ──────────────────────────────────────────────────────────────
+
+  private updatePanel(player: PlayerBattlePass): void {
+    if (!this.root) return;
+
+    const season = CURRENT_SEASON;
+    const currentTier = this.computeCurrentTier(player.xp);
+    const prev = this.lastPlayerData;
+
+    // Update header
+    if (this.tierBadgeEl) this.tierBadgeEl.textContent = `TIER ${currentTier}`;
+    if (this.xpCurEl) this.xpCurEl.textContent = `${player.xp} XP`;
+
+    const nextTierXp = currentTier < season.tiers.length
+      ? season.tiers[currentTier].xpRequired
+      : season.tiers[season.tiers.length - 1].xpRequired;
+    if (this.xpNextEl) this.xpNextEl.textContent = currentTier < season.tiers.length ? `${nextTierXp} XP` : 'MAX';
+
+    const prevTierXp = currentTier >= 2 ? season.tiers[currentTier - 2]?.xpRequired ?? 0 : 0;
+    const xpRange = nextTierXp - prevTierXp;
+    const xpIntoTier = this.computeXpIntoTier(player.xp, currentTier);
+    const progressFrac = xpRange > 0 ? Math.min(1, xpIntoTier / xpRange) : 1;
+    if (this.progressFillEl) this.progressFillEl.style.width = `${progressFrac * 100}%`;
+
+    // Premium purchased — fade out footer
+    if (player.premium && prev && !prev.premium && this.footerEl) {
+      this.footerEl.style.opacity = '0';
+      this.footerEl.style.maxHeight = '0';
+      setTimeout(() => { this.footerEl?.remove(); this.footerEl = null; }, 300);
+    }
+
+    // Update each card
+    for (const tierDef of season.tiers) {
+      const tier = tierDef.tier;
+      const isUnlocked = tier <= currentTier;
+      const isFuture = tier > currentTier;
+
+      // Update row opacity for tier unlock transitions
+      if (this.tierList) {
+        const row = this.tierList.querySelector(`[data-tier="${tier}"]`) as HTMLElement | null;
+        if (row) {
+          row.style.opacity = isFuture ? '0.3' : '';
+          row.style.transition = 'opacity 0.4s ease';
+        }
+      }
+
+      // Update free card
+      const freeKey = `${tier}-free`;
+      const freeCard = this.cardMap.get(freeKey);
+      if (freeCard && !this.animatingCards.has(freeKey)) {
+        const freeClaimed = !!player.claimedFree[tier];
+        const freeClaimable = isUnlocked && !!tierDef.freeReward && !player.claimedFree[tier];
+        this.populateRewardCard(freeCard, tierDef.freeReward, isUnlocked, freeClaimed, freeClaimable, false, tier);
+      }
+
+      // Update premium card
+      const premKey = `${tier}-prem`;
+      const premCard = this.cardMap.get(premKey);
+      if (premCard && !this.animatingCards.has(premKey)) {
+        const premClaimed = !!player.claimedPremium[tier];
+        const premClaimable = isUnlocked && !!tierDef.premiumReward && !player.claimedPremium[tier] && player.premium;
+        this.populateRewardCard(premCard, tierDef.premiumReward, isUnlocked, premClaimed, premClaimable, true, tier);
+      }
+    }
+
+    this.lastPlayerData = { ...player, claimedFree: { ...player.claimedFree }, claimedPremium: { ...player.claimedPremium } };
   }
 
   // ──────────────────────────────────────────────────────────────
@@ -365,7 +480,7 @@ export class BattlePassPanel {
       display:flex;align-items:stretch;
       padding:8px 12px;gap:8px;
       border-bottom:1px solid rgba(139,115,85,0.15);
-      transition:background 0.15s;
+      transition:background 0.15s, opacity 0.4s ease;
       ${isFuture ? 'opacity:0.3;' : ''}
       ${isCurrent ? `background:rgba(255,217,61,0.08);border-left:4px solid ${C.gold};padding-left:8px;` : ''}
     `;
@@ -404,7 +519,7 @@ export class BattlePassPanel {
   }
 
   // ──────────────────────────────────────────────────────────────
-  //  Build a square reward card
+  //  Build a square reward card (outer shell + populate)
   // ──────────────────────────────────────────────────────────────
 
   private buildRewardCard(
@@ -416,11 +531,12 @@ export class BattlePassPanel {
     tier: number,
   ): HTMLDivElement {
     const card = document.createElement('div');
-    const borderColor = isPremium ? 'rgba(255,217,61,0.5)' : 'rgba(139,115,85,0.25)';
-    const bgColor = isPremium
-      ? 'linear-gradient(135deg, rgba(255,217,61,0.12) 0%, rgba(230,168,0,0.08) 100%)'
-      : 'rgba(212,196,160,0.06)';
-    const boxShadow = isPremium ? '0 0 12px rgba(255,217,61,0.15), inset 0 0 20px rgba(255,217,61,0.05)' : 'none';
+    card.dataset.rewardCard = `${tier}-${isPremium ? 'prem' : 'free'}`;
+
+    // Store in map for targeted updates
+    this.cardMap.set(`${tier}-${isPremium ? 'prem' : 'free'}`, card);
+
+    // Base card styles (non-content styles that don't change per state)
     card.style.cssText = `
       flex:1;
       aspect-ratio:1;
@@ -429,21 +545,50 @@ export class BattlePassPanel {
       gap:2px;
       padding:8px 4px;
       border-radius:10px;
-      background:${bgColor};
-      border:2px solid ${borderColor};
-      box-shadow:${boxShadow};
       position:relative;
       min-width:0;
-      transition:border-color 0.15s, background 0.15s, box-shadow 0.15s;
-      ${isClaimed ? 'opacity:0.5;' : ''}
+      transition:border-color 0.3s ease, background 0.3s ease, box-shadow 0.3s ease, opacity 0.3s ease;
     `;
+
+    this.populateRewardCard(card, reward, isUnlocked, isClaimed, isClaimable, isPremium, tier);
+    return card;
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  //  Populate / repopulate card contents
+  // ──────────────────────────────────────────────────────────────
+
+  private populateRewardCard(
+    card: HTMLDivElement,
+    reward: BattlePassReward | undefined,
+    isUnlocked: boolean,
+    isClaimed: boolean,
+    isClaimable: boolean,
+    isPremium: boolean,
+    tier: number,
+  ): void {
+    // Clear existing children
+    card.innerHTML = '';
+
+    const showLock = isPremium && !isClaimed && !isClaimable && !!reward;
+    const borderColor = isPremium ? 'rgba(255,217,61,0.5)' : 'rgba(139,115,85,0.25)';
+    const bgColor = isPremium
+      ? 'linear-gradient(135deg, rgba(255,217,61,0.12) 0%, rgba(230,168,0,0.08) 100%)'
+      : 'rgba(212,196,160,0.06)';
+    const boxShadow = isPremium ? '0 0 12px rgba(255,217,61,0.15), inset 0 0 20px rgba(255,217,61,0.05)' : 'none';
+
+    // Update dynamic styles
+    card.style.background = bgColor;
+    card.style.border = `2px solid ${borderColor}`;
+    card.style.boxShadow = boxShadow;
+    card.style.opacity = isClaimed ? '0.5' : showLock ? '0.45' : '';
 
     if (!reward) {
       const dash = document.createElement('span');
       dash.textContent = '\u2014';
       dash.style.cssText = `font-size:16px;color:${C.textMuted};opacity:0.2;`;
       card.appendChild(dash);
-      return card;
+      return;
     }
 
     // Big emoji icon
@@ -451,7 +596,8 @@ export class BattlePassPanel {
     icon.textContent = rewardEmoji(reward);
     icon.style.cssText = `
       font-size:56px;line-height:1;margin-bottom:6px;
-      ${isPremium && !isUnlocked ? 'filter:grayscale(1) brightness(0.5);' : ''}
+      transition:filter 0.3s ease;
+      ${showLock ? 'filter:grayscale(1) brightness(0.5);' : ''}
     `;
     card.appendChild(icon);
 
@@ -473,19 +619,11 @@ export class BattlePassPanel {
 
     // State overlay
     if (isClaimed) {
-      const check = document.createElement('div');
-      check.textContent = '\u2713';
-      check.style.cssText = `
-        position:absolute;top:4px;right:4px;
-        width:18px;height:18px;border-radius:50%;
-        background:${C.green};color:#fff;
-        font-size:11px;font-weight:700;
-        display:flex;align-items:center;justify-content:center;
-      `;
-      card.appendChild(check);
+      card.appendChild(this.createCheckmark());
     } else if (isClaimable) {
       const claimBtn = document.createElement('button');
       claimBtn.textContent = 'CLAIM';
+      claimBtn.className = 'bp-claim-btn';
       claimBtn.style.cssText = `
         padding:3px 10px;border-radius:6px;font-size:10px;font-weight:700;
         cursor:pointer;transition:all 0.15s;
@@ -502,17 +640,34 @@ export class BattlePassPanel {
       // Glow effect on claimable
       card.style.borderColor = C.green;
       card.style.boxShadow = `0 0 8px rgba(90,154,78,0.2)`;
-    } else if (isPremium && !isUnlocked) {
+    } else if (showLock) {
       const lock = document.createElement('div');
       lock.textContent = '\uD83D\uDD12';
       lock.style.cssText = `
-        position:absolute;top:40%;left:50%;transform:translate(-50%,-50%);
-        font-size:72px;opacity:0.5;
+        position:absolute;top:4px;right:4px;
+        font-size:20px;opacity:1;
+        line-height:1;
       `;
       card.appendChild(lock);
     }
+  }
 
-    return card;
+  // ──────────────────────────────────────────────────────────────
+  //  Create a checkmark badge element
+  // ──────────────────────────────────────────────────────────────
+
+  private createCheckmark(): HTMLDivElement {
+    const check = document.createElement('div');
+    check.textContent = '\u2713';
+    check.className = 'bp-checkmark';
+    check.style.cssText = `
+      position:absolute;top:4px;right:4px;
+      width:18px;height:18px;border-radius:50%;
+      background:${C.green};color:#fff;
+      font-size:11px;font-weight:700;
+      display:flex;align-items:center;justify-content:center;
+    `;
+    return check;
   }
 
   // ──────────────────────────────────────────────────────────────
@@ -535,15 +690,91 @@ export class BattlePassPanel {
         body: JSON.stringify({ tier, track: isPremium ? 'premium' : 'free' }),
       });
       const data = await res.json();
-      if (data.success) {
-        // Refresh the panel to reflect the claimed state
-        this.refresh();
+      if (res.ok && data.success) {
+        showToast(rewardToastText(data.reward), 'success');
+        this.animateClaim(tier, isPremium);
+        // Fly currency icons to the HUD counter
+        const reward = data.reward as BattlePassReward;
+        if ((reward.type === 'crowns' || reward.type === 'glory') && (reward.amount ?? 0) > 0) {
+          const display = CurrencyDisplay.getActive();
+          const targetEl = reward.type === 'crowns' ? display?.getCrownsEl() : display?.getGloryEl();
+          const key = `${tier}-${isPremium ? 'prem' : 'free'}`;
+          const card = this.cardMap.get(key);
+          if (targetEl && card) {
+            const cardRect = card.getBoundingClientRect();
+            playCurrencyFly({
+              type: reward.type,
+              amount: reward.amount!,
+              fromX: cardRect.left + cardRect.width / 2,
+              fromY: cardRect.top + cardRect.height / 2,
+              toElement: targetEl,
+            });
+          }
+        }
       } else {
         console.warn('[BattlePass] Claim failed:', data.error);
+        showToast(data.error || 'Failed to claim reward', 'error');
       }
     } catch (err) {
       console.warn('[BattlePass] Claim error:', err);
+      showToast('Failed to claim reward', 'error');
     }
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  //  Claim animation (Clash Royale style)
+  // ──────────────────────────────────────────────────────────────
+
+  private animateClaim(tier: number, isPremium: boolean): void {
+    const key = `${tier}-${isPremium ? 'prem' : 'free'}`;
+    const card = this.cardMap.get(key);
+    if (!card) return;
+
+    // Guard against updatePanel stomping our animation
+    this.animatingCards.add(key);
+
+    // Phase 1: Glow + scale up
+    card.style.animation = 'bp-claim-glow 500ms ease forwards';
+
+    // Flash overlay
+    const flash = document.createElement('div');
+    flash.style.cssText = `
+      position:absolute;inset:0;border-radius:10px;
+      background:radial-gradient(circle, rgba(255,255,255,0.8) 0%, rgba(255,217,61,0.3) 100%);
+      pointer-events:none;
+      animation:bp-claim-flash 400ms ease 150ms forwards;
+      opacity:0;
+    `;
+    card.appendChild(flash);
+
+    // Phase 2: After glow, transition to claimed state
+    setTimeout(() => {
+      // Remove flash
+      flash.remove();
+      card.style.animation = '';
+
+      // Remove CLAIM button
+      const btn = card.querySelector('.bp-claim-btn');
+      if (btn) btn.remove();
+
+      // Transition to claimed look
+      card.style.opacity = '0.5';
+      const borderColor = isPremium ? 'rgba(255,217,61,0.5)' : 'rgba(139,115,85,0.25)';
+      card.style.borderColor = borderColor;
+      const boxShadow = isPremium ? '0 0 12px rgba(255,217,61,0.15), inset 0 0 20px rgba(255,217,61,0.05)' : 'none';
+      card.style.boxShadow = boxShadow;
+
+      // Phase 3: Checkmark pops in
+      const check = this.createCheckmark();
+      check.style.animation = 'bp-check-pop 300ms cubic-bezier(0.175,0.885,0.32,1.275) forwards';
+      card.appendChild(check);
+
+      // Done animating
+      setTimeout(() => {
+        check.style.animation = '';
+        this.animatingCards.delete(key);
+      }, 350);
+    }, 550);
   }
 
   private showLoginPrompt(): void {
@@ -677,6 +908,24 @@ export class BattlePassPanel {
       #bp-sidebar .bp-tier-list {
         scrollbar-width:thin;
         scrollbar-color:rgba(139,115,85,0.35) transparent;
+      }
+
+      @keyframes bp-claim-glow {
+        0%   { transform:scale(1);    box-shadow:0 0 0 rgba(90,154,78,0); }
+        50%  { transform:scale(1.12); box-shadow:0 0 24px rgba(90,154,78,0.5), 0 0 48px rgba(255,217,61,0.25); }
+        100% { transform:scale(1);    box-shadow:0 0 0 rgba(90,154,78,0); }
+      }
+
+      @keyframes bp-claim-flash {
+        0%   { opacity:0; }
+        40%  { opacity:0.7; }
+        100% { opacity:0; }
+      }
+
+      @keyframes bp-check-pop {
+        0%   { transform:scale(0.3); opacity:0; }
+        70%  { transform:scale(1.2); opacity:1; }
+        100% { transform:scale(1);   opacity:1; }
       }
     `;
     document.head.appendChild(style);

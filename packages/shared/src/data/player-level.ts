@@ -109,3 +109,14 @@ export function getRewardForLevel(level: number): LevelReward | null {
   if (level <= 1) return null;
   return level % 2 === 0 ? { glory: 25 } : { crowns: 25 };
 }
+
+// ─── Crate grants on level-up ──────────────────────────────────
+// Every level-up: 1 Silver Crate. Every 10 levels: bonus Gold Crate.
+import type { CrateTier } from '../types/store';
+
+export function getCratesForLevel(level: number): CrateTier[] {
+  if (level <= 1) return [];
+  const crates: CrateTier[] = ['silver'];
+  if (level % 10 === 0) crates.push('gold');
+  return crates;
+}
