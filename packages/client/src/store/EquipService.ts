@@ -64,14 +64,6 @@ export class EquipService {
     await this.equipItem('voicePack', packId);
   }
 
-  async equipBuildingTheme(themeId: string): Promise<void> {
-    await this.equipItem('buildingTheme', themeId);
-  }
-
-  async equipMapTheme(themeId: string): Promise<void> {
-    await this.equipItem('mapTheme', themeId);
-  }
-
   async equipDeathEffect(effectId: string): Promise<void> {
     await this.equipItem('deathEffect', effectId);
   }
@@ -104,12 +96,28 @@ export class EquipService {
     await this.equipItem('cursor', cursorId);
   }
 
+  async equipEquipmentSkin(equipType: EquipmentType, skinId: string): Promise<void> {
+    await this.equipItem(`equipmentSkins/${equipType}`, skinId);
+  }
+
+  async equipPortraitFrame(frameId: string): Promise<void> {
+    await this.equipItem('portraitFrame', frameId);
+  }
+
+  async equipBuildingTheme(themeId: string): Promise<void> {
+    await this.equipItem('buildingTheme', themeId);
+  }
+
+  async equipMapTheme(themeId: string): Promise<void> {
+    await this.equipItem('mapTheme', themeId);
+  }
+
   async equipUiTheme(themeId: string): Promise<void> {
     await this.equipItem('uiTheme', themeId);
   }
 
-  async equipEquipmentSkin(equipType: EquipmentType, skinId: string): Promise<void> {
-    await this.equipItem(`equipmentSkins/${equipType}`, skinId);
+  async equipProfileBackground(bgId: string): Promise<void> {
+    await this.equipItem('profileBackground', bgId);
   }
 
   // ── Reset ───────────────────────────────────────────────────────

@@ -737,7 +737,7 @@ export class AccountScene extends Phaser.Scene {
       { key: 'profile', label: 'Profile', categories: ['profile_title', 'profile_border', 'profile_background', 'portrait_frame'] },
       { key: 'emotes', label: 'Emotes', categories: ['emote'] },
       { key: 'effects', label: 'Effects', categories: ['death_effect', 'spawn_effect', 'attack_trail', 'victory_effect'] },
-      { key: 'themes', label: 'Themes', categories: ['building_theme', 'map_theme', 'ui_theme', 'cursor_pack'] },
+      { key: 'misc', label: 'Misc', categories: ['cursor_pack'] },
       { key: 'equipment', label: 'Equipment', categories: ['equipment_cosmetic'] },
       { key: 'boosters', label: 'Boosters', categories: ['booster'] },
     ];
@@ -764,9 +764,6 @@ export class AccountScene extends Phaser.Scene {
         case 'spawn_effect': return eq.spawnEffect === item.id;
         case 'attack_trail': return eq.attackTrail === item.id;
         case 'victory_effect': return eq.victoryEffect === item.id;
-        case 'building_theme': return eq.buildingTheme === item.id;
-        case 'map_theme': return eq.mapTheme === item.id;
-        case 'ui_theme': return eq.uiTheme === item.id;
         case 'cursor_pack': return eq.cursor === item.id;
         case 'equipment_cosmetic': {
           const et = item.equipType;
@@ -895,9 +892,6 @@ export class AccountScene extends Phaser.Scene {
         case 'spawn_effect': await equip.equipSpawnEffect(item.id); break;
         case 'attack_trail': await equip.equipAttackTrail(item.id); break;
         case 'victory_effect': await equip.equipVictoryEffect(item.id); break;
-        case 'building_theme': await equip.equipBuildingTheme(item.id); break;
-        case 'map_theme': await equip.equipMapTheme(item.id); break;
-        case 'ui_theme': await equip.equipUiTheme(item.id); break;
         case 'cursor_pack': await equip.equipCursor(item.id); break;
         case 'equipment_cosmetic':
           if (item.equipType) await equip.equipEquipmentSkin(item.equipType, item.id);
@@ -918,9 +912,6 @@ export class AccountScene extends Phaser.Scene {
         case 'spawn_effect': await equip.equipSpawnEffect('default'); break;
         case 'attack_trail': await equip.equipAttackTrail('default'); break;
         case 'victory_effect': await equip.equipVictoryEffect('default'); break;
-        case 'building_theme': await equip.equipBuildingTheme('default'); break;
-        case 'map_theme': await equip.equipMapTheme('default'); break;
-        case 'ui_theme': await equip.equipUiTheme('default'); break;
         case 'cursor_pack': await equip.equipCursor('default'); break;
         case 'equipment_cosmetic':
           if (item.equipType) await equip.equipEquipmentSkin(item.equipType, 'default');

@@ -102,6 +102,35 @@ export const adminGrantItems = functions.https.onRequest(async (req, res) => {
         res.json({ success: true, action: 'cleared' });
         break;
 
+      case 'toggle_battlepass': {
+        const bpRef = admin.database().ref(`users/${targetUid}/battlePass/premium`);
+        const snap = await bpRef.once('value');
+        const current = snap.val() === true;
+        await bpRef.set(!current);
+        res.json({ success: true, action: 'toggle_battlepass', premium: !current });
+        break;
+      }
+
+      case 'reset_character': {
+        // Look up username to clean up the usernames index
+        const profileSnap = await admin.database().ref(`users/${targetUid}/username`).once('value');
+        const username = profileSnap.val();
+        if (username) {
+          await admin.database().ref(`usernames/${String(username).toLowerCase()}`).remove();
+        }
+        // Delete all user data
+        await Promise.all([
+          admin.database().ref(`users/${targetUid}`).remove(),
+          admin.database().ref(`matchHistory/${targetUid}`).remove(),
+          admin.database().ref(`ratings/${targetUid}`).remove(),
+          admin.database().ref(`friends/${targetUid}`).remove(),
+        ]);
+        // Delete the Firebase Auth account
+        try { await admin.auth().deleteUser(targetUid); } catch { /* may already be deleted */ }
+        res.json({ success: true, action: 'reset_character' });
+        break;
+      }
+
       default:
         res.status(400).json({ error: `Unknown action: ${action}` });
     }

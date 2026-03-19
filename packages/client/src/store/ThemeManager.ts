@@ -87,15 +87,10 @@ export class ThemeManager {
     // Subscribe to equipped changes to auto-apply theme
     try {
       const inv = InventoryManager.getInstance();
-      this.unsubscribe = inv.onEquippedChange((eq) => {
-        const themeId = eq.uiTheme || 'default';
-        if (themeId !== this.currentTheme) {
-          this.applyTheme(themeId);
-        }
+      this.unsubscribe = inv.onEquippedChange(() => {
+        // Theme system simplified — always use default
       });
-      // Apply current theme
-      const eq = inv.getEquipped();
-      this.applyTheme(eq.uiTheme || 'default');
+      this.applyTheme('default');
     } catch { /* not initialized yet */ }
   }
 

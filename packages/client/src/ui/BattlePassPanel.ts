@@ -12,7 +12,9 @@ import { getAuth } from 'firebase/auth';
 import { getFirebaseApp } from '../auth/firebaseApp';
 import { showToast } from './Toast';
 import { CurrencyDisplay } from './CurrencyDisplay';
-import { playCurrencyFly } from './CurrencyFlyAnimation';
+import { playCurrencyFly, prefreezeElement, unfreezeElement } from './CurrencyFlyAnimation';
+import { SpritePreview } from './SpritePreview';
+import { getSkinDef } from '@prompt-battle/shared';
 
 // ── Reward display helpers ──────────────────────────────────────
 
@@ -73,6 +75,9 @@ export class BattlePassPanel {
 
   // Claim animation guard
   private animatingCards: Set<string> = new Set();
+  private claiming = false;
+  private _lastFlyTarget: HTMLElement | null = null;
+  private spritePreviews: SpritePreview[] = [];
 
   constructor(onLoginRequest?: () => void) {
     this.onLoginRequest = onLoginRequest ?? null;
@@ -92,6 +97,8 @@ export class BattlePassPanel {
   unmount(): void {
     this.unsubscribeBP?.();
     this.unsubscribeBP = null;
+    for (const sp of this.spritePreviews) sp.destroy();
+    this.spritePreviews = [];
     if (this.root) {
       this.root.remove();
       this.root = null;
@@ -168,40 +175,6 @@ export class BattlePassPanel {
       color:${C.gold};letter-spacing:2px;
     `;
     titleLeft.appendChild(title);
-
-    // Debug: +1000 XP button
-    const dbgBtn = document.createElement('button');
-    dbgBtn.textContent = '+1000 XP';
-    dbgBtn.style.cssText = `
-      font-size:9px;font-weight:700;font-family:"Nunito",sans-serif;
-      padding:2px 6px;border-radius:4px;cursor:pointer;
-      background:rgba(139,115,85,0.4);border:1px solid ${C.gold};
-      color:${C.gold};margin-left:6px;
-    `;
-    dbgBtn.onmouseenter = () => { dbgBtn.style.background = 'rgba(255,217,61,0.25)'; };
-    dbgBtn.onmouseleave = () => { dbgBtn.style.background = 'rgba(139,115,85,0.4)'; };
-    dbgBtn.onclick = async () => {
-      try {
-        const { getAuth } = await import('firebase/auth');
-        const { getFirebaseApp } = await import('../auth/firebaseApp');
-        const auth = getAuth(getFirebaseApp());
-        if (!auth.currentUser) {
-          dbgBtn.textContent = 'NO AUTH';
-          setTimeout(() => { dbgBtn.textContent = '+1000 XP'; }, 1200);
-          return;
-        }
-        const token = await auth.currentUser.getIdToken(true);
-        const res = await fetch('/api/store/grantBattlePassXp', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-          body: JSON.stringify({ xp: 1000 }),
-        });
-        const data = await res.json();
-        dbgBtn.textContent = data.success ? `T${data.currentTier}!` : data.error || 'ERR';
-        setTimeout(() => { dbgBtn.textContent = '+1000 XP'; }, 1200);
-      } catch (e) { dbgBtn.textContent = 'ERR'; console.error('[BP debug]', e); setTimeout(() => { dbgBtn.textContent = '+1000 XP'; }, 1200); }
-    };
-    titleLeft.appendChild(dbgBtn);
 
     titleRow.appendChild(titleLeft);
 
@@ -319,30 +292,32 @@ export class BattlePassPanel {
     if (!player.premium) {
       const footer = document.createElement('div');
       footer.style.cssText = `
-        padding:12px 18px;border-top:2px solid rgba(139,115,85,0.3);flex-shrink:0;
-        background:rgba(139,115,85,0.06);
+        padding:16px 18px;border-top:2px solid rgba(139,115,85,0.3);flex-shrink:0;
+        background:linear-gradient(180deg, rgba(255,217,61,0.08) 0%, rgba(139,115,85,0.06) 100%);
         transition:opacity 0.3s ease, max-height 0.3s ease;
-        max-height:80px;overflow:hidden;
+        max-height:120px;overflow:hidden;
       `;
       this.footerEl = footer;
 
+      const defaultHtml = `<div style="font-size:20px;font-weight:800;letter-spacing:1px;">BUY HORDE PASS</div><div style="font-size:14px;opacity:0.8;margin-top:2px;">$${season.premiumPriceUSD}</div>`;
       const buyBtn = document.createElement('button');
-      buyBtn.innerHTML = `\u{1F451} <span style="font-size:14px;">UPGRADE</span> <span style="font-size:11px;opacity:0.7;">${season.premiumPriceCrowns} Crowns</span>`;
+      buyBtn.innerHTML = defaultHtml;
       buyBtn.style.cssText = `
-        width:100%;padding:8px 10px;border-radius:10px;font-weight:700;
+        width:100%;padding:16px 10px;border-radius:14px;font-weight:700;
         font-family:"Fredoka",sans-serif;cursor:pointer;transition:all 0.15s;
         background:linear-gradient(135deg, ${C.gold}, ${C.goldDark});
-        border:none;color:${C.textDark};
-        display:flex;align-items:center;justify-content:center;gap:6px;
-        box-shadow:0 2px 8px rgba(255,217,61,0.25);
+        border:2px solid rgba(255,217,61,0.6);color:${C.textDark};
+        display:flex;flex-direction:column;align-items:center;justify-content:center;
+        box-shadow:0 4px 16px rgba(255,217,61,0.3);
+        text-shadow:0 1px 2px rgba(0,0,0,0.1);
       `;
       buyBtn.onmouseenter = () => {
-        buyBtn.style.transform = 'translateY(-1px)';
-        buyBtn.style.boxShadow = '0 4px 14px rgba(255,217,61,0.35)';
+        buyBtn.style.transform = 'translateY(-2px)';
+        buyBtn.style.boxShadow = '0 6px 24px rgba(255,217,61,0.45)';
       };
       buyBtn.onmouseleave = () => {
         buyBtn.style.transform = '';
-        buyBtn.style.boxShadow = '0 2px 8px rgba(255,217,61,0.25)';
+        buyBtn.style.boxShadow = '0 4px 16px rgba(255,217,61,0.3)';
       };
       buyBtn.onclick = async () => {
         if (AuthManager.getInstance().isGuest) {
@@ -360,15 +335,15 @@ export class BattlePassPanel {
           });
           const data = await res.json();
           if (data.success) {
-            buyBtn.textContent = '\u2713 PREMIUM';
+            buyBtn.textContent = '\u2713 PREMIUM UNLOCKED';
             buyBtn.style.background = C.teal;
           } else {
             buyBtn.textContent = data.error || 'Failed';
-            setTimeout(() => { buyBtn.innerHTML = `\u{1F451} <span style="font-size:14px;">UPGRADE</span> <span style="font-size:11px;opacity:0.7;">${season.premiumPriceCrowns} Crowns</span>`; }, 2000);
+            setTimeout(() => { buyBtn.innerHTML = defaultHtml; }, 2000);
           }
         } catch {
           buyBtn.textContent = 'Error';
-          setTimeout(() => { buyBtn.innerHTML = `\u{1F451} <span style="font-size:14px;">UPGRADE</span> <span style="font-size:11px;opacity:0.7;">${season.premiumPriceCrowns} Crowns</span>`; }, 2000);
+          setTimeout(() => { buyBtn.innerHTML = defaultHtml; }, 2000);
         }
       };
       footer.appendChild(buyBtn);
@@ -567,8 +542,19 @@ export class BattlePassPanel {
     isPremium: boolean,
     tier: number,
   ): void {
-    // Clear existing children
+    // Destroy any SpritePreview attached to this card before clearing
+    const oldCanvas = card.querySelector('canvas');
+    if (oldCanvas) {
+      const idx = this.spritePreviews.findIndex(sp => sp.getElement() === oldCanvas);
+      if (idx >= 0) { this.spritePreviews[idx].destroy(); this.spritePreviews.splice(idx, 1); }
+    }
+    // Clear existing children and click handlers
     card.innerHTML = '';
+    card.onclick = null;
+    card.onmouseenter = null;
+    card.onmouseleave = null;
+    card.style.cursor = '';
+    card.style.transform = '';
 
     const showLock = isPremium && !isClaimed && !isClaimable && !!reward;
     const borderColor = isPremium ? 'rgba(255,217,61,0.5)' : 'rgba(139,115,85,0.25)';
@@ -581,7 +567,9 @@ export class BattlePassPanel {
     card.style.background = bgColor;
     card.style.border = `2px solid ${borderColor}`;
     card.style.boxShadow = boxShadow;
-    card.style.opacity = isClaimed ? '0.5' : showLock ? '0.45' : '';
+    card.style.overflow = 'hidden';
+    // Don't use card-level opacity — it dims skin previews. Use an overlay instead.
+    card.style.opacity = '';
 
     if (!reward) {
       const dash = document.createElement('span');
@@ -591,15 +579,39 @@ export class BattlePassPanel {
       return;
     }
 
-    // Big emoji icon
-    const icon = document.createElement('div');
-    icon.textContent = rewardEmoji(reward);
-    icon.style.cssText = `
-      font-size:56px;line-height:1;margin-bottom:6px;
-      transition:filter 0.3s ease;
-      ${showLock ? 'filter:grayscale(1) brightness(0.5);' : ''}
-    `;
-    card.appendChild(icon);
+    // Skin items get an animated sprite preview; everything else gets an emoji
+    const skinId = reward.type === 'item' && reward.itemId?.startsWith('skin_') ? reward.itemId : null;
+    const skinDef = skinId ? getSkinDef(skinId) : null;
+    if (skinDef) {
+      const preview = new SpritePreview(300, 300);
+      preview.loadUnit(skinDef.unitType as any, 'attack', skinId!);
+      const canvas = preview.getElement();
+      // Skin stays fully visible — no opacity or grayscale
+      canvas.style.cssText += `width:100%;height:100%;object-fit:contain;border-radius:8px;background:transparent;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) scale(1.75);z-index:2;`;
+      card.appendChild(canvas);
+      this.spritePreviews.push(preview);
+    } else {
+      const icon = document.createElement('div');
+      icon.textContent = rewardEmoji(reward);
+      icon.style.cssText = `
+        font-size:56px;line-height:1;margin-bottom:6px;
+        transition:filter 0.3s ease;
+        ${showLock ? 'filter:grayscale(1) brightness(0.5);' : ''}
+        ${isClaimed ? 'opacity:0.5;' : ''}
+      `;
+      card.appendChild(icon);
+    }
+
+    // Dimming overlay for locked/claimed non-skin items
+    if (!skinDef && (isClaimed || showLock)) {
+      const dimOverlay = document.createElement('div');
+      dimOverlay.style.cssText = `
+        position:absolute;inset:0;border-radius:8px;
+        background:rgba(0,0,0,${isClaimed ? '0.35' : '0.45'});
+        z-index:0;pointer-events:none;
+      `;
+      card.appendChild(dimOverlay);
+    }
 
     // Reward label
     const label = document.createElement('div');
@@ -614,6 +626,7 @@ export class BattlePassPanel {
       line-height:1.2;
       margin-top:2px;
       font-family:"Fredoka",sans-serif;
+      ${skinDef ? 'position:relative;z-index:3;margin-top:auto;text-shadow:0 1px 3px rgba(0,0,0,0.8);' : 'position:relative;z-index:1;'}
     `;
     card.appendChild(label);
 
@@ -629,14 +642,25 @@ export class BattlePassPanel {
         cursor:pointer;transition:all 0.15s;
         background:${C.green};border:none;color:#fff;
         font-family:"Fredoka",sans-serif;letter-spacing:0.5px;
+        pointer-events:none;
       `;
-      claimBtn.onmouseenter = () => { claimBtn.style.background = C.greenDark; claimBtn.style.transform = 'scale(1.05)'; };
-      claimBtn.onmouseleave = () => { claimBtn.style.background = C.green; claimBtn.style.transform = ''; };
-      claimBtn.onclick = (e) => {
+      card.appendChild(claimBtn);
+      // Make the entire card clickable for claiming
+      card.style.cursor = 'pointer';
+      card.onmouseenter = () => {
+        claimBtn.style.background = C.greenDark;
+        claimBtn.style.transform = 'scale(1.05)';
+        card.style.transform = 'scale(1.03)';
+      };
+      card.onmouseleave = () => {
+        claimBtn.style.background = C.green;
+        claimBtn.style.transform = '';
+        card.style.transform = '';
+      };
+      card.onclick = (e) => {
         e.stopPropagation();
         this.handleClaim(tier, isPremium);
       };
-      card.appendChild(claimBtn);
       // Glow effect on claimable
       card.style.borderColor = C.green;
       card.style.boxShadow = `0 0 8px rgba(90,154,78,0.2)`;
@@ -675,6 +699,7 @@ export class BattlePassPanel {
   // ──────────────────────────────────────────────────────────────
 
   private async handleClaim(tier: number, isPremium: boolean): Promise<void> {
+    if (this.claiming) return; // prevent rapid-fire claims
     const auth = AuthManager.getInstance();
     if (auth.isGuest) {
       showGuestLoginPrompt('claim rewards');
@@ -682,6 +707,18 @@ export class BattlePassPanel {
     }
     const token = await getAuth(getFirebaseApp()).currentUser?.getIdToken();
     if (!token) return;
+
+    this.claiming = true;
+    // Visually disable all claim buttons while in-flight
+    this.root?.querySelectorAll<HTMLButtonElement>('.bp-claim-btn').forEach(btn => {
+      btn.disabled = true;
+    });
+
+    // Pre-freeze currency displays so Firebase listener doesn't update them before the fly animation
+    const crownsEl = document.getElementById('menu-crowns-display');
+    const gloryEl = document.getElementById('menu-glory-display');
+    if (crownsEl) prefreezeElement(crownsEl);
+    if (gloryEl) prefreezeElement(gloryEl);
 
     try {
       const res = await fetch('/api/store/claimBattlePassReward', {
@@ -693,14 +730,17 @@ export class BattlePassPanel {
       if (res.ok && data.success) {
         showToast(rewardToastText(data.reward), 'success');
         this.animateClaim(tier, isPremium);
-        // Fly currency icons to the HUD counter
+        // Fly currency icons to the top-right HUD counter
         const reward = data.reward as BattlePassReward;
         if ((reward.type === 'crowns' || reward.type === 'glory') && (reward.amount ?? 0) > 0) {
+          // Try menu scene display first, then fall back to CurrencyDisplay singleton
+          const menuEl = document.getElementById(reward.type === 'crowns' ? 'menu-crowns-display' : 'menu-glory-display');
           const display = CurrencyDisplay.getActive();
-          const targetEl = reward.type === 'crowns' ? display?.getCrownsEl() : display?.getGloryEl();
+          const targetEl = menuEl || (reward.type === 'crowns' ? display?.getCrownsEl() : display?.getGloryEl());
           const key = `${tier}-${isPremium ? 'prem' : 'free'}`;
           const card = this.cardMap.get(key);
           if (targetEl && card) {
+            this._lastFlyTarget = targetEl;
             const cardRect = card.getBoundingClientRect();
             playCurrencyFly({
               type: reward.type,
@@ -718,6 +758,17 @@ export class BattlePassPanel {
     } catch (err) {
       console.warn('[BattlePass] Claim error:', err);
       showToast('Failed to claim reward', 'error');
+    } finally {
+      this.claiming = false;
+      // Re-enable claim buttons
+      this.root?.querySelectorAll<HTMLButtonElement>('.bp-claim-btn').forEach(btn => {
+        btn.disabled = false;
+      });
+      // Unfreeze whichever currency element was NOT used by the fly animation
+      // (the animated one gets unfrozen by the animation itself when it finishes)
+      if (gloryEl && gloryEl !== this._lastFlyTarget) unfreezeElement(gloryEl);
+      if (crownsEl && crownsEl !== this._lastFlyTarget) unfreezeElement(crownsEl);
+      this._lastFlyTarget = null;
     }
   }
 

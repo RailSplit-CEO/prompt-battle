@@ -204,6 +204,14 @@ async function boot() {
     void container.offsetHeight;
   }
 
+  // Remove boot splash screen
+  const splash = document.getElementById('boot-splash');
+  if (splash) {
+    splash.style.transition = 'opacity 0.3s ease';
+    splash.style.opacity = '0';
+    setTimeout(() => splash.remove(), 300);
+  }
+
   const config: Phaser.Types.Core.GameConfig = {
     type: Phaser.AUTO,
     parent: 'game-container',

@@ -12,6 +12,8 @@ import { PaymentService } from '../store/PaymentService';
 import { showPurchaseConfirm } from './PurchaseConfirmModal';
 import { AuthManager } from '../auth/AuthManager';
 import { showGuestLoginPrompt } from './LoginOverlay';
+import { showInsufficientFunds } from './InsufficientFundsModal';
+import { showToast } from './Toast';
 import type { CatalogItem, ItemCategory, HordeUnitType, EquipmentType } from '@prompt-battle/shared';
 
 // ── Rarity border colours ───────────────────────────────────────
@@ -50,9 +52,6 @@ const CATEGORY_EMOJI: Partial<Record<ItemCategory, string>> = {
   spawn_effect:       '\u26A1',
   attack_trail:       '\u2728',
   victory_effect:     '\uD83C\uDF86',
-  map_theme:          '\uD83D\uDDFA\uFE0F',
-  building_theme:     '\uD83C\uDFF0',
-  ui_theme:           '\uD83C\uDFA8',
   cursor_pack:        '\uD83D\uDD79\uFE0F',
   equipment_cosmetic: '\u2694\uFE0F',
   emote:              '\uD83D\uDE04',
@@ -92,7 +91,6 @@ interface CosmeticsTab {
 const TABS: CosmeticsTab[] = [
   { id: 'profile',   label: 'Profile',   icon: '\uD83D\uDC64' },
   { id: 'effects',   label: 'Effects',   icon: '\u2728' },
-  { id: 'world',     label: 'World',     icon: '\uD83C\uDF0D' },
   { id: 'equipment', label: 'Equipment', icon: '\u2694\uFE0F' },
   { id: 'more',      label: 'More',      icon: '\uD83D\uDCE6' },
 ];
@@ -375,7 +373,6 @@ export class CosmeticsHub {
     switch (this.activeTab) {
       case 'profile':   this.renderProfileTab(container); break;
       case 'effects':   this.renderEffectsTab(container); break;
-      case 'world':     this.renderWorldTab(container); break;
       case 'equipment': this.renderEquipmentTab(container); break;
       case 'more':      this.renderMoreTab(container); break;
       default:          this.renderProfileTab(container); break;
@@ -436,27 +433,6 @@ export class CosmeticsHub {
     const victoryItems = this.catalog.getByCategory('victory_effect');
     container.appendChild(
       this.renderSubSection('Victory Effect', victoryItems, 'victoryEffect', '\uD83C\uDF86')
-    );
-  }
-
-  // ────────────────────────────────────────────────────────────────
-  //  World Tab
-  // ────────────────────────────────────────────────────────────────
-
-  private renderWorldTab(container: HTMLDivElement): void {
-    const mapItems = this.catalog.getByCategory('map_theme');
-    container.appendChild(
-      this.renderSubSection('Map Theme', mapItems, 'mapTheme', '\uD83D\uDDFA\uFE0F')
-    );
-
-    const buildingItems = this.catalog.getByCategory('building_theme');
-    container.appendChild(
-      this.renderSubSection('Building Theme', buildingItems, 'buildingTheme', '\uD83C\uDFF0')
-    );
-
-    const uiItems = this.catalog.getByCategory('ui_theme');
-    container.appendChild(
-      this.renderSubSection('UI Theme', uiItems, 'uiTheme', '\uD83C\uDFA8')
     );
 
     const cursorItems = this.catalog.getByCategory('cursor_pack');
@@ -1284,20 +1260,20 @@ export class CosmeticsHub {
   /**
    * Trigger the purchase confirmation flow for an unowned item.
    */
-  private purchaseItem(item: CatalogItem): void {
-    showPurchaseConfirm({
-      itemName: item.name,
-      priceCrowns: item.priceCrowns,
-      priceGlory: item.priceGlory ?? undefined,
-      onConfirm: async () => {
-        const currency = item.priceGlory ? 'glory' : 'crowns';
-        const result = await PaymentService.getInstance().purchaseItem(item.id, currency);
-        if (!result.success) {
-          alert(result.error || 'Purchase failed');
-        }
-      },
-      onCancel: () => {},
-    });
+  private async purchaseItem(item: CatalogItem): Promise<void> {
+    if (AuthManager.getInstance().isGuest) {
+      showGuestLoginPrompt('buy items');
+      return;
+    }
+    const currency: 'crowns' | 'glory' = (item.priceGlory != null && item.priceGlory > 0) ? 'glory' : 'crowns';
+    const result = await PaymentService.getInstance().purchaseItem(item.id, currency);
+    if (!result.success) {
+      if (result.error?.includes('Not enough')) {
+        showInsufficientFunds(currency);
+      } else {
+        showToast(result.error || 'Purchase failed', 'error');
+      }
+    }
   }
 
   // ────────────────────────────────────────────────────────────────

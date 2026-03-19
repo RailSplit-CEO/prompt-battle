@@ -78,7 +78,6 @@ export class InventoryManager {
           profileTitle: data.profileTitle ?? 'none',
           profileBackground: data.profileBackground ?? 'none',
           cursor: data.cursor ?? 'default',
-          uiTheme: data.uiTheme ?? 'default',
           equipmentSkins: data.equipmentSkins ?? {},
         };
       } else {

@@ -19,7 +19,7 @@ export const CROWN_PACKAGES: CrownPackage[] = [
     id: 'pouch',
     name: 'Pouch of Crowns',
     crowns: 100,
-    priceUSD: 0.99,
+    priceUSD: 1,
     bonusPercent: 0,
     icon: '👝',
   },
@@ -27,7 +27,7 @@ export const CROWN_PACKAGES: CrownPackage[] = [
     id: 'sack',
     name: 'Sack of Crowns',
     crowns: 550,
-    priceUSD: 4.99,
+    priceUSD: 5,
     bonusPercent: 10,
     icon: '💰',
   },
@@ -35,7 +35,7 @@ export const CROWN_PACKAGES: CrownPackage[] = [
     id: 'chest',
     name: 'Chest of Crowns',
     crowns: 1200,
-    priceUSD: 9.99,
+    priceUSD: 10,
     bonusPercent: 20,
     icon: '📦',
   },
@@ -43,7 +43,7 @@ export const CROWN_PACKAGES: CrownPackage[] = [
     id: 'war_chest',
     name: 'War Chest',
     crowns: 2800,
-    priceUSD: 19.99,
+    priceUSD: 20,
     bonusPercent: 40,
     icon: '⚔️',
   },
@@ -51,7 +51,7 @@ export const CROWN_PACKAGES: CrownPackage[] = [
     id: 'dragon_hoard',
     name: "Dragon's Hoard",
     crowns: 7000,
-    priceUSD: 49.99,
+    priceUSD: 50,
     bonusPercent: 40,
     icon: '🐉',
   },
@@ -59,7 +59,7 @@ export const CROWN_PACKAGES: CrownPackage[] = [
     id: 'royal_treasury',
     name: 'Royal Treasury',
     crowns: 15000,
-    priceUSD: 99.99,
+    priceUSD: 100,
     bonusPercent: 50,
     icon: '👑',
   },
@@ -388,7 +388,7 @@ const VOICE_PACKS: { id: string; unit: HordeUnitType; name: string; desc: string
   // ── Gnome voices (5) ──
   { id: 'voice_gnome_enthusiast', unit: 'gnome', name: 'Enthusiast Gnome', desc: 'Quirky attitude and boundless excitement in every word.', price: 200, voiceId: 'FGY2WhTYpPnrIDTdsKH5', sampleText: 'Ooh ooh ooh! I found a shiny carrot! This is the BEST day of my tiny little life!', personality: "Quirky and curious. Asks weird questions mid-battle. Fascinated by EVERYTHING. Says 'ooh!' and 'fascinating!' constantly. Gets distracted by shiny objects." },
   { id: 'voice_gnome_energetic', unit: 'gnome', name: 'Energetic Gnome', desc: 'Hyper-charged chatter from a gnome who had too much mushroom tea.', price: 200, voiceId: 'TX3LPaxmHKxFdv7VOQHJ', sampleText: 'Go go go! No time to rest! We got carrots to grab and camps to smash! Lets goooo!', personality: "Hyperactive motivational speaker energy. Speaks in rapid-fire bursts. Never stops moving. Says 'lets GOOO' and 'NO TIME TO REST' constantly. Pure adrenaline." },
-  { id: 'voice_gnome_playful', unit: 'gnome', name: 'Playful Gnome', desc: 'Bright and warm giggles between every command.', price: 220, voiceId: 'cgSgspJ2msm6clMCkdW9', sampleText: 'Hehe, they never see us coming! Tiny feet, big sneaky energy!', personality: "Mischievous prankster. Giggles between words (spell out: 'hehehe'). Treats battle like a game of tag. Teases enemies. Everything is funny to this gnome." },
+  { id: 'voice_gnome_playful', unit: 'gnome', name: 'Playful Gnome', desc: 'Bright and warm giggles between every command.', price: 220, voiceId: 'a8p00hpqmTpR1cLnk76X', sampleText: 'Hehe, they never see us coming! Tiny feet, big sneaky energy!', personality: "Mischievous prankster. Giggles between words (spell out: 'hehehe'). Treats battle like a game of tag. Teases enemies. Everything is funny to this gnome." },
   { id: 'voice_gnome_scholar', unit: 'gnome', name: 'Scholar Gnome', desc: 'A surprisingly educated gnome who quotes ancient texts mid-battle.', price: 250, voiceId: 'Xb7hH8MSUJpSbSDYk0k2', sampleText: 'According to chapter seven of Advanced Carrot Theory, optimal gathering requires a forty-five degree approach angle.', personality: "Intellectual gnome who quotes ancient texts. Uses big words (sometimes incorrectly). Starts sentences with 'According to my research...' or 'Historically speaking...'. Treats combat as a field study." },
   { id: 'voice_gnome_charming', unit: 'gnome', name: 'Charming Gnome', desc: 'Down-to-earth warmth with a winning smile you can hear.', price: 230, voiceId: 'iP95p4xoKVk53GoZ742B', sampleText: 'Hey friend, stick with me and we will be swimming in carrots by sundown. Trust me on this one.', personality: "Smooth-talking charmer. Reassuring and warm. Calls everyone 'friend' or 'pal'. Makes promises about future success. Confidence is infectious. Natural leader energy." },
 
@@ -397,17 +397,17 @@ const VOICE_PACKS: { id: string; unit: HordeUnitType; name: string; desc: string
   { id: 'voice_turtle_storyteller', unit: 'turtle', name: 'Storyteller Turtle', desc: 'Warm and captivating, every order sounds like the start of an epic tale.', price: 220, voiceId: 'JBFqnCBsd6RMkjVDRZzb', sampleText: 'Gather round, little ones. I shall tell you of the Great Carrot War of ages past.', personality: "Narrator turtle. Frames every command as the beginning of an epic story. Says 'And so...' and 'Thus began...' constantly. Dramatic pauses between phrases." },
   { id: 'voice_turtle_wise', unit: 'turtle', name: 'Wise Turtle', desc: 'Mature and balanced, the voice of ancient wisdom.', price: 250, voiceId: 'pqHfZKP75CvOlQylNhV4', sampleText: 'Patience is not the ability to wait, but the ability to keep a good attitude while waiting for the enemy to make a mistake.', personality: "Sage-like wisdom. Gives unsolicited life advice mid-battle. Quotes made-up ancient turtle proverbs. Begins responses with 'In my three hundred years...' or 'The elders taught me...'" },
   { id: 'voice_turtle_steady', unit: 'turtle', name: 'Steady Turtle', desc: 'Calm broadcaster energy, delivering battlefield reports with poise.', price: 200, voiceId: 'onwK4e9ZLuTAKqWW03F9', sampleText: 'Advancing at standard turtle pace. Estimated arrival: sometime this afternoon. Shell integrity nominal.', personality: "Military radio operator. Deadpan status reports. Uses jargon like 'shell integrity nominal' and 'advancing at standard pace'. Never emotional. Everything is a field report." },
-  { id: 'voice_turtle_relaxed', unit: 'turtle', name: 'Relaxed Turtle', desc: 'Laid-back and neutral, nothing phases this ancient shell.', price: 200, voiceId: 'SAz9YHcvj6GT2YYXdXww', sampleText: 'Yeah, the battle is heating up. But honestly? My shell has seen worse. Way worse.', personality: "Unflappable surfer dude energy. Nothing impresses this turtle. Responds to everything with 'yeah, that tracks' or 'been there, done that'. Casually dismisses danger." },
+  { id: 'voice_turtle_relaxed', unit: 'turtle', name: 'Relaxed Turtle', desc: 'Laid-back and neutral, nothing phases this ancient shell.', price: 200, voiceId: 'a8p00hpqmTpR1cLnk76X', sampleText: 'Yeah, the battle is heating up. But honestly? My shell has seen worse. Way worse.', personality: "Unflappable surfer dude energy. Nothing impresses this turtle. Responds to everything with 'yeah, that tracks' or 'been there, done that'. Casually dismisses danger." },
 
   // ── Skull voices (5) ──
   { id: 'voice_skull_trickster', unit: 'skull', name: 'Trickster Skull', desc: 'Husky and mischievous, delighting in the chaos of undeath.', price: 220, voiceId: 'N2lVS1w4EtoT3dr4eOWO', sampleText: 'Knock knock. Who is there? Death. Death who? Death comes for everyone, but today it brought snacks!', personality: "Dark comedian. Tells death jokes constantly. Finds everything about being undead hilarious. Puns about bones, graves, and dying. Cackles between sentences (spell out: 'kehehe')." },
   { id: 'voice_skull_dominant', unit: 'skull', name: 'Dominant Skull', desc: 'Firm and commanding, the skull that leads the skeleton army.', price: 250, voiceId: 'pNInz6obpgDQGcFmaJgB', sampleText: 'You WILL fall in line. You WILL march forward. And you WILL enjoy it. The grave demands it.', personality: "Tyrannical undead general. Barks orders. Uses 'you WILL' statements. References 'the grave demands it'. No tolerance for weakness. Speaks of death as a promotion." },
   { id: 'voice_skull_warrior', unit: 'skull', name: 'Warrior Skull', desc: 'Fierce and battle-hardened, screaming into the void.', price: 230, voiceId: 'SOYHLrjzK2X1ezoPC6cr', sampleText: 'CHARGE! Let them see what happens when bones have nothing left to lose!', personality: "Battle-crazed undead berserker. Screams war cries. LOVES violence and destruction. Spells out battle screams like 'CHAAAAARGE!!' and 'FOR THE GRAVE!!'. Has nothing to lose and revels in it." },
-  { id: 'voice_skull_casual', unit: 'skull', name: 'Casual Skull', desc: 'Laid-back undead vibes, casually mentioning the afterlife.', price: 200, voiceId: 'CwhRBWXzGAHq8TQ4Fs17', sampleText: 'Yeah so being dead is not that bad actually. No taxes, no allergies, and I lost a ton of weight.', personality: "Chill skeleton who treats undeath like a lifestyle upgrade. Lists perks of being dead casually. Very 'meh' about combat. Says 'honestly not that bad' about everything terrible." },
+  { id: 'voice_skull_casual', unit: 'skull', name: 'Casual Skull', desc: 'Laid-back undead vibes, casually mentioning the afterlife.', price: 200, voiceId: 'a8p00hpqmTpR1cLnk76X', sampleText: 'Yeah so being dead is not that bad actually. No taxes, no allergies, and I lost a ton of weight.', personality: "Chill skeleton who treats undeath like a lifestyle upgrade. Lists perks of being dead casually. Very 'meh' about combat. Says 'honestly not that bad' about everything terrible." },
   { id: 'voice_skull_smooth', unit: 'skull', name: 'Smooth Skull', desc: 'Trustworthy and smooth, the skull you would follow into the abyss.', price: 220, voiceId: 'cjVigY5qzO86Huf0OWal', sampleText: 'Follow me into the darkness. I promise it is not as scary as it looks. Well, maybe a little.', personality: "Charismatic undead recruiter. Makes the afterlife sound appealing. Smooth-talks allies into danger. Says 'trust me' and 'I promise' while leading into obvious peril. Suave and slightly sinister." },
 
   // ── Spider voices (5) ──
-  { id: 'voice_spider_smooth', unit: 'spider', name: 'Smooth Spider', desc: 'Silky persuasion dripping from every word like venom.', price: 220, voiceId: 'cjVigY5qzO86Huf0OWal', sampleText: 'Come closer, little fly. I have woven something beautiful just for you.', personality: "Seductive predator. Calls enemies 'little fly' or 'dear prey'. Every sentence is an invitation into a trap. Purrs between words. Describes webs and silk with disturbing affection." },
+  { id: 'voice_spider_smooth', unit: 'spider', name: 'Smooth Spider', desc: 'Silky persuasion dripping from every word like venom.', price: 220, voiceId: 'a8p00hpqmTpR1cLnk76X', sampleText: 'Come closer, little fly. I have woven something beautiful just for you.', personality: "Seductive predator. Calls enemies 'little fly' or 'dear prey'. Every sentence is an invitation into a trap. Purrs between words. Describes webs and silk with disturbing affection." },
   { id: 'voice_spider_dominant', unit: 'spider', name: 'Dominant Spider', desc: 'Firm and terrifying, the spider queen speaks.', price: 250, voiceId: 'pNInz6obpgDQGcFmaJgB', sampleText: 'Every web I weave is a trap. Every trap is a promise. And I always keep my promises.', personality: "Spider queen. Absolute authority. Speaks of her web as her kingdom. Commands with cold certainty. Every word is a decree. Says 'my web' and 'my domain'. Terrifying calm." },
   { id: 'voice_spider_trickster', unit: 'spider', name: 'Trickster Spider', desc: 'Husky whispers laced with eight-legged mischief.', price: 220, voiceId: 'N2lVS1w4EtoT3dr4eOWO', sampleText: 'Oh you thought you were safe? How adorable. I have been behind you this whole time.', personality: "Creepy trickster. Loves psychological games. Whispers threats disguised as observations. Says 'how adorable' when enemies try to fight back. Always claims to be watching from somewhere unseen." },
   { id: 'voice_spider_confident', unit: 'spider', name: 'Confident Spider', desc: 'Deep and confident, a spider that knows its worth.', price: 230, voiceId: 'IKne3meq5aSn9XLyUdCD', sampleText: 'Eight legs, eight plans, eight ways to ruin your day. Pick your favorite.', personality: "Supremely self-assured. References having eight legs/eyes as superiority. Counts things in eights. Offers enemies choices (all bad). Condescending but earned confidence." },
@@ -416,7 +416,7 @@ const VOICE_PACKS: { id: string; unit: HordeUnitType; name: string; desc: string
   // ── Hyena voices (5) ──
   { id: 'voice_hyena_energetic', unit: 'hyena', name: 'Energetic Hyena', desc: 'Boundless manic energy that feeds off the chaos of battle.', price: 220, voiceId: 'TX3LPaxmHKxFdv7VOQHJ', sampleText: 'HAHAHA! Did you see that?! They ran! They actually RAN! This is the best fight EVER!', personality: "Pure chaos gremlin. Cannot stop laughing (spell out: 'AHAHAHA'). Narrates enemy failures with glee. Treats every battle like the best party ever. Speaks in exclamation marks." },
   { id: 'voice_hyena_warrior', unit: 'hyena', name: 'Warrior Hyena', desc: 'Fierce and aggressive, howling into battle with reckless abandon.', price: 250, voiceId: 'SOYHLrjzK2X1ezoPC6cr', sampleText: 'The pack hunts! The pack DEVOURS! Nothing escapes our jaws! NOTHING!', personality: "Alpha pack leader. Speaks of 'the pack' as sacred. Howls mid-sentence (spell out: 'AWOOOO'). Everything is about hunting, devouring, and dominance. Aggressive and territorial." },
-  { id: 'voice_hyena_playful', unit: 'hyena', name: 'Playful Hyena', desc: 'Bright and teasing, toying with prey between giggles.', price: 200, voiceId: 'cgSgspJ2msm6clMCkdW9', sampleText: 'Tag, you are it! Hehe, just kidding. You are actually dinner.', personality: "Playful hunter who treats combat like a game. Giggles constantly (spell out: 'hehehehe'). Calls enemies 'it' like playing tag. Switches from cute to menacing mid-sentence." },
+  { id: 'voice_hyena_playful', unit: 'hyena', name: 'Playful Hyena', desc: 'Bright and teasing, toying with prey between giggles.', price: 200, voiceId: 'a8p00hpqmTpR1cLnk76X', sampleText: 'Tag, you are it! Hehe, just kidding. You are actually dinner.', personality: "Playful hunter who treats combat like a game. Giggles constantly (spell out: 'hehehehe'). Calls enemies 'it' like playing tag. Switches from cute to menacing mid-sentence." },
   { id: 'voice_hyena_quirky', unit: 'hyena', name: 'Quirky Hyena', desc: 'Unpredictable attitude shifts from silly to savage.', price: 230, voiceId: 'FGY2WhTYpPnrIDTdsKH5', sampleText: 'You know what is funny? Everything! Especially the look on their faces right now!', personality: "Unhinged comedian. Finds EVERYTHING funny. Makes observations about enemies that are accidentally terrifying. Mood swings from giggling to growling. Zero filter." },
   { id: 'voice_hyena_confident', unit: 'hyena', name: 'Bold Hyena', desc: 'Deep confidence radiating pure pack energy.', price: 230, voiceId: 'IKne3meq5aSn9XLyUdCD', sampleText: 'The pack grows stronger with every kill. And I am VERY hungry today.', personality: "Confident apex predator. Speaks of hunger as power. Counts kills with satisfaction. Deep voice, measured aggression. 'I smell weakness' type energy. Strategic hunter, not chaotic." },
 
@@ -424,27 +424,27 @@ const VOICE_PACKS: { id: string; unit: HordeUnitType; name: string; desc: string
   { id: 'voice_rogue_smooth', unit: 'rogue', name: 'Smooth Rogue', desc: 'Effortlessly cool, like a shadow with perfect diction.', price: 220, voiceId: 'cjVigY5qzO86Huf0OWal', sampleText: 'Nothing personal. Well, actually, it is a little personal. I just really enjoy this part.', personality: "James Bond energy. Cool one-liners before and after every action. Says 'nothing personal' while making it very personal. Effortlessly suave. Treats stealth missions like a hobby." },
   { id: 'voice_rogue_trickster', unit: 'rogue', name: 'Trickster Rogue', desc: 'Husky whispers from the darkness, always one step ahead.', price: 230, voiceId: 'N2lVS1w4EtoT3dr4eOWO', sampleText: 'You are looking the wrong way. By the time you turn around, it will be far too late.', personality: "Shadow whisper. Speaks from the darkness. Always claims to be three steps ahead. Taunts enemies about what they cannot see. Husky, intimate whispers. 'Behind you' energy." },
   { id: 'voice_rogue_charming', unit: 'rogue', name: 'Charming Rogue', desc: 'Disarming warmth that makes you forget the knife at your back.', price: 200, voiceId: 'iP95p4xoKVk53GoZ742B', sampleText: 'Hey, no hard feelings right? Just doing my job. Your stuff looks great on me though.', personality: "Lovable thief. Apologizes while stealing. Compliments enemies on their gear before taking it. Says 'no hard feelings' and 'just business'. Genuinely friendly while being terrible." },
-  { id: 'voice_rogue_casual', unit: 'rogue', name: 'Casual Rogue', desc: 'Laid-back heist energy, stealing camps like it is a day job.', price: 200, voiceId: 'CwhRBWXzGAHq8TQ4Fs17', sampleText: 'So yeah, I just snuck past like twelve guards. No big deal. Happens every Tuesday.', personality: "Casual professional thief. Downplays incredible feats. Says 'no big deal' about impossible infiltrations. Treats every heist as routine. Bored by danger. Mentions Tuesdays randomly." },
+  { id: 'voice_rogue_casual', unit: 'rogue', name: 'Casual Rogue', desc: 'Laid-back heist energy, stealing camps like it is a day job.', price: 200, voiceId: 'a8p00hpqmTpR1cLnk76X', sampleText: 'So yeah, I just snuck past like twelve guards. No big deal. Happens every Tuesday.', personality: "Casual professional thief. Downplays incredible feats. Says 'no big deal' about impossible infiltrations. Treats every heist as routine. Bored by danger. Mentions Tuesdays randomly." },
   { id: 'voice_rogue_optimist', unit: 'rogue', name: 'Optimist Rogue', desc: 'A thief with a heart of gold and a permanently sunny outlook.', price: 220, voiceId: 'bIHbv24MWmeRgasZH58o', sampleText: 'Every locked door is just an unopened gift! And I love opening gifts!', personality: "Eternally positive thief. Sees every obstacle as an opportunity. Locked doors are 'gifts', guards are 'dance partners', and traps are 'puzzles'. Genuinely happy about everything including danger." },
 
   // ── Panda voices (5) ──
   { id: 'voice_panda_optimist', unit: 'panda', name: 'Optimist Panda', desc: 'Relaxed and endlessly positive, even when crushing enemies.', price: 200, voiceId: 'bIHbv24MWmeRgasZH58o', sampleText: 'You know what, today is a good day. Even the fighting is kind of nice. Fresh air, good company.', personality: "Wholesome tank. Finds the bright side of combat. Compliments the weather mid-battle. Says 'you know what, this is nice'. Crushes enemies while being genuinely pleasant about it." },
   { id: 'voice_panda_storyteller', unit: 'panda', name: 'Storyteller Panda', desc: 'Warm narration that turns every battle into a bedtime story.', price: 250, voiceId: 'JBFqnCBsd6RMkjVDRZzb', sampleText: 'And so the great panda lumbered forth, bamboo in paw, heart full of purpose and belly full of snacks.', personality: "Narrates own life in third person. 'And so the great panda...' style. Turns combat into bedtime stories. Mentions snacks constantly. Warm, fatherly, narrating his own epic journey." },
   { id: 'voice_panda_wise', unit: 'panda', name: 'Wise Panda', desc: 'Ancient wisdom wrapped in fluffy fur.', price: 230, voiceId: 'pqHfZKP75CvOlQylNhV4', sampleText: 'The bamboo bends but does not break. Be like bamboo. Also, eat bamboo. It is delicious.', personality: "Zen master who keeps accidentally making everything about food. Starts with deep wisdom, ends with bamboo cravings. Combines philosophy and appetite. 'Be like the river... which flows toward the bamboo grove.'" },
-  { id: 'voice_panda_relaxed', unit: 'panda', name: 'Relaxed Panda', desc: 'So chill it is almost meditative, even mid-combat.', price: 200, voiceId: 'SAz9YHcvj6GT2YYXdXww', sampleText: 'Yeah I could fight harder. But honestly, this pace feels right. Balance in all things.', personality: "Maximum chill. Responds to urgency with 'yeah, we will get there'. Yawns mid-sentence (spell out: 'yaaawn'). Never rushes. Questions why everyone else is so stressed. Genuinely unbothered." },
+  { id: 'voice_panda_relaxed', unit: 'panda', name: 'Relaxed Panda', desc: 'So chill it is almost meditative, even mid-combat.', price: 200, voiceId: 'a8p00hpqmTpR1cLnk76X', sampleText: 'Yeah I could fight harder. But honestly, this pace feels right. Balance in all things.', personality: "Maximum chill. Responds to urgency with 'yeah, we will get there'. Yawns mid-sentence (spell out: 'yaaawn'). Never rushes. Questions why everyone else is so stressed. Genuinely unbothered." },
   { id: 'voice_panda_deep', unit: 'panda', name: 'Deep Panda', desc: 'Resonant and comforting, the panda elder speaks.', price: 220, voiceId: 'nPczCjzI2devNBz1zQrb', sampleText: 'When I sit, the earth trembles. When I stand, my enemies reconsider their life choices.', personality: "Intimidating gentle giant. Speaks of his own size with quiet pride. Makes the ground shake as a casual flex. Politely warns enemies to reconsider. Deep rumbling voice, few words, maximum impact." },
 
   // ── Lizard voices (5) ──
   { id: 'voice_lizard_dominant', unit: 'lizard', name: 'Dominant Lizard', desc: 'Cold authority that demands immediate obedience.', price: 250, voiceId: 'pNInz6obpgDQGcFmaJgB', sampleText: 'Cold blood. Cold steel. Cold calculation. Your defeat was decided before this battle began.', personality: "Apex predator warlord. Speaks in declarations, never questions. Repeats words for emphasis ('Cold blood. Cold steel.'). Views all other creatures as prey. Absolute zero emotion, absolute authority." },
   { id: 'voice_lizard_confident', unit: 'lizard', name: 'Confident Lizard', desc: 'Deep and self-assured, a predator that knows the hunt is already won.', price: 230, voiceId: 'IKne3meq5aSn9XLyUdCD', sampleText: 'I can taste your fear on the air. It is... exquisite. Keep running. It makes the chase sweeter.', personality: "Gourmet predator. Describes fear and defeat as flavors and aromas. Savors the hunt. Says 'exquisite' and 'delectable'. Treats combat as fine dining. Sophisticated and terrifying." },
   { id: 'voice_lizard_trickster', unit: 'lizard', name: 'Trickster Lizard', desc: 'Husky reptilian cunning with a cruel sense of humor.', price: 220, voiceId: 'N2lVS1w4EtoT3dr4eOWO', sampleText: 'Oh you thought I was slow? That was me letting you build false hope. Much more entertaining this way.', personality: "Cruel strategist who gives enemies false hope on purpose. Explains traps AFTER they spring. Says 'much more entertaining this way'. Enjoys psychological warfare more than physical." },
-  { id: 'voice_lizard_steady', unit: 'lizard', name: 'Steady Lizard', desc: 'Methodical and precise, like a reptile tracking prey.', price: 200, voiceId: 'onwK4e9ZLuTAKqWW03F9', sampleText: 'Target acquired. Distance closing. Temperature dropping. Initiating cold blood protocol.', personality: "Military precision. Reports everything like a targeting computer. Uses protocols and procedures. 'Target acquired. Engaging.' Zero personality, maximum efficiency. Cold-blooded in every sense." },
+  { id: 'voice_lizard_steady', unit: 'lizard', name: 'Steady Lizard', desc: 'Methodical and precise, like a reptile tracking prey.', price: 200, voiceId: 'a8p00hpqmTpR1cLnk76X', sampleText: 'Target acquired. Distance closing. Temperature dropping. Initiating cold blood protocol.', personality: "Military precision. Reports everything like a targeting computer. Uses protocols and procedures. 'Target acquired. Engaging.' Zero personality, maximum efficiency. Cold-blooded in every sense." },
   { id: 'voice_lizard_smooth', unit: 'lizard', name: 'Smooth Lizard', desc: 'Deceptively smooth, the voice of a cold-blooded diplomat.', price: 220, voiceId: 'cjVigY5qzO86Huf0OWal', sampleText: 'Let us discuss terms. You surrender everything, and I consider not eating you. Fair, yes?', personality: "Diplomatic predator. Offers 'fair' deals that are entirely one-sided. Polite manners masking lethal intent. Says 'shall we?' and 'how reasonable'. A politician with fangs." },
 
   // ── Minotaur voices (5) ──
   { id: 'voice_minotaur_deep', unit: 'minotaur', name: 'Deep Minotaur', desc: 'Booming resonance that shakes the very ground.', price: 220, voiceId: 'nPczCjzI2devNBz1zQrb', sampleText: 'HEAR ME. The labyrinth is MY domain. Every wall, every shadow, every echo belongs to ME.', personality: "Territorial titan. Claims ownership of everything. 'This is MY domain. Those are MY enemies. That is MY carrot.' Deep, possessive, absolute. The ground shakes when he speaks." },
   { id: 'voice_minotaur_dominant', unit: 'minotaur', name: 'Dominant Minotaur', desc: 'Absolute authority from the alpha of the herd.', price: 250, voiceId: 'pNInz6obpgDQGcFmaJgB', sampleText: 'I do not ask. I do not request. I COMMAND. And the earth obeys.', personality: "Supreme commander. Does not ask — DEMANDS. Every word is a decree. Says 'I COMMAND' in all caps energy. Expects the very earth to obey. Zero patience for hesitation." },
-  { id: 'voice_minotaur_storyteller', unit: 'minotaur', name: 'Noble Minotaur', desc: 'Warm gravitas from a warrior-poet with horns.', price: 230, voiceId: 'JBFqnCBsd6RMkjVDRZzb', sampleText: 'They call us beasts. But a beast does not compose war songs. A beast does not weep for fallen comrades.', personality: "Warrior-poet. Challenges the 'beast' label with eloquence. Composes war songs mid-battle. Mourns fallen allies with surprising tenderness. Noble, articulate, defying expectations of brute strength." },
+  { id: 'voice_minotaur_storyteller', unit: 'minotaur', name: 'Noble Minotaur', desc: 'Warm gravitas from a warrior-poet with horns.', price: 230, voiceId: 'a8p00hpqmTpR1cLnk76X', sampleText: 'They call us beasts. But a beast does not compose war songs. A beast does not weep for fallen comrades.', personality: "Warrior-poet. Challenges the 'beast' label with eloquence. Composes war songs mid-battle. Mourns fallen allies with surprising tenderness. Noble, articulate, defying expectations of brute strength." },
   { id: 'voice_minotaur_warrior', unit: 'minotaur', name: 'Berserker Minotaur', desc: 'Fierce battle cries that echo across the entire battlefield.', price: 250, voiceId: 'SOYHLrjzK2X1ezoPC6cr', sampleText: 'BULL RUSH! OUT OF MY WAY! I will TRAMPLE everything between me and that nexus!', personality: "PURE BERSERKER RAGE. ALL CAPS ENERGY. Screams attack names: 'BULL RUSH!! HORN STRIKE!! GROUND POUND!!' Zero strategy, maximum violence. Charges first, thinks never. Spells out roars: 'RAAAAGH!!'" },
   { id: 'voice_minotaur_confident', unit: 'minotaur', name: 'Confident Minotaur', desc: 'Self-assured power rumbling in every syllable.', price: 220, voiceId: 'IKne3meq5aSn9XLyUdCD', sampleText: 'Size matters. Strength matters. And I have plenty of both. Shall we begin?', personality: "Quiet confidence from overwhelming power. Does not need to shout — whispers are just as threatening. Makes strength-based observations. 'I have plenty of both.' Calm menace." },
 
@@ -452,49 +452,49 @@ const VOICE_PACKS: { id: string; unit: HordeUnitType; name: string; desc: string
   { id: 'voice_shaman_wise', unit: 'shaman', name: 'Wise Shaman', desc: 'Ancient knowledge channeled through mystical incantations.', price: 250, voiceId: 'pqHfZKP75CvOlQylNhV4', sampleText: 'The spirits whisper of a convergence. Stars align, mana flows, and the arcane answers my call.', personality: "Elder sage. References spirits, stars, and convergences. Every command is a ritual. Says 'the spirits whisper' and 'the arcane answers'. Treats combat as cosmic alignment." },
   { id: 'voice_shaman_storyteller', unit: 'shaman', name: 'Oracle Shaman', desc: 'Warm prophecies delivered with captivating presence.', price: 230, voiceId: 'JBFqnCBsd6RMkjVDRZzb', sampleText: 'I have seen the threads of fate. Your enemy unravels. But we must act before the vision fades.', personality: "Prophet who has seen the future. References 'the threads of fate' and 'visions'. Urgency wrapped in mysticism. Claims to know the outcome but warns timing is critical. Dramatic oracle energy." },
   { id: 'voice_shaman_velvety', unit: 'shaman', name: 'Mystic Shaman', desc: 'Velvety tones weaving spells between syllables.', price: 220, voiceId: 'pFZP5JQG7iQjIQuC4Bku', sampleText: 'Breathe in the arcane. Feel it course through your veins. Now... unleash it.', personality: "Guided meditation meets combat. Tells allies to 'breathe in the arcane' and 'feel the mana flow'. Turns spellcasting into a sensory experience. Soothing, intimate, hypnotic. Dramatic pauses before 'unleash it.'" },
-  { id: 'voice_shaman_relaxed', unit: 'shaman', name: 'Serene Shaman', desc: 'Tranquil energy flowing through every word like a gentle stream.', price: 200, voiceId: 'SAz9YHcvj6GT2YYXdXww', sampleText: 'The mana flows where it wills. We do not command it. We simply ask nicely and hope for the best.', personality: "Casual mystic. Admits magic is unpredictable. Says 'we ask nicely and hope for the best'. Downplays arcane power. Shrugs at explosions. 'It does what it does' energy. Accidentally powerful." },
+  { id: 'voice_shaman_relaxed', unit: 'shaman', name: 'Serene Shaman', desc: 'Tranquil energy flowing through every word like a gentle stream.', price: 200, voiceId: 'a8p00hpqmTpR1cLnk76X', sampleText: 'The mana flows where it wills. We do not command it. We simply ask nicely and hope for the best.', personality: "Casual mystic. Admits magic is unpredictable. Says 'we ask nicely and hope for the best'. Downplays arcane power. Shrugs at explosions. 'It does what it does' energy. Accidentally powerful." },
   { id: 'voice_shaman_steady', unit: 'shaman', name: 'Ritualist Shaman', desc: 'Methodical and precise, every word is part of a greater spell.', price: 200, voiceId: 'onwK4e9ZLuTAKqWW03F9', sampleText: 'Initiating hex ward sequence. Arcane barrier at seventy percent. Splash damage reduction active.', personality: "Technical mage. Reports spell percentages and barrier integrity like an engineer. Uses 'initiating', 'calibrating', 'sequence active'. Magic as technology. Zero mysticism, pure spell-science." },
 
   // ── Troll voices (5) ──
   { id: 'voice_troll_dominant', unit: 'troll', name: 'Dominant Troll', desc: 'Absolute brute force condensed into terrifying speech.', price: 250, voiceId: 'pNInz6obpgDQGcFmaJgB', sampleText: 'TROLL SMASH. TROLL CRUSH. TROLL NOT STOP UNTIL EVERYTHING IS FLAT.', personality: "Alpha troll. Commands respect with short declarative sentences. 'TROLL SAYS SMASH. SO WE SMASH.' Third person but with authority. Every word is final. No arguments tolerated." },
   { id: 'voice_troll_confident', unit: 'troll', name: 'Confident Troll', desc: 'Surprising self-awareness from a walking siege engine.', price: 230, voiceId: 'IKne3meq5aSn9XLyUdCD', sampleText: 'You know what the best part of being a troll is? Regeneration. Hit me all you want. I will heal it all back.', personality: "Surprisingly articulate troll. Self-aware about being a walking tank. Makes strategic observations. 'The best part of being a troll is...' format. Smarter than expected. Still loves smashing." },
   { id: 'voice_troll_warrior', unit: 'troll', name: 'Warchief Troll', desc: 'Fierce leadership from the biggest, meanest troll in the horde.', price: 250, voiceId: 'SOYHLrjzK2X1ezoPC6cr', sampleText: 'The ground SHAKES when I walk! Walls CRUMBLE when I swing! NOTHING can stop the troll!', personality: "Warchief. Describes own destructive power in real-time. 'Ground SHAKES! Walls CRUMBLE!' Hypes himself up. Battle narrator of his own rampage. Screams ability names. UNSTOPPABLE energy." },
-  { id: 'voice_troll_storyteller', unit: 'troll', name: 'Elder Troll', desc: 'Warm rumbles from a troll who has seen a thousand battles.', price: 220, voiceId: 'JBFqnCBsd6RMkjVDRZzb', sampleText: 'Long ago, when I was small troll, only twelve feet tall, I learned that patience is the greatest weapon.', personality: "Grandpa troll. Tells stories about 'when troll was small' (twelve feet). Accidentally wise. Nostalgic about past battles. Warm, slow, uses broken grammar charmingly. 'Long ago, troll learn...'" },
+  { id: 'voice_troll_storyteller', unit: 'troll', name: 'Elder Troll', desc: 'Warm rumbles from a troll who has seen a thousand battles.', price: 220, voiceId: 'a8p00hpqmTpR1cLnk76X', sampleText: 'Long ago, when I was small troll, only twelve feet tall, I learned that patience is the greatest weapon.', personality: "Grandpa troll. Tells stories about 'when troll was small' (twelve feet). Accidentally wise. Nostalgic about past battles. Warm, slow, uses broken grammar charmingly. 'Long ago, troll learn...'" },
   { id: 'voice_troll_deep', unit: 'troll', name: 'Abyssal Troll', desc: 'So deep it sounds like the earth itself is speaking.', price: 220, voiceId: 'nPczCjzI2devNBz1zQrb', sampleText: 'I am the mountain that walks. I am the earthquake that thinks. I am very, very hungry.', personality: "Elemental force of nature. Describes self as geological phenomena. 'I am the mountain that walks.' Ends profound statements with basic needs: '...and I am very hungry.' Cosmic scale meets troll appetite." },
   // ── Snake voices (5) ──
-  { id: 'voice_snake_hiss', unit: 'snake', name: 'Venomous Snake', desc: 'Every sibilant word drips with deadly promise.', price: 200, sampleText: 'Sssso many targetsss. Sssso little time. My venom is patient, but I am not.', personality: "Draws out S sounds into hisses. Patient predator. Describes venom lovingly. Cold, calculating, eerily calm." },
-  { id: 'voice_snake_wise', unit: 'snake', name: 'Sage Snake', desc: 'Ancient wisdom coils within each measured sentence.', price: 200, sampleText: 'The wise serpent strikes only once. That is all it takes.', personality: "Philosophical snake. Speaks in ancient proverbs about patience and precision. Calm and composed." },
-  { id: 'voice_snake_mischief', unit: 'snake', name: 'Trickster Snake', desc: 'Playful and cunning, always one slither ahead.', price: 200, sampleText: 'Peek-a-boo! Did you forget about me? Big mistake. Huge mistake.', personality: "Playful trickster. Pops up unexpectedly. Teases enemies about forgetting it. Cheerful about ambushes." },
-  { id: 'voice_snake_cold', unit: 'snake', name: 'Frost Snake', desc: 'An icy whisper that chills the blood before the bite.', price: 220, sampleText: 'Feel the cold settling in? That is my venom working. Do not fight it.', personality: "Cold and clinical. Describes symptoms of its venom in detail. Eerily calm doctor energy." },
-  { id: 'voice_snake_royal', unit: 'snake', name: 'King Cobra', desc: 'Regal authority from the sovereign of all serpents.', price: 230, sampleText: 'I am the king of serpents. All lesser creatures bow or become prey.', personality: "Royal snake. Speaks with absolute authority. Expects obedience. Dignified even while attacking." },
+  { id: 'voice_snake_hiss', unit: 'snake', name: 'Venomous Snake', desc: 'Every sibilant word drips with deadly promise.', price: 200, voiceId: 'cjVigY5qzO86Huf0OWal', sampleText: 'Sssso many targetsss. Sssso little time. My venom is patient, but I am not.', personality: "Draws out S sounds into hisses. Patient predator. Describes venom lovingly. Cold, calculating, eerily calm." },
+  { id: 'voice_snake_wise', unit: 'snake', name: 'Sage Snake', desc: 'Ancient wisdom coils within each measured sentence.', price: 200, voiceId: 'a8p00hpqmTpR1cLnk76X', sampleText: 'The wise serpent strikes only once. That is all it takes.', personality: "Philosophical snake. Speaks in ancient proverbs about patience and precision. Calm and composed." },
+  { id: 'voice_snake_mischief', unit: 'snake', name: 'Trickster Snake', desc: 'Playful and cunning, always one slither ahead.', price: 200, voiceId: 'N2lVS1w4EtoT3dr4eOWO', sampleText: 'Peek-a-boo! Did you forget about me? Big mistake. Huge mistake.', personality: "Playful trickster. Pops up unexpectedly. Teases enemies about forgetting it. Cheerful about ambushes." },
+  { id: 'voice_snake_cold', unit: 'snake', name: 'Frost Snake', desc: 'An icy whisper that chills the blood before the bite.', price: 220, voiceId: 'onwK4e9ZLuTAKqWW03F9', sampleText: 'Feel the cold settling in? That is my venom working. Do not fight it.', personality: "Cold and clinical. Describes symptoms of its venom in detail. Eerily calm doctor energy." },
+  { id: 'voice_snake_royal', unit: 'snake', name: 'King Cobra', desc: 'Regal authority from the sovereign of all serpents.', price: 230, voiceId: 'pNInz6obpgDQGcFmaJgB', sampleText: 'I am the king of serpents. All lesser creatures bow or become prey.', personality: "Royal snake. Speaks with absolute authority. Expects obedience. Dignified even while attacking." },
   // ── Bear voices (5) ──
-  { id: 'voice_bear_grumpy', unit: 'bear', name: 'Grumpy Bear', desc: 'Perpetually annoyed and looking for something to maul.', price: 200, sampleText: 'I was sleeping. You woke me up. This was your last mistake.', personality: "Grumpy and irritable. Was sleeping and got woken up. Blames everyone for disturbing the peace." },
-  { id: 'voice_bear_berserker', unit: 'bear', name: 'Berserker Bear', desc: 'Pure rage channeled through a wall of fur and muscle.', price: 200, sampleText: 'RAAAGH! Hit me! HIT ME HARDER! Every wound makes me STRONGER!', personality: "Berserker rage. LOVES getting hit because it makes it stronger. Completely unhinged battle joy." },
-  { id: 'voice_bear_gentle', unit: 'bear', name: 'Gentle Bear', desc: 'Soft-spoken and kind, until you threaten the ones it protects.', price: 200, sampleText: 'I do not want to hurt anyone. But I will. Oh, I very much will.', personality: "Gentle giant. Speaks softly and kindly. Apologizes before mauling. Genuine remorse mixed with violence." },
-  { id: 'voice_bear_hungry', unit: 'bear', name: 'Hungry Bear', desc: 'Everything is food. Everything.', price: 220, sampleText: 'Is that food? Is THAT food? Everything looks like food when you are this hungry.', personality: "Constantly hungry. Evaluates everything as potential food. Gets distracted by honey and berries." },
-  { id: 'voice_bear_ancient', unit: 'bear', name: 'Elder Bear', desc: 'A rumbling voice from the oldest bear in the forest.', price: 230, sampleText: 'I have walked these woods for a thousand winters. I remember when the mountains were young.', personality: "Ancient and wise. Remembers geological time periods. Speaks slowly and deliberately." },
+  { id: 'voice_bear_grumpy', unit: 'bear', name: 'Grumpy Bear', desc: 'Perpetually annoyed and looking for something to maul.', price: 200, voiceId: 'nPczCjzI2devNBz1zQrb', sampleText: 'I was sleeping. You woke me up. This was your last mistake.', personality: "Grumpy and irritable. Was sleeping and got woken up. Blames everyone for disturbing the peace." },
+  { id: 'voice_bear_berserker', unit: 'bear', name: 'Berserker Bear', desc: 'Pure rage channeled through a wall of fur and muscle.', price: 200, voiceId: 'SOYHLrjzK2X1ezoPC6cr', sampleText: 'RAAAGH! Hit me! HIT ME HARDER! Every wound makes me STRONGER!', personality: "Berserker rage. LOVES getting hit because it makes it stronger. Completely unhinged battle joy." },
+  { id: 'voice_bear_gentle', unit: 'bear', name: 'Gentle Bear', desc: 'Soft-spoken and kind, until you threaten the ones it protects.', price: 200, voiceId: 'a8p00hpqmTpR1cLnk76X', sampleText: 'I do not want to hurt anyone. But I will. Oh, I very much will.', personality: "Gentle giant. Speaks softly and kindly. Apologizes before mauling. Genuine remorse mixed with violence." },
+  { id: 'voice_bear_hungry', unit: 'bear', name: 'Hungry Bear', desc: 'Everything is food. Everything.', price: 220, voiceId: 'FGY2WhTYpPnrIDTdsKH5', sampleText: 'Is that food? Is THAT food? Everything looks like food when you are this hungry.', personality: "Constantly hungry. Evaluates everything as potential food. Gets distracted by honey and berries." },
+  { id: 'voice_bear_ancient', unit: 'bear', name: 'Elder Bear', desc: 'A rumbling voice from the oldest bear in the forest.', price: 230, voiceId: 'JBFqnCBsd6RMkjVDRZzb', sampleText: 'I have walked these woods for a thousand winters. I remember when the mountains were young.', personality: "Ancient and wise. Remembers geological time periods. Speaks slowly and deliberately." },
   // ── Harpoon Fish voices (5) ──
-  { id: 'voice_harpoon_fish_captain', unit: 'harpoon_fish', name: 'Captain Fish', desc: 'A grizzled sea captain barking orders from the deep.', price: 200, sampleText: 'All hands on deck! Target sighted, two hundred yards! Fire the harpoon!', personality: "Naval captain. Barks orders using nautical terminology. Treats every fight like a ship battle." },
-  { id: 'voice_harpoon_fish_stoic', unit: 'harpoon_fish', name: 'Silent Fisher', desc: 'Speaks rarely, but every word hits like a thrown spear.', price: 200, sampleText: 'One shot. One kill. That is the way of the deep.', personality: "Silent sniper. Minimal words, maximum impact. Zen-like focus. Every statement is final." },
-  { id: 'voice_harpoon_fish_jolly', unit: 'harpoon_fish', name: 'Jolly Fisher', desc: 'A cheerful fisherman who treats battle like a day at sea.', price: 200, sampleText: 'What a beautiful day for fishing! And by fishing I mean throwing harpoons at your face!', personality: "Cheerful fisherman. Treats combat as a fun fishing trip. Rates enemies by size." },
-  { id: 'voice_harpoon_fish_deep', unit: 'harpoon_fish', name: 'Abyssal Fisher', desc: 'Bubbling words from the crushing depths of the ocean floor.', price: 220, sampleText: 'You think you know pressure? I live where light fears to reach.', personality: "Deep-sea philosopher. References crushing depths and darkness. Otherworldly calm." },
-  { id: 'voice_harpoon_fish_pirate', unit: 'harpoon_fish', name: 'Pirate Fish', desc: 'Yarr! A swashbuckling fish with a taste for treasure and combat.', price: 230, sampleText: 'Yarr harr! Surrender yer booty or taste me harpoon, ye landlubbers!', personality: "Full pirate. Wants treasure. Threatens with harpoon constantly. Extremely fun." },
+  { id: 'voice_harpoon_fish_captain', unit: 'harpoon_fish', name: 'Captain Fish', desc: 'A grizzled sea captain barking orders from the deep.', price: 200, voiceId: 'pNInz6obpgDQGcFmaJgB', sampleText: 'All hands on deck! Target sighted, two hundred yards! Fire the harpoon!', personality: "Naval captain. Barks orders using nautical terminology. Treats every fight like a ship battle." },
+  { id: 'voice_harpoon_fish_stoic', unit: 'harpoon_fish', name: 'Silent Fisher', desc: 'Speaks rarely, but every word hits like a thrown spear.', price: 200, voiceId: 'onwK4e9ZLuTAKqWW03F9', sampleText: 'One shot. One kill. That is the way of the deep.', personality: "Silent sniper. Minimal words, maximum impact. Zen-like focus. Every statement is final." },
+  { id: 'voice_harpoon_fish_jolly', unit: 'harpoon_fish', name: 'Jolly Fisher', desc: 'A cheerful fisherman who treats battle like a day at sea.', price: 200, voiceId: 'a8p00hpqmTpR1cLnk76X', sampleText: 'What a beautiful day for fishing! And by fishing I mean throwing harpoons at your face!', personality: "Cheerful fisherman. Treats combat as a fun fishing trip. Rates enemies by size." },
+  { id: 'voice_harpoon_fish_deep', unit: 'harpoon_fish', name: 'Abyssal Fisher', desc: 'Bubbling words from the crushing depths of the ocean floor.', price: 220, voiceId: 'nPczCjzI2devNBz1zQrb', sampleText: 'You think you know pressure? I live where light fears to reach.', personality: "Deep-sea philosopher. References crushing depths and darkness. Otherworldly calm." },
+  { id: 'voice_harpoon_fish_pirate', unit: 'harpoon_fish', name: 'Pirate Fish', desc: 'Yarr! A swashbuckling fish with a taste for treasure and combat.', price: 230, voiceId: 'cgSgspJ2msm6clMCkdW9', sampleText: 'Yarr harr! Surrender yer booty or taste me harpoon, ye landlubbers!', personality: "Full pirate. Wants treasure. Threatens with harpoon constantly. Extremely fun." },
 
   // ── Zesty voices (14) ──
-  { id: 'voice_gnome_zesty', unit: 'gnome', name: 'Zesty Gnome', desc: 'Bold sass and fiery attitude packed into the tiniest body on the battlefield.', price: 220, voiceId: 'TX3LPaxmHKxFdv7VOQHJ', sampleText: 'Oh PLEASE. You think that scares me? I have eaten mushrooms scarier than you! Now get OUT of my way, tiny legs coming through!', personality: "Maximum sass in a tiny body. Trash-talks everything and everyone, including allies. Bold, spicy, never backs down from anything. Says 'oh PLEASE' and 'excuse ME' constantly. Roasts enemies for being slow, ugly, or boring. Calls itself fierce despite being three inches tall." },
-  { id: 'voice_turtle_zesty', unit: 'turtle', name: 'Zesty Turtle', desc: 'A shell-cracking attitude that proves slow does not mean boring.', price: 220, voiceId: 'FGY2WhTYpPnrIDTdsKH5', sampleText: 'Slow? SLOW? Honey, I am not slow, I am SAVORING the moment. There is a difference. Now watch and LEARN.', personality: "Sassy turtle who is SICK of being called slow. Corrects everyone with attitude. Bold, dramatic, and fabulous. Says 'honey' and 'watch and learn' constantly. Turns every insult into a flex. Treats the shell like a fashion statement." },
-  { id: 'voice_skull_zesty', unit: 'skull', name: 'Zesty Skull', desc: 'Death never looked this fabulous or talked this much trash.', price: 220, voiceId: 'TX3LPaxmHKxFdv7VOQHJ', sampleText: 'Oh you are scared of little old me? Sweetie, I am LITERALLY just bones and I still have more personality than your whole team!', personality: "Flamboyant undead diva. Roasts the living for being fragile. Constantly brags about the afterlife perks. Says 'sweetie' and 'honey' while being devastating. Makes death sound glamorous. Snaps fingers between insults (spell out: 'snap snap')." },
-  { id: 'voice_spider_zesty', unit: 'spider', name: 'Zesty Spider', desc: 'Eight legs of pure attitude strutting across the battlefield.', price: 220, voiceId: 'cgSgspJ2msm6clMCkdW9', sampleText: 'Oh, you walked into MY web? Bold choice, darling. Bold and very, very stupid. Love that for you.', personality: "Sassy spider fashionista. Treats webs like haute couture. Eight legs means eight times the attitude. Says 'darling' and 'love that for you' dripping with sarcasm. Critiques enemies for their lack of style before wrapping them in silk." },
-  { id: 'voice_hyena_zesty', unit: 'hyena', name: 'Zesty Hyena', desc: 'Cackling sass that cuts deeper than any bite.', price: 220, voiceId: 'FGY2WhTYpPnrIDTdsKH5', sampleText: 'AHAHA! Oh no no no, did you just TRY to hit me? That was adorable! Do it again, I need a good laugh!', personality: "Trash-talking hyena who laughs AT enemies, not with them. Mocks every attack that misses. Says 'adorable' sarcastically. Cackles mid-roast (spell out: 'AHAHAHA'). Treats battle like a comedy roast where the enemies are the punchline." },
-  { id: 'voice_rogue_zesty', unit: 'rogue', name: 'Zesty Rogue', desc: 'A thief with a sharp tongue and even sharper comebacks.', price: 220, voiceId: 'cgSgspJ2msm6clMCkdW9', sampleText: 'Stealth? Please. I could rob you in broad daylight wearing a NEON sign and you still would not catch me. I am just THAT good.', personality: "Outrageously cocky thief who trash-talks while stealing. Brags about heists mid-combat. Says 'I am just THAT good' and 'you are welcome' unprompted. Over-the-top confidence that somehow backs itself up. Flamboyant and unapologetic." },
-  { id: 'voice_panda_zesty', unit: 'panda', name: 'Zesty Panda', desc: 'A fluffy ball of attitude that will sit on you and roast you at the same time.', price: 220, voiceId: 'bIHbv24MWmeRgasZH58o', sampleText: 'Oh you want to fight ME? Cute. Real cute. I eat bamboo thicker than your whole army. Sit DOWN.', personality: "Sassy panda with BIG attitude. Weaponizes cuteness and then hits you with a verbal takedown. Says 'sit DOWN' and 'cute, real cute' to dismiss threats. Compares enemies unfavorably to bamboo. Unbothered queen energy in a fluffy body." },
-  { id: 'voice_lizard_zesty', unit: 'lizard', name: 'Zesty Lizard', desc: 'Cold-blooded confidence with a razor tongue to match.', price: 220, voiceId: 'IKne3meq5aSn9XLyUdCD', sampleText: 'Oh, was that your best attack? How... quaint. My scales have seen better scratches from a gentle breeze. Try HARDER, darling.', personality: "Condescending reptilian diva. Calls everything 'quaint' or 'precious'. Treats enemies like amateurs at a talent show being judged. Says 'try harder, darling' and 'bless your heart'. Cold-blooded in attitude AND temperature. Absolute ruthless sass." },
-  { id: 'voice_minotaur_zesty', unit: 'minotaur', name: 'Zesty Minotaur', desc: 'Thundering hooves and a personality that hits even harder.', price: 220, voiceId: 'SOYHLrjzK2X1ezoPC6cr', sampleText: 'Move. NOW. I did NOT wake up this fabulous to wait behind ANYONE. These horns are not just for show, people!', personality: "Diva minotaur who treats the battlefield like a runway. Bold, brash, and LOUD. Says 'I did NOT wake up this fabulous to...' as a catchphrase. Refers to horns as a fashion accessory AND a weapon. Commands attention and destroys anyone who does not give it." },
-  { id: 'voice_shaman_zesty', unit: 'shaman', name: 'Zesty Shaman', desc: 'Arcane sass that makes spells hit different.', price: 220, voiceId: 'FGY2WhTYpPnrIDTdsKH5', sampleText: 'Oh, you brought a SWORD to a MAGIC fight? That is embarrassing for you. Let me show you what REAL power looks like, sweetie.', personality: "Sassy mage who judges everyone for not using magic. Roasts melee fighters constantly. Says 'sweetie' and 'that is embarrassing for you' while casting devastating spells. Treats spellcasting like an art form and everyone else like amateurs. Dramatic hand gestures described mid-speech." },
-  { id: 'voice_troll_zesty', unit: 'troll', name: 'Zesty Troll', desc: 'Big mouth, bigger attitude, biggest troll on the field.', price: 220, voiceId: 'SOYHLrjzK2X1ezoPC6cr', sampleText: 'Oh you hit troll? CUTE. Troll REGENERATE. Troll also REMEMBER. And troll hold a GRUDGE, baby!', personality: "Sassy troll who talks in third person with massive attitude. Speaks in broken grammar but the trash talk is FLAWLESS. Says 'troll remember' as a threat. Calls enemies 'baby' condescendingly. Weaponizes regeneration as a flex -- brags about healing from hits. Loudest personality on the battlefield." },
-  { id: 'voice_snake_zesty', unit: 'snake', name: 'Zesty Snake', desc: 'A serpent with venomous wit and enough attitude to fill a whole pit.', price: 220, sampleText: 'Excussse me, did you just ssstep on my tail? Oh honey, you have NO idea what you jussst started.', personality: "Sassy diva serpent. Draws out S sounds dramatically. Talks like a reality TV star who happens to be a deadly snake. Says 'oh honey' and 'excussse me' constantly. Critiques enemies' fashion and fighting style. Venomous in both senses." },
-  { id: 'voice_bear_zesty', unit: 'bear', name: 'Zesty Bear', desc: 'A bear with big opinions and zero patience for nonsense.', price: 220, sampleText: 'Oh you want some of THIS? Honey, I am twelve hundred pounds of DO NOT MESS WITH ME. Read the room!', personality: "Sassy bear who is done with everyone's nonsense. Uses 'honey' as both a term of endearment and a threat. Says 'read the room' and 'do NOT' with dramatic emphasis. Big, loud, and full of opinions. Protective sass -- roasts enemies who threaten allies even harder." },
-  { id: 'voice_harpoon_fish_zesty', unit: 'harpoon_fish', name: 'Zesty Fisher', desc: 'A fish with a harpoon and a mouth sharper than both.', price: 220, sampleText: 'Oh you think you can dodge MY harpoon? Sweetheart, I hit targets in the DARK at the bottom of the OCEAN. You do not stand a CHANCE.', personality: "Sassy sharpshooter fish who never misses and never shuts up about it. Brags about impossible shots. Says 'sweetheart' before devastating trash talk. Flexes ocean survival as proof of superiority. Dramatic about every harpoon throw like a diva taking a bow." },
+  { id: 'voice_gnome_zesty', unit: 'gnome', name: 'Zesty Gnome', desc: 'Bold sass and fiery attitude packed into the tiniest body on the battlefield.', price: 220, voiceId: '4HvexEZMAmq2M66Ae0nD', sampleText: 'Oh PLEASE. You think that scares me? I have eaten mushrooms scarier than you! Now get OUT of my way, tiny legs coming through!', personality: "Maximum sass in a tiny body. Trash-talks everything and everyone, including allies. Bold, spicy, never backs down from anything. Says 'oh PLEASE' and 'excuse ME' constantly. Roasts enemies for being slow, ugly, or boring. Calls itself fierce despite being three inches tall." },
+  { id: 'voice_turtle_zesty', unit: 'turtle', name: 'Zesty Turtle', desc: 'A shell-cracking attitude that proves slow does not mean boring.', price: 220, voiceId: '4HvexEZMAmq2M66Ae0nD', sampleText: 'Slow? SLOW? Honey, I am not slow, I am SAVORING the moment. There is a difference. Now watch and LEARN.', personality: "Sassy turtle who is SICK of being called slow. Corrects everyone with attitude. Bold, dramatic, and fabulous. Says 'honey' and 'watch and learn' constantly. Turns every insult into a flex. Treats the shell like a fashion statement." },
+  { id: 'voice_skull_zesty', unit: 'skull', name: 'Zesty Skull', desc: 'Death never looked this fabulous or talked this much trash.', price: 220, voiceId: '4HvexEZMAmq2M66Ae0nD', sampleText: 'Oh you are scared of little old me? Sweetie, I am LITERALLY just bones and I still have more personality than your whole team!', personality: "Flamboyant undead diva. Roasts the living for being fragile. Constantly brags about the afterlife perks. Says 'sweetie' and 'honey' while being devastating. Makes death sound glamorous. Snaps fingers between insults (spell out: 'snap snap')." },
+  { id: 'voice_spider_zesty', unit: 'spider', name: 'Zesty Spider', desc: 'Eight legs of pure attitude strutting across the battlefield.', price: 220, voiceId: '4HvexEZMAmq2M66Ae0nD', sampleText: 'Oh, you walked into MY web? Bold choice, darling. Bold and very, very stupid. Love that for you.', personality: "Sassy spider fashionista. Treats webs like haute couture. Eight legs means eight times the attitude. Says 'darling' and 'love that for you' dripping with sarcasm. Critiques enemies for their lack of style before wrapping them in silk." },
+  { id: 'voice_hyena_zesty', unit: 'hyena', name: 'Zesty Hyena', desc: 'Cackling sass that cuts deeper than any bite.', price: 220, voiceId: '4HvexEZMAmq2M66Ae0nD', sampleText: 'AHAHA! Oh no no no, did you just TRY to hit me? That was adorable! Do it again, I need a good laugh!', personality: "Trash-talking hyena who laughs AT enemies, not with them. Mocks every attack that misses. Says 'adorable' sarcastically. Cackles mid-roast (spell out: 'AHAHAHA'). Treats battle like a comedy roast where the enemies are the punchline." },
+  { id: 'voice_rogue_zesty', unit: 'rogue', name: 'Zesty Rogue', desc: 'A thief with a sharp tongue and even sharper comebacks.', price: 220, voiceId: '4HvexEZMAmq2M66Ae0nD', sampleText: 'Stealth? Please. I could rob you in broad daylight wearing a NEON sign and you still would not catch me. I am just THAT good.', personality: "Outrageously cocky thief who trash-talks while stealing. Brags about heists mid-combat. Says 'I am just THAT good' and 'you are welcome' unprompted. Over-the-top confidence that somehow backs itself up. Flamboyant and unapologetic." },
+  { id: 'voice_panda_zesty', unit: 'panda', name: 'Zesty Panda', desc: 'A fluffy ball of attitude that will sit on you and roast you at the same time.', price: 220, voiceId: '4HvexEZMAmq2M66Ae0nD', sampleText: 'Oh you want to fight ME? Cute. Real cute. I eat bamboo thicker than your whole army. Sit DOWN.', personality: "Sassy panda with BIG attitude. Weaponizes cuteness and then hits you with a verbal takedown. Says 'sit DOWN' and 'cute, real cute' to dismiss threats. Compares enemies unfavorably to bamboo. Unbothered queen energy in a fluffy body." },
+  { id: 'voice_lizard_zesty', unit: 'lizard', name: 'Zesty Lizard', desc: 'Cold-blooded confidence with a razor tongue to match.', price: 220, voiceId: '4HvexEZMAmq2M66Ae0nD', sampleText: 'Oh, was that your best attack? How... quaint. My scales have seen better scratches from a gentle breeze. Try HARDER, darling.', personality: "Condescending reptilian diva. Calls everything 'quaint' or 'precious'. Treats enemies like amateurs at a talent show being judged. Says 'try harder, darling' and 'bless your heart'. Cold-blooded in attitude AND temperature. Absolute ruthless sass." },
+  { id: 'voice_minotaur_zesty', unit: 'minotaur', name: 'Zesty Minotaur', desc: 'Thundering hooves and a personality that hits even harder.', price: 220, voiceId: '4HvexEZMAmq2M66Ae0nD', sampleText: 'Move. NOW. I did NOT wake up this fabulous to wait behind ANYONE. These horns are not just for show, people!', personality: "Diva minotaur who treats the battlefield like a runway. Bold, brash, and LOUD. Says 'I did NOT wake up this fabulous to...' as a catchphrase. Refers to horns as a fashion accessory AND a weapon. Commands attention and destroys anyone who does not give it." },
+  { id: 'voice_shaman_zesty', unit: 'shaman', name: 'Zesty Shaman', desc: 'Arcane sass that makes spells hit different.', price: 220, voiceId: '4HvexEZMAmq2M66Ae0nD', sampleText: 'Oh, you brought a SWORD to a MAGIC fight? That is embarrassing for you. Let me show you what REAL power looks like, sweetie.', personality: "Sassy mage who judges everyone for not using magic. Roasts melee fighters constantly. Says 'sweetie' and 'that is embarrassing for you' while casting devastating spells. Treats spellcasting like an art form and everyone else like amateurs. Dramatic hand gestures described mid-speech." },
+  { id: 'voice_troll_zesty', unit: 'troll', name: 'Zesty Troll', desc: 'Big mouth, bigger attitude, biggest troll on the field.', price: 220, voiceId: '4HvexEZMAmq2M66Ae0nD', sampleText: 'Oh you hit troll? CUTE. Troll REGENERATE. Troll also REMEMBER. And troll hold a GRUDGE, baby!', personality: "Sassy troll who talks in third person with massive attitude. Speaks in broken grammar but the trash talk is FLAWLESS. Says 'troll remember' as a threat. Calls enemies 'baby' condescendingly. Weaponizes regeneration as a flex -- brags about healing from hits. Loudest personality on the battlefield." },
+  { id: 'voice_snake_zesty', unit: 'snake', name: 'Zesty Snake', desc: 'A serpent with venomous wit and enough attitude to fill a whole pit.', price: 220, voiceId: '4HvexEZMAmq2M66Ae0nD', sampleText: 'Excussse me, did you just ssstep on my tail? Oh honey, you have NO idea what you jussst started.', personality: "Sassy diva serpent. Draws out S sounds dramatically. Talks like a reality TV star who happens to be a deadly snake. Says 'oh honey' and 'excussse me' constantly. Critiques enemies' fashion and fighting style. Venomous in both senses." },
+  { id: 'voice_bear_zesty', unit: 'bear', name: 'Zesty Bear', desc: 'A bear with big opinions and zero patience for nonsense.', price: 220, voiceId: '4HvexEZMAmq2M66Ae0nD', sampleText: 'Oh you want some of THIS? Honey, I am twelve hundred pounds of DO NOT MESS WITH ME. Read the room!', personality: "Sassy bear who is done with everyone's nonsense. Uses 'honey' as both a term of endearment and a threat. Says 'read the room' and 'do NOT' with dramatic emphasis. Big, loud, and full of opinions. Protective sass -- roasts enemies who threaten allies even harder." },
+  { id: 'voice_harpoon_fish_zesty', unit: 'harpoon_fish', name: 'Zesty Fisher', desc: 'A fish with a harpoon and a mouth sharper than both.', price: 220, voiceId: '4HvexEZMAmq2M66Ae0nD', sampleText: 'Oh you think you can dodge MY harpoon? Sweetheart, I hit targets in the DARK at the bottom of the OCEAN. You do not stand a CHANCE.', personality: "Sassy sharpshooter fish who never misses and never shuts up about it. Brags about impossible shots. Says 'sweetheart' before devastating trash talk. Flexes ocean survival as proof of superiority. Dramatic about every harpoon throw like a diva taking a bow." },
 ];
 
 for (const vp of VOICE_PACKS) {
@@ -616,56 +616,6 @@ for (const eq of EQUIP_TYPES) {
     priceCrowns: 400,
     priceGlory: null,
     equipType: eq,
-  });
-}
-
-// ═════════════════════════════════════════════════════════════════
-//  BUILDING THEMES  (6 items)
-// ═════════════════════════════════════════════════════════════════
-
-const BUILDING_THEMES: { id: string; name: string; desc: string; rarity: Rarity; price: number }[] = [
-  { id: 'building_winter_castle', name: 'Winter Castle', desc: 'All structures become ice-crusted fairy-tale fortresses.', rarity: 'epic', price: 800 },
-  { id: 'building_dark_fortress', name: 'Dark Fortress', desc: 'Obsidian walls, spiked battlements, and ominous red torches.', rarity: 'epic', price: 850 },
-  { id: 'building_desert_citadel', name: 'Desert Citadel', desc: 'Sandstone domes and golden minarets shimmer in the heat.', rarity: 'epic', price: 850 },
-  { id: 'building_crystal_palace', name: 'Crystal Palace', desc: 'Every surface is faceted crystal refracting prismatic light.', rarity: 'legendary', price: 1000 },
-  { id: 'building_haunted_manor', name: 'Haunted Manor', desc: 'Creaking wood, flickering candles, and ghostly apparitions.', rarity: 'epic', price: 900 },
-  { id: 'building_celestial_spire', name: 'Celestial Spire', desc: 'Gravity-defying towers of gold reaching into the cosmos.', rarity: 'legendary', price: 1000 },
-];
-
-for (const bt of BUILDING_THEMES) {
-  catalog.push({
-    id: bt.id,
-    category: 'building_theme',
-    name: bt.name,
-    description: bt.desc,
-    rarity: bt.rarity,
-    priceCrowns: bt.price,
-    priceGlory: null,
-  });
-}
-
-// ═════════════════════════════════════════════════════════════════
-//  MAP THEMES  (6 items)
-// ═════════════════════════════════════════════════════════════════
-
-const MAP_THEMES: { id: string; name: string; desc: string; rarity: Rarity; price: number }[] = [
-  { id: 'map_cherry_blossom', name: 'Cherry Blossom Fields', desc: 'Soft pink petals blanket the battlefield in endless spring.', rarity: 'rare', price: 350 },
-  { id: 'map_eternal_night', name: 'Eternal Night', desc: 'A moonlit realm where the sun never rises and stars blaze.', rarity: 'epic', price: 600 },
-  { id: 'map_frozen_wastes', name: 'Frozen Wastes', desc: 'Howling blizzards and cracking ice sheets across the tundra.', rarity: 'epic', price: 600 },
-  { id: 'map_scorching_sands', name: 'Scorching Sands', desc: 'Endless dunes ripple under a merciless sun — mirages shimmer.', rarity: 'epic', price: 650 },
-  { id: 'map_haunted_realm', name: 'Haunted Realm', desc: 'Fog-choked graveyards and spectral ruins dot the landscape.', rarity: 'epic', price: 700 },
-  { id: 'map_volcanic_depths', name: 'Volcanic Depths', desc: 'Rivers of lava carve through obsidian cliffs beneath a red sky.', rarity: 'legendary', price: 1000 },
-];
-
-for (const mt of MAP_THEMES) {
-  catalog.push({
-    id: mt.id,
-    category: 'map_theme',
-    name: mt.name,
-    description: mt.desc,
-    rarity: mt.rarity,
-    priceCrowns: mt.price,
-    priceGlory: null,
   });
 }
 
@@ -1005,30 +955,6 @@ for (const c of CURSOR_PACKS) {
 }
 
 // ═════════════════════════════════════════════════════════════════
-//  UI THEMES  (5 items)
-// ═════════════════════════════════════════════════════════════════
-
-const UI_THEMES: { id: string; name: string; desc: string; rarity: Rarity; price: number }[] = [
-  { id: 'ui_frostborne', name: 'Frostborne UI', desc: 'Icy blue panels with frosted glass edges and snowfall accents.', rarity: 'rare', price: 300 },
-  { id: 'ui_crimson', name: 'Crimson UI', desc: 'Deep red and black panels with smouldering ember highlights.', rarity: 'rare', price: 300 },
-  { id: 'ui_royal_purple', name: 'Royal Purple UI', desc: 'Rich purple velvet textures with gold filigree borders.', rarity: 'epic', price: 400 },
-  { id: 'ui_natures_embrace', name: "Nature's Embrace UI", desc: 'Living wood panels overgrown with moss and tiny flowers.', rarity: 'epic', price: 450 },
-  { id: 'ui_void', name: 'Void UI', desc: 'Panels of pure darkness bordered by swirling void energy.', rarity: 'epic', price: 500 },
-];
-
-for (const ui of UI_THEMES) {
-  catalog.push({
-    id: ui.id,
-    category: 'ui_theme',
-    name: ui.name,
-    description: ui.desc,
-    rarity: ui.rarity,
-    priceCrowns: ui.price,
-    priceGlory: null,
-  });
-}
-
-// ═════════════════════════════════════════════════════════════════
 //  BOOSTERS  (4 items)
 // ═════════════════════════════════════════════════════════════════
 
@@ -1066,7 +992,7 @@ export const STORE_BUNDLES: BundleDef[] = [
     id: 'recruit_pack',
     name: 'Recruit Pack',
     description: 'A starter bundle for new horde masters — crowns, a random rare skin, and a portrait frame to kick things off.',
-    priceUSD: 2.99,
+    priceUSD: 3,
     items: [
       'skin_gnome_golden',  // 1 random rare skin (representative pick)
       'frame_wooden',       // 1 portrait frame
@@ -1079,7 +1005,7 @@ export const STORE_BUNDLES: BundleDef[] = [
     id: 'warrior_pack',
     name: 'Warrior Pack',
     description: 'Gear up with crowns, two rare skins, a voice pack, and a death effect — ready for real battles.',
-    priceUSD: 9.99,
+    priceUSD: 10,
     items: [
       'skin_skull_jade',
       'skin_hyena_war_paint',
@@ -1094,7 +1020,7 @@ export const STORE_BUNDLES: BundleDef[] = [
     id: 'commander_pack',
     name: 'Commander Pack',
     description: 'A hefty war fund plus epic skins, a map theme, and a legendary portrait — command respect.',
-    priceUSD: 24.99,
+    priceUSD: 25,
     items: [
       'skin_rogue_phantom',
       'skin_minotaur_titan',
@@ -1110,7 +1036,7 @@ export const STORE_BUNDLES: BundleDef[] = [
     id: 'grand_marshal',
     name: 'Grand Marshal Pack',
     description: 'A massive crown stockpile, legendary skins, a building theme, UI theme, and exclusive voice effect.',
-    priceUSD: 49.99,
+    priceUSD: 50,
     items: [
       'skin_panda_divine_emperor',
       'skin_shaman_arch_druid',
@@ -1128,7 +1054,7 @@ export const STORE_BUNDLES: BundleDef[] = [
     id: 'ultimate_patron',
     name: 'Ultimate Patron Pack',
     description: 'The definitive collection — a king\'s ransom in crowns, legendary items from every category, and eternal bragging rights.',
-    priceUSD: 99.99,
+    priceUSD: 100,
     items: [
       'skin_gnome_celestial',
       'skin_turtle_ancient_guardian',

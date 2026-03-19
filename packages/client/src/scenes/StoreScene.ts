@@ -22,7 +22,7 @@ const TABS: TabDef[] = [
   { key: 'effects',   label: 'Effects',   categories: ['death_effect', 'spawn_effect', 'attack_trail', 'victory_effect'] },
   { key: 'emotes',    label: 'Emotes',    categories: ['emote'] },
   { key: 'profile',   label: 'Profile',   categories: ['profile_title', 'profile_border', 'profile_background', 'cursor_pack'] },
-  { key: 'themes',    label: 'Themes',    categories: ['ui_theme', 'building_theme', 'map_theme'] },
+  // themes tab removed (building_theme, map_theme, ui_theme no longer exist)
   { key: 'equipment', label: 'Equipment', categories: ['equipment_cosmetic'] },
   { key: 'gems',      label: 'Gems',      categories: null },
   { key: 'bundles',   label: 'Bundles',   categories: null },
@@ -42,11 +42,10 @@ const RARITY_COLOR: Record<string, string> = {
 const CAT_EMOJI: Partial<Record<string, string>> = {
   unit_skin: '🎨', avatar_portrait: '🖼️', portrait_frame: '🖼️',
   voice_pack: '🎙️', voice_effect: '🎙️', equipment_cosmetic: '⚔️',
-  building_theme: '🏰', map_theme: '🗺️', death_effect: '💥',
-  spawn_effect: '⚡', attack_trail: '✨', victory_effect: '🎆',
+  death_effect: '💥', spawn_effect: '⚡', attack_trail: '✨', victory_effect: '🎆',
   emote: '😄', profile_title: '📛',
   profile_border: '🖼️', profile_background: '🌄', cursor_pack: '🕹️',
-  ui_theme: '🎨', booster: '🚀',
+  booster: '🚀',
 };
 
 export class StoreScene extends Phaser.Scene {
@@ -368,7 +367,7 @@ export class StoreScene extends Phaser.Scene {
             <div class="store-card-name">${this.esc(pkg.name)}</div>
             <div style="font-size:22px;font-weight:800;color:#FFD93D;font-family:'Fredoka',sans-serif;margin:6px 0;">${pkg.crowns.toLocaleString()}</div>
             ${pkg.bonusPercent ? `<div style="font-size:10px;color:#45E6B0;font-weight:700;margin-bottom:4px;">+${pkg.bonusPercent}% bonus</div>` : ''}
-            <div style="font-size:16px;font-weight:700;color:#d4c8a0;margin-bottom:8px;">$${pkg.priceUSD.toFixed(2)}</div>
+            <div style="font-size:16px;font-weight:700;color:#d4c8a0;margin-bottom:8px;">$${Math.round(pkg.priceUSD)}</div>
             <button style="width:100%;padding:8px;border-radius:8px;cursor:pointer;
               background:rgba(255,217,61,0.15);border:1.5px solid rgba(255,217,61,0.4);
               color:#FFD93D;font:bold 13px 'Fredoka',sans-serif;letter-spacing:1px;
@@ -405,7 +404,7 @@ export class StoreScene extends Phaser.Scene {
             <div class="store-card-name">${this.esc(b.name)}</div>
             <div style="font-size:11px;color:#a89870;margin-bottom:6px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${this.esc(b.description || '')}</div>
             <div style="font-size:10px;color:#7a6e56;margin-bottom:8px;">${b.items?.length || 0} items + ${b.crownsIncluded || 0} Crowns</div>
-            <div style="font-size:16px;font-weight:700;color:#d4c8a0;">$${(b.priceUSD || 0).toFixed(2)}</div>
+            <div style="font-size:16px;font-weight:700;color:#d4c8a0;">$${Math.round(b.priceUSD || 0)}</div>
           </div>
         `).join('')}
       </div>
@@ -432,26 +431,23 @@ export class StoreScene extends Phaser.Scene {
     if (!item || inv.owns(itemId)) return;
 
     try {
-      const { showPurchaseConfirm } = await import('../ui/PurchaseConfirmModal');
-      showPurchaseConfirm({
-        itemName: item.name,
-        priceCrowns: item.priceCrowns,
-        priceGlory: item.priceGlory ?? undefined,
-        onConfirm: async () => {
-          try {
-            const { PaymentService } = await import('../store/PaymentService');
-            const ps = PaymentService.getInstance();
-            const currency = item.priceGlory ? 'glory' : 'crowns';
-            await ps.purchaseItem(itemId, currency);
-            this.renderTab(this.activeTab);
-          } catch (err) {
-            console.warn('[Store] Purchase failed:', err);
-          }
-        },
-        onCancel: () => {},
-      });
+      const { PaymentService } = await import('../store/PaymentService');
+      const ps = PaymentService.getInstance();
+      const currency: 'crowns' | 'glory' = (item.priceGlory != null && item.priceGlory > 0) ? 'glory' : 'crowns';
+      const result = await ps.purchaseItem(itemId, currency);
+      if (result.success) {
+        this.renderTab(this.activeTab);
+      } else {
+        if (result.error?.includes('Not enough')) {
+          const { showInsufficientFunds } = await import('../ui/InsufficientFundsModal');
+          showInsufficientFunds(currency);
+        } else {
+          const { showToast } = await import('../ui/Toast');
+          showToast(result.error || 'Purchase failed', 'error');
+        }
+      }
     } catch (err) {
-      console.warn('[Store] Purchase modal failed:', err);
+      console.warn('[Store] Purchase failed:', err);
     }
   }
 

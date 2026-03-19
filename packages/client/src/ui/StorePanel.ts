@@ -9,12 +9,16 @@ import { WalletManager } from '../store/WalletManager';
 import { InventoryManager } from '../store/InventoryManager';
 import { CatalogService } from '../store/CatalogService';
 import type { CatalogItem, CrownPackage, Rarity, ItemCategory } from '@prompt-battle/shared';
+import { CRATE_DEFS } from '@prompt-battle/shared';
 import { PaymentService } from '../store/PaymentService';
 import { PaymentModal } from './PaymentModal';
 import { ItchRedeemModal } from './ItchRedeemModal';
 import { showPurchaseConfirm } from './PurchaseConfirmModal';
 import { showGuestLoginPrompt } from './LoginOverlay';
 import { AuthManager } from '../auth/AuthManager';
+import { CrateOpeningModal } from './CrateOpeningModal';
+import { showInsufficientFunds } from './InsufficientFundsModal';
+import { showToast } from './Toast';
 
 // ── Category definitions ────────────────────────────────────────
 
@@ -28,6 +32,7 @@ interface StoreTab {
 const TABS: StoreTab[] = [
   { id: 'gems',       label: '\uD83D\uDC51 Crowns',      categories: null },
   { id: 'stars',      label: '\u2605 Stars',              categories: null },
+  { id: 'crates',     label: '\uD83D\uDCE6 Crates',      categories: null },
   { id: 'battlepass', label: '\uD83C\uDFC6 Horde Pass',  categories: null },
   { id: 'bundles',    label: '\uD83C\uDF81 Bundles',      categories: null },
 ];
@@ -57,8 +62,6 @@ const CATEGORY_EMOJI: Partial<Record<ItemCategory, string>> = {
   voice_pack:         '\uD83C\uDF99\uFE0F',  // microphone
   voice_effect:       '\uD83C\uDF99\uFE0F',
   equipment_cosmetic: '\u2694\uFE0F',   // crossed swords
-  building_theme:     '\uD83C\uDFF0',   // castle
-  map_theme:          '\uD83D\uDDFA\uFE0F',  // world map
   death_effect:       '\uD83D\uDCA5',   // boom
   spawn_effect:       '\u26A1',          // lightning
   attack_trail:       '\u2728',          // sparkles
@@ -68,7 +71,6 @@ const CATEGORY_EMOJI: Partial<Record<ItemCategory, string>> = {
   profile_border:     '\uD83D\uDDBC\uFE0F',
   profile_background: '\uD83C\uDF04',   // sunrise
   cursor_pack:        '\uD83D\uDD79\uFE0F',  // joystick
-  ui_theme:           '\uD83C\uDFA8',
   booster:            '\uD83D\uDE80',   // rocket
 };
 
@@ -96,6 +98,9 @@ export class StorePanel {
   open(): void {
     if (this.root) return;
     this.build();
+    // Block Phaser canvas clicks while store is open
+    const canvas = document.querySelector('#game-container canvas') as HTMLCanvasElement | null;
+    if (canvas) canvas.style.pointerEvents = 'none';
     this.escHandler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') this.close();
     };
@@ -103,6 +108,9 @@ export class StorePanel {
   }
 
   close(): void {
+    // Restore Phaser canvas clicks
+    const canvas = document.querySelector('#game-container canvas') as HTMLCanvasElement | null;
+    if (canvas) canvas.style.pointerEvents = '';
     if (this.escHandler) {
       window.removeEventListener('keydown', this.escHandler);
       this.escHandler = null;
@@ -348,6 +356,12 @@ export class StorePanel {
       return;
     }
 
+    // Special tab: Crates
+    if (this.activeCategory === 'crates') {
+      this.renderCrates(container);
+      return;
+    }
+
     // Special tab: Bundles
     if (this.activeCategory === 'bundles') {
       this.renderBundles(container);
@@ -424,24 +438,22 @@ export class StorePanel {
       card.style.transform = 'translateY(0)';
       card.style.boxShadow = glow;
     };
-    card.onclick = () => {
+    card.onclick = async () => {
       if (AuthManager.getInstance().isGuest) {
         showGuestLoginPrompt('make purchases');
         return;
       }
       const inv = InventoryManager.getInstance();
       if (inv.owns(item.id)) return; // already owned
-      showPurchaseConfirm({
-        itemName: item.name,
-        priceCrowns: item.priceCrowns,
-        priceGlory: item.priceGlory ?? undefined,
-        onConfirm: async () => {
-          const currency = item.priceGlory ? 'glory' : 'crowns';
-          const result = await PaymentService.getInstance().purchaseItem(item.id, currency);
-          if (!result.success) alert(result.error || 'Purchase failed');
-        },
-        onCancel: () => {},
-      });
+      const currency: 'crowns' | 'glory' = (item.priceGlory != null && item.priceGlory > 0) ? 'glory' : 'crowns';
+      const result = await PaymentService.getInstance().purchaseItem(item.id, currency);
+      if (!result.success) {
+        if (result.error?.includes('Not enough')) {
+          showInsufficientFunds(currency);
+        } else {
+          showToast(result.error || 'Purchase failed', 'error');
+        }
+      }
     };
 
     // ── Preview area ──
@@ -602,7 +614,7 @@ export class StorePanel {
 
     // ── Price ──
     const price = document.createElement('div');
-    price.textContent = `$${pkg.priceUSD.toFixed(2)}`;
+    price.textContent = `$${Math.round(pkg.priceUSD)}`;
     price.style.cssText = `
       font-size:12px;font-weight:700;color:${C.textSecondary};
       font-family:"Nunito",sans-serif;
@@ -679,7 +691,7 @@ export class StorePanel {
                   });
                 }
               } else {
-                alert(result.error || 'Payment failed');
+                showToast(result.error || 'Payment failed', 'error');
               }
             },
             onCancel: () => payModal.close(),
@@ -719,20 +731,20 @@ export class StorePanel {
       <div style="font-size:13px;color:${C.textMuted};margin-bottom:16px;">50 tiers of exclusive rewards. Earn XP by playing matches and completing challenges.</div>
       <div style="display:flex;justify-content:center;gap:20px;margin-bottom:16px;">
         <div style="text-align:center;">
-          <div style="font-size:11px;color:${C.textMuted};letter-spacing:1px;">FREE TRACK</div>
-          <div style="font-size:14px;color:${C.teal};font-weight:700;margin-top:2px;">Always included</div>
+          <div style="font-size:11px;color:${C.textMuted};letter-spacing:1px;">HORDE PASS</div>
+          <div style="font-size:14px;color:${C.gold};font-weight:700;margin-top:2px;">$10</div>
         </div>
         <div style="width:1px;background:${C.divider};"></div>
         <div style="text-align:center;">
-          <div style="font-size:11px;color:${C.textMuted};letter-spacing:1px;">BATTLE PASS</div>
-          <div style="font-size:14px;color:${C.gold};font-weight:700;margin-top:2px;">\uD83D\uDC51 1,000 Crowns</div>
+          <div style="font-size:11px;color:${C.textMuted};letter-spacing:1px;">FREE TRACK</div>
+          <div style="font-size:14px;color:${C.teal};font-weight:700;margin-top:2px;">Always included</div>
         </div>
       </div>
     `;
 
     // Buy button
     const buyBtn = document.createElement('button');
-    buyBtn.textContent = 'BUY BATTLE PASS — 1,000 \uD83D\uDC51';
+    buyBtn.textContent = 'BUY HORDE PASS — $10';
     buyBtn.style.cssText = `
       width:100%;max-width:360px;font-family:'Fredoka',sans-serif;font-size:16px;font-weight:700;
       color:#1a1a0a;background:${C.gold};border:none;border-radius:12px;
@@ -769,9 +781,6 @@ export class StorePanel {
     viewLink.onmouseleave = () => { viewLink.style.color = C.teal; };
     viewLink.onclick = () => {
       this.close();
-      import('./BattlePassPanel').then(({ BattlePassPanel }) => {
-        new BattlePassPanel().mount(document.body);
-      });
     };
     banner.appendChild(viewLink);
 
@@ -903,69 +912,162 @@ export class StorePanel {
       }
       const wallet = this.wallet;
       if (wallet.crowns < pkg.crowns) {
-        showPurchaseConfirm({
-          itemName: pkg.name,
-          priceCrowns: pkg.crowns,
-          onConfirm: async () => {},
-          onCancel: () => {},
-        });
+        showInsufficientFunds('crowns');
         return;
       }
-      showPurchaseConfirm({
-        itemName: `${pkg.name} (\u2605 ${pkg.stars} Stars)`,
-        priceCrowns: pkg.crowns,
-        onConfirm: async () => {
-          buyBtn.textContent = '...';
-          try {
-            const { getAuth } = await import('firebase/auth');
-            const { getFirebaseApp } = await import('../auth/firebaseApp');
-            const token = await getAuth(getFirebaseApp()).currentUser?.getIdToken();
-            if (!token) return;
-            const baseUrl = (import.meta as any).env?.VITE_FUNCTIONS_URL || '';
-            const res = await fetch(`${baseUrl}/api/store/exchangeStars`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-              body: JSON.stringify({ packageId: pkg.id }),
+      buyBtn.textContent = '...';
+      try {
+        const { getAuth } = await import('firebase/auth');
+        const { getFirebaseApp } = await import('../auth/firebaseApp');
+        const token = await getAuth(getFirebaseApp()).currentUser?.getIdToken();
+        if (!token) return;
+        const baseUrl = (import.meta as any).env?.VITE_FUNCTIONS_URL || '';
+        const res = await fetch(`${baseUrl}/api/store/exchangeStars`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ packageId: pkg.id }),
+        });
+        const data = await res.json().catch(() => ({ error: 'Failed' }));
+        if (data.success) {
+          buyBtn.textContent = `\u2713 +${pkg.stars} \u2605`;
+          buyBtn.style.background = C.teal;
+          buyBtn.style.color = C.textDark;
+          buyBtn.style.borderColor = C.teal;
+          const gloryTarget = this.currencyDisplay?.getGloryEl();
+          if (gloryTarget) {
+            const btnRect = buyBtn.getBoundingClientRect();
+            playCurrencyFly({
+              type: 'glory',
+              amount: pkg.stars,
+              fromX: btnRect.left + btnRect.width / 2,
+              fromY: btnRect.top + btnRect.height / 2,
+              toElement: gloryTarget,
             });
-            const data = await res.json().catch(() => ({ error: 'Failed' }));
-            if (data.success) {
-              buyBtn.textContent = `\u2713 +${pkg.stars} \u2605`;
-              buyBtn.style.background = C.teal;
-              buyBtn.style.color = C.textDark;
-              buyBtn.style.borderColor = C.teal;
-              // Fly stars to the glory counter
-              const gloryTarget = this.currencyDisplay?.getGloryEl();
-              if (gloryTarget) {
-                const btnRect = buyBtn.getBoundingClientRect();
-                playCurrencyFly({
-                  type: 'glory',
-                  amount: pkg.stars,
-                  fromX: btnRect.left + btnRect.width / 2,
-                  fromY: btnRect.top + btnRect.height / 2,
-                  toElement: gloryTarget,
-                });
-              }
-              setTimeout(() => {
-                buyBtn.textContent = 'EXCHANGE';
-                buyBtn.style.background = 'rgba(192,192,210,0.2)';
-                buyBtn.style.color = '#C0C0D2';
-                buyBtn.style.borderColor = 'rgba(192,192,210,0.3)';
-              }, 2000);
-            } else {
-              buyBtn.textContent = data.error || 'Failed';
-              setTimeout(() => { buyBtn.textContent = 'EXCHANGE'; }, 2000);
-            }
-          } catch {
-            buyBtn.textContent = 'Error';
-            setTimeout(() => { buyBtn.textContent = 'EXCHANGE'; }, 2000);
           }
-        },
-        onCancel: () => {},
-      });
+          setTimeout(() => {
+            buyBtn.textContent = 'EXCHANGE';
+            buyBtn.style.background = 'rgba(192,192,210,0.2)';
+            buyBtn.style.color = '#C0C0D2';
+            buyBtn.style.borderColor = 'rgba(192,192,210,0.3)';
+          }, 2000);
+        } else {
+          buyBtn.textContent = data.error || 'Failed';
+          setTimeout(() => { buyBtn.textContent = 'EXCHANGE'; }, 2000);
+        }
+      } catch {
+        buyBtn.textContent = 'Error';
+        setTimeout(() => { buyBtn.textContent = 'EXCHANGE'; }, 2000);
+      }
     };
     card.appendChild(buyBtn);
 
     return card;
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  //  Crates tab
+  // ────────────────────────────────────────────────────────────────
+
+  private renderCrates(container: HTMLDivElement): void {
+    const tierColors: Record<string, string> = { bronze: '#CD7F32', silver: '#C0C0C0', gold: '#FFD700' };
+    const tierGlows: Record<string, string> = { bronze: 'rgba(205,127,50,0.3)', silver: 'rgba(192,192,192,0.3)', gold: 'rgba(255,215,0,0.4)' };
+
+    // Section header
+    const header = document.createElement('div');
+    header.style.cssText = `margin-bottom:16px;`;
+    header.innerHTML = `
+      <div style="font:bold 16px 'Fredoka',sans-serif;color:${C.textH1};">Loot Crates</div>
+      <div style="font-size:12px;color:${C.textMuted};margin-top:4px;">Mash to open and discover rare cosmetics!</div>
+    `;
+    container.appendChild(header);
+
+    const grid = document.createElement('div');
+    grid.style.cssText = 'display:flex;flex-direction:column;gap:12px;';
+
+    for (const tier of ['bronze', 'silver', 'gold'] as const) {
+      const def = CRATE_DEFS[tier];
+      if (!def) continue;
+
+      const color = tierColors[tier];
+      const glow = tierGlows[tier];
+      const card = document.createElement('div');
+      card.style.cssText = `
+        background:${C.surface};
+        border:2px solid ${color}44;
+        border-radius:14px;padding:18px 20px;
+        display:flex;align-items:center;gap:16px;
+        cursor:pointer;transition:all 0.15s;
+        box-shadow:0 0 0 0 ${glow};
+      `;
+      card.onmouseenter = () => {
+        card.style.background = C.surfaceHover;
+        card.style.borderColor = color + '88';
+        card.style.boxShadow = `0 0 20px ${glow}`;
+        card.style.transform = 'translateY(-2px)';
+      };
+      card.onmouseleave = () => {
+        card.style.background = C.surface;
+        card.style.borderColor = color + '44';
+        card.style.boxShadow = `0 0 0 0 ${glow}`;
+        card.style.transform = 'translateY(0)';
+      };
+
+      // Icon
+      const icon = document.createElement('div');
+      icon.textContent = def.icon;
+      icon.style.cssText = `font-size:44px;filter:drop-shadow(0 0 10px ${glow});`;
+      card.appendChild(icon);
+
+      // Info
+      const info = document.createElement('div');
+      info.style.cssText = 'flex:1;min-width:0;';
+      info.innerHTML = `
+        <div style="font:bold 16px 'Fredoka',sans-serif;color:${color};">${def.name}</div>
+        <div style="font-size:12px;color:${C.textSecondary};margin-top:3px;">${def.itemCount} item${def.itemCount > 1 ? 's' : ''} per crate</div>
+      `;
+      card.appendChild(info);
+
+      // Price
+      const priceWrap = document.createElement('div');
+      priceWrap.style.cssText = 'display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;';
+
+      const crownPrice = document.createElement('span');
+      crownPrice.style.cssText = `font:bold 14px 'Fredoka',sans-serif;color:${C.gold};`;
+      crownPrice.textContent = `\uD83D\uDC51 ${def.priceCrowns}`;
+      priceWrap.appendChild(crownPrice);
+
+      if (def.priceGlory) {
+        const gloryPrice = document.createElement('span');
+        gloryPrice.style.cssText = `font:bold 12px 'Fredoka',sans-serif;color:#C0C0D2;`;
+        gloryPrice.textContent = `\u2605 ${def.priceGlory}`;
+        priceWrap.appendChild(gloryPrice);
+      }
+      card.appendChild(priceWrap);
+
+      // Click → one-click buy & open crate
+      card.onclick = async () => {
+        if (AuthManager.getInstance().isGuest) {
+          showGuestLoginPrompt('open crates');
+          return;
+        }
+        try {
+          const currency: 'crowns' | 'glory' = (def.priceGlory != null && def.priceGlory > 0) ? 'glory' : 'crowns';
+          await new CrateOpeningModal().open(tier, currency);
+        } catch (err: any) {
+          const msg = err.message || 'Failed to open crate';
+          if (msg.includes('Not enough')) {
+            const currency: 'crowns' | 'glory' = (def.priceGlory != null && def.priceGlory > 0) ? 'glory' : 'crowns';
+            showInsufficientFunds(currency);
+          } else {
+            showToast(msg, 'error');
+          }
+        }
+      };
+
+      grid.appendChild(card);
+    }
+
+    container.appendChild(grid);
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -1056,7 +1158,7 @@ export class StorePanel {
       `;
       if (bundle.priceUSD != null) {
         const usd = document.createElement('span');
-        usd.textContent = `$${bundle.priceUSD.toFixed(2)}`;
+        usd.textContent = `$${Math.round(bundle.priceUSD)}`;
         usd.style.cssText = `color:${C.textPrimary};`;
         priceLine.appendChild(usd);
       }

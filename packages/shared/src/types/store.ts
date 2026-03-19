@@ -7,8 +7,6 @@ export type ItemCategory =
   | 'voice_pack'
   | 'voice_effect'
   | 'equipment_cosmetic'
-  | 'building_theme'
-  | 'map_theme'
   | 'death_effect'
   | 'spawn_effect'
   | 'attack_trail'
@@ -18,7 +16,6 @@ export type ItemCategory =
   | 'profile_border'
   | 'profile_background'
   | 'cursor_pack'
-  | 'ui_theme'
   | 'booster';
 
 export type Rarity = 'common' | 'rare' | 'epic' | 'legendary';
@@ -115,8 +112,6 @@ export interface EquippedCosmetics {
   portraitFrame: string;            // frameId or 'none'
   voicePack: string;                // packId or 'default' (legacy)
   voicePacks: Partial<Record<HordeUnitType, string>>;  // per-unit voice packs
-  buildingTheme: string;
-  mapTheme: string;
   deathEffect: string;
   spawnEffect: string;
   attackTrail: string;
@@ -125,7 +120,6 @@ export interface EquippedCosmetics {
   profileTitle: string;
   profileBackground: string;
   cursor: string;
-  uiTheme: string;
   equipmentSkins: Partial<Record<EquipmentType, string>>;
 }
 
@@ -135,8 +129,6 @@ export const DEFAULT_EQUIPPED: EquippedCosmetics = {
   portraitFrame: 'none',
   voicePack: 'default',
   voicePacks: {},
-  buildingTheme: 'default',
-  mapTheme: 'default',
   deathEffect: 'default',
   spawnEffect: 'default',
   attackTrail: 'default',
@@ -145,7 +137,6 @@ export const DEFAULT_EQUIPPED: EquippedCosmetics = {
   profileTitle: 'none',
   profileBackground: 'none',
   cursor: 'default',
-  uiTheme: 'default',
   equipmentSkins: {},
 };
 
@@ -199,6 +190,7 @@ export interface BattlePassSeason {
   endDate: number;
   tiers: BattlePassTier[];
   premiumPriceCrowns: number;
+  premiumPriceUSD: number;
   premiumPlusPriceCrowns: number;
 }
 

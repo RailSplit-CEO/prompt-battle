@@ -227,6 +227,8 @@ export const claimBattlePassReward = functions.https.onRequest(async (req, res) 
       await addGlory(uid, reward.amount);
     } else if (reward.type === 'item' && reward.itemId) {
       await grantItem(uid, reward.itemId);
+    } else if (reward.type === 'crate' && reward.crateTier) {
+      await grantItem(uid, `crate_${reward.crateTier}`);
     }
 
     // Mark claimed

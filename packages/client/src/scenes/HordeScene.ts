@@ -1360,6 +1360,7 @@ export class HordeScene extends Phaser.Scene {
   private playerId: string | null = null;
   private opponentUid: string | null = null;
   private opponentSkins: Record<string, string> = {}; // unitType → skinId
+  private opponentCosmetics: import('@prompt-battle/shared').EquippedCosmetics | null = null;
   private matchType: string = 'solo';
   private isRanked = false;
   private ratingDelta: { oldRating: number; newRating: number; delta: number } | null = null;
@@ -1379,15 +1380,21 @@ export class HordeScene extends Phaser.Scene {
     super({ key: 'HordeScene' });
   }
 
-  /** Load opponent's equipped skins from Firebase and preload their sprites */
+  /** Load opponent's equipped cosmetics from Firebase and preload their sprites */
   private async loadOpponentSkins(uid: string) {
     try {
       const { getDatabase, ref, get } = await import('firebase/database');
+      const { DEFAULT_EQUIPPED } = await import('@prompt-battle/shared');
       const db = getDatabase();
-      const snap = await get(ref(db, `users/${uid}/equipped/unitSkins`));
-      if (!snap.exists()) return;
-      const skins = snap.val() as Record<string, string>;
-      this.opponentSkins = skins;
+
+      // Fetch ALL opponent cosmetics (not just skins)
+      const fullSnap = await get(ref(db, `users/${uid}/equipped`));
+      if (fullSnap.exists()) {
+        this.opponentCosmetics = { ...DEFAULT_EQUIPPED, ...fullSnap.val() };
+      }
+
+      const skins = this.opponentCosmetics?.unitSkins || {};
+      this.opponentSkins = skins as Record<string, string>;
 
       // Dynamically load skin sprite sheets and create animations
       for (const [unitType, skinId] of Object.entries(skins)) {
@@ -1428,7 +1435,7 @@ export class HordeScene extends Phaser.Scene {
           });
         }
       }
-      console.log('[Horde] Opponent skins loaded:', Object.keys(skins).filter(k => skins[k] && skins[k] !== 'default'));
+      console.log('[Horde] Opponent skins loaded:', Object.keys(skins).filter(k => (skins as any)[k] && (skins as any)[k] !== 'default'));
     } catch (err) {
       console.warn('[Horde] Failed to load opponent skins:', err);
     }
@@ -1699,6 +1706,7 @@ export class HordeScene extends Phaser.Scene {
     this.settingsPanel = new SettingsPanel({
       onTestSfx: () => this.sfx.playGlobal('button_click'),
       onTestVoice: () => this.ttsService?.test(),
+      onForfeit: () => this.showForfeitConfirm(),
     });
     this.setupHUD();
     // ═══ DAY/NIGHT OVERLAY ═══
@@ -1753,8 +1761,23 @@ export class HordeScene extends Phaser.Scene {
       this.profilingRecorder?.toggle();
     });
 
-    // Set custom pixel art cursor
-    this.input.setDefaultCursor('url(assets/ui/cursors/Cursor_01.png) 0 0, auto');
+    // Set custom pixel art cursor — use equipped cursor cosmetic if available
+    const cursorMap: Record<string, string> = {
+      'default': 'Cursor_01.png',
+      'cursor_flame': 'Cursor_02.png',
+      'cursor_crystal': 'Cursor_03.png',
+      'cursor_shadow': 'Cursor_04.png',
+      'cursor_golden': 'Cursor_02.png',
+      'cursor_enchanted': 'Cursor_03.png',
+      'cursor_seasonal': 'Cursor_04.png',
+    };
+    let cursorFile = 'Cursor_01.png';
+    try {
+      const equipped = InventoryManager.getInstance().getEquipped();
+      const cursorId = equipped.cursor || 'default';
+      cursorFile = cursorMap[cursorId] || 'Cursor_01.png';
+    } catch { /* inventory not ready */ }
+    this.input.setDefaultCursor(`url(assets/ui/cursors/${cursorFile}) 0 0, auto`);
 
     // Pre-capture T1 camps (gnome + snake) for each team at game start
     // Skip when server-authoritative — server handles initial setup, first sync will have correct state
@@ -2075,6 +2098,28 @@ export class HordeScene extends Phaser.Scene {
             container.add(sprite);
           }
         }
+      }
+    }
+
+    // Apply map theme color overlay
+    const mapTheme = 'default'; // map themes removed
+    if (mapTheme !== 'default') {
+      const MAP_TINTS: Record<string, { color: number; alpha: number }> = {
+        map_eternal_night:    { color: 0x1122AA, alpha: 0.15 },
+        map_volcanic_depths:  { color: 0xFF3300, alpha: 0.10 },
+        map_crystal_caverns:  { color: 0x8844CC, alpha: 0.12 },
+        map_enchanted_forest: { color: 0x22AA44, alpha: 0.10 },
+        map_frozen_wastes:    { color: 0x88CCFF, alpha: 0.15 },
+        map_shadow_realm:     { color: 0x220033, alpha: 0.18 },
+      };
+      const tint = MAP_TINTS[mapTheme];
+      if (tint) {
+        const tintRect = this.add.rectangle(
+          (cols * TILE_SIZE) / 2, (rows * TILE_SIZE) / 2,
+          cols * TILE_SIZE, rows * TILE_SIZE,
+          tint.color, tint.alpha,
+        ).setDepth(2);
+        container.add(tintRect);
       }
     }
   }
@@ -3048,8 +3093,12 @@ export class HordeScene extends Phaser.Scene {
       const c = this.add.container(base.x, nexFootY).setDepth(10 + Math.round(nexFootY * 0.01));
       const castleKey = team === 1 ? 'ts_castle_blue' : 'ts_castle_red';
       const castle = this.add.image(0, 0, castleKey).setScale(1.5).setOrigin(0.5, 1.0);
-      c.add(castle);
+      // Apply building theme tint
       const isMyNexus = team === this.myTeam;
+      const bTheme = 'default'; // building themes removed
+      const buildingTint = this.getBuildingThemeTint(bTheme);
+      if (buildingTint) castle.setTint(buildingTint);
+      c.add(castle);
       const nexLabel = this.add.text(0, 90, isMyNexus ? 'YOUR CASTLE' : 'ENEMY CASTLE', {
         fontSize: '18px', color: isMyNexus ? '#4499FF' : '#FF5555',
         fontFamily: '"Fredoka", sans-serif', fontStyle: 'bold',
@@ -3113,6 +3162,11 @@ export class HordeScene extends Phaser.Scene {
         .setScale(1.8)
         .setOrigin(0.5, 1.0)
         .setDepth(10 + Math.round(towerFootY * 0.01));
+      // Apply building theme tint to tower
+      const tIsOwn = pos.team === this.myTeam;
+      const tTheme = 'default'; // building themes removed
+      const tTint = this.getBuildingThemeTint(tTheme);
+      if (tTint) sprite.setTint(tTint);
 
       // Tower label — below building
       const tLabel = this.add.text(pos.x, towerFootY + 50, pos.team === this.myTeam ? 'Allied Tower' : 'Enemy Tower', {
@@ -4025,6 +4079,11 @@ export class HordeScene extends Phaser.Scene {
 
     // ═══ BOTTOM-LEFT QUEST PANEL ═══
     this.setupQuestPanel(gc);
+
+    // ═══ OPPONENT PROFILE (top-right, multiplayer only) ═══
+    if (this.opponentUid) {
+      this.setupOpponentProfileHUD(gc);
+    }
 
     // ESC to open settings
     this.input.keyboard!.on('keydown-ESC', () => {
@@ -8832,6 +8891,21 @@ export class HordeScene extends Phaser.Scene {
   }
 
   private playDeathEffect(u: HUnit) {
+    const sx = u.sprite ? u.sprite.x : u.x;
+    const sy = u.sprite ? u.sprite.y : u.y;
+
+    // Check for cosmetic death effect
+    const isOwn = u.team === this.myTeam;
+    const effectId = isOwn
+      ? (InventoryManager.getInstance().getEquipped().deathEffect || 'default')
+      : (this.opponentCosmetics?.deathEffect || 'default');
+
+    if (effectId !== 'default') {
+      this.playCosmeticDeathEffect(effectId, sx, sy);
+      return;
+    }
+
+    // Default poof effect
     const animalDef = ANIMALS[u.type];
     const t = animalDef?.tier || 1;
     const isBig = t >= 3;
@@ -8839,11 +8913,42 @@ export class HordeScene extends Phaser.Scene {
     const texKey = isBig ? 'ts_dust02' : 'ts_dust01';
     const scale = isBig ? 1.8 : 1.2;
 
-    const sx = u.sprite ? u.sprite.x : u.x;
-    const sy = u.sprite ? u.sprite.y : u.y;
     const poof = this.add.sprite(sx, sy, texKey).setScale(scale).setDepth(25).setOrigin(0.5);
     poof.play(animKey);
     poof.once('animationcomplete', () => poof.destroy());
+  }
+
+  private playCosmeticDeathEffect(effectId: string, x: number, y: number) {
+    const EFFECTS: Record<string, { color: number; color2: number; count: number; speed: number; lifespan: number; scale: number }> = {
+      death_immolation:  { color: 0xFF4400, color2: 0xFFAA00, count: 12, speed: 80, lifespan: 600, scale: 3 },
+      death_shatter:     { color: 0xCCCCFF, color2: 0x8888CC, count: 16, speed: 120, lifespan: 500, scale: 2 },
+      death_flower_burst:{ color: 0xFF88CC, color2: 0xFFCCEE, count: 14, speed: 60, lifespan: 800, scale: 3 },
+      death_void_collapse:{ color: 0x440066, color2: 0x220033, count: 10, speed: 40, lifespan: 700, scale: 4 },
+      death_lightning:   { color: 0x44CCFF, color2: 0xFFFFFF, count: 8,  speed: 150, lifespan: 400, scale: 2 },
+      death_frost:       { color: 0x88DDFF, color2: 0xCCEEFF, count: 12, speed: 70, lifespan: 600, scale: 3 },
+    };
+    const cfg = EFFECTS[effectId];
+    if (!cfg) return;
+
+    // Burst of colored circles radiating outward
+    for (let i = 0; i < cfg.count; i++) {
+      const angle = (i / cfg.count) * Math.PI * 2 + Math.random() * 0.3;
+      const color = Math.random() > 0.5 ? cfg.color : cfg.color2;
+      const size = 2 + Math.random() * cfg.scale;
+      const particle = this.add.circle(x, y, size, color, 0.9).setDepth(26);
+      const dist = cfg.speed * (0.6 + Math.random() * 0.4);
+      this.tweens.add({
+        targets: particle,
+        x: x + Math.cos(angle) * dist,
+        y: y + Math.sin(angle) * dist,
+        alpha: 0,
+        scaleX: 0.2,
+        scaleY: 0.2,
+        duration: cfg.lifespan,
+        ease: 'Quad.easeOut',
+        onComplete: () => particle.destroy(),
+      });
+    }
   }
 
   // ─── RESOURCE ECONOMY: GROUND ITEMS ──────────────────────────
@@ -10593,6 +10698,12 @@ export class HordeScene extends Phaser.Scene {
       panel.style.transform = 'scale(1)';
     }));
 
+    // Victory cosmetic effect
+    if (win) {
+      const vEffect = InventoryManager.getInstance().getEquipped().victoryEffect || 'default';
+      if (vEffect !== 'default') this.playVictoryEffect(vEffect, overlay);
+    }
+
     // Button hover effects
     const playBtn = panel.querySelector('#go-play-again') as HTMLButtonElement;
     const menuBtnEl = panel.querySelector('#go-menu') as HTMLButtonElement;
@@ -10699,6 +10810,164 @@ export class HordeScene extends Phaser.Scene {
       this.sfx.playAt(spawnKey, x, y);
     } else {
       this.sfx.playAt('unit_spawn', x, y);
+    }
+
+    // Cosmetic spawn effect
+    const isOwn = team === this.myTeam;
+    const spawnEffectId = isOwn
+      ? (InventoryManager.getInstance().getEquipped().spawnEffect || 'default')
+      : (this.opponentCosmetics?.spawnEffect || 'default');
+    if (spawnEffectId !== 'default') {
+      this.playCosmeticSpawnEffect(spawnEffectId, x, y);
+    }
+  }
+
+  private playCosmeticSpawnEffect(effectId: string, x: number, y: number) {
+    const EFFECTS: Record<string, { color: number; count: number; radius: number; duration: number }> = {
+      spawn_portal:   { color: 0x8844FF, count: 10, radius: 30, duration: 500 },
+      spawn_lightning: { color: 0x44CCFF, count: 6,  radius: 20, duration: 350 },
+      spawn_nature:   { color: 0x44CC44, count: 8,  radius: 25, duration: 450 },
+    };
+    const cfg = EFFECTS[effectId];
+    if (!cfg) return;
+
+    // Converging ring effect
+    for (let i = 0; i < cfg.count; i++) {
+      const angle = (i / cfg.count) * Math.PI * 2;
+      const startX = x + Math.cos(angle) * cfg.radius;
+      const startY = y + Math.sin(angle) * cfg.radius;
+      const dot = this.add.circle(startX, startY, 3, cfg.color, 0.8).setDepth(26);
+      this.tweens.add({
+        targets: dot,
+        x, y,
+        alpha: 0,
+        scaleX: 2,
+        scaleY: 2,
+        duration: cfg.duration,
+        ease: 'Quad.easeIn',
+        onComplete: () => dot.destroy(),
+      });
+    }
+  }
+
+  private async setupOpponentProfileHUD(gc: HTMLElement) {
+    if (!this.opponentUid) return;
+    try {
+      const auth = AuthManager.getInstance();
+      const profile = await auth.getProfile(this.opponentUid);
+      if (!profile) return;
+
+      const cosmetics = this.opponentCosmetics;
+      const frameId = cosmetics?.portraitFrame || 'none';
+      const titleId = cosmetics?.profileTitle || 'none';
+
+      const el = document.createElement('div');
+      el.id = 'horde-opponent-profile';
+      el.style.cssText = `
+        position:fixed;top:12px;right:12px;z-index:80;
+        display:flex;align-items:center;gap:10px;
+        padding:8px 14px;border-radius:12px;
+        background:rgba(28,22,14,0.85);border:1px solid rgba(139,115,85,0.4);
+        font-family:"Nunito",sans-serif;
+        opacity:0;transition:opacity 0.5s ease 1s;
+      `;
+
+      // Avatar with frame
+      const avatarWrap = document.createElement('div');
+      avatarWrap.style.cssText = `width:36px;height:36px;border-radius:50%;overflow:hidden;border:2px solid rgba(255,100,100,0.6);flex-shrink:0;`;
+      const avatar = document.createElement('img');
+      avatar.src = `assets/enemies/avatars/${profile.icon || 'gnome'}.png`;
+      avatar.style.cssText = 'width:100%;height:100%;object-fit:cover;image-rendering:pixelated;';
+      avatarWrap.appendChild(avatar);
+      el.appendChild(avatarWrap);
+
+      // Name + title
+      const info = document.createElement('div');
+      info.style.cssText = 'display:flex;flex-direction:column;';
+      const name = document.createElement('div');
+      name.textContent = profile.username;
+      name.style.cssText = `font-size:13px;font-weight:700;color:#FF6B6B;font-family:"Fredoka",sans-serif;`;
+      info.appendChild(name);
+      if (titleId !== 'none') {
+        const title = document.createElement('div');
+        title.textContent = titleId.replace(/^title_/, '').replace(/_/g, ' ');
+        title.style.cssText = 'font-size:10px;color:rgba(255,200,160,0.6);font-style:italic;text-transform:capitalize;';
+        info.appendChild(title);
+      }
+      el.appendChild(info);
+
+      gc.appendChild(el);
+      requestAnimationFrame(() => { el.style.opacity = '1'; });
+    } catch { /* non-critical */ }
+  }
+
+  private playVictoryEffect(effectId: string, container: HTMLElement) {
+    const EFFECTS: Record<string, { emoji: string; count: number; duration: number }> = {
+      victory_confetti:       { emoji: '🎊', count: 30, duration: 3000 },
+      victory_fireworks:      { emoji: '🎆', count: 15, duration: 2500 },
+      victory_aurora:         { emoji: '✨', count: 25, duration: 3500 },
+      victory_lightning_storm: { emoji: '⚡', count: 12, duration: 2000 },
+      victory_flower_rain:    { emoji: '🌸', count: 20, duration: 4000 },
+    };
+    const cfg = EFFECTS[effectId];
+    if (!cfg) return;
+
+    for (let i = 0; i < cfg.count; i++) {
+      const el = document.createElement('div');
+      el.textContent = cfg.emoji;
+      el.style.cssText = `
+        position:fixed;
+        left:${Math.random() * 100}%;
+        top:-30px;
+        font-size:${20 + Math.random() * 16}px;
+        pointer-events:none;
+        z-index:10001;
+        opacity:0.9;
+      `;
+      container.appendChild(el);
+      const delay = Math.random() * cfg.duration * 0.6;
+      const fallDuration = cfg.duration * (0.5 + Math.random() * 0.5);
+      el.animate([
+        { transform: `translateY(0) rotate(0deg)`, opacity: 0.9 },
+        { transform: `translateY(${window.innerHeight + 50}px) rotate(${Math.random() * 360}deg)`, opacity: 0.3 },
+      ], { duration: fallDuration, delay, easing: 'ease-in', fill: 'forwards' })
+        .onfinish = () => el.remove();
+    }
+  }
+
+  private getBuildingThemeTint(themeId: string): number | null {
+    const TINTS: Record<string, number> = {
+      building_crystal_palace: 0x88BBFF,
+      building_dark_fortress: 0xAA66CC,
+      building_nature_grove: 0x66CC66,
+      building_fire_citadel: 0xFF8844,
+      building_ice_bastion: 0x88EEFF,
+      building_celestial_spire: 0xFFDD66,
+    };
+    return TINTS[themeId] || null;
+  }
+
+  private playAttackTrail(trailId: string, x: number, y: number) {
+    const TRAILS: Record<string, { color: number; count: number }> = {
+      trail_fire:      { color: 0xFF6600, count: 4 },
+      trail_lightning: { color: 0x44CCFF, count: 3 },
+      trail_ice:       { color: 0x88DDFF, count: 4 },
+      trail_shadow:    { color: 0x440066, count: 3 },
+    };
+    const cfg = TRAILS[trailId];
+    if (!cfg) return;
+    for (let i = 0; i < cfg.count; i++) {
+      const ox = (Math.random() - 0.5) * 16;
+      const oy = (Math.random() - 0.5) * 16;
+      const dot = this.add.circle(x + ox, y + oy, 2 + Math.random() * 2, cfg.color, 0.7).setDepth(24);
+      this.tweens.add({
+        targets: dot,
+        y: y + oy - 10 - Math.random() * 10,
+        alpha: 0,
+        duration: 250 + Math.random() * 150,
+        ease: 'Quad.easeOut',
+        onComplete: () => dot.destroy(),
+      });
     }
   }
 
@@ -12390,6 +12659,14 @@ export class HordeScene extends Phaser.Scene {
   private readonly DMG_POOL_SIZE = 60;
 
   private spawnDmgNumber(x: number, y: number, amount: number, isPrimary: boolean, attacker: HUnit | null) {
+    // Attack trail cosmetic effect at impact point
+    if (attacker && isPrimary) {
+      const isOwn = attacker.team === this.myTeam;
+      const trailId = isOwn
+        ? (InventoryManager.getInstance().getEquipped().attackTrail || 'default')
+        : (this.opponentCosmetics?.attackTrail || 'default');
+      if (trailId !== 'default') this.playAttackTrail(trailId, x, y);
+    }
     // Color based on attacker's team relative to viewer
     let color: string;
     if (!attacker) {
@@ -14294,6 +14571,7 @@ export class HordeScene extends Phaser.Scene {
     document.getElementById('forfeit-overlay')?.remove();
     this.questPanelEl?.remove(); this.questPanelEl = null;
     this.questManager = null;
+    document.getElementById('horde-opponent-profile')?.remove();
     // Emote system cleanup
     this.emoteRenderer?.destroy(); this.emoteRenderer = null;
     this.emoteSync?.destroy(); this.emoteSync = null;

@@ -18,6 +18,7 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
 export interface SettingsPanelCallbacks {
   onTestSfx?: () => void;
   onTestVoice?: () => void;
+  onForfeit?: () => void;
 }
 
 export class SettingsPanel {
@@ -294,6 +295,30 @@ export class SettingsPanel {
       this.renderTab(content, tabBtns);
     };
     footer.appendChild(resetBtn);
+
+    // Forfeit button — only shown during a game
+    if (this.callbacks.onForfeit) {
+      const forfeitBtn = document.createElement('button');
+      forfeitBtn.textContent = '🏳️ Forfeit';
+      forfeitBtn.style.cssText = `
+        background:rgba(255,107,107,0.12);border:1px solid rgba(255,107,107,0.4);
+        color:${C.red};padding:7px 18px;border-radius:8px;font-size:13px;font-weight:700;
+        cursor:pointer;font-family:"Fredoka",sans-serif;transition:all 0.15s;
+      `;
+      forfeitBtn.onmouseenter = () => {
+        forfeitBtn.style.background = 'rgba(255,107,107,0.25)';
+        forfeitBtn.style.borderColor = 'rgba(255,107,107,0.6)';
+      };
+      forfeitBtn.onmouseleave = () => {
+        forfeitBtn.style.background = 'rgba(255,107,107,0.12)';
+        forfeitBtn.style.borderColor = 'rgba(255,107,107,0.4)';
+      };
+      forfeitBtn.onclick = () => {
+        this.close();
+        this.callbacks.onForfeit!();
+      };
+      footer.appendChild(forfeitBtn);
+    }
 
     const signOutBtn = document.createElement('button');
     signOutBtn.textContent = 'Sign Out';

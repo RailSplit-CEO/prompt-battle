@@ -1,14 +1,19 @@
 // ─── CurrencyFlyAnimation — Clash Royale-style fly-to-counter ────────
-// Spawns ~10 currency icons that burst from a source point, hang briefly,
+// Spawns currency icons that burst from a source point, hang briefly,
 // then fly along staggered curved paths to the HUD counter. The counter
-// ticks up as each icon lands and pulses on impact.
+// is frozen during the animation — external listeners should check
+// isFrozen() before updating the element. Icons tick the counter up as
+// they land, and the final value is applied when the animation finishes.
+// Queued: only one animation plays at a time to prevent DOM thrashing.
 
 const ICON_COUNT = 10;
+const ICON_COUNT_QUEUED = 6; // fewer icons when animations are queued up
 const HANG_MS = 150;          // pause after burst so player registers icons
 const STAGGER_MS = 40;        // delay between each icon's flight start
 const FLIGHT_MS = 500;        // flight duration per icon
 const SPREAD = 24;            // random burst spread (px)
 const ICON_SIZE = 22;         // emoji font size
+const SAFETY_TIMEOUT = 2000;  // force-cleanup if animation gets stuck
 
 export interface CurrencyFlyOptions {
   type: 'crowns' | 'glory';
@@ -19,14 +24,72 @@ export interface CurrencyFlyOptions {
   onComplete?: () => void;
 }
 
-export function playCurrencyFly(opts: CurrencyFlyOptions): void {
-  const { type, amount, fromX, fromY, toElement, onComplete } = opts;
-  if (amount <= 0) { onComplete?.(); return; }
+// ── Frozen elements — external updaters should skip these ────────
+const frozenElements = new Set<HTMLElement>();
+/** Pending final value to apply when animation ends */
+const pendingValues = new Map<HTMLElement, string>();
 
+/** Check if an element is currently being animated — callers should skip updating it */
+export function isCurrencyFlyTarget(el: HTMLElement): boolean {
+  return frozenElements.has(el);
+}
+
+/** Store a pending update for a frozen element — applied when animation ends */
+export function setPendingCurrencyValue(el: HTMLElement, value: string): void {
+  if (frozenElements.has(el)) {
+    pendingValues.set(el, value);
+  }
+}
+
+/** Pre-freeze an element before an API call so Firebase listeners don't update it */
+export function prefreezeElement(el: HTMLElement): void {
+  frozenElements.add(el);
+}
+
+/** Unfreeze an element that was pre-frozen but never animated (e.g. non-currency reward) */
+export function unfreezeElement(el: HTMLElement): void {
+  unfreeze(el);
+}
+
+// ── Global animation queue ──────────────────────────────────────
+let isAnimating = false;
+const queue: CurrencyFlyOptions[] = [];
+
+export function playCurrencyFly(opts: CurrencyFlyOptions): void {
+  if (opts.amount <= 0) { opts.onComplete?.(); return; }
+
+  if (isAnimating) {
+    queue.push(opts);
+    return;
+  }
+
+  runAnimation(opts);
+}
+
+function processQueue(): void {
+  isAnimating = false;
+  if (queue.length > 0) {
+    runAnimation(queue.shift()!);
+  }
+}
+
+function runAnimation(opts: CurrencyFlyOptions): void {
+  isAnimating = true;
+  const { type, amount, fromX, fromY, toElement, onComplete } = opts;
+
+  const iconCount = queue.length > 0 ? ICON_COUNT_QUEUED : ICON_COUNT;
   const emoji = type === 'crowns' ? '\u{1F451}' : '\u2605';
   const targetRect = toElement.getBoundingClientRect();
   const toX = targetRect.left + targetRect.width / 2;
   const toY = targetRect.top + targetRect.height / 2;
+
+  // Freeze the element — external listeners will defer updates
+  frozenElements.add(toElement);
+
+  // Snapshot current value and prefix
+  const rawText = toElement.textContent || '0';
+  const startValue = parseInt(rawText.replace(/[^\d]/g, ''), 10) || 0;
+  const prefix = rawText.replace(/[\d,]+.*$/, '');
 
   // Container covers viewport, no pointer events
   const container = document.createElement('div');
@@ -35,12 +98,29 @@ export function playCurrencyFly(opts: CurrencyFlyOptions): void {
   `;
   document.body.appendChild(container);
 
-  const perIcon = Math.max(1, Math.round(amount / ICON_COUNT));
+  const perIcon = Math.max(1, Math.round(amount / iconCount));
   let landed = 0;
   let accumulated = 0;
-  const startValue = parseInt(toElement.textContent || '0', 10) || 0;
 
-  for (let i = 0; i < ICON_COUNT; i++) {
+  // Safety timeout — force cleanup if animations get stuck
+  const safetyTimer = setTimeout(() => {
+    container.remove();
+    unfreeze(toElement);
+    onComplete?.();
+    processQueue();
+  }, SAFETY_TIMEOUT);
+
+  function finish(): void {
+    clearTimeout(safetyTimer);
+    container.remove();
+    // Apply final ticked value, then unfreeze so pending Firebase value can land
+    toElement.textContent = `${prefix}${(startValue + amount).toLocaleString()}`;
+    unfreeze(toElement);
+    onComplete?.();
+    processQueue();
+  }
+
+  for (let i = 0; i < iconCount; i++) {
     const icon = document.createElement('span');
     icon.textContent = emoji;
     // Random burst offset
@@ -114,35 +194,39 @@ export function playCurrencyFly(opts: CurrencyFlyOptions): void {
         icon.remove();
         landed++;
 
-        // Tick the counter up
+        // Tick the counter up as each icon lands
         accumulated += perIcon;
         const displayValue = Math.min(startValue + accumulated, startValue + amount);
-        toElement.textContent = String(displayValue);
+        toElement.textContent = `${prefix}${displayValue.toLocaleString()}`;
 
-        // Pulse the target element
+        // Pulse the target element on each landing
         pulseElement(toElement);
 
         // All done
-        if (landed >= ICON_COUNT) {
-          // Ensure final value is exact
-          toElement.textContent = String(startValue + amount);
-          container.remove();
-          onComplete?.();
+        if (landed >= iconCount) {
+          finish();
         }
       };
     }, flyDelay);
   }
 }
 
+/** Unfreeze an element and apply any pending value from Firebase */
+function unfreeze(el: HTMLElement): void {
+  frozenElements.delete(el);
+  const pending = pendingValues.get(el);
+  if (pending) {
+    pendingValues.delete(el);
+    el.textContent = pending;
+  }
+}
+
 /** Quick scale bounce on an element */
 function pulseElement(el: HTMLElement): void {
-  // Cancel any in-progress pulse
   el.style.transition = 'none';
   el.style.transform = 'scale(1.18)';
   requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      el.style.transition = 'transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)';
-      el.style.transform = 'scale(1)';
-    });
+    el.style.transition = 'transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)';
+    el.style.transform = 'scale(1)';
   });
 }

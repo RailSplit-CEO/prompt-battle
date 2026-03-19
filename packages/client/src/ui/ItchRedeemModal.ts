@@ -165,7 +165,7 @@ export class ItchRedeemModal {
       left.appendChild(info);
 
       const priceEl = document.createElement('div');
-      priceEl.textContent = `$${pkg.priceUSD.toFixed(2)}`;
+      priceEl.textContent = `$${Math.round(pkg.priceUSD)}`;
       priceEl.style.cssText = `
         font-size:13px;color:${C.textSecondary};font-weight:600;
         flex-shrink:0;margin-left:8px;

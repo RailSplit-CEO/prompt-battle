@@ -46,15 +46,17 @@ export async function deductCrowns(uid: string, amount: number): Promise<boolean
   const walletRef = db().ref(`users/${uid}/wallet`);
   let success = false;
   await walletRef.transaction((current) => {
-    if (!current || (current.crowns || 0) < amount) {
+    // Initialize wallet if it doesn't exist yet
+    const wallet = current || { crowns: 0, glory: 0, totalCrownsPurchased: 0, totalCrownsSpent: 0, totalGlorySpent: 0, firstPurchaseUsed: false };
+    if ((wallet.crowns || 0) < amount) {
       success = false;
-      return; // abort
+      return; // abort — not enough
     }
     success = true;
     return {
-      ...current,
-      crowns: current.crowns - amount,
-      totalCrownsSpent: (current.totalCrownsSpent || 0) + amount,
+      ...wallet,
+      crowns: (wallet.crowns || 0) - amount,
+      totalCrownsSpent: (wallet.totalCrownsSpent || 0) + amount,
     };
   });
   return success;
@@ -85,15 +87,17 @@ export async function deductGlory(uid: string, amount: number): Promise<boolean>
   const walletRef = db().ref(`users/${uid}/wallet`);
   let success = false;
   await walletRef.transaction((current) => {
-    if (!current || (current.glory || 0) < amount) {
+    // Initialize wallet if it doesn't exist yet
+    const wallet = current || { crowns: 0, glory: 0, totalCrownsPurchased: 0, totalCrownsSpent: 0, totalGlorySpent: 0, firstPurchaseUsed: false };
+    if ((wallet.glory || 0) < amount) {
       success = false;
-      return;
+      return; // abort — not enough
     }
     success = true;
     return {
-      ...current,
-      glory: current.glory - amount,
-      totalGlorySpent: (current.totalGlorySpent || 0) + amount,
+      ...wallet,
+      glory: (wallet.glory || 0) - amount,
+      totalGlorySpent: (wallet.totalGlorySpent || 0) + amount,
     };
   });
   return success;

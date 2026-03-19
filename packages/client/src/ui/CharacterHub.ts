@@ -11,6 +11,8 @@ import { InventoryManager } from '../store/InventoryManager';
 import { EquipService } from '../store/EquipService';
 import { PaymentService } from '../store/PaymentService';
 import { showPurchaseConfirm } from './PurchaseConfirmModal';
+import { showInsufficientFunds } from './InsufficientFundsModal';
+import { showToast } from './Toast';
 import { AuthManager } from '../auth/AuthManager';
 import { showGuestLoginPrompt } from './LoginOverlay';
 import { HORDE_SPRITE_CONFIGS } from '../sprites/SpriteConfig';
@@ -844,10 +846,22 @@ export class CharacterHub {
       `;
       actionRow.appendChild(badge);
     } else if (owned) {
-      // Equip button
-      const equipBtn = makeBtn('EQUIP', true);
+      // Equip button — yellow outline, not solid
+      const equipBtn = makeBtn('EQUIP', false);
       equipBtn.style.padding = '4px 14px';
       equipBtn.style.fontSize = '11px';
+      equipBtn.style.border = `2px solid ${C.gold}`;
+      equipBtn.style.color = C.gold;
+      equipBtn.style.background = 'transparent';
+      equipBtn.style.fontFamily = "'Fredoka',sans-serif";
+      equipBtn.onmouseenter = () => {
+        equipBtn.style.background = 'rgba(255,217,61,0.12)';
+        equipBtn.style.borderColor = C.goldDark;
+      };
+      equipBtn.onmouseleave = () => {
+        equipBtn.style.background = 'transparent';
+        equipBtn.style.borderColor = C.gold;
+      };
       equipBtn.onclick = (e) => {
         e.stopPropagation();
         if (AuthManager.getInstance().isGuest) {
@@ -892,32 +906,41 @@ export class CharacterHub {
       const buyBtn = makeBtn('BUY', true);
       buyBtn.style.padding = '4px 12px';
       buyBtn.style.fontSize = '11px';
-      buyBtn.onclick = (e) => {
+      buyBtn.onclick = async (e) => {
         e.stopPropagation();
-        showPurchaseConfirm({
-          itemName: name,
-          priceCrowns: useGlory ? undefined : (priceCrowns ?? undefined),
-          priceGlory: useGlory ? (priceGlory ?? undefined) : undefined,
-          onConfirm: async () => {
-            const result = await PaymentService.getInstance().purchaseItem(skinId, currency);
-            if (!result.success) {
-              console.warn('Purchase failed:', result.error);
-            }
-          },
-          onCancel: () => {},
-        });
+        if (AuthManager.getInstance().isGuest) {
+          showGuestLoginPrompt('buy skins');
+          return;
+        }
+        const result = await PaymentService.getInstance().purchaseItem(skinId, currency);
+        if (!result.success) {
+          if (result.error?.includes('Not enough')) {
+            showInsufficientFunds(currency);
+          } else {
+            showToast(result.error || 'Purchase failed', 'error');
+          }
+        }
       };
       actionRow.appendChild(buyBtn);
     }
 
     card.appendChild(actionRow);
 
-    // Click card to preview skin in sprite viewer (all skins, including locked)
+    // Click card to preview AND equip if owned
     card.onclick = () => {
       const skinArg = skinId === 'default' ? undefined : skinId;
       this.spritePreview?.loadUnit(unitType, this.currentAnimState, skinArg);
       this.previewedSkinId = skinId;
       this.refreshSkinCardHighlights();
+      // Also equip if the skin is owned
+      if (owned && !AuthManager.getInstance().isGuest) {
+        const eq = EquipService.getInstance();
+        if (skinId === 'default') {
+          eq.unequipUnitSkin(unitType);
+        } else {
+          eq.equipUnitSkin(unitType, skinId);
+        }
+      }
     };
 
     return card;
@@ -1037,9 +1060,21 @@ export class CharacterHub {
       `;
       row.appendChild(badge);
     } else if (owned) {
-      const equipBtn = makeBtn('EQUIP', true);
+      const equipBtn = makeBtn('EQUIP', false);
       equipBtn.style.padding = '4px 14px';
       equipBtn.style.fontSize = '11px';
+      equipBtn.style.border = `2px solid ${C.gold}`;
+      equipBtn.style.color = C.gold;
+      equipBtn.style.background = 'transparent';
+      equipBtn.style.fontFamily = "'Fredoka',sans-serif";
+      equipBtn.onmouseenter = () => {
+        equipBtn.style.background = 'rgba(255,217,61,0.12)';
+        equipBtn.style.borderColor = C.goldDark;
+      };
+      equipBtn.onmouseleave = () => {
+        equipBtn.style.background = 'transparent';
+        equipBtn.style.borderColor = C.gold;
+      };
       equipBtn.onclick = (e) => {
         e.stopPropagation();
         if (AuthManager.getInstance().isGuest) {
@@ -1074,19 +1109,21 @@ export class CharacterHub {
       const buyBtn = makeBtn('BUY', true);
       buyBtn.style.padding = '4px 12px';
       buyBtn.style.fontSize = '11px';
-      buyBtn.onclick = (e) => {
+      buyBtn.onclick = async (e) => {
         e.stopPropagation();
-        showPurchaseConfirm({
-          itemName: name,
-          priceCrowns: priceCrowns ?? undefined,
-          priceGlory: priceGlory ?? undefined,
-          onConfirm: async () => {
-            const currency = priceGlory ? 'glory' : 'crowns';
-            const result = await PaymentService.getInstance().purchaseItem(packId, currency);
-            if (!result.success) console.warn('Purchase failed:', result.error);
-          },
-          onCancel: () => {},
-        });
+        if (AuthManager.getInstance().isGuest) {
+          showGuestLoginPrompt('buy items');
+          return;
+        }
+        const currency: 'crowns' | 'glory' = (priceGlory != null && priceGlory > 0) ? 'glory' : 'crowns';
+        const result = await PaymentService.getInstance().purchaseItem(packId, currency);
+        if (!result.success) {
+          if (result.error?.includes('Not enough')) {
+            showInsufficientFunds(currency);
+          } else {
+            showToast(result.error || 'Purchase failed', 'error');
+          }
+        }
       };
       priceWrap.appendChild(buyBtn);
       row.appendChild(priceWrap);

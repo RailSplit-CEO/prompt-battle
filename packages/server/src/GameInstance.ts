@@ -3,12 +3,14 @@ import type { GameSimulation } from '../../shared/src/simulation/GameSimulation'
 import type { GameWebSocketServer } from './WebSocketServer';
 
 export class GameInstance {
+  private static MAX_GAME_DURATION_MS = 60 * 60 * 1000; // 1 hour max
   private gameId: string;
   private sim: GameSimulation;
   private syncCounter = 0;
   private player1Id: string;
   private player2Id: string;
   private wsServer: GameWebSocketServer | null;
+  private createdAt = Date.now();
   public finished = false;
 
   constructor(
@@ -33,6 +35,12 @@ export class GameInstance {
 
   tick(deltaMs: number): void {
     if (this.finished) return;
+    // Auto-expire games older than 1 hour
+    if (Date.now() - this.createdAt > GameInstance.MAX_GAME_DURATION_MS) {
+      console.log(`[Game ${this.gameId}] Expired after 1 hour, finishing`);
+      this.onGameOver();
+      return;
+    }
     this.sim.tick(deltaMs);
     this.syncCounter++;
     // Push sync every 2 ticks (~130ms at 15Hz)

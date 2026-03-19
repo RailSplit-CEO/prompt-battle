@@ -110,7 +110,7 @@ export class PaymentModal {
     panel.appendChild(summaryName);
 
     const summaryPrice = document.createElement('div');
-    summaryPrice.textContent = `$${opts.amountUSD.toFixed(2)}`;
+    summaryPrice.textContent = `$${Math.round(opts.amountUSD)}`;
     summaryPrice.style.cssText = `
       font-size:22px;color:${C.gold};text-align:center;
       font-family:'Fredoka',sans-serif;font-weight:bold;
@@ -154,7 +154,7 @@ export class PaymentModal {
 
     // Pay button
     const payBtn = document.createElement('button');
-    payBtn.textContent = `Pay $${opts.amountUSD.toFixed(2)}`;
+    payBtn.textContent = `Pay $${Math.round(opts.amountUSD)}`;
     payBtn.style.cssText = `
       width:100%;padding:12px;border:none;border-radius:10px;
       background:${C.gold};color:#1a1a0a;

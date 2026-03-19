@@ -31,6 +31,10 @@
         "function": "adminGrantItems"
       },
       {
+        "source": "/api/store/adminGrantItems",
+        "function": "adminGrantItems"
+      },
+      {
         "source": "/api/store/webhook/square",
         "function": "squareWebhook"
       },

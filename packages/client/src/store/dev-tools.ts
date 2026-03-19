@@ -10,7 +10,7 @@ function getFunctionsUrl(): string {
   return (import.meta as any).env?.VITE_FUNCTIONS_URL || '';
 }
 
-async function adminCall(action: string, data: Record<string, any> = {}): Promise<any> {
+export async function adminCall(action: string, data: Record<string, any> = {}): Promise<any> {
   const auth = getAuth(getFirebaseApp());
   const user = auth.currentUser;
   if (!user) {
@@ -18,7 +18,7 @@ async function adminCall(action: string, data: Record<string, any> = {}): Promis
     return;
   }
   const token = await user.getIdToken();
-  const res = await fetch(`${getFunctionsUrl()}/api/store/adminGrant`, {
+  const res = await fetch(`${getFunctionsUrl()}/api/store/adminGrantItems`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -53,6 +53,17 @@ export function installDevTools(): void {
 
   (window as any).__devClearInventory = () =>
     adminCall('clear_inventory');
+
+  (window as any).__devToggleBattlePass = () =>
+    adminCall('toggle_battlepass');
+
+  (window as any).__devResetCharacter = async () => {
+    if (!confirm('DELETE your account and ALL data? This cannot be undone.')) return;
+    await adminCall('reset_character');
+    // Sign out after server-side deletion
+    try { await getAuth(getFirebaseApp()).signOut(); } catch { /* ok */ }
+    window.location.reload();
+  };
 
   (window as any).__devUnlockAll = async () => {
     const { STORE_CATALOG } = await import('@prompt-battle/shared');

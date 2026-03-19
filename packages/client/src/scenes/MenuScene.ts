@@ -15,12 +15,14 @@ import { BattlePassPanel } from '../ui/BattlePassPanel';
 import { DailyRewardModal } from '../ui/DailyRewardModal';
 import { HORDE_SPRITE_CONFIGS, getEffectiveSpriteConfig, getAnimKeyPrefix } from '../sprites/SpriteConfig';
 import { WalletManager } from '../store/WalletManager';
+import { isCurrencyFlyTarget, setPendingCurrencyValue } from '../ui/CurrencyFlyAnimation';
 import { PlayerLevelManager } from '../store/PlayerLevelManager';
 import { InventoryManager } from '../store/InventoryManager';
 import { renderBadgeHTML, renderTitleHTML, getFrameStyle } from '../ui/FriendsPanel';
 import { FriendsSidebar } from '../ui/FriendsSidebar';
 import { PlayerProfilePopup } from '../ui/PlayerProfilePopup';
 import { getCatalogItem } from '@prompt-battle/shared';
+import { DevPanel } from '../ui/DevPanel';
 
 export class MenuScene extends Phaser.Scene {
   private matchmaking!: Matchmaking;
@@ -41,6 +43,7 @@ export class MenuScene extends Phaser.Scene {
   private _queueUnsub: (() => void) | null = null;
   private queueStatusText: Phaser.GameObjects.Text | null = null;
   private friendsSidebar: FriendsSidebar | null = null;
+  private devPanel: DevPanel | null = null;
 
   constructor() {
     super({ key: 'MenuScene' });
@@ -59,6 +62,17 @@ export class MenuScene extends Phaser.Scene {
       this.cleanupSocialUI();
     });
     const { width, height } = this.cameras.main;
+
+    // Apply custom cursor
+    try {
+      const cursorMap: Record<string, string> = { default: 'Cursor_01.png', cursor_crystal: 'Cursor_01.png', cursor_golden: 'Cursor_02.png', cursor_enchanted: 'Cursor_03.png', cursor_seasonal: 'Cursor_04.png' };
+      const cursorId = InventoryManager.getInstance().getEquipped().cursor || 'default';
+      this.input.setDefaultCursor(`url(assets/ui/cursors/${cursorMap[cursorId] || 'Cursor_01.png'}) 0 0, auto`);
+    } catch { /* inventory not ready */ }
+
+    // === DEV PANEL (right side, menu only) ===
+    this.devPanel?.destroy();
+    this.devPanel = new DevPanel();
 
     // === BACKGROUND: dark earthy gradient ===
     this.cameras.main.setBackgroundColor('#0f1a0a');
@@ -172,7 +186,13 @@ export class MenuScene extends Phaser.Scene {
       storeIcon.setPosition(-120, 0);
     }
     storeBtn.zone.on('pointerdown', () => {
-      new StorePanel().open();
+      this.blockGameInput();
+      const store = new StorePanel();
+      store.open();
+      // Re-enable input when store closes
+      const checkClose = setInterval(() => {
+        if (!store.isOpen) { clearInterval(checkClose); this.unblockGameInput(); }
+      }, 200);
     });
 
     // ═══ COSMETICS BUTTON ═══
@@ -185,8 +205,13 @@ export class MenuScene extends Phaser.Scene {
       cosIcon.setPosition(-120, 0);
     }
     cosmeticsBtn.zone.on('pointerdown', () => {
+      this.blockGameInput();
       import('../ui/CosmeticsHub').then(({ CosmeticsHub }) => {
-        new CosmeticsHub().open();
+        const hub = new CosmeticsHub();
+        hub.open();
+        const checkClose = setInterval(() => {
+          if (!hub.isOpen) { clearInterval(checkClose); this.unblockGameInput(); }
+        }, 200);
       });
     });
 
@@ -817,6 +842,21 @@ export class MenuScene extends Phaser.Scene {
       overflow:hidden;width:min(440px, 35vw);
     `;
 
+    // Apply profile background cosmetic
+    try {
+      const bgId = InventoryManager.getInstance().getEquipped().profileBackground || 'none';
+      const BG_GRADIENTS: Record<string, string> = {
+        bg_crystal_cave:  'linear-gradient(135deg, rgba(88,44,200,0.3), rgba(44,88,200,0.2))',
+        bg_autumn_forest: 'linear-gradient(135deg, rgba(180,100,30,0.3), rgba(80,120,30,0.2))',
+        bg_starfield:     'linear-gradient(135deg, rgba(10,10,60,0.4), rgba(40,20,80,0.3))',
+        bg_ocean_depths:  'linear-gradient(135deg, rgba(10,60,100,0.3), rgba(20,80,120,0.2))',
+        bg_lava_fields:   'linear-gradient(135deg, rgba(160,40,10,0.3), rgba(200,80,10,0.2))',
+      };
+      if (BG_GRADIENTS[bgId]) {
+        this.profileCardEl.style.background = `${BG_GRADIENTS[bgId]}, ${C.panelBg}`;
+      }
+    } catch { /* inventory not ready */ }
+
     if (auth.userProfile && !auth.isGuest) {
       const profile = auth.userProfile;
 
@@ -872,10 +912,12 @@ export class MenuScene extends Phaser.Scene {
       currencyWrap.style.cssText = `display:flex;align-items:center;gap:8px;`;
 
       const crownsSpan = document.createElement('span');
+      crownsSpan.id = 'menu-crowns-display';
       crownsSpan.style.cssText = `display:inline-flex;align-items:center;gap:4px;padding:4px 12px;border-radius:14px;background:rgba(255,217,61,0.15);border:1.5px solid rgba(255,217,61,0.4);font:bold 15px 'Fredoka',sans-serif;color:${C.gold};`;
       crownsSpan.textContent = '\uD83D\uDC51 0';
 
       const glorySpan = document.createElement('span');
+      glorySpan.id = 'menu-glory-display';
       glorySpan.style.cssText = `display:inline-flex;align-items:center;gap:4px;padding:4px 12px;border-radius:14px;background:rgba(192,192,210,0.12);border:1.5px solid rgba(192,192,210,0.35);font:bold 15px 'Fredoka',sans-serif;color:#C0C0D2;`;
       glorySpan.textContent = '\u2605 0';
 
@@ -891,8 +933,18 @@ export class MenuScene extends Phaser.Scene {
         crownsSpan.textContent = `${crownIcon} ${wm.crowns.toLocaleString()}`;
         glorySpan.textContent = `${starIcon} ${wm.glory.toLocaleString()}`;
         wm.onChange((w) => {
-          crownsSpan.textContent = `${crownIcon} ${w.crowns.toLocaleString()}`;
-          glorySpan.textContent = `${starIcon} ${w.glory.toLocaleString()}`;
+          const crownsText = `${crownIcon} ${w.crowns.toLocaleString()}`;
+          const gloryText = `${starIcon} ${w.glory.toLocaleString()}`;
+          if (isCurrencyFlyTarget(crownsSpan)) {
+            setPendingCurrencyValue(crownsSpan, crownsText);
+          } else {
+            crownsSpan.textContent = crownsText;
+          }
+          if (isCurrencyFlyTarget(glorySpan)) {
+            setPendingCurrencyValue(glorySpan, gloryText);
+          } else {
+            glorySpan.textContent = gloryText;
+          }
         });
       } catch {}
       try {
@@ -1651,12 +1703,14 @@ export class MenuScene extends Phaser.Scene {
   private blockGameInput() {
     const canvas = document.querySelector('#game-container canvas') as HTMLCanvasElement | null;
     if (canvas) canvas.style.pointerEvents = 'none';
+    this.input.enabled = false;
   }
 
   /** Restore Phaser canvas interaction */
   private unblockGameInput() {
     const canvas = document.querySelector('#game-container canvas') as HTMLCanvasElement | null;
     if (canvas) canvas.style.pointerEvents = '';
+    this.input.enabled = true;
   }
 
   private openFriendsPanel() {
@@ -1744,6 +1798,8 @@ export class MenuScene extends Phaser.Scene {
     this.battlePassPanel = null;
     if (this.friendsUnsub) { this.friendsUnsub(); this.friendsUnsub = null; }
     if (this.invitesUnsub) { this.invitesUnsub(); this.invitesUnsub = null; }
+    this.devPanel?.destroy();
+    this.devPanel = null;
     this.unblockGameInput();
   }
 
