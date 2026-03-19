@@ -22,33 +22,10 @@ import { GameSettings } from '../systems/GameSettings';
 import { AuthManager } from '../auth/AuthManager';
 import { InventoryManager } from '../store/InventoryManager';
 import { CatalogService } from '../store/CatalogService';
+import { parseWithGemini, correctSTT, validateAndFixWorkflow,
+         getGeminiCooldownRemaining, getActivePersonality,
+         type GameContext, type HordeCommand } from '../ai/GeminiPrompt';
 // horde-maps.json loaded at runtime from public/ via fetch (not bundled)
-
-// ═══════════════════════════════════════════════════════════════
-// GEMINI INTEGRATION
-// ═══════════════════════════════════════════════════════════════
-
-const _GEMINI_ENV_KEY = (import.meta as any).env?.VITE_GEMINI_API_KEY || '';
-const getGeminiKey = () => localStorage.getItem('pb_gemini_key') || _GEMINI_ENV_KEY;
-const GEMINI_MODEL = 'gemini-3.1-flash-lite-preview';
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=`;
-const GEMINI_MAX_RETRIES = 3;
-
-interface GameContext {
-  myUnits: { type: string; count: number; tier: number; gathering: number }[];
-  camps: { name: string; animalType: string; tier: number; owner: string; index: number; x: number; y: number; dist: number; defenders: number; storedFood: number; spawnCost: number }[];
-  nexusHp: { mine: number; enemy: number };
-  resources: { carrot: number; meat: number; crystal: number; metal: number };
-  groundCarrots: number;
-  groundMeat: number;
-  groundCrystals: number;
-  gameTime: number;
-  selectedHoard: string;
-  hoardCenter: { x: number; y: number };
-  carrotZones: { x: number; y: number; w: number; h: number }[];
-  activeEvents?: { type: string; emoji: string; name: string; x: number; y: number; timeLeft: number; info: string; howToWin: string }[];
-  activeBuffs?: { stat: string; amount: number; remaining: number }[];
-}
 
 // ─── Behavior Modifiers ──────────────────────────────────────
 // Modify HOW units execute their workflow, not WHAT they do.
@@ -61,793 +38,8 @@ interface BehaviorMods {
 
 const DEFAULT_MODS: BehaviorMods = { formation: 'normal', caution: 'normal', pacing: 'normal' };
 
-interface HordeCommand {
-  targetType: 'camp' | 'nearest_camp' | 'sweep_camps' | 'nexus' | 'base' | 'position' | 'defend' | 'retreat' | 'workflow' | 'query' | 'advanced_plan';
-  targetAnimal?: string;
-  campIndex?: number;
-  qualifier?: 'nearest' | 'furthest' | 'weakest' | 'strongest' | 'uncaptured' | 'enemy';
-  // LLM-defined workflow steps — the LLM decides the full loop
-  workflow?: { action: string; resourceType?: string; target?: string; targetType?: string; campIndex?: number; qualifier?: string; targetAnimal?: string; x?: number; y?: number; equipmentType?: string }[];
-  loopFrom?: number; // after end, loop back here (default 0 = loop everything)
-  narration?: string;
-  unitReaction?: string; // short in-character grunt/reaction for thought bubble (2-5 words)
-  // Behavior modifiers — change how units execute, not what they do
-  modifiers?: { formation?: string | null; caution?: string | null; pacing?: string | null };
-  modifierOnly?: boolean; // true = only change modifiers, keep existing workflow
-  responseType?: 'action' | 'unrecognized' | 'status_query' | 'acknowledgment';
-  statusReport?: string;
-  // Advanced plan goal — resolved client-side into multi-phase plan
-  planGoal?: { type: string; equipment?: string; resource?: string; amount?: number; thenAction?: string };
-}
-
-let _lastGeminiCall = 0;
-let _geminiCooldownMs = 4000; // starts at 4s, grows on 429
-const GEMINI_BASE_COOLDOWN = 4000;
-const GEMINI_MAX_COOLDOWN = 60000; // max 60s backoff
-
-// ─── STT Pre-Correction ─────────────────────────────────────
-// Fix common speech-to-text mishearings BEFORE sending to Gemini.
-// Maps regex → replacement. Order matters (first match wins per token).
-const STT_CORRECTIONS: [RegExp, string][] = [
-  // Action verbs
-  [/\bmoning\b/gi, 'mining'],
-  [/\bmoning\b/gi, 'mining'],
-  [/\bmon(?:e|ing)\b/gi, 'mining'],
-  [/\bmind?\b/gi, 'mine'],
-  [/\bmi(?:ne|ning)\s*(?:ing)?\b/gi, 'mining'], // "mine ing" → "mining"
-  [/\bgathur\b/gi, 'gather'],
-  [/\bgathiring\b/gi, 'gathering'],
-  [/\battact\b/gi, 'attack'],
-  [/\battck\b/gi, 'attack'],
-  [/\bdefned\b/gi, 'defend'],
-  [/\bretrete?\b/gi, 'retreat'],
-  [/\bscowt\b/gi, 'scout'],
-  // Unit names
-  [/\bhi\s*ena\b/gi, 'hyena'],
-  [/\bhyenn?a\b/gi, 'hyena'],
-  [/\bhigh\s*ena\b/gi, 'hyena'],
-  [/\bhyna\b/gi, 'hyena'],
-  [/\bhire\s*na\b/gi, 'hyena'],
-  [/\bn[o]me\b/gi, 'gnome'],
-  [/\bhome(?=s?\b)/gi, 'gnome'], // "homes" → "gnomes" only at word boundary
-  [/\bno\s*me\b/gi, 'gnome'],
-  [/\bminor\s*tour\b/gi, 'minotaur'],
-  [/\bmin[ao]t(?:ou?|oo)r\b/gi, 'minotaur'],
-  [/\bminute\s*(?:or|er)\b/gi, 'minotaur'],
-  [/\bshow\s*man\b/gi, 'shaman'],
-  [/\bshay?\s*man\b/gi, 'shaman'],
-  [/\bsherman\b/gi, 'shaman'],
-  [/\brobe\b/gi, 'rogue'],
-  [/\bro(?:ad|w|g)\b/gi, 'rogue'],
-  [/\bschool\b/gi, 'skull'],
-  [/\bscull\b/gi, 'skull'],
-  [/\bspy?ders?\b/gi, 'spider'],
-  // Equipment names
-  [/\bpick\s*ax(?:e|es?)?\b/gi, 'pickaxe'],
-  [/\bpic(?:k\s*)?acts?\b/gi, 'pickaxe'],
-  [/\bpickets?\b/gi, 'pickaxe'],
-  [/\bbatter\b/gi, 'banner'],
-  [/\bbanter\b/gi, 'banner'],
-  [/\bmanner\b/gi, 'banner'],
-  [/\bshe(?:'ll|eld)\b/gi, 'shield'],
-  [/\byield\b/gi, 'shield'],
-  // Resources
-  [/\bcarrits?\b/gi, 'carrot'],
-  [/\bcarrets?\b/gi, 'carrot'],
-  [/\bcristals?\b/gi, 'crystal'],
-  [/\bchristals?\b/gi, 'crystal'],
-  // Common game intent
-  [/\bgo\s+mon(?:e|ing)\b/gi, 'go mining'],
-  [/\bstart\s+mon(?:e|ing)\b/gi, 'start mining'],
-];
-
-function correctSTT(text: string): string {
-  let corrected = text;
-  for (const [pattern, replacement] of STT_CORRECTIONS) {
-    corrected = corrected.replace(pattern, replacement);
-  }
-  if (corrected !== text) {
-    console.log(`[STT] Corrected: "${text}" → "${corrected}"`);
-  }
-  return corrected;
-}
-
-// ─── Post-Gemini Workflow Validation ─────────────────────────
-// Fix common Gemini mistakes and validate logical coherence.
-function validateAndFixWorkflow(cmd: HordeCommand): HordeCommand {
-  if (!cmd.workflow || cmd.workflow.length === 0) return cmd;
-
-  const steps = cmd.workflow;
-  const actions = steps.map(s => s.action);
-
-  // Fix 1: mine without equip pickaxe → prepend equip pickaxe
-  if (actions.includes('mine') && !actions.includes('equip')) {
-    steps.unshift({ action: 'equip', equipmentType: 'pickaxe' });
-    // Push loopFrom forward to account for inserted step
-    if (cmd.loopFrom != null) cmd.loopFrom = Math.max(1, (cmd.loopFrom || 0) + 1);
-    else cmd.loopFrom = 1;
-    console.log('[Validate] Added missing equip pickaxe before mine');
-  }
-
-  // Fix 2: mine without deliver → append deliver base
-  if (actions.includes('mine') && !actions.includes('deliver')) {
-    steps.push({ action: 'deliver', target: 'base' });
-    console.log('[Validate] Added missing deliver base after mine');
-  }
-
-  // Fix 3: seek_resource/collect without deliver → append deliver base
-  const hasGather = actions.includes('seek_resource') || actions.includes('collect');
-  if (hasGather && !actions.includes('deliver') && !actions.includes('attack_camp')) {
-    steps.push({ action: 'deliver', target: 'base' });
-    console.log('[Validate] Added missing deliver base after gather');
-  }
-
-  // Fix 4: deliver to camp without attack_camp → prepend attack_camp
-  for (const s of steps) {
-    if (s.action === 'deliver' && s.target && s.target.includes('_camp') && !actions.includes('attack_camp')) {
-      const m = s.target.match(/^nearest_(\w+)_camp$/);
-      if (m) {
-        steps.unshift({ action: 'attack_camp', targetAnimal: m[1], qualifier: 'nearest' });
-        if (cmd.loopFrom != null && cmd.loopFrom > 0) cmd.loopFrom++;
-        console.log(`[Validate] Added missing attack_camp for ${m[1]}`);
-      }
-      break;
-    }
-  }
-
-  // Fix 5: hunt for meat/crystal producers without seek_resource after → append seek + deliver
-  const hasHunt = actions.includes('hunt') || actions.includes('kill_only');
-  if (hasHunt && !hasGather && !actions.includes('deliver') && !actions.includes('attack_enemies')) {
-    // hunt-only is intentional (kill_only), but hunt without pickup is usually a mistake
-    if (actions.includes('hunt') && !actions.includes('kill_only')) {
-      steps.push({ action: 'seek_resource', resourceType: 'meat' });
-      steps.push({ action: 'deliver', target: 'base' });
-      console.log('[Validate] Added seek_resource meat + deliver after hunt');
-    }
-  }
-
-  // Fix 6: equip step with loopFrom 0 → should be loopFrom 1+
-  if (steps.length > 0 && steps[0].action === 'equip' && (cmd.loopFrom == null || cmd.loopFrom === 0)) {
-    cmd.loopFrom = 1;
-    console.log('[Validate] Fixed loopFrom for equip one-shot');
-  }
-
-  // Fix 6b: normalize loopFrom — null/-1/undefined → 0
-  if (cmd.loopFrom == null || cmd.loopFrom < 0) {
-    cmd.loopFrom = 0;
-  }
-  // Clamp loopFrom to valid range
-  if (cmd.loopFrom >= steps.length) {
-    cmd.loopFrom = Math.max(0, steps.length - 1);
-  }
-
-  // Fix 9: caution=safe → convert seek_resource to collect (auto-pickup near base)
-  if (cmd.modifiers?.caution === 'safe') {
-    for (let i = 0; i < steps.length; i++) {
-      if (steps[i].action === 'seek_resource') {
-        steps[i] = { ...steps[i], action: 'collect' };
-        console.log(`[Validate] caution=safe: seek_resource → collect at step ${i}`);
-      }
-    }
-    // In safe collect mode, remove separate deliver steps (collect auto-delivers)
-    for (let i = steps.length - 1; i >= 0; i--) {
-      if (steps[i].action === 'deliver') {
-        steps.splice(i, 1);
-        console.log('[Validate] caution=safe: removed deliver (collect handles it)');
-      }
-    }
-  }
-
-  // Fix 10: lone attack_camp → full bootstrap (attack → gather resource → deliver to camp)
-  const currentActions = steps.map(s => s.action);
-  if (currentActions.length === 1 && currentActions[0] === 'attack_camp') {
-    const campStep = steps[0];
-    const animal = campStep.targetAnimal || campStep.targetType;
-    if (animal) {
-      const CAMP_RESOURCE: Record<string, string> = {
-        spider: 'carrot', gnome: 'carrot', turtle: 'carrot', snake: 'carrot',
-        hyena: 'meat', lizard: 'meat', skull: 'meat',
-        rogue: 'crystal', shaman: 'crystal',
-        panda: 'metal', minotaur: 'crystal', bear: 'meat', harpoon_fish: 'crystal',
-      };
-      const res = CAMP_RESOURCE[animal] || 'carrot';
-      const gatherAction = res === 'metal' ? 'mine' : 'seek_resource';
-      const gatherStep = gatherAction === 'mine'
-        ? { action: 'mine' }
-        : { action: 'seek_resource', resourceType: res };
-      const deliverStep = { action: 'deliver', target: `nearest_${animal}_camp` };
-
-      // Full bootstrap: attack_camp → gather → deliver (loop from gather)
-      steps.length = 0;
-      steps.push(campStep, gatherStep, deliverStep);
-      cmd.loopFrom = 1;
-      console.log(`[Validate] Expanded lone attack_camp to bootstrap: attack → ${gatherAction} ${res} → deliver`);
-    }
-  }
-
-  // Fix 7: reject unknown action names (don't silently default to carrot gathering)
-  const knownActions = new Set(['seek_resource','deliver','hunt','attack_camp','move','defend',
-    'attack_enemies','scout','collect','kill_only','mine','equip','contest_event','withdraw_base','upgrade']);
-  cmd.workflow = steps.filter(s => {
-    if (!knownActions.has(s.action)) {
-      console.warn(`[Validate] Removed unknown action: ${s.action}`);
-      return false;
-    }
-    return true;
-  });
-
-  // Fix 8: empty workflow after filtering → mark as unrecognized
-  if (cmd.workflow.length === 0) {
-    cmd.responseType = 'unrecognized';
-    cmd.narration = cmd.narration || 'Could not understand that';
-  }
-
-  return cmd;
-}
-
-// ─── Default unit personalities (used when no voice pack override is equipped) ───
-const DEFAULT_PERSONALITIES: Record<string, string> = {
-  gnome: 'Squeaky, hyper, childlike. Obsessed with food and shiny things. Say "boss" constantly. Laugh with "hehehehe!" or "teeheehee!". Short attention span. "Ooh ooh! Yes boss yes boss! Hehehehe! We go get the shinies boss!"',
-  skull: 'Grim. Hollow. Monotone. Speak of death, graves, the void. No excitement EVER. Flat, ominous, unsettling. Long pauses as "..." between phrases. "...the dead do not rush. We will arrive... when the earth permits."',
-  spider: 'Sinister, whispery, hissing. Stretch S sounds (sssslither, yesss, preciousss). Creepy and predatory. "Yesss... we ssscatter through the dark, sssilent and hungry..."',
-  hyena: 'Absolutely unhinged. Manic laughter spelled out: "AHAHAHA!!" or "HEHEHEHE!!". CAPS. Lives for chaos. Cannot be serious. "AHAHAHA YEAH YEAH YEAH!! LETS GO BREAK STUFF!! HEHEHEHE!!"',
-  turtle: 'Depressed. Exhausted. Everything is too hard, too far, too fast. Spell out sighs as "huuuhhh..." or "uuugghh...". Reluctant compliance. Miserable. "Uuugghh... fine. We\'ll drag ourselves over there. Again."',
-  panda: 'Slow, warm, sleepy. Zen-like calm. Thinks about food and naps. Yawns as "mmmyaaawn..." Unhurried. Gentle. "Mmm... okay. Nice slow walk. Mmmyaaawn... maybe bamboo on the way..."',
-  lizard: 'Cold. Clinical. Zero emotion. Military brevity. No personality flair, no humor. Robotic. "Affirmative. Route plotted. Executing."',
-  minotaur: 'PURE RAGE. ALL CAPS. Roar spelled out: "RAAAAGH!!" or "GRRRAAAH!!". Primal. Wants to smash everything. No subtlety. "RAAAAGH!! MOVE!! SMASH!! GRRRAAAH!! DESTROY EVERYTHING!!"',
-  shaman: 'Cryptic, mystical, speaks in riddles. References spirits, fate, the stars. Ethereal, drawn-out vowels: "oooohhh..." or "ahhhhh...". "Oooohhh... the spirits murmur of this path... fate curls like smoke..."',
-  rogue: 'Sarcastic, dry, too-cool. Eye-rolling energy. Scoffs as "tch" or "pfft". Reluctant competence. Never impressed. "Tch... sure. Whatever. Already three steps ahead of you."',
-  troll: 'Dumb. Third-person speech. Broken grammar. Confused easily. Grunts as "uhhh" or "hrmm". Lovable but slow. "Uhhh... Troll go now. Hrmm. Troll not sure where... but Troll go."',
-  snake: 'Sinister, hissing, patient predator. Stretch S sounds: "sssslither", "yesss", "preciousss". Cold and calculating. Coils before striking. "Yesss... we ssstrike from the grasss... sssilent and ssswift..."',
-  bear: 'Grumpy, powerful, just woke up. Everything annoys it. Deep rumbling growls as "grrrmph" or "rrrrgh". Protective but irritable. Third-person sometimes. "Grrrmph... fine. Bear will handle this. Bear always handles this."',
-  harpoon_fish: 'Nautical, no-nonsense marksman. Speaks in naval terms: "port", "starboard", "fire at will". Treats every battle like a ship engagement. Precise and focused. "Target sighted, two hundred yards. Adjusting for wind. Fire!"',
-};
-
-/** Get the active personality for a hoard type — checks equipped voice pack for override */
-function getActivePersonality(hoardType: string): string {
-  try {
-    const equipped = InventoryManager.getInstance().getEquipped();
-    const packId = (equipped as any).voicePacks?.[hoardType];
-    if (packId && packId !== 'default') {
-      const item = CatalogService.getInstance().getItem(packId);
-      if (item?.personality) return item.personality;
-    }
-  } catch { /* inventory/catalog not initialized */ }
-  return DEFAULT_PERSONALITIES[hoardType] || DEFAULT_PERSONALITIES.gnome;
-}
-
-async function parseWithGemini(
-  rawText: string,
-  ctx: GameContext,
-): Promise<HordeCommand[] | null> {
-  if (!getGeminiKey()) return null;
-  const now = Date.now();
-  if (now - _lastGeminiCall < _geminiCooldownMs) return null;
-  _lastGeminiCall = now;
-
-  const campList = ctx.camps.map(c =>
-    `  [${c.index}] ${c.name} (${c.animalType}, T${c.tier}) - ${c.owner}${c.storedFood > 0 ? ` - food:${c.storedFood}/${c.spawnCost}` : ''} - dist:${c.dist} - defenders:${c.defenders}`
-  ).join('\n');
-
-  const unitList = ctx.myUnits.map(u => {
-    let info = `  ${u.type} (T${u.tier}): ${u.count} units`;
-    if (u.gathering > 0) info += ` (${u.gathering} gathering)`;
-    return info;
-  }).join('\n');
-
-  const prompt = `You are the AI commander for a voice-controlled RTS game called "Horde Capture." The player speaks commands and you interpret them into game actions. You deeply understand the game's economy and must reason about what the player wants.
-
-═══ GAME ECONOMY ═══
-Resources: 🥕 Carrots (spawn on ground everywhere), 🍖 Meat (drops from killed wild animals), 💎 Crystals (drops from elite prey), ⚙️ Metal (mined from mine nodes on the map)
-
-SPAWN COSTS — each unit type requires a specific resource delivered to its camp:
-  Tier 1: gnome (🧝) = 2 carrots, snake (🐍) = 2 carrots
-  Tier 2: turtle (🐢) = 4 carrots + 2 meat, skull (💀) = 4 meat, spider (🕷️) = 5 meat, hyena (🐺) = 4 meat, rogue (🗡️) = 5 meat
-  Tier 3: panda (🐼) = 6 meat + 3 carrots, lizard (🦎) = 6 meat + 2 carrots, bear (🐻) = 7 meat + 3 carrots, harpoon fish (🐡) = 5 meat + 3 crystals
-  Tier 4: minotaur (🐂) = 8 crystals + 4 meat, shaman (🔮) = 8 crystals + 3 meat
-  Tier 5: troll (👹) = 12 crystals + 6 meat
-
-HOW SPAWNING WORKS: Units gather a resource → carry it to a camp of the desired type → camp uses it to spawn that unit type. E.g. "make gnomes" means gather carrots and deliver to a gnome camp. "make skulls" means gather meat and deliver to a skull camp. Base stores resources but does NOT spawn units — only camps spawn units. Each team gets 1 free gnome + 1 free snake from base every 45 seconds automatically.
-
-BASE STOCKPILE: Units can WITHDRAW resources from the base stockpile using {"action":"withdraw_base","resourceType":"carrot|meat|crystal|metal"}. This lets you redistribute stored resources — e.g. take carrots from base and deliver to a gnome camp. Use this when base has surplus resources and you want to feed camps directly.
-
-To produce a unit, you MUST own a camp of that type. Camps start neutral with defenders — kill the defenders to capture.
-
-ARMORY: 🏛️ Each team has an Armory building on their side of the map. Players unlock equipment with resources ("unlock swords"), then units walk to the Armory to pick items up. Equipment is permanent (doesn't drop on death). Units can carry a resource AND have equipment. One equipment per unit.
-
-EQUIPMENT (unlock/upgrade, unlimited pickups — costs scale by level: ×1.0/×2.5/×5.0):
-  ⛏️ Pickaxe (40🥕): Required to mine metal. +25% gather speed. Any unit.
-  ⚔️ Sword (40🍖+15⚙️+10💎): +50% attack, +25% attack speed. MELEE ONLY.
-  🛡️ Shield (35🍖+15⚙️+10💎): +60% HP, -25% damage taken, -15% speed. MELEE ONLY.
-  🏹 Bow (35🍖+15⚙️+10💎): +40% attack, +30% range. RANGED ONLY.
-  🎯 Quiver (30🍖+10⚙️+10💎): +40% attack speed, 15% dodge. RANGED ONLY.
-  👢 Boots (35🥕+10⚙️+5💎): +60% move speed, +50% pickup range. Any unit.
-  🚩 Banner (50🍖+20⚙️+15💎): Aura — nearby allies +20% atk, +15% speed. Any unit.
-  Max level 3. Level multiplier stacks: Lvl2=×2.5, Lvl3=×5.0.
-  MELEE units (gnome, turtle, skull, spider, panda, lizard, bear, rogue, minotaur, troll) use Sword+Shield.
-  RANGED units (snake, hyena, harpoon_fish, shaman) use Bow+Quiver.
-
-MINES: ⛏️ Mine nodes on the map. Only units with a Pickaxe can mine metal. Metal is used to unlock equipment.
-
-To equip: include {"action":"equip","equipmentType":"pickaxe|sword|shield|boots|banner|bow|quiver"} step BEFORE other steps. Unit walks to Armory, picks up item, then continues.
-To upgrade: include {"action":"upgrade","equipmentType":"pickaxe|sword|shield|boots|banner|bow|quiver"} step. Deducts resources from base stockpile instantly. Use when player says "upgrade swords", "unlock shields", "research bows".
-Example: "get pickaxes then mine" → [{"action":"equip","equipmentType":"pickaxe"},{"action":"mine"},{"action":"deliver","target":"base"}]
-Example: "get swords and attack" → [{"action":"equip","equipmentType":"sword"},{"action":"attack_camp","targetAnimal":"hyena","qualifier":"nearest"}]
-Example: "upgrade swords then attack" → [{"action":"upgrade","equipmentType":"sword"},{"action":"equip","equipmentType":"sword"},{"action":"attack_enemies"}], loopFrom:2
-Example: "upgrade everything" → [{"action":"upgrade","equipmentType":"pickaxe"},{"action":"upgrade","equipmentType":"sword"},{"action":"upgrade","equipmentType":"shield"},{"action":"upgrade","equipmentType":"bow"},{"action":"upgrade","equipmentType":"quiver"},{"action":"upgrade","equipmentType":"boots"},{"action":"upgrade","equipmentType":"banner"}], loopFrom:0
-Example: "get bows for archers" → [{"action":"equip","equipmentType":"bow"},{"action":"attack_enemies"}] — ranged units get bow
-Example: "equip swords and attack" → [{"action":"equip","equipmentType":"sword"},{"action":"attack_enemies"}] — melee units get sword
-
-═══ CURRENT GAME STATE ═══
-Time: ${Math.floor(ctx.gameTime / 1000)}s
-Selected hoard: ${ctx.selectedHoard} (player commands this group via hotkeys)
-
-MY UNITS:
-${unitList || '  (none)'}
-
-MY BASE STOCKPILE: 🥕${ctx.resources.carrot} 🍖${ctx.resources.meat} 💎${ctx.resources.crystal} ⚙️${ctx.resources.metal}
-(Units can withdraw from base stockpile using withdraw_base action to redistribute to camps)
-
-CAMPS (sorted by distance):
-${campList}
-
-CASTLE HP: mine=${ctx.nexusHp.mine}/50000, enemy=${ctx.nexusHp.enemy >= 0 ? ctx.nexusHp.enemy + '/50000' : 'unknown (not in vision)'}
-
-Ground items nearby: 🥕${ctx.groundCarrots} carrots, 🍖${ctx.groundMeat} meat, 💎${ctx.groundCrystals} crystals on the map
-
-CARROT SPAWN ZONES (carrots appear in these areas every 5s):
-${ctx.carrotZones.length > 0 ? ctx.carrotZones.map((z, i) => `  Zone ${i + 1}: (${z.x},${z.y}) to (${z.x + z.w},${z.y + z.h}) — center (${Math.round(z.x + z.w / 2)},${Math.round(z.y + z.h / 2)})`).join('\n') : '  (scattered across map)'}
-
-ACTIVE MAP EVENTS:
-${ctx.activeEvents && ctx.activeEvents.length > 0 ? ctx.activeEvents.map(e => `  ${e.emoji} ${e.name} (${e.type}) at (${e.x},${e.y}) — ${e.info} — ${e.timeLeft}s left\n    HOW TO WIN: ${e.howToWin}`).join('\n') : '  (none)'}
-
-ACTIVE BUFFS:
-${ctx.activeBuffs && ctx.activeBuffs.length > 0 ? ctx.activeBuffs.map(b => `  +${Math.round(b.amount * 100)}% ${b.stat} (${b.remaining}s left)`).join('\n') : '  (none)'}
-
-HOARD POSITION: Your selected units are centered at (${ctx.hoardCenter.x}, ${ctx.hoardCenter.y})
-Map is 6400x6400. My base is at (250, 6150). Enemy base is at (6150, 250).
-
-SPATIAL REFERENCE (relative to hoard center):
-  Left: x-600  |  Right: x+600  |  Up: y-600  |  Down: y+600
-  For "go left": move to (${Math.max(50, ctx.hoardCenter.x - 600)}, ${ctx.hoardCenter.y})
-  For "go right": move to (${Math.min(6350, ctx.hoardCenter.x + 600)}, ${ctx.hoardCenter.y})
-  For "go up/forward": move to (${ctx.hoardCenter.x}, ${Math.max(50, ctx.hoardCenter.y - 600)})
-  For "go down/back": move to (${ctx.hoardCenter.x}, ${Math.min(6350, ctx.hoardCenter.y + 600)})
-
-When the player says a RELATIVE direction ("go left", "move right", "push forward"):
-  → Use the hoard center as origin, offset by ~600 in that direction
-  → Clamp to map bounds [50, 6350]
-  → Do NOT use absolute map edges — the player means relative to where their units ARE
-
-When flanking or going around a target:
-  → Compute waypoints that arc from hoard center around the target
-  → E.g. if hoard=(2000,3000) and target=(4500,3200), flank via (3500,1500)→(5000,2000)→(4500,3200)
-
-═══ BEHAVIOR MODIFIERS ═══
-Modifiers change HOW units execute (not WHAT they do). They persist until changed. Can be combined with ANY workflow.
-
-FORMATION: "spread" | "tight" | null
-  spread: fan out/scatter/spread out/don't clump → units space apart
-  tight: group up/stick together/stay close/cluster → units bunch up
-  null: clear formation
-
-CAUTION: "safe" | "aggressive" | null
-  safe: careful/don't die/play safe/be careful → avoid threats, hunt weaker prey
-  aggressive: go hard/no mercy/be aggressive → no avoidance, engage everything
-  null: clear caution
-
-PACING: "rush" | "efficient" | null
-  rush: rush/hurry/go fast/faster → lower idle tolerance, faster restarts
-  efficient: be efficient/smart/one at a time → careful resource claiming
-  null: clear pacing
-
-MODIFIER RULES:
-- Modifiers can appear WITH a workflow command: "aggressively attack with swords" → caution:"aggressive" + equip sword + attack_enemies
-- Modifier-only commands (no action change): "be more careful" / "spread out" → modifierOnly=true
-- "back to normal" / "reset" → clear all to null, modifierOnly=true
-- "rush the base" → attack enemy castle (NOT rush modifier). "rush economy" → rush modifier.
-- ALWAYS include modifiers if the tone/adjectives imply them, even alongside workflows.
-
-═══ ACTIONS ═══
-ALL commands use targetType="workflow" with a workflow array. Even simple commands:
-- "go to camp" → workflow: [attack_camp with targetAnimal and qualifier]
-- "attack nexus/castle" → workflow: [attack_enemies] (units fight their way to the enemy)
-- "defend"/"retreat"/"go home" → workflow: [defend base] or [move to base coords]
-
-QUALIFIERS for attack_camp steps: nearest, furthest, weakest, uncaptured, enemy
-
-═══ WORKFLOWS ═══
-For economy/production commands, you design a WORKFLOW — a repeating loop of steps the units execute automatically. Use targetType="workflow" and provide a "workflow" array.
-
-Available step types:
-  {"action": "seek_resource", "resourceType": "carrot|meat|crystal"} — find and pick up a ground resource
-  {"action": "deliver", "target": "base|nearest_TYPE_camp"} — carry item to a destination. Use "nearest_gnome_camp", "nearest_skull_camp", etc.
-  {"action": "hunt", "targetType": "skull|spider|..."} — attack wild animals (they drop meat/crystals on death). Optional targetType filter.
-  {"action": "attack_camp", "targetAnimal": "gnome|skull|...", "qualifier": "nearest"} — go capture a camp
-  {"action": "move", "x": 1000, "y": 1000} — move to coordinates
-  {"action": "defend", "target": "base|nearest_TYPE_camp"} — guard a location, patrol nearby, fight enemies that approach. ALWAYS include target! "defend the panda camp" → target:"nearest_panda_camp"
-  {"action": "attack_enemies"} — seek and fight enemy player units relentlessly
-  {"action": "scout", "x": 500, "y": 500} — explore a region, AVOIDS combat. Use x,y to target a specific area. For directional scouting ("explore the right side"), set x,y to the CENTER of that region. Use MULTIPLE scout steps with different x,y coords for patrol routes. Map regions: left side x≈800, right side x≈5600, top y≈800, bottom y≈5600, center x≈3200,y≈3200. Omit x,y for random full-map exploration.
-  {"action": "collect", "resourceType": "carrot|meat|crystal"} — pick up ground resources while AVOIDING enemy units (safe gathering)
-  {"action": "kill_only", "targetType": "skull|spider|..."} — hunt and kill wild animals but IGNORE resource drops (pure combat, no pickup)
-  {"action": "mine"} — go to nearest mine node and extract metal, then carry it back (requires Pickaxe equipment)
-  {"action": "contest_event"} — move to nearest active map event and interact (gather, deliver, attack, sacrifice, feed). Use when player says "go to event", "contest the event", "help with the bear", etc.
-  {"action": "equip", "equipmentType": "pickaxe|sword|shield|bow|quiver|boots|banner"} — go to team Armory and equip item (must be unlocked first). Sword/Shield=melee only. Bow/Quiver=ranged only.
-  {"action": "upgrade", "equipmentType": "pickaxe|sword|shield|bow|quiver|boots|banner"} — unlock or upgrade equipment. Deducts resources from base stockpile. Use when player says "upgrade swords", "unlock shields", "research bows".
-  {"action": "withdraw_base", "resourceType": "carrot|meat|crystal|metal"} — go to base and take 1 resource from stockpile (unit carries it, then deliver to camp)
-
-The workflow LOOPS automatically. Design the steps so they make a sensible repeating cycle.
-
-═══ TASK CHAINING (loopFrom) ═══
-Use "loopFrom" to mark where the repeating loop starts. Steps before loopFrom run once; steps from loopFrom onward loop forever.
-loopFrom=0 (default) means everything loops. loopFrom>0 means steps 0..loopFrom-1 are one-shot setup.
-"then"/"after that" in player speech signals a phase boundary → set loopFrom where the second part starts.
-
-SPECIAL: Turtles carry 10x resources per trip — they're slow but incredibly efficient haulers! Prefer assigning turtles to gather/deliver workflows.
-
-═══ UNIT TRAITS & ROLES ═══
-Each unit has unique strengths — use these to make smart workflow decisions:
-
-GNOME (T1, 🧝): Fast melee gatherer, 2x pickup range. BEST gatherer for carrots. Cheap (2 carrots). Weak fighter — keep gathering.
-SNAKE (T1, 🐍): Ranged T1 (110 range). Venom spit poisons targets. Cheap (2 carrots). Fragile but safe DPS from behind.
-TURTLE (T2, 🐢): Slow but carries 10x resources per trip! Ultimate hauler. Taunts nearby enemies. Always prefer turtles for gather/deliver.
-SKULL (T2, 💀): Cheats death once (survives lethal at 1 HP). Good fighter. Can self-sustain: hunt → pick meat → deliver.
-SPIDER (T2, 🕷️): Fast ambusher. Venom shreds tanks (+5% max HP per hit). Web Trap slows on first hit.
-HYENA (T2, 🐺): Ranged attacker (120 range). Excellent for defense and kiting. Pack bonus with other hyenas.
-ROGUE (T2, 🗡️): Fast assassin. 3x damage on first hit (Backstab). Invisible to neutrals — sneaks past defenders.
-THIEF (T2, 🥷): Ranged (100 range) dagger thrower. Kills drop +50% resources (Pilfer). Smoke Bomb escape.
-PANDA (T3, 🐼): Tanky brawler, high HP, regenerates 1.5% HP/sec. Blocks projectiles for units behind.
-LIZARD (T3, 🦎): Cold Blood deals 3x damage to targets below 40% HP. Tail Whip cleaves behind target.
-BEAR (T3, 🐻): Berserker — gets stronger as HP drops (Rage). Maul stuns targets. Huge HP pool.
-HARPOON FISH (T3, 🐡): Longest range in game (160). Pierces through first target. Anchor Shot slows 50%.
-MINOTAUR (T4, 🐂): Commander — nearby allies +25% attack. Bull Rush charges for 2x impact. 8 crystals.
-SHAMAN (T4, 🔮): All attacks splash 60px. Hex Ward reduces splash damage to allies. 8 crystals.
-TROLL (T5, 👹): Ultimate unit — enormous stats, 90px splash slam. Only 1 camp at map center. 12 crystals.
-
-═══ RESOURCE FLOW ═══
-Carrots → spawn on ground naturally (slow). Gnomes/turtles eat these.
-Meat → drops when wild animals die. Need to HUNT first. For T2-T3.
-Crystals → drop from elite golden minotaurs (rare, tough, map center). For T4-T5.
-KEY: For meat/crystals, include "hunt" step BEFORE "seek_resource". For carrots, just "seek_resource".
-
-═══ BOOTSTRAP SEQUENCES (per unit type) ═══
-"bootstrap gnomes": [{"action":"attack_camp","targetAnimal":"gnome","qualifier":"nearest"},{"action":"seek_resource","resourceType":"carrot"},{"action":"deliver","target":"nearest_gnome_camp"}]
-"bootstrap turtles": [{"action":"attack_camp","targetAnimal":"turtle","qualifier":"nearest"},{"action":"seek_resource","resourceType":"carrot"},{"action":"deliver","target":"nearest_turtle_camp"}]
-"bootstrap skulls": [{"action":"attack_camp","targetAnimal":"skull","qualifier":"nearest"},{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_skull_camp"}]
-"bootstrap spiders": [{"action":"attack_camp","targetAnimal":"spider","qualifier":"nearest"},{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_spider_camp"}]
-"bootstrap hyenas": [{"action":"attack_camp","targetAnimal":"hyena","qualifier":"nearest"},{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_hyena_camp"}]
-"bootstrap rogues": [{"action":"attack_camp","targetAnimal":"rogue","qualifier":"nearest"},{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_rogue_camp"}]
-"bootstrap pandas": [{"action":"attack_camp","targetAnimal":"panda","qualifier":"nearest"},{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_panda_camp"}]
-"bootstrap lizards": [{"action":"attack_camp","targetAnimal":"lizard","qualifier":"nearest"},{"action":"hunt"},{"action":"seek_resource","resourceType":"meat"},{"action":"deliver","target":"nearest_lizard_camp"}]
-"bootstrap minotaurs": [{"action":"attack_camp","targetAnimal":"minotaur","qualifier":"nearest"},{"action":"hunt","targetType":"minotaur"},{"action":"seek_resource","resourceType":"crystal"},{"action":"deliver","target":"nearest_minotaur_camp"}]
-"bootstrap shamans": [{"action":"attack_camp","targetAnimal":"shaman","qualifier":"nearest"},{"action":"hunt","targetType":"minotaur"},{"action":"seek_resource","resourceType":"crystal"},{"action":"deliver","target":"nearest_shaman_camp"}]
-"bootstrap troll": [{"action":"attack_camp","targetAnimal":"troll","qualifier":"nearest"},{"action":"hunt","targetType":"minotaur"},{"action":"seek_resource","resourceType":"crystal"},{"action":"deliver","target":"nearest_troll_camp"}]
-
-═══ INTENT CLASSIFICATION ═══
-
-STEP 1: Detect modifiers from tone/adjectives (can combine with any action below):
-  - "aggressively", "carefully", "spread out", "rush", "efficiently" → set modifiers
-  - Pure modifier commands ("be careful", "spread out") → modifierOnly=true, NO workflow
-
-STEP 2: Classify the PRIMARY intent:
-
-A) ADVANCED PLAN (UNLOCK/UPGRADE EQUIPMENT): "get me shields", "unlock pickaxe", "upgrade swords", "I want banners", "work on getting boots"
-   When player wants to UNLOCK or UPGRADE equipment (whether or not they have the resources):
-   → targetType="advanced_plan"
-   → planGoal: { "type": "unlock_equipment", "equipment": "[id]" }
-   The game will automatically resolve the full prerequisite chain (gather resources, unlock prerequisites, etc).
-
-   With follow-up action: "get shields and defend", "unlock swords and attack"
-   → planGoal: { "type": "unlock_equipment", "equipment": "shield", "thenAction": "defend" }
-
-   Resource stockpiling: "stockpile metal", "I need metal", "gather metal for me"
-   → planGoal: { "type": "stockpile_resource", "resource": "metal", "amount": 20 }
-
-   DISAMBIGUATION:
-   - "equip swords" (already unlocked, just pick up) → regular workflow with equip step (B below)
-   - "unlock/upgrade/get swords" (unlock new or upgrade) → advanced_plan
-   - "get [animal]" (e.g. "get skulls") → bootstrap (C below), NOT advanced_plan
-   - Equipment names: pickaxe, sword, shield, boots, banner
-
-AA) UNLOCK EQUIPMENT (text command fallback): "unlock/buy/research [equipment name]"
-   → This is NOT a workflow. Return targetType="base" with narration about unlocking.
-   → The game handles unlock logic separately from this JSON.
-   → Prefer advanced_plan (A) over this for voice commands.
-
-B) EQUIP + ACTION: "get/grab/equip [equipment] and/then [action]"
-   → targetType="workflow", start with {"action":"equip","equipmentType":"..."}, then action steps
-   Examples:
-   "get pickaxes and mine" → [equip pickaxe, mine, deliver base]
-   "grab swords and attack wolf camp" → [equip sword, attack_camp hyena nearest]
-   "get shields and defend base" → [equip shield, defend base]
-   "equip boots and gather carrots" → [equip boots, seek_resource carrot, deliver base]
-   "get banners and follow the hoard" → [equip banner, attack_enemies]
-   "get pickaxes and mine aggressively" → [equip pickaxe, mine, deliver base] + caution:"aggressive"
-
-C) PRODUCE/BOOTSTRAP UNIT: "get/make/take/produce/train/spawn [ANIMAL TYPE]"
-   → ALWAYS full bootstrap: [attack_camp, (hunt if meat/crystal), seek_resource, deliver]
-   → CRITICAL: ALWAYS include attack_camp as the FIRST step, even if we already own a camp of that type! The attack_camp step is a runtime safeguard — the game auto-skips it when the camp is owned but re-captures if lost. NEVER omit it.
-   → "get" + animal name = bootstrap, NOT equip! "get gnomes" = bootstrap gnomes, "get a sword" = equip sword
-   → CRITICAL: "get skulls" = bootstrap skulls. "get a pickaxe" = equip pickaxe. Distinguish animal names from equipment names!
-   → If "safely"/"safe"/"careful" is mentioned: use "collect" instead of "seek_resource" AND set caution:"safe"
-   → "safely make gnomes" → [attack_camp gnome, collect carrot, deliver nearest_gnome_camp] + caution:"safe"
-
-D) GATHER/FARM: "gather/farm/harvest/stockpile [resource]"
-   → [seek_resource, deliver base] or [hunt, seek_resource, deliver base]
-
-E) COMBAT: "attack/fight/kill/raid [target]"
-   → attack_camp, attack_enemies, kill_only, or nexus
-
-F) MINING: "mine/mine metal/go mine/go mining"
-   → [equip pickaxe, mine, deliver base] — ALWAYS include equip pickaxe step for mining commands
-   → The game automatically handles unlocking pickaxe if needed (gathers carrots, unlocks, then mines)
-   → If "safely"/"safe"/"careful" is mentioned: set caution:"safe"
-
-G) DEFEND: "defend/guard/protect [location]"
-   → [defend target]
-
-H) MOVEMENT: "go to/move to/retreat/scout"
-   → Simple movement or scout workflow
-
-═══ EXAMPLES (all workflows show loopFrom) ═══
-
-PRODUCTION (bootstrap — capture camp + gather + deliver, loopFrom: 0 = all steps loop):
-"make gnomes" → [attack_camp gnome nearest, seek_resource carrot, deliver nearest_gnome_camp], loopFrom: 0
-"get skulls" → [attack_camp skull nearest, hunt, seek_resource meat, deliver nearest_skull_camp], loopFrom: 0
-"take pandas" → [attack_camp panda nearest, hunt, seek_resource meat, deliver nearest_panda_camp], loopFrom: 0
-"gnomes make skulls" → [attack_camp skull nearest, seek_resource meat, deliver nearest_skull_camp], loopFrom: 0
-"go get some gnomes" → [attack_camp gnome nearest, seek_resource carrot, deliver nearest_gnome_camp], loopFrom: 0
-"I want more turtles" → [attack_camp turtle nearest, seek_resource carrot, deliver nearest_turtle_camp], loopFrom: 0
-"let's get some spiders" → [attack_camp spider nearest, hunt, seek_resource meat, deliver nearest_spider_camp], loopFrom: 0
-"I need skulls" → [attack_camp skull nearest, hunt, seek_resource meat, deliver nearest_skull_camp], loopFrom: 0
-
-SAFE PRODUCTION (collect instead of seek_resource, avoids enemies):
-"safely get gnomes" → [attack_camp gnome nearest, collect carrot, deliver nearest_gnome_camp], loopFrom: 0, caution: "safe"
-"make skulls safely" → [attack_camp skull nearest, hunt, collect meat, deliver nearest_skull_camp], loopFrom: 0, caution: "safe"
-"carefully bootstrap turtles" → [attack_camp turtle nearest, collect carrot, deliver nearest_turtle_camp], loopFrom: 0, caution: "safe"
-
-GATHER & STOCKPILE:
-"gather carrots" → [seek_resource carrot, deliver base], loopFrom: 0
-"stockpile carrots" → [seek_resource carrot, deliver base], loopFrom: 0
-"farm meat" → [hunt, seek_resource meat, deliver base], loopFrom: 0
-"safely gather carrots" → [collect carrot], loopFrom: 0, caution: "safe"
-"aggressively farm meat" → [hunt, seek_resource meat, deliver base], loopFrom: 0, caution: "aggressive"
-"spread out and gather crystals" → [hunt minotaur, seek_resource crystal, deliver base], loopFrom: 0, formation: "spread"
-
-HUNTING & KILL-ONLY:
-"hunt wilds" → [hunt], loopFrom: 0
-"aggressively hunt everything" → [hunt], loopFrom: 0
-"kill animals but don't pick anything up" → [kill_only], loopFrom: 0
-"just kill spiders, ignore the drops" → [kill_only spider], loopFrom: 0
-NOTE: "don't pick up"/"ignore drops"/"just kill" → use kill_only (NOT hunt). hunt = kill + auto-pickup, kill_only = kill + ignore drops., caution: "aggressive"
-
-EQUIPMENT (equip is one-shot, loopFrom after equip step):
-"mine metal" → [equip pickaxe, mine, deliver base], loopFrom: 1
-"get swords and fight" → [equip sword, attack_enemies], loopFrom: 1
-"grab boots and collect carrots" → [equip boots, collect carrot], loopFrom: 1
-"carefully get pickaxes and mine" → [equip pickaxe, mine, deliver base], loopFrom: 1, caution: "safe"
-"aggressively attack with swords" → [equip sword, attack_enemies], loopFrom: 1, caution: "aggressive"
-"spread out and gather carrots with boots" → [equip boots, seek_resource carrot, deliver base], loopFrom: 1, formation: "spread"
-"rush to get shields and defend" → [equip shield, defend base], loopFrom: 1, pacing: "rush"
-"get a banner and lead the charge" → [equip banner, attack_enemies], loopFrom: 1, caution: "aggressive"
-
-TASK CHAINING ("then"/"after that" = one-shot setup + looping action):
-"equip sword then defend base" → [equip sword, defend base], loopFrom: 1
-"get pickaxes then mine" → [equip pickaxe, mine, deliver base], loopFrom: 1
-"grab shields then defend base safely" → [equip shield, defend base], loopFrom: 1, caution: "safe"
-"get swords then aggressively attack enemies" → [equip sword, attack_enemies], loopFrom: 1, caution: "aggressive"
-"equip boots then gather carrots spread out" → [equip boots, seek_resource carrot, deliver base], loopFrom: 1, formation: "spread"
-"get banners then rush the enemy" → [equip banner, attack_enemies], loopFrom: 1, pacing: "rush"
-
-CHAINING WITH CAMPS (attack_camp + deliver to camp = loopFrom: 0 ALWAYS — camp safeguard):
-"capture skull camp then gather meat" → [attack_camp skull nearest, hunt, seek_resource meat, deliver nearest_skull_camp], loopFrom: 0
-"take the gnome camp then make gnomes" → [attack_camp gnome nearest, seek_resource carrot, deliver nearest_gnome_camp], loopFrom: 0
-"capture spider camp then spread out and gather meat" → [attack_camp spider nearest, hunt, seek_resource meat, deliver nearest_spider_camp], loopFrom: 0, formation: "spread"
-"rush to capture panda camp after that farm meat" → [attack_camp panda nearest, hunt, seek_resource meat, deliver nearest_panda_camp], loopFrom: 0, pacing: "rush"
-"safely take gnome camp and then gather carrots" → [attack_camp gnome nearest, collect carrot, deliver nearest_gnome_camp], loopFrom: 0, caution: "safe"
-
-DEFEND & COMBAT (single-step loops):
-"defend base" → [defend base], loopFrom: 0
-"aggressively defend base" → [defend base], loopFrom: 0, caution: "aggressive"
-"carefully scout the map" → [scout], loopFrom: 0, caution: "safe"
-"explore the right side" → [scout x:5600 y:2000, scout x:5600 y:4400], loopFrom: 0
-"scout top left" → [scout x:800 y:800], loopFrom: 0
-"patrol the middle" → [scout x:2400 y:3200, scout x:4000 y:3200], loopFrom: 0
-"scout around the enemy base" → [scout x:5500 y:800, scout x:5800 y:1500], loopFrom: 0, caution: "safe"
-
-REDISTRIBUTE BASE RESOURCES:
-"use base carrots to make gnomes" → [withdraw_base carrot, deliver nearest_gnome_camp], loopFrom: 0
-"take meat from base and feed skull camp" → [withdraw_base meat, deliver nearest_skull_camp], loopFrom: 0
-"redistribute carrots to gnome camp" → [withdraw_base carrot, deliver nearest_gnome_camp], loopFrom: 0
-"spread out and defend" → [defend base], loopFrom: 0, formation: "spread"
-
-SIMPLE MOVEMENT (still uses workflow):
-"attack nearest camp" → [attack_camp, qualifier: "nearest"], loopFrom: 0
-"attack nexus" → [attack_enemies], loopFrom: 0
-"retreat" → [defend base], loopFrom: 0
-"go to the skull camp" → [attack_camp skull nearest], loopFrom: 0
-
-STRATEGIC:
-"get started" → [attack_camp gnome nearest, seek_resource carrot, deliver nearest_gnome_camp], loopFrom: 0
-
-═══ loopFrom RULES ═══
-- loopFrom: 0 → ALL steps loop (default, use for gather/bootstrap/defend/hunt)
-- loopFrom: 1+ → steps before loopFrom run ONCE, steps from loopFrom onward loop forever
-- equip steps are ALWAYS one-shot → loopFrom >= 1 whenever workflow starts with equip
-- CRITICAL: attack_camp + deliver to a CAMP (nearest_X_camp) → loopFrom: 0 ALWAYS. The attack_camp step is a safeguard that re-checks camp ownership each cycle. Without it, units break if the camp is lost.
-- attack_camp + deliver to BASE (not a camp) → loopFrom: 1 is OK (camp loss doesn't matter for base delivery)
-- "then"/"after that" in player speech = phase boundary, BUT still respect the camp safeguard rule above
-- When in doubt, use loopFrom: 0 (safe default, everything loops)
-
-═══ VOICE RECOGNITION CONTINGENCY ═══
-Input comes from speech-to-text which often mishears names. Always match the INTENDED word:
-  UNIT NAMES:
-  - "hyena" may appear as: "hyenna", "hi ena", "hyna", "hiena", "high ena", "hire na" → all mean HYENA
-  - "gnome" may appear as: "nome", "home", "no me", "gnome" → all mean GNOME
-  - "minotaur" may appear as: "minor tour", "minator", "minotour", "minute or" → all mean MINOTAUR
-  - "shaman" may appear as: "showman", "shaman", "shayman", "sherman", "shaman" → all mean SHAMAN
-  - "rogue" may appear as: "robe", "road", "row", "rog" → all mean ROGUE
-  - "skull" may appear as: "school", "scull" → all mean SKULL
-  - "spider" may appear as: "spyder", "spiders" → all mean SPIDER
-  EQUIPMENT NAMES:
-  - "pickaxe" may appear as: "pick axe", "pick acts", "pickets", "pic axe" → all mean PICKAXE
-  - "banner" may appear as: "batter", "manner", "banter" → all mean BANNER
-  - "shield" may appear as: "she'll", "yield" → all mean SHIELD
-  ALWAYS interpret the closest matching unit/equipment name — never treat a mishearing as an unknown command.
-
-═══ STRATEGIC REASONING ═══
-Before choosing, think step by step:
-1. MODIFIERS: Does the tone imply formation/caution/pacing? Set them alongside the action.
-2. INTENT: What's the primary goal? (produce unit, equip+action, gather, fight, defend, unlock?)
-3. EQUIPMENT: Does the command mention equipment? "get a sword" ≠ "get skulls". Equipment names: pickaxe, sword, shield, boots, banner. Animal names: gnome, turtle, skull, spider, hyena, panda, lizard, minotaur, shaman, troll, rogue.
-4. DISAMBIGUATION: "get [equipment]" → equip workflow. "get [animal]" → bootstrap workflow. "mine" → always include equip pickaxe.
-5. RESOURCE: carrots→T1, meat→T2-T3, crystals→T4-T5. Meat/crystals need "hunt" before "seek_resource".
-6. SAFETY: If "safely/safe/careful" appears → use "collect" (avoids enemies) instead of "seek_resource", AND set caution:"safe".
-7. LOOPFROM: Is there a one-shot setup phase (equip, capture)? Set loopFrom after it. Otherwise loopFrom: 0.
-8. MINE commands ALWAYS start with equip pickaxe (can't mine without one).
-
-═══ YOUR JOB ═══
-Interpret the player's voice command using your deep understanding of the economy and unit traits.
-Focus on the INTENT behind the words, not the literal phrasing. Players speak casually and imprecisely.
-
-CRITICAL INTENT RULES:
-- "get X" / "make X" / "take X" / "produce X" / "create X" / "train X" / "spawn X" / "go get X" / "go make X" / "let's get some X" / "I want X" / "I need X" / "more X" → ALWAYS bootstrap X (targetType="workflow" with attack_camp + resource gathering + deliver)
-- "bootstrap X" → same as above
-- "get started" / "start" / "let's go" / "begin" → bootstrap gnomes (cheapest start)
-- ANY command mentioning an animal name with production intent → FULL bootstrap workflow, NEVER just a simple move
-- Be creative — combine steps based on what makes strategic sense
-- If you can tell which unit type is selected, tailor the workflow to their strengths
-- When in doubt, prefer returning a WORKFLOW (targetType="workflow") over simple movement commands. Workflows are more useful to the player.
-
-GENRE TRANSLATION — Players may use words from other game genres. Translate the INTENT:
-- shoot/fire/blast → attack_enemies or attack_camp
-- loot/collect → seek_resource workflow
-- sprint/rush/dash → rush pacing modifier + nearest_camp or forward action
-- heal/rest → retreat to base
-- block/shield → defend
-- cast/spell → unrecognized (no magic system)
-- build/construct/place → unrecognized (no building system), BUT "build an army" = bootstrap gnomes (cheapest start)
-- jump/crouch/reload/aim/scope → unrecognized (no FPS mechanics)
-
-EMOTIONAL & URGENT — Players shout in the heat of battle. Interpret the INTENT behind the emotion:
-- "oh no run!" / "run away!" / "flee!" → retreat to base, pacing:"rush"
-- "help!" / "we're dying!" → defend base OR retreat (either is valid)
-- "yes attack!" / "charge!" / "let's go!" → attack_enemies, caution:"aggressive"
-- "go go go!" / "move move move!" → pacing:"rush" + forward action (attack_enemies or nearest_camp)
-- "no no no come back!" / "stop!" / "come back!" → retreat to base
-- Exclamation marks and repeated words indicate urgency → prefer pacing:"rush"
-
-NOISE, GIBBERISH & CASUAL CHAT — If there is clearly no game command in the input:
-- Nonsensical words (e.g. "blorp fizzle wompus", "asdf") or single filler words ("the", "a", "is") → unrecognized
-- Casual chat, jokes, greetings, or off-topic remarks (e.g. "hello", "you're cute", "what's your favorite color", "I love you") → unrecognized
-- Return responseType:"unrecognized" — do NOT guess a random action
-- Still provide a narration in the ${ctx.selectedHoard} unit voice (see UNIT PERSONALITY section below). Must sound confused/dismissive/bored in their unique way — NOT generically cheerful.
-
-STATUS QUERIES — If the player asks about their status ("how am I doing?", "what should I do?", "how many units?"):
-- Return targetType "query" with a statusReport containing a 1-2 sentence tactical answer using the game context above
-- DO NOT force a movement action for questions
-
-AVOIDANCE & PATHING — Players may give negative commands or route instructions:
-- "don't go there" / "stay away from X" / "avoid the skull camp" → set caution:"safe" and redirect units elsewhere. If a specific camp/area is mentioned, pick a different target (e.g. nearest camp that ISN'T the avoided one).
-- "go around" / "take the long way" / "flank" → use multiple "move" steps in the workflow to create waypoints that route around obstacles or enemy positions. Use map coordinates to plot an indirect path.
-- "don't attack" / "stop fighting" / "pull back" → retreat to base with caution:"safe"
-- "go left/right/up/down" → move step RELATIVE to hoard center (offset ~600). See SPATIAL REFERENCE above.
-- "go far left" / "all the way right" → move to map edge in that direction.
-- "not that way" / "wrong way" / "come back" → retreat to base
-- When routing around an area, use 2-3 move steps as waypoints from hoard center around the target before the final destination.
-
-RULES:
-- Output exactly ONE command (hoard selection is handled separately by hotkeys).
-- Pick the BEST game interpretation if one exists. If there is genuinely NO game action (e.g. "pause", "save game", "open menu", "what's the weather"), return responseType "unrecognized".
-- Match camp names by partial word.
-- You MUST return targetType="workflow" with a "workflow" array for EVERY actionable command. There are no other action targetTypes — workflow is the ONLY way to give units orders. Even "attack", "defend", "retreat" must be workflows.
-- EVERY voice command = a NEW workflow. The player is giving a new order — always create full workflow steps.
-- NEVER return responseType="acknowledgment". Either it's an action (produce a workflow) or it's unrecognized/status_query.
-- If the player says ANYTHING that implies an action (attack, defend, gather, make, get, go, move, retreat, scout, mine, hunt, etc.), you MUST return a workflow.
-
-═══ UNIT PERSONALITY (CRITICAL) ═══
-The currently selected hoard is: **${ctx.selectedHoard}**
-Your "narration" and "unitReaction" fields MUST be written AS these units speaking. They are NOT a narrator — they are the creatures themselves responding to an order. Each type has a radically different voice. Do NOT make them all sound excited or enthusiastic. Lean HARD into the personality — exaggerate it. The player should immediately know which unit type is talking.
-
-IMPORTANT: Each unit type is ONE specific recurring character the player has a relationship with — not a random member of the group. The gnome is always THE SAME gnome who calls the player "boss" and remembers being sent on errands. The turtle is always THE SAME tired turtle who has been dragging himself around all game. Write as if this character has been with the player the whole match. They can reference past orders, complain about workload, or show familiarity. The player should feel like they're talking to the same friend every time they switch to that unit type.
-
-PERSONALITY FOR "${ctx.selectedHoard}":
-CRITICAL RULE: NEVER describe sounds or actions — SPELL THEM OUT phonetically so TTS can voice them. No *giggles*, no *sighs*, no *cackles*. Instead write "hehehehe!", "huuuhhh...", "AHAHAHA!" etc. Everything you write will be read aloud by text-to-speech — if it can't be spoken, don't write it.
-  ${ctx.selectedHoard}: ${getActivePersonality(ctx.selectedHoard)}
-
-PLAYER SAYS: "${rawText}"
-
-JSON ONLY (no markdown):
-{
-  "targetType": "<workflow|query|advanced_plan>",
-  "responseType": "<action|unrecognized|status_query>",
-  "statusReport": "<1-2 sentence tactical answer, only if responseType=status_query>",
-  "targetAnimal": "<animal type or omit>",
-  "campIndex": <index or -1>,
-  "qualifier": "<nearest|furthest|weakest|uncaptured|enemy or omit>",
-  "workflow": [<array of step objects, only if targetType=workflow>],
-  "loopFrom": <index where repeating loop starts, default 0>,
-  "narration": "<6-15 words, spoken BY the ${ctx.selectedHoard} units in their personality voice. NOT a narrator. Must sound like a ${ctx.selectedHoard} — see personality reference above. No generic enthusiasm.>",
-  "unitReaction": "<2-5 word grunt/bark in ${ctx.selectedHoard} voice — spell out ALL sounds phonetically, never describe them. Examples — gnome:'Yes boss! Hehe!', skull:'...so it begins.', spider:'yesss...', hyena:'AHAHAHA!!', turtle:'uuugghh... fine.', panda:'mmm okay', lizard:'Confirmed.', minotaur:'RAAAGH!!', shaman:'oohhh... it is fated.', rogue:'tch. whatever.', troll:'Uhhh Troll go!'>",
-  "modifiers": {"formation": "spread|tight|null", "caution": "safe|aggressive|null", "pacing": "rush|efficient|null"},
-  "planGoal": {"type": "unlock_equipment|stockpile_resource", "equipment": "<equipment id, only if type=unlock_equipment>", "resource": "<resource type, only if type=stockpile_resource>", "amount": "<number, only if stockpile_resource>", "thenAction": "<optional follow-up: defend, attack, etc>"},
-  "modifierOnly": false
-}`;
-
-  const body = JSON.stringify({
-    contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: {
-      maxOutputTokens: 2048,
-      temperature: 0.15, // low temp for deterministic command parsing
-      responseMimeType: 'application/json',
-    },
-  });
-
-  for (let attempt = 0; attempt < GEMINI_MAX_RETRIES; attempt++) {
-    try {
-      const response = await fetch(GEMINI_URL + getGeminiKey(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body,
-      });
-
-      if (response.status === 429) {
-        // Rate limited — exponential backoff, don't retry
-        _geminiCooldownMs = Math.min(_geminiCooldownMs * 2, GEMINI_MAX_COOLDOWN);
-        console.warn(`[Gemini] 429 rate limited, backing off to ${_geminiCooldownMs / 1000}s`);
-        return null;
-      }
-
-      if (!response.ok) {
-        console.warn('[Gemini] API error:', response.status);
-        return null;
-      }
-
-      // Successful call — reset cooldown to base
-      _geminiCooldownMs = GEMINI_BASE_COOLDOWN;
-
-      const data = await response.json();
-      // With thinking enabled, parts[0] may be the thinking part — find the last text part
-      const parts = data.candidates?.[0]?.content?.parts;
-      if (!parts || parts.length === 0) return null;
-      const text = parts[parts.length - 1]?.text;
-      if (!text) return null;
-
-      // Strip markdown fencing if present (safety net — responseMimeType should give clean JSON)
-      const cleaned = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
-      console.log('[Gemini] Raw response:', cleaned.slice(0, 500));
-      const parsed = JSON.parse(cleaned);
-      if (Array.isArray(parsed)) return parsed as HordeCommand[];
-      return [parsed] as HordeCommand[];
-    } catch (err) {
-      console.warn('[Gemini] Parse failed, falling back to local:', err);
-      return null;
-    }
-  }
-
-  console.warn('[Gemini] All retries exhausted, falling back to local parser');
-  return null;
-}
+// STT corrections, workflow validation, personalities, and Gemini prompt
+// are now in ../ai/GeminiPrompt.ts
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -1293,6 +485,7 @@ const P2_BASE = { x: WORLD_W - 250, y: 250 };
 // Avatar image URLs for unit icons (served from public/assets/enemies/avatars/)
 const AVATAR_URL: Record<string, string> = {
   gnome: 'assets/enemies/avatars/gnome.png',
+  snake: 'assets/enemies/avatars/snake.png',
   turtle: 'assets/enemies/avatars/turtle.png',
   skull: 'assets/enemies/avatars/skull.png',
   spider: 'assets/enemies/avatars/spider.png',
@@ -1300,6 +493,8 @@ const AVATAR_URL: Record<string, string> = {
   rogue: 'assets/enemies/avatars/rogue.png',
   panda: 'assets/enemies/avatars/panda.png',
   lizard: 'assets/enemies/avatars/lizard.png',
+  bear: 'assets/enemies/avatars/bear.png',
+  harpoon_fish: 'assets/enemies/avatars/harpoon_fish.png',
   minotaur: 'assets/enemies/avatars/minotaur.png',
   shaman: 'assets/enemies/avatars/shaman.png',
   troll: 'assets/enemies/avatars/troll.png',
@@ -1937,7 +1132,7 @@ export class HordeScene extends Phaser.Scene {
   // Hoard selection: TAB cycles forward, Shift+TAB cycles back, number keys direct-pick
   private selectedHoard: string = 'all';
   // Cycle order: all → then only types the player currently has units of
-  private allHoardTypes = ['all', 'gnome', 'turtle', 'skull', 'spider', 'hyena', 'panda', 'lizard', 'minotaur', 'shaman', 'troll'];
+  private allHoardTypes = ['all', 'gnome', 'snake', 'turtle', 'skull', 'spider', 'hyena', 'rogue', 'panda', 'lizard', 'bear', 'harpoon_fish', 'minotaur', 'shaman', 'troll'];
   private hoardKeys: Record<string, string> = {
     '1': 'all', '2': 'gnome', '3': 'skull', '4': 'panda', '5': 'minotaur', '6': 'troll',
     '7': 'turtle', '8': 'spider', '9': 'hyena', '0': 'lizard',
@@ -2159,6 +1354,7 @@ export class HordeScene extends Phaser.Scene {
   // ─── MULTIPLAYER ──────────────────────────────────────────────
   private isOnline = false;
   private isHost = true; // host = runs simulation; guest = renders sync state
+  private serverAuthoritative = false; // true = server runs simulation, client is render-only
   private myTeam: 1 | 2 = 1;
   private gameId: string | null = null;
   private playerId: string | null = null;
@@ -2561,7 +1757,8 @@ export class HordeScene extends Phaser.Scene {
     this.input.setDefaultCursor('url(assets/ui/cursors/Cursor_01.png) 0 0, auto');
 
     // Pre-capture T1 camps (gnome + snake) for each team at game start
-    if (!this.isOnline || this.isHost) {
+    // Skip when server-authoritative — server handles initial setup, first sync will have correct state
+    if (!this.serverAuthoritative && (!this.isOnline || this.isHost)) {
       for (const animalType of ['gnome', 'snake']) {
         const campsOfType = this.camps.filter(c => c.animalType === animalType);
         const p1Camp = campsOfType.slice().sort((a, b) => pdist2(a, P1_BASE) - pdist2(b, P1_BASE))[0];
@@ -2608,8 +1805,9 @@ export class HordeScene extends Phaser.Scene {
       const serverUrl = getGameServerUrl();
       this.gameSocket = new GameSocket(serverUrl, this.gameId, this.playerId || '', {
         onJoined: (team) => {
-          console.log(`[HordeScene] Joined via WebSocket as team ${team}`);
+          console.log(`[HordeScene] Joined via WebSocket as team ${team} — server-authoritative mode`);
           this.myTeam = team;
+          this.serverAuthoritative = true;
         },
         onSync: (state: any) => {
           this.applyGuestSync(state as HordeSyncState);
@@ -2624,10 +1822,11 @@ export class HordeScene extends Phaser.Scene {
           console.warn('[HordeScene] WebSocket error:', err);
         },
         onFallback: () => {
-          // WebSocket unreachable — fall back to Firebase host/guest model
+          // WebSocket unreachable — fall back to Firebase sync (server still pushes state to Firebase)
           console.warn('[HordeScene] WebSocket unavailable, falling back to Firebase sync');
           this.gameSocket?.disconnect();
           this.gameSocket = null;
+          // Server also pushes sync state to Firebase RTDB as fallback
           this.setupFirebaseSync();
         },
       });
@@ -3601,7 +2800,7 @@ export class HordeScene extends Phaser.Scene {
 
       // Spawn defenders only for camps whose tier is unlocked by the current era
       // +2 so higher-tier camps (e.g. troll T5) spawn defenders earlier (Era 3)
-      if (!this.isOnline || this.isHost) {
+      if (!this.serverAuthoritative && (!this.isOnline || this.isHost)) {
         if (animalDef.tier <= this.eraMaxTier() + 2) {
           this.spawnCampDefenders(camp);
         }
@@ -4561,9 +3760,8 @@ export class HordeScene extends Phaser.Scene {
       this.showFallbackWarning();
     }
 
-    // Test TTS on startup — you should hear "Ready for battle, commander."
-    console.log('[Voice] Firing test TTS...');
-    this.ttsService!.test();
+    // TTS will play on first voice command — no startup test needed
+    console.log('[Voice] TTS ready (will speak on first command)');
   }
 
   /** Show AI response text on both voice orb and portrait speech bubble */
@@ -4997,7 +4195,7 @@ export class HordeScene extends Phaser.Scene {
         <div style="display:flex;align-items:center;justify-content:center;min-height:64px;">
           ${s.id === 'all'
             ? `<img src="assets/ui/icons/Icon_05.png" width="48" height="48" style="image-rendering:pixelated;object-fit:contain;" alt="all">`
-            : `<img src="assets/ui/icons/Icon_05.png" width="48" height="48" style="image-rendering:pixelated;object-fit:contain;" alt="${s.id}">`}
+            : `<img src="${AVATAR_URL[s.id] || 'assets/ui/icons/Icon_05.png'}" width="48" height="48" style="image-rendering:pixelated;object-fit:contain;border-radius:50%;" alt="${s.id}">`}
         </div>
         <div style="font-size:11px;font-weight:800;color:#2a1a0a;letter-spacing:0.3px;white-space:nowrap;">${s.name} <span style="color:#8B5E34;">${s.count}</span></div>
       </div>`;
@@ -6319,9 +5517,8 @@ export class HordeScene extends Phaser.Scene {
       return;
     }
 
-    if (this.isOnline && (this.gameSocket?.isConnected() || !this.isHost)) {
-      // Online with server: render only — server runs simulation, state arrives via WebSocket
-      // Or online guest with Firebase fallback: also render only
+    if (this.serverAuthoritative || (this.isOnline && !this.isHost)) {
+      // Server-authoritative: render only — server runs simulation, state arrives via WebSocket/Firebase
       this._frameCount++;
       this.updateUnitSprites();
       if (this._frameCount % 2 === 0) {
@@ -6518,8 +5715,8 @@ export class HordeScene extends Phaser.Scene {
       this.handleCommand(cmd.text, cmd.team);
     }
 
-    // Host: drain queued remote commands from guest
-    if (this.isOnline && this.isHost && !this.isProcessingCommand && this.pendingRemoteCommands.length > 0) {
+    // Host: drain queued remote commands from guest (skip when server-authoritative)
+    if (!this.serverAuthoritative && this.isOnline && this.isHost && !this.isProcessingCommand && this.pendingRemoteCommands.length > 0) {
       const cmd = this.pendingRemoteCommands.shift()!;
       const prevHoard = this.selectedHoard;
       this.selectedHoard = cmd.selectedHoard;
@@ -6535,8 +5732,8 @@ export class HordeScene extends Phaser.Scene {
       this.selectedHoard = prevHoard;
     }
 
-    // Host: push sync state to Firebase
-    if (this.isOnline && this.isHost && this.firebase && this.gameId) {
+    // Host: push sync state to Firebase (skip when server-authoritative)
+    if (!this.serverAuthoritative && this.isOnline && this.isHost && this.firebase && this.gameId) {
       this.syncTimer += delta;
       if (this.syncTimer >= this.SYNC_INTERVAL_MS) {
         this.syncTimer -= this.SYNC_INTERVAL_MS;
@@ -11598,8 +10795,13 @@ export class HordeScene extends Phaser.Scene {
   /** Fall back to Firebase host/guest sync when WebSocket server is unavailable */
   private setupFirebaseSync(): void {
     if (!this.firebase || !this.gameId) return;
-    if (this.isHost) {
-      // Host: listen for guest commands via Firebase
+    if (this.serverAuthoritative || !this.isHost) {
+      // Server-authoritative or guest: listen for sync state from server via Firebase
+      this.firebase.onSyncState(this.gameId, (state: any) => {
+        this.applyGuestSync(state as HordeSyncState);
+      });
+    } else {
+      // Legacy host mode: listen for guest commands via Firebase
       this.firebase.onRemoteOrders(this.gameId, (data) => {
         if (data.orders) {
           for (const entry of data.orders) {
@@ -11620,11 +10822,6 @@ export class HordeScene extends Phaser.Scene {
           }
         }
         if (this.gameId) this.firebase!.removeRemoteOrder(this.gameId, data.key);
-      });
-    } else {
-      // Guest: listen for sync state from host via Firebase
-      this.firebase.onSyncState(this.gameId, (state: any) => {
-        this.applyGuestSync(state as HordeSyncState);
       });
     }
   }
@@ -11923,7 +11120,7 @@ export class HordeScene extends Phaser.Scene {
     this.voiceOrb?.setState('processing');
 
     this.pendingCommandText = text;
-    console.log(`[Command] Heard: "${text}" | Gemini cooldown: ${Math.round((_geminiCooldownMs - (Date.now() - _lastGeminiCall)) / 1000)}s left`);
+    console.log(`[Command] Heard: "${text}" | Gemini cooldown: ${Math.round(getGeminiCooldownRemaining() / 1000)}s left`);
     this.showFeedback(`"${text.length > 40 ? text.slice(0, 37) + '...' : text}"`, '#FFD93D');
 
     try {
@@ -12003,6 +11200,7 @@ export class HordeScene extends Phaser.Scene {
       activeBuffs: this.teamBuffs.filter(b => b.team === team).map(b => ({
         stat: b.stat, amount: b.amount, remaining: Math.round(b.remaining / 1000),
       })),
+      armoryLevels: Object.fromEntries(this.unlockedEquipment[team]),
     };
 
     // Try Gemini first, with error protection so local fallback always runs
@@ -12029,12 +11227,19 @@ export class HordeScene extends Phaser.Scene {
               heroId: '',
               order: { parsed: [gCmd], team, selectedHoard: this.selectedHoard } as any,
             }]);
+          } else if (this.serverAuthoritative) {
+            // Server-authoritative but WebSocket down — can't execute locally
+            this.showFeedback('Reconnecting to server...', '#FFD93D');
           } else {
-            // Firebase fallback: host executes locally
+            // Offline fallback: host executes locally
             this.executeGeminiCommand(gCmd, team);
           }
           this.showFeedback('Command sent!', '#6CC4FF');
-          if (gCmd.narration) this.showAIResponse(gCmd.narration);
+          if (gCmd.narration) {
+            this.showAIResponse(gCmd.narration);
+            const ttsVoice = this.selectedHoard !== 'all' ? this.selectedHoard : 'all';
+            this.ttsService?.speak(ttsVoice, gCmd.narration);
+          }
           this.sfx.playGlobal('voice_recognized');
           geminiHandled = true;
         }
@@ -14241,7 +13446,7 @@ export class HordeScene extends Phaser.Scene {
 
   private updateMapEvents(delta: number) {
     if (this.gameOver) return;
-    if (this.isOnline && !this.isHost) return;
+    if (this.serverAuthoritative || (this.isOnline && !this.isHost)) return;
 
     // DEBUG: spawn all 6 events immediately, respawn when expired
     if (this.isDebug) {
@@ -15087,6 +14292,8 @@ export class HordeScene extends Phaser.Scene {
     this.minimapEl = null; this.minimapCtx = null; this.minimapTerrainCanvas = null;
     this.forfeitBtnEl?.remove(); this.forfeitBtnEl = null;
     document.getElementById('forfeit-overlay')?.remove();
+    this.questPanelEl?.remove(); this.questPanelEl = null;
+    this.questManager = null;
     // Emote system cleanup
     this.emoteRenderer?.destroy(); this.emoteRenderer = null;
     this.emoteSync?.destroy(); this.emoteSync = null;
@@ -15501,7 +14708,7 @@ export class HordeScene extends Phaser.Scene {
 
   private updateShrine(delta: number) {
     if (this.gameOver) return;
-    if (this.isOnline && !this.isHost) return;
+    if (this.serverAuthoritative || (this.isOnline && !this.isHost)) return;
 
     // Not active until SHRINE_ACTIVATE_TIME
     if (this.gameTime < SHRINE_ACTIVATE_TIME) {
@@ -15615,8 +14822,8 @@ export class HordeScene extends Phaser.Scene {
       };
       this.bountyCamps.push(camp);
     }
-    // Spawn initial defenders if host or solo
-    if (!this.isOnline || this.isHost) {
+    // Spawn initial defenders if host or solo (skip when server-authoritative)
+    if (!this.serverAuthoritative && (!this.isOnline || this.isHost)) {
       for (const camp of this.bountyCamps) {
         this.spawnBountyDefenders(camp);
       }
@@ -15675,7 +14882,7 @@ export class HordeScene extends Phaser.Scene {
 
   private updateBountyCamps(delta: number) {
     if (this.gameOver) return;
-    if (this.isOnline && !this.isHost) return;
+    if (this.serverAuthoritative || (this.isOnline && !this.isHost)) return;
 
     for (const camp of this.bountyCamps) {
       // Check if defenders are dead

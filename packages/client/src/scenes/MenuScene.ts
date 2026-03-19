@@ -172,10 +172,6 @@ export class MenuScene extends Phaser.Scene {
       storeIcon.setPosition(-120, 0);
     }
     storeBtn.zone.on('pointerdown', () => {
-      if (AuthManager.getInstance().isGuest) {
-        showGuestLoginPrompt('access the store');
-        return;
-      }
       new StorePanel().open();
     });
 
@@ -203,11 +199,28 @@ export class MenuScene extends Phaser.Scene {
       gearIcon.setPosition(-120, 0);
     }
 
-    debugBtn.zone.on('pointerdown', () => {
+    debugBtn.zone.on('pointerdown', async () => {
       this.cameras.main.fadeOut(400, 15, 26, 10);
-      this.cameras.main.once('camerafadeoutcomplete', () => {
-        this.scene.start('HordeScene', { mapId: 'default', isDebug: true });
-      });
+      try {
+        // Route debug through server for server-authoritative simulation
+        const firebase = FirebaseSync.getInstance();
+        await firebase.initialize();
+        const gameId = await firebase.createSoloGame();
+        this.cameras.main.once('camerafadeoutcomplete', () => {
+          this.scene.start('HordeScene', {
+            isOnline: true,
+            gameId,
+            playerId: firebase.getPlayerId(),
+            amPlayer1: true,
+            isDebug: true,
+          });
+        });
+      } catch (err) {
+        console.warn('[MenuScene] Server unavailable for debug, falling back to local:', err);
+        this.cameras.main.once('camerafadeoutcomplete', () => {
+          this.scene.start('HordeScene', { mapId: 'default', isDebug: true });
+        });
+      }
     });
 
     // Keyboard shortcut hint
@@ -804,7 +817,7 @@ export class MenuScene extends Phaser.Scene {
       overflow:hidden;width:min(440px, 35vw);
     `;
 
-    if (auth.userProfile) {
+    if (auth.userProfile && !auth.isGuest) {
       const profile = auth.userProfile;
 
       // ── BIG PROFILE CARD ──
@@ -909,22 +922,32 @@ export class MenuScene extends Phaser.Scene {
       );
       this.friendsSidebar.show(gc);
     } else {
-      // No profile (fallback) — compact card with sign in CTA
+      // Guest card — gnome avatar + "Guest" label + settings gear
       const guestHeader = document.createElement('div');
       guestHeader.style.cssText = `
-        display:flex;align-items:center;gap:10px;
-        padding:12px 14px;
-        border-bottom:1px solid ${C.divider};
+        display:flex;align-items:center;gap:12px;
+        padding:14px 16px 10px;
       `;
-      const guestIcon = document.createElement('span');
-      guestIcon.textContent = '\u2694';
-      guestIcon.style.cssText = `font-size:20px;opacity:0.4;`;
-      guestHeader.appendChild(guestIcon);
+
+      const guestAvatar = document.createElement('img');
+      guestAvatar.src = 'assets/enemies/avatars/gnome.png';
+      guestAvatar.style.cssText = `width:48px;height:48px;border-radius:50%;border:2px solid ${C.panelBorder};image-rendering:pixelated;object-fit:contain;opacity:0.7;`;
+      guestHeader.appendChild(guestAvatar);
 
       const guestName = document.createElement('div');
       guestName.textContent = 'Guest';
-      guestName.style.cssText = `font-size:14px;font-weight:700;color:${C.textMuted};`;
+      guestName.style.cssText = `flex:1;font-family:'Fredoka',sans-serif;font-size:18px;font-weight:700;color:${C.textMuted};`;
       guestHeader.appendChild(guestName);
+
+      // Settings gear — guests still need audio/display settings
+      const gear = document.createElement('button');
+      gear.textContent = '\u2699\uFE0F';
+      gear.style.cssText = `background:none;border:none;font-size:18px;cursor:pointer;opacity:0.5;transition:opacity 0.15s;padding:4px;`;
+      gear.onmouseenter = () => { gear.style.opacity = '1'; };
+      gear.onmouseleave = () => { gear.style.opacity = '0.5'; };
+      gear.onclick = (e) => { e.stopPropagation(); this.settingsPanel.toggle(); };
+      guestHeader.appendChild(gear);
+
       this.profileCardEl.appendChild(guestHeader);
 
       const signInBtn = document.createElement('button');

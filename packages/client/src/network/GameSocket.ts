@@ -22,7 +22,7 @@ export class GameSocket {
   private callbacks: GameSocketCallbacks;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempts = 0;
-  private maxReconnects = 3;
+  private maxReconnects = 10;
   private closed = false;
   private everConnected = false;
 

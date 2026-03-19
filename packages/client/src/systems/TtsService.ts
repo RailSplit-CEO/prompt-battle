@@ -81,6 +81,8 @@ export class TtsService {
   private charVoices: Map<string, string> = new Map();
   private queue: QueueEntry[] = [];
   private playing = false;
+  private playStartTime = 0;
+  private static MAX_PLAY_DURATION = 30_000; // 30s max — no TTS clip is this long
   private currentAudio: HTMLAudioElement | null = null;
   private enabled = true;
   private volume = 1.0;
@@ -141,8 +143,18 @@ export class TtsService {
   setVolume(vol: number) { this.volume = Math.max(0, Math.min(1, vol)); }
 
   private async processQueue() {
+    // Safety: if playing has been true for > 30s, force-reset (stuck state recovery)
+    if (this.playing && this.playStartTime > 0 && Date.now() - this.playStartTime > TtsService.MAX_PLAY_DURATION) {
+      console.warn('[TTS] ⚠ Force-reset stuck playing state');
+      this.playing = false;
+      this.currentAudio?.pause();
+      this.currentAudio?.remove();
+      this.currentAudio = null;
+    }
+
     if (this.playing || this.queue.length === 0) return;
     this.playing = true;
+    this.playStartTime = Date.now();
 
     const entry = this.queue.shift()!;
     const voiceName = Object.values(HOARD_VOICES).find(v => v.id === entry.voiceId)?.name || '?';

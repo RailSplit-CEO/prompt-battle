@@ -14,8 +14,8 @@ const HOLD_MS = 50;            // Minimum ms mouth stays open once triggered (pr
 const MIN_NOISE_FLOOR = 0.001; // Floor clamp — prevents dead-silence edge cases
 
 const HAS_TALK_AVATAR = new Set([
-  'gnome', 'turtle', 'skull', 'spider', 'hyena', 'panda',
-  'lizard', 'minotaur', 'shaman', 'troll', 'rogue',
+  'gnome', 'snake', 'turtle', 'skull', 'spider', 'hyena', 'rogue',
+  'panda', 'lizard', 'bear', 'harpoon_fish', 'minotaur', 'shaman', 'troll',
 ]);
 
 export class TalkingPortrait {
@@ -82,26 +82,25 @@ export class TalkingPortrait {
 
   /** Update portrait avatar without starting speech */
   setIdleAvatar(charId: string): void {
+    const displayName = charId.charAt(0).toUpperCase() + charId.slice(1).replace('_', ' ');
     if (!HAS_TALK_AVATAR.has(charId)) charId = 'gnome';
     this.currentChar = charId;
     this.idleImg.src = `${AVATAR_BASE}/${charId}.png`;
     this.talkImg.src = `${AVATAR_BASE}/${charId}_talk_nobg.png`;
-    this.nameLabel.textContent = charId.charAt(0).toUpperCase() + charId.slice(1);
+    this.nameLabel.textContent = displayName;
   }
 
   startTalking(charId: string, audioEl?: HTMLAudioElement): void {
-    if (!HAS_TALK_AVATAR.has(charId)) charId = 'gnome';
-
     // Cancel any pending fade-out
     if (this.hideTimer !== null) {
       clearTimeout(this.hideTimer);
       this.hideTimer = null;
     }
 
-    // Set image sources (browser caches after first load — no flicker)
-    this.currentChar = charId;
     this.mouthOpen = false;
     this.noiseFloor = 0.01; // reset so it recalibrates for this playback
+    if (!HAS_TALK_AVATAR.has(charId)) charId = 'gnome';
+    this.currentChar = charId;
     this.idleImg.src = `${AVATAR_BASE}/${charId}.png`;
     this.talkImg.src = `${AVATAR_BASE}/${charId}_talk_nobg.png`;
     this.container.classList.remove('speaking');

@@ -3,6 +3,7 @@
 // ESC or clicking backdrop closes it.
 
 import { GameSettings, SettingsData } from './GameSettings';
+import { AuthManager } from '../auth/AuthManager';
 import { C } from '../ui/UIColors';
 
 type Tab = 'audio' | 'voice' | 'display' | 'accessibility';
@@ -103,9 +104,9 @@ export class SettingsPanel {
     content.className = 'settings-content';
     container.appendChild(content);
 
-    // Reset button
+    // Footer row — Reset + Sign Out
     const resetRow = document.createElement('div');
-    resetRow.style.cssText = `margin-top:16px;padding-top:12px;border-top:1px solid ${C.divider};`;
+    resetRow.style.cssText = `margin-top:16px;padding-top:12px;border-top:1px solid ${C.divider};display:flex;align-items:center;gap:8px;`;
     const resetBtn = document.createElement('button');
     resetBtn.textContent = 'Reset to Defaults';
     resetBtn.style.cssText = `
@@ -117,6 +118,22 @@ export class SettingsPanel {
     resetBtn.onmouseleave = () => { resetBtn.style.background = 'rgba(255,107,107,0.08)'; };
     resetBtn.onclick = () => { this.settings.reset(); this.renderTab(content, tabBtns); };
     resetRow.appendChild(resetBtn);
+
+    const signOutBtn = document.createElement('button');
+    signOutBtn.textContent = 'Sign Out';
+    signOutBtn.style.cssText = `
+      background:rgba(255,255,255,0.05);border:1px solid ${C.inputBorder};
+      color:${C.textSecondary};padding:7px 16px;border-radius:8px;font-size:12px;font-weight:700;
+      cursor:pointer;font-family:"Nunito",sans-serif;transition:all 0.15s;
+    `;
+    signOutBtn.onmouseenter = () => { signOutBtn.style.background = 'rgba(255,255,255,0.1)'; signOutBtn.style.color = C.textPrimary; };
+    signOutBtn.onmouseleave = () => { signOutBtn.style.background = 'rgba(255,255,255,0.05)'; signOutBtn.style.color = C.textSecondary; };
+    signOutBtn.onclick = async () => {
+      await AuthManager.getInstance().signOut();
+      window.location.reload();
+    };
+    resetRow.appendChild(signOutBtn);
+
     container.appendChild(resetRow);
 
     this.renderTab(content, tabBtns);
@@ -277,6 +294,21 @@ export class SettingsPanel {
       this.renderTab(content, tabBtns);
     };
     footer.appendChild(resetBtn);
+
+    const signOutBtn = document.createElement('button');
+    signOutBtn.textContent = 'Sign Out';
+    signOutBtn.style.cssText = `
+      background:rgba(255,255,255,0.05);border:1px solid ${C.inputBorder};
+      color:${C.textSecondary};padding:7px 16px;border-radius:8px;font-size:12px;font-weight:700;
+      cursor:pointer;font-family:"Nunito",sans-serif;transition:all 0.15s;
+    `;
+    signOutBtn.onmouseenter = () => { signOutBtn.style.background = 'rgba(255,255,255,0.1)'; signOutBtn.style.color = C.textPrimary; };
+    signOutBtn.onmouseleave = () => { signOutBtn.style.background = 'rgba(255,255,255,0.05)'; signOutBtn.style.color = C.textSecondary; };
+    signOutBtn.onclick = async () => {
+      await AuthManager.getInstance().signOut();
+      window.location.reload();
+    };
+    footer.appendChild(signOutBtn);
 
     const hint = document.createElement('span');
     hint.textContent = 'ESC to close';

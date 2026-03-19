@@ -3,6 +3,8 @@
 // Creates a fixed overlay with a small confirmation panel.
 
 import { C } from './UIColors';
+import { AuthManager } from '../auth/AuthManager';
+import { showGuestLoginPrompt } from './LoginOverlay';
 
 export interface PurchaseConfirmOptions {
   itemName: string;
@@ -13,6 +15,12 @@ export interface PurchaseConfirmOptions {
 }
 
 export function showPurchaseConfirm(opts: PurchaseConfirmOptions): void {
+  // Gate all purchases for guests — prompt sign-in instead
+  if (AuthManager.getInstance().isGuest) {
+    showGuestLoginPrompt('make purchases');
+    return;
+  }
+
   let root: HTMLDivElement | null = null;
   let escHandler: ((e: KeyboardEvent) => void) | null = null;
 

@@ -11,12 +11,40 @@ export interface ScribeCallbacks {
 const TOKEN_URL = 'https://api.elevenlabs.io/v1/single-use-token/realtime_scribe';
 const WS_BASE = 'wss://api.elevenlabs.io/v1/speech-to-text/realtime';
 const MAX_RETRIES = 3;
+const RECOVERY_INTERVAL = 30_000; // 30s recovery after all retries exhausted
+
+// AudioWorklet processor — runs on audio thread, not main thread.
+// Buffers 4096 samples (~256ms at 16kHz) before posting to main thread.
+const WORKLET_CODE = `
+class ScribeProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this._buf = new Float32Array(4096);
+    this._idx = 0;
+  }
+  process(inputs) {
+    const ch = inputs[0]?.[0];
+    if (!ch) return true;
+    for (let i = 0; i < ch.length; i++) {
+      this._buf[this._idx++] = ch[i];
+      if (this._idx >= 4096) {
+        this.port.postMessage(this._buf, [this._buf.buffer]);
+        this._buf = new Float32Array(4096);
+        this._idx = 0;
+      }
+    }
+    return true;
+  }
+}
+registerProcessor('scribe-processor', ScribeProcessor);
+`;
 
 export class ScribeService {
   private apiKey: string | null;
   private ws: WebSocket | null = null;
   private mediaStream: MediaStream | null = null;
   private audioContext: AudioContext | null = null;
+  private workletNode: AudioWorkletNode | null = null;
   private scriptNode: ScriptProcessorNode | null = null;
   private sourceNode: MediaStreamAudioSourceNode | null = null;
   private state: ScribeState = 'idle';
@@ -24,7 +52,9 @@ export class ScribeService {
   private callbacks: ScribeCallbacks = {};
   private destroyed = false;
   private _paused = false;
+  private _pausedDuringConnect = false;
   private chunksSent = 0;
+  private recoveryTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(callbacks?: ScribeCallbacks) {
     this.apiKey = (import.meta as any).env?.VITE_ELEVENLABS_API_KEY || null;
@@ -41,29 +71,44 @@ export class ScribeService {
     if (this.destroyed) { console.warn('[Scribe] Already destroyed'); return; }
     if (!this.apiKey) { console.warn('[Scribe] No API key'); return; }
     this.retryCount = 0;
+    this.clearRecoveryTimer();
     await this.connect();
   }
 
   stop(): void {
     console.log('[Scribe] stop()');
+    this.clearRecoveryTimer();
     this.cleanup();
     this.setState('idle');
   }
 
   pause(): void {
     this._paused = true;
+    if (this.state === 'connecting') {
+      this._pausedDuringConnect = true;
+    }
     this.setState('paused');
   }
 
   resume(): void {
     this._paused = false;
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.setState('listening');
+    this._pausedDuringConnect = false;
+
+    // BUG 1 FIX: If WebSocket died while paused, reconnect instead of silently failing
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.log('[Scribe] resume() — WebSocket not open, reconnecting...');
+      this.retryCount = 0;
+      this.clearRecoveryTimer();
+      this.connect();
+      return;
     }
+
+    this.setState('listening');
   }
 
   destroy(): void {
     this.destroyed = true;
+    this.clearRecoveryTimer();
     this.cleanup();
     this.setState('closed');
   }
@@ -75,11 +120,36 @@ export class ScribeService {
     this.callbacks.onStateChange?.(s);
   }
 
+  private clearRecoveryTimer() {
+    if (this.recoveryTimer) {
+      clearTimeout(this.recoveryTimer);
+      this.recoveryTimer = null;
+    }
+  }
+
+  // ─── CONNECTION ──────────────────────────────────────────────
+
   private async connect(): Promise<void> {
     if (this.destroyed) return;
     this.setState('connecting');
 
     try {
+      // BUG 5 FIX: Acquire mic once, keep it alive across reconnections
+      if (!this.mediaStream || this.mediaStream.getTracks().every(t => t.readyState === 'ended')) {
+        await this.acquireMic();
+      }
+
+      // Setup audio pipeline if needed (persists across WS reconnections)
+      if (!this.audioContext || this.audioContext.state === 'closed') {
+        await this.setupAudioPipeline();
+      }
+
+      // Close stale WebSocket before reconnecting
+      if (this.ws) {
+        try { this.ws.close(); } catch { /* */ }
+        this.ws = null;
+      }
+
       console.log('[Scribe] Requesting token...');
       const tokenRes = await fetch(TOKEN_URL, {
         method: 'POST',
@@ -108,7 +178,15 @@ export class ScribeService {
         if (this.destroyed) { this.ws?.close(); return; }
         console.log('[Scribe] ✓ WebSocket CONNECTED');
         this.retryCount = 0;
-        this.startMic();
+        this.clearRecoveryTimer();
+
+        // BUG 6 FIX: Respect pause state if pause() was called during connection
+        if (this._paused || this._pausedDuringConnect) {
+          this._pausedDuringConnect = false;
+          this.setState('paused');
+        } else {
+          this.setState('listening');
+        }
       };
 
       this.ws.onmessage = (ev) => {
@@ -148,93 +226,146 @@ export class ScribeService {
     }
   }
 
-  private async startMic(): Promise<void> {
-    try {
-      console.log('[Scribe] Requesting mic access...');
-      this.mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          sampleRate: 16000,
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-        },
-      });
-      console.log(`[Scribe] ✓ Mic granted — tracks: ${this.mediaStream.getTracks().length}`);
+  // ─── MIC & AUDIO PIPELINE ───────────────────────────────────
 
-      this.audioContext = new AudioContext({ sampleRate: 16000 });
-      console.log(`[Scribe] AudioContext rate=${this.audioContext.sampleRate} state=${this.audioContext.state}`);
-      this.sourceNode = this.audioContext.createMediaStreamSource(this.mediaStream);
-      this.scriptNode = this.audioContext.createScriptProcessor(4096, 1, 1);
-      this.chunksSent = 0;
+  private async acquireMic(): Promise<void> {
+    console.log('[Scribe] Requesting mic access...');
+    this.mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        sampleRate: 16000,
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+      },
+    });
+    console.log(`[Scribe] ✓ Mic granted — tracks: ${this.mediaStream.getTracks().length}`);
+  }
 
-      this.scriptNode.onaudioprocess = (e) => {
-        if (this._paused || this.destroyed) return;
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+  /** BUG 3 FIX: Use AudioWorklet (off main thread) with ScriptProcessor fallback */
+  private async setupAudioPipeline(): Promise<void> {
+    this.disconnectPipeline();
+    if (!this.mediaStream) return;
 
-        const float32 = e.inputBuffer.getChannelData(0);
-        const int16 = new Int16Array(float32.length);
-        for (let i = 0; i < float32.length; i++) {
-          const s = Math.max(-1, Math.min(1, float32[i]));
-          int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-        }
+    this.audioContext = new AudioContext({ sampleRate: 16000 });
+    if (this.audioContext.state === 'suspended') {
+      await this.audioContext.resume();
+    }
+    console.log(`[Scribe] AudioContext rate=${this.audioContext.sampleRate} state=${this.audioContext.state}`);
+    this.sourceNode = this.audioContext.createMediaStreamSource(this.mediaStream);
+    this.chunksSent = 0;
 
-        const bytes = new Uint8Array(int16.buffer);
-        let binary = '';
-        for (let i = 0; i < bytes.byteLength; i++) {
-          binary += String.fromCharCode(bytes[i]);
-        }
-        const b64 = btoa(binary);
+    // Try AudioWorklet first (processes audio on a separate thread)
+    if (this.audioContext.audioWorklet) {
+      try {
+        const blob = new Blob([WORKLET_CODE], { type: 'application/javascript' });
+        const url = URL.createObjectURL(blob);
+        await this.audioContext.audioWorklet.addModule(url);
+        URL.revokeObjectURL(url);
 
-        // ElevenLabs Scribe protocol: message_type + audio_base_64
-        this.ws!.send(JSON.stringify({
-          message_type: 'input_audio_chunk',
-          audio_base_64: b64,
-          sample_rate: 16000,
-        }));
-        this.chunksSent++;
-        if (this.chunksSent % 50 === 1) {
-          console.log(`[Scribe] Streaming... chunks=${this.chunksSent}`);
-        }
-      };
+        this.workletNode = new AudioWorkletNode(this.audioContext, 'scribe-processor');
+        this.workletNode.port.onmessage = (e) => this.sendChunk(e.data as Float32Array);
+        this.sourceNode.connect(this.workletNode);
+        this.workletNode.connect(this.audioContext.destination);
+        console.log('[Scribe] ✓ AudioWorklet pipeline connected');
+        return;
+      } catch (err) {
+        console.warn('[Scribe] AudioWorklet failed, falling back to ScriptProcessor:', err);
+      }
+    }
 
-      this.sourceNode.connect(this.scriptNode);
-      this.scriptNode.connect(this.audioContext.destination);
-      console.log('[Scribe] ✓ Audio pipeline connected — LISTENING');
-      this.setState('listening');
-    } catch (err) {
-      console.error('[Scribe] ✗ Mic FAILED:', err);
-      this.handleError();
+    // Fallback: ScriptProcessorNode (deprecated but broadly supported)
+    this.scriptNode = this.audioContext.createScriptProcessor(4096, 1, 1);
+    this.scriptNode.onaudioprocess = (e) => this.sendChunk(e.inputBuffer.getChannelData(0));
+    this.sourceNode.connect(this.scriptNode);
+    this.scriptNode.connect(this.audioContext.destination);
+    console.log('[Scribe] ✓ ScriptProcessor fallback pipeline connected');
+  }
+
+  // ─── ENCODING & SENDING ─────────────────────────────────────
+
+  /** BUG 2 FIX: O(1) chunked base64 instead of O(n²) string concatenation */
+  private encodeChunk(float32: Float32Array): string {
+    const int16 = new Int16Array(float32.length);
+    for (let i = 0; i < float32.length; i++) {
+      const s = Math.max(-1, Math.min(1, float32[i]));
+      int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+    const bytes = new Uint8Array(int16.buffer);
+    // Build binary string in chunks to avoid O(n²) concatenation
+    const CHUNK = 4096;
+    const parts: string[] = [];
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      parts.push(String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK) as any));
+    }
+    return btoa(parts.join(''));
+  }
+
+  private sendChunk(float32: Float32Array): void {
+    if (this._paused || this.destroyed) return;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+    const b64 = this.encodeChunk(float32);
+    this.ws.send(JSON.stringify({
+      message_type: 'input_audio_chunk',
+      audio_base_64: b64,
+      sample_rate: 16000,
+    }));
+    this.chunksSent++;
+    if (this.chunksSent % 50 === 1) {
+      console.log(`[Scribe] Streaming... chunks=${this.chunksSent}`);
     }
   }
 
+  // ─── ERROR HANDLING & CLEANUP ────────────────────────────────
+
+  /** BUG 4 FIX: Long-interval recovery after max retries instead of giving up */
   private handleError(): void {
-    this.releaseMic();
+    // Close WebSocket but keep mic + audio pipeline alive for reconnection
+    if (this.ws) {
+      try { this.ws.close(); } catch { /* */ }
+      this.ws = null;
+    }
     if (this.destroyed) return;
+
     if (this.retryCount < MAX_RETRIES) {
       this.retryCount++;
       console.log(`[Scribe] Retrying (${this.retryCount}/${MAX_RETRIES}) in ${this.retryCount}s...`);
       this.setState('connecting');
       setTimeout(() => this.connect(), 1000 * this.retryCount);
     } else {
-      console.error('[Scribe] ✗ All retries exhausted');
+      console.error(`[Scribe] ✗ All retries exhausted — recovery in ${RECOVERY_INTERVAL / 1000}s`);
       this.setState('error');
+      this.recoveryTimer = setTimeout(() => {
+        if (!this.destroyed && this.state === 'error') {
+          console.log('[Scribe] Recovery attempt...');
+          this.retryCount = 0;
+          this.connect();
+        }
+      }, RECOVERY_INTERVAL);
     }
   }
 
-  private releaseMic(): void {
+  /** Disconnect audio processing nodes without releasing mic */
+  private disconnectPipeline(): void {
+    try { this.workletNode?.disconnect(); } catch { /* */ }
     try { this.scriptNode?.disconnect(); } catch { /* */ }
     try { this.sourceNode?.disconnect(); } catch { /* */ }
     try { this.audioContext?.close(); } catch { /* */ }
-    if (this.mediaStream) {
-      this.mediaStream.getTracks().forEach(t => t.stop());
-    }
+    this.workletNode = null;
     this.scriptNode = null;
     this.sourceNode = null;
     this.audioContext = null;
+  }
+
+  private releaseMic(): void {
+    if (this.mediaStream) {
+      this.mediaStream.getTracks().forEach(t => t.stop());
+    }
     this.mediaStream = null;
   }
 
   private cleanup(): void {
+    this.disconnectPipeline();
     this.releaseMic();
     if (this.ws) {
       try { this.ws.close(); } catch { /* */ }

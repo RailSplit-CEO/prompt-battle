@@ -11,6 +11,8 @@ import { InventoryManager } from '../store/InventoryManager';
 import { EquipService } from '../store/EquipService';
 import { PaymentService } from '../store/PaymentService';
 import { showPurchaseConfirm } from './PurchaseConfirmModal';
+import { AuthManager } from '../auth/AuthManager';
+import { showGuestLoginPrompt } from './LoginOverlay';
 import { HORDE_SPRITE_CONFIGS } from '../sprites/SpriteConfig';
 import type { HordeUnitType, CatalogItem } from '@prompt-battle/shared';
 
@@ -848,6 +850,10 @@ export class CharacterHub {
       equipBtn.style.fontSize = '11px';
       equipBtn.onclick = (e) => {
         e.stopPropagation();
+        if (AuthManager.getInstance().isGuest) {
+          showGuestLoginPrompt('equip skins');
+          return;
+        }
         const equip = EquipService.getInstance();
         if (skinId === 'default') {
           equip.unequipUnitSkin(unitType);
@@ -1036,6 +1042,10 @@ export class CharacterHub {
       equipBtn.style.fontSize = '11px';
       equipBtn.onclick = (e) => {
         e.stopPropagation();
+        if (AuthManager.getInstance().isGuest) {
+          showGuestLoginPrompt('equip voice packs');
+          return;
+        }
         const equip = EquipService.getInstance();
         if (packId === 'default') {
           equip.equipItem(`voicePacks/${unitType}`, 'default');

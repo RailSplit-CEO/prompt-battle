@@ -76,31 +76,25 @@ async function boot() {
     }
   }
 
-  // 4. Load or create profile for ALL users (including guests)
+  // 4. Load or create profile for ALL users (guests get local-only profile)
   if (auth.currentUser) {
     try {
-      await auth.loadMyProfile();
-      if (!auth.userProfile) {
-        const provider = auth.isGuest ? 'anonymous' : 'google';
-        const itchUser = auth.isGuest ? null : auth.getPendingItchUser();
-        if (itchUser) {
-          // Auto-create profile from itch.io info
-          try {
-            const username = itchUser.username.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 16);
-            await auth.createProfile(auth.currentUser.uid, username, 'gnome', 'itch');
-            await auth.loadMyProfile();
-          } catch {
-            // Fall back to manual profile setup
-            const profileSetup = new ProfileSetupOverlay(
-              (username) => auth.checkUsernameAvailable(username)
-            );
-            const { username, icon } = await profileSetup.show();
-            await auth.createProfile(auth.currentUser.uid, username, icon, 'itch');
-            profileSetup.hide();
-            await auth.loadMyProfile();
-          }
-        } else {
-          // Profile setup for Google and guest users — pick a username
+      if (auth.isGuest) {
+        // Guests get a local-only profile — no Firebase writes, no username reservation
+        auth.userProfile = {
+          uid: auth.currentUser.uid,
+          username: 'Guest',
+          icon: 'gnome',
+          provider: 'anonymous',
+          createdAt: Date.now(),
+          lastSeen: Date.now(),
+          online: false,
+        };
+      } else {
+        await auth.loadMyProfile();
+        // Force username creation if profile exists but has no username
+        if (auth.userProfile && !auth.userProfile.username) {
+          const provider = auth.userProfile.provider || 'google';
           const profileSetup = new ProfileSetupOverlay(
             (username) => auth.checkUsernameAvailable(username)
           );
@@ -109,6 +103,35 @@ async function boot() {
           profileSetup.hide();
           await auth.loadMyProfile();
         }
+        if (!auth.userProfile) {
+          const itchUser = auth.getPendingItchUser();
+          if (itchUser) {
+            // Auto-create profile from itch.io info
+            try {
+              const username = itchUser.username.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 16);
+              await auth.createProfile(auth.currentUser.uid, username, 'gnome', 'itch');
+              await auth.loadMyProfile();
+            } catch {
+              // Fall back to manual profile setup
+              const profileSetup = new ProfileSetupOverlay(
+                (username) => auth.checkUsernameAvailable(username)
+              );
+              const { username, icon } = await profileSetup.show();
+              await auth.createProfile(auth.currentUser.uid, username, icon, 'itch');
+              profileSetup.hide();
+              await auth.loadMyProfile();
+            }
+          } else {
+            // Profile setup for Google users — pick a username
+            const profileSetup = new ProfileSetupOverlay(
+              (username) => auth.checkUsernameAvailable(username)
+            );
+            const { username, icon } = await profileSetup.show();
+            await auth.createProfile(auth.currentUser.uid, username, icon, 'google');
+            profileSetup.hide();
+            await auth.loadMyProfile();
+          }
+        }
       }
     } catch (err) {
       console.warn('[Boot] Profile load/create failed (deploy database rules?):', err);
@@ -116,13 +139,13 @@ async function boot() {
     }
   }
 
-  // 5. Set up online presence tracking (for all users with a profile)
-  if (auth.currentUser && auth.userProfile) {
+  // 5. Set up online presence tracking (signed-in users only — no Firebase writes for guests)
+  if (auth.currentUser && auth.userProfile && !auth.isGuest) {
     try { auth.setupPresence(); } catch { /* non-critical */ }
   }
 
-  // 5b. Initialize store managers (wallet, inventory, equip)
-  if (auth.currentUser) {
+  // 5b. Initialize store managers (signed-in users only — guests have no wallet/inventory/level)
+  if (auth.currentUser && !auth.isGuest) {
     const uid = auth.currentUser.uid;
     WalletManager.getInstance().init(uid);
     InventoryManager.getInstance().init(uid);

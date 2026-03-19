@@ -19,10 +19,32 @@ export class LoginOverlay {
   private root: HTMLDivElement | null = null;
   private errorEl: HTMLDivElement | null = null;
   private resolve: ((value: 'google' | 'guest' | 'itch') => void) | null = null;
+  private googleBtn: HTMLButtonElement | null = null;
+  private itchBtn: HTMLButtonElement | null = null;
+  private guestLink: HTMLButtonElement | null = null;
+  private isItchPlatform = false;
+
+  /** Reset all buttons to their original state so the user can try again */
+  private resetButtons(): void {
+    if (this.googleBtn) {
+      this.googleBtn.innerHTML = `${GOOGLE_SVG} Sign in with Google`;
+      this.googleBtn.disabled = false;
+    }
+    if (this.itchBtn) {
+      this.itchBtn.textContent = 'Sign in with itch.io';
+      this.itchBtn.disabled = false;
+    }
+    if (this.guestLink) {
+      this.guestLink.textContent = 'Play as Guest';
+      this.guestLink.style.pointerEvents = '';
+      this.guestLink.disabled = false;
+    }
+  }
 
   show(): Promise<'google' | 'guest' | 'itch'> {
-    // If already showing, just swap the resolve so next click resolves the new promise
+    // If already showing, reset buttons and swap the resolve so user can try again
     if (this.root) {
+      this.resetButtons();
       return new Promise<'google' | 'guest' | 'itch'>((resolve) => {
         this.resolve = resolve;
       });
@@ -206,7 +228,9 @@ export class LoginOverlay {
       const isItchPlatform = (import.meta as any).env?.VITE_PLATFORM === 'itch' || window.location.hostname.includes('itch.zone');
 
       // --- itch.io sign-in button ---
+      this.isItchPlatform = isItchPlatform;
       const itchBtn = document.createElement('button');
+      this.itchBtn = itchBtn;
       itchBtn.textContent = 'Sign in with itch.io';
       const itchIsPrimary = isItchPlatform;
       itchBtn.style.cssText = `
@@ -254,6 +278,7 @@ export class LoginOverlay {
 
       // --- Google sign-in button ---
       const googleBtn = document.createElement('button');
+      this.googleBtn = googleBtn;
       const googleIsPrimary = !isItchPlatform;
       googleBtn.innerHTML = `${GOOGLE_SVG} Sign in with Google`;
       googleBtn.style.cssText = `
@@ -302,6 +327,7 @@ export class LoginOverlay {
 
       // --- Guest button with outline ---
       const guestLink = document.createElement('button');
+      this.guestLink = guestLink;
       guestLink.textContent = 'Play as Guest';
       guestLink.style.cssText = `
         width:100%;max-width:300px;height:44px;
@@ -402,6 +428,9 @@ export class LoginOverlay {
     this.root = null;
     this.errorEl = null;
     this.resolve = null;
+    this.googleBtn = null;
+    this.itchBtn = null;
+    this.guestLink = null;
   }
 
   showError(msg: string): void {

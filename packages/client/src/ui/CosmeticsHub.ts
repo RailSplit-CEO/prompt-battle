@@ -10,6 +10,8 @@ import { InventoryManager } from '../store/InventoryManager';
 import { EquipService } from '../store/EquipService';
 import { PaymentService } from '../store/PaymentService';
 import { showPurchaseConfirm } from './PurchaseConfirmModal';
+import { AuthManager } from '../auth/AuthManager';
+import { showGuestLoginPrompt } from './LoginOverlay';
 import type { CatalogItem, ItemCategory, HordeUnitType, EquipmentType } from '@prompt-battle/shared';
 
 // ── Rarity border colours ───────────────────────────────────────
@@ -791,7 +793,7 @@ export class CosmeticsHub {
     card.onclick = () => {
       if (isEquipped) return;
       if (equipType) {
-        EquipService.getInstance().equipEquipmentSkin(equipType, 'default');
+        this.equipItem(`equipmentSkins/${equipType}`, 'default');
       } else {
         this.equipItem(equipSlot, 'default');
       }
@@ -1264,6 +1266,10 @@ export class CosmeticsHub {
    * specialized method. For simple slots, use generic equipItem.
    */
   private equipItem(slot: string, value: string): void {
+    if (AuthManager.getInstance().isGuest) {
+      showGuestLoginPrompt('equip cosmetics');
+      return;
+    }
     const equip = EquipService.getInstance();
 
     if (slot.startsWith('equipmentSkins/')) {
