@@ -1821,39 +1821,38 @@ export class HordeScene extends Phaser.Scene {
     this.input.setDefaultCursor(`url(assets/ui/cursors/${cursorFile}) 0 0, auto`);
 
     // Pre-capture T1 camps (gnome + snake) for each team at game start
-    if (!this.isOnline || this.isHost || this.serverAuthoritative) {
-      for (const animalType of ['gnome', 'snake']) {
-        const campsOfType = this.camps.filter(c => c.animalType === animalType);
-        const p1Camp = campsOfType.slice().sort((a, b) => pdist2(a, P1_BASE) - pdist2(b, P1_BASE))[0];
-        const p2Camp = campsOfType.filter(c => c !== p1Camp).sort((a, b) => pdist2(a, P2_BASE) - pdist2(b, P2_BASE))[0];
-        if (p1Camp) {
-          p1Camp.owner = 1;
-          this.units = this.units.filter(u => u.campId !== p1Camp.id);
-        }
-        if (p2Camp) {
-          p2Camp.owner = 2;
-          this.units = this.units.filter(u => u.campId !== p2Camp.id);
-        }
+    // All modes (including guest) — first sync will reconcile within ~150ms
+    for (const animalType of ['gnome', 'snake']) {
+      const campsOfType = this.camps.filter(c => c.animalType === animalType);
+      const p1Camp = campsOfType.slice().sort((a, b) => pdist2(a, P1_BASE) - pdist2(b, P1_BASE))[0];
+      const p2Camp = campsOfType.filter(c => c !== p1Camp).sort((a, b) => pdist2(a, P2_BASE) - pdist2(b, P2_BASE))[0];
+      if (p1Camp) {
+        p1Camp.owner = 1;
+        this.units = this.units.filter(u => u.campId !== p1Camp.id);
       }
+      if (p2Camp) {
+        p2Camp.owner = 2;
+        this.units = this.units.filter(u => u.campId !== p2Camp.id);
+      }
+    }
 
-      // Starting units: 3 gnomes + 2 snakes
-      for (let i = 0; i < 3; i++) {
-        this.spawnUnit('gnome', 1, P1_BASE.x + 50 + i * 20, P1_BASE.y - 50);
-        this.spawnUnit('gnome', 2, P2_BASE.x - 50 - i * 20, P2_BASE.y + 50);
-      }
-      for (let i = 0; i < 2; i++) {
-        this.spawnUnit('snake', 1, P1_BASE.x + 30 + i * 20, P1_BASE.y - 80);
-        this.spawnUnit('snake', 2, P2_BASE.x - 30 - i * 20, P2_BASE.y + 80);
-      }
+    // Starting units: 3 gnomes + 2 snakes (both teams, all modes)
+    for (let i = 0; i < 3; i++) {
+      this.spawnUnit('gnome', 1, P1_BASE.x + 50 + i * 20, P1_BASE.y - 50);
+      this.spawnUnit('gnome', 2, P2_BASE.x - 50 - i * 20, P2_BASE.y + 50);
+    }
+    for (let i = 0; i < 2; i++) {
+      this.spawnUnit('snake', 1, P1_BASE.x + 30 + i * 20, P1_BASE.y - 80);
+      this.spawnUnit('snake', 2, P2_BASE.x - 30 - i * 20, P2_BASE.y + 80);
+    }
 
-      // Debug mode: spawn 3 of every unit type for both teams
-      if (this.isDebug) {
-        const allTypes = ['snake','turtle','skull','spider','hyena','rogue','panda','lizard','bear','harpoon_fish','minotaur','shaman','troll'];
-        for (const uType of allTypes) {
-          for (let i = 0; i < 3; i++) {
-            this.spawnUnit(uType, 1, P1_BASE.x + 30 + i * 25, P1_BASE.y - 80 - allTypes.indexOf(uType) * 30);
-            this.spawnUnit(uType, 2, P2_BASE.x - 30 - i * 25, P2_BASE.y + 80 + allTypes.indexOf(uType) * 30);
-          }
+    // Debug mode: spawn 3 of every unit type for both teams
+    if (this.isDebug) {
+      const allTypes = ['snake','turtle','skull','spider','hyena','rogue','panda','lizard','bear','harpoon_fish','minotaur','shaman','troll'];
+      for (const uType of allTypes) {
+        for (let i = 0; i < 3; i++) {
+          this.spawnUnit(uType, 1, P1_BASE.x + 30 + i * 25, P1_BASE.y - 80 - allTypes.indexOf(uType) * 30);
+          this.spawnUnit(uType, 2, P2_BASE.x - 30 - i * 25, P2_BASE.y + 80 + allTypes.indexOf(uType) * 30);
         }
       }
     }
