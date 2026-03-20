@@ -2,14 +2,14 @@ import * as functions from 'firebase-functions';
 import * as admin from 'firebase-admin';
 import { deductCrowns, addGlory, logTransaction } from './inventory-helpers';
 
-// Star packages — crowns to glory at a terrible exchange rate
+// Star packages — crowns to glory
 const STAR_PACKAGES: Record<string, { crowns: number; stars: number }> = {
-  stars_tiny:   { crowns: 100,   stars: 5 },
-  stars_small:  { crowns: 250,   stars: 15 },
-  stars_medium: { crowns: 500,   stars: 35 },
-  stars_large:  { crowns: 1000,  stars: 80 },
-  stars_mega:   { crowns: 2500,  stars: 220 },
-  stars_ultra:  { crowns: 5000,  stars: 500 },
+  stars_tiny:   { crowns: 100,   stars: 250 },
+  stars_small:  { crowns: 250,   stars: 750 },
+  stars_medium: { crowns: 500,   stars: 1750 },
+  stars_large:  { crowns: 1000,  stars: 4000 },
+  stars_mega:   { crowns: 2500,  stars: 11000 },
+  stars_ultra:  { crowns: 5000,  stars: 25000 },
 };
 
 export const exchangeStars = functions.https.onRequest(async (req, res) => {

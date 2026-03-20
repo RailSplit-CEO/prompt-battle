@@ -785,12 +785,12 @@ export class StorePanel {
   // ────────────────────────────────────────────────────────────────
 
   private static readonly STAR_PACKAGES = [
-    { id: 'stars_tiny',   name: 'Handful of Stars', crowns: 100,   stars: 5,    icon: '\u2B50' },
-    { id: 'stars_small',  name: 'Star Pouch',       crowns: 250,   stars: 15,   icon: '\uD83C\uDF1F' },
-    { id: 'stars_medium', name: 'Star Crate',       crowns: 500,   stars: 35,   icon: '\u2728' },
-    { id: 'stars_large',  name: 'Star Chest',       crowns: 1000,  stars: 80,   icon: '\uD83D\uDCAB' },
-    { id: 'stars_mega',   name: 'Star Vault',       crowns: 2500,  stars: 220,  icon: '\uD83C\uDF20' },
-    { id: 'stars_ultra',  name: 'Cosmic Haul',      crowns: 5000,  stars: 500,  icon: '\uD83C\uDF0C' },
+    { id: 'stars_tiny',   name: 'Handful of Stars', crowns: 100,   stars: 250,    icon: '\u2B50' },
+    { id: 'stars_small',  name: 'Star Pouch',       crowns: 250,   stars: 750,    icon: '\uD83C\uDF1F' },
+    { id: 'stars_medium', name: 'Star Crate',       crowns: 500,   stars: 1750,   icon: '\u2728' },
+    { id: 'stars_large',  name: 'Star Chest',       crowns: 1000,  stars: 4000,   icon: '\uD83D\uDCAB' },
+    { id: 'stars_mega',   name: 'Star Vault',       crowns: 2500,  stars: 11000,  icon: '\uD83C\uDF20' },
+    { id: 'stars_ultra',  name: 'Cosmic Haul',      crowns: 5000,  stars: 25000,  icon: '\uD83C\uDF0C' },
   ];
 
   private renderStarsExchange(container: HTMLDivElement): void {
@@ -822,7 +822,6 @@ export class StorePanel {
   }
 
   private createStarPackageCard(pkg: { id: string; name: string; crowns: number; stars: number; icon: string }): HTMLDivElement {
-    const rate = (pkg.crowns / pkg.stars).toFixed(1);
     const card = document.createElement('div');
     card.style.cssText = `
       background:${C.surface};
@@ -867,12 +866,6 @@ export class StorePanel {
     amount.style.cssText = `font-size:14px;font-weight:700;color:#C0C0D2;font-family:"Fredoka",sans-serif;`;
     amount.textContent = `\u2605 ${pkg.stars} Stars`;
     card.appendChild(amount);
-
-    // Rate
-    const rateEl = document.createElement('div');
-    rateEl.textContent = `${rate} crowns/star`;
-    rateEl.style.cssText = `font-size:9px;font-weight:600;color:${C.textMuted};font-family:"Nunito",sans-serif;`;
-    card.appendChild(rateEl);
 
     // Price
     const price = document.createElement('div');

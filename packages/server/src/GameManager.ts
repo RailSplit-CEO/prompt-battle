@@ -51,11 +51,23 @@ export class GameManager {
 
   private watchForGames(): void {
     const gamesRef = getDb().ref('games');
+    const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+
+    const isStale = (meta: any): boolean => {
+      if (!meta?.createdAt) return true; // no timestamp = stale
+      return (Date.now() - meta.createdAt) > STALE_THRESHOLD_MS;
+    };
+
     // Listen for new games or status changes
     gamesRef.on('child_added', async (snap) => {
       const gameId = snap.key!;
       const data = snap.val();
       if (data?.meta?.status === 'playing' && !this.games.has(gameId)) {
+        if (isStale(data.meta)) {
+          console.log(`[GameManager] Skipping stale game ${gameId}, marking expired`);
+          getDb().ref(`games/${gameId}/meta/status`).set('expired').catch(() => {});
+          return;
+        }
         await this.startGame(gameId, data.meta);
       }
     });
@@ -64,6 +76,11 @@ export class GameManager {
       const gameId = snap.key!;
       const data = snap.val();
       if (data?.meta?.status === 'playing' && !this.games.has(gameId)) {
+        if (isStale(data.meta)) {
+          console.log(`[GameManager] Skipping stale game ${gameId}, marking expired`);
+          getDb().ref(`games/${gameId}/meta/status`).set('expired').catch(() => {});
+          return;
+        }
         await this.startGame(gameId, data.meta);
       }
     });

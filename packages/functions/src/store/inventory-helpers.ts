@@ -44,19 +44,23 @@ export async function addCrowns(uid: string, amount: number): Promise<number> {
 
 export async function deductCrowns(uid: string, amount: number): Promise<boolean> {
   const walletRef = db().ref(`users/${uid}/wallet`);
+  // Pre-read to warm cache — avoids null on cold Cloud Function start
+  const snap = await walletRef.once('value');
+  const current = snap.val();
+  if (!current || (current.crowns || 0) < amount) return false;
+
   let success = false;
-  await walletRef.transaction((current) => {
-    // Initialize wallet if it doesn't exist yet
-    const wallet = current || { crowns: 0, glory: 0, totalCrownsPurchased: 0, totalCrownsSpent: 0, totalGlorySpent: 0, firstPurchaseUsed: false };
-    if ((wallet.crowns || 0) < amount) {
+  await walletRef.transaction((data) => {
+    if (!data) return data; // let Firebase retry with real data (never abort)
+    if ((data.crowns || 0) < amount) {
       success = false;
-      return; // abort — not enough
+      return data; // return unchanged — do NOT abort
     }
     success = true;
     return {
-      ...wallet,
-      crowns: (wallet.crowns || 0) - amount,
-      totalCrownsSpent: (wallet.totalCrownsSpent || 0) + amount,
+      ...data,
+      crowns: (data.crowns || 0) - amount,
+      totalCrownsSpent: (data.totalCrownsSpent || 0) + amount,
     };
   });
   return success;
@@ -85,19 +89,23 @@ export async function addGlory(uid: string, amount: number): Promise<number> {
 
 export async function deductGlory(uid: string, amount: number): Promise<boolean> {
   const walletRef = db().ref(`users/${uid}/wallet`);
+  // Pre-read to warm cache — avoids null on cold Cloud Function start
+  const snap = await walletRef.once('value');
+  const current = snap.val();
+  if (!current || (current.glory || 0) < amount) return false;
+
   let success = false;
-  await walletRef.transaction((current) => {
-    // Initialize wallet if it doesn't exist yet
-    const wallet = current || { crowns: 0, glory: 0, totalCrownsPurchased: 0, totalCrownsSpent: 0, totalGlorySpent: 0, firstPurchaseUsed: false };
-    if ((wallet.glory || 0) < amount) {
+  await walletRef.transaction((data) => {
+    if (!data) return data; // let Firebase retry with real data (never abort)
+    if ((data.glory || 0) < amount) {
       success = false;
-      return; // abort — not enough
+      return data; // return unchanged — do NOT abort
     }
     success = true;
     return {
-      ...wallet,
-      glory: (wallet.glory || 0) - amount,
-      totalGlorySpent: (wallet.totalGlorySpent || 0) + amount,
+      ...data,
+      glory: (data.glory || 0) - amount,
+      totalGlorySpent: (data.totalGlorySpent || 0) + amount,
     };
   });
   return success;

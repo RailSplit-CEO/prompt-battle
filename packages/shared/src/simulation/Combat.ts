@@ -154,7 +154,7 @@ export function updateCombat(
     }
 
     if (u.carrying && u.team !== 0) {
-      const combatRange = u.type === 'hyena' ? 120 : u.type === 'shaman' ? 100 : COMBAT_RANGE;
+      const combatRange = u.type === 'hyena' ? 120 : u.type === 'shaman' ? 100 : u.type === 'snake' ? 110 : u.type === 'harpoon_fish' ? 160 : COMBAT_RANGE;
       const onCombatStep = !ctx.isNonCombatStep(u);
       const isAttackingCamp = u.loop?.steps[u.loop.currentStep]?.action === 'attack_camp';
 
@@ -202,7 +202,7 @@ export function updateCombat(
     if (u.attackTimer > 0) continue;
 
     // Find closest enemy
-    const baseCombatRange = u.type === 'hyena' ? 120 : u.type === 'shaman' ? 100 : COMBAT_RANGE;
+    const baseCombatRange = u.type === 'hyena' ? 120 : u.type === 'shaman' ? 100 : u.type === 'snake' ? 110 : u.type === 'harpoon_fish' ? 160 : COMBAT_RANGE;
     const unitCombatRange = u.mods.caution === 'aggressive' ? Math.max(baseCombatRange, 200) : baseCombatRange;
     let best: SimUnit | null = null, bestD2 = Infinity;
     const unitCombatRange2 = unitCombatRange * unitCombatRange;
@@ -250,7 +250,7 @@ export function updateCombat(
     if (best) {
       const attackerElev = ctx.getElevation(u.x, u.y);
       const targetElev = ctx.getElevation(best.x, best.y);
-      const isRangedUnit = u.type === 'hyena' || u.type === 'shaman';
+      const isRangedUnit = u.type === 'hyena' || u.type === 'shaman' || u.type === 'snake' || u.type === 'harpoon_fish';
       if (attackerElev === 0 && targetElev === 1 && !isRangedUnit) {
         best = null;
       }
@@ -271,6 +271,19 @@ export function updateCombat(
       if (u.type === 'spider') {
         atk += best.maxHp * 0.05;
       }
+
+      // SNAKE VENOM SPIT: +3% of target's max HP as bonus damage
+      if (u.type === 'snake') {
+        atk += best.maxHp * 0.03;
+      }
+
+      // BEAR RAGE: +2% damage per 1% missing HP
+      if (u.type === 'bear') {
+        const missingPct = 1 - (u.hp / u.maxHp);
+        atk *= (1 + missingPct * 2);
+      }
+
+      // HARPOON FISH: extended range already handled by ranged check
 
       // LIZARD COLD BLOOD: 3x to targets below 40% HP
       let hitIsCrit = false;
@@ -338,7 +351,7 @@ export function updateCombat(
       if (best.team !== 0) primaryDmg *= ctx.getUnitEquipBuffs(best).damageTaken;
 
       // Queue delayed damage
-      const ranged = u.type === 'hyena' || u.type === 'shaman';
+      const ranged = u.type === 'hyena' || u.type === 'shaman' || u.type === 'snake' || u.type === 'harpoon_fish';
       newHits.push({
         attackerId: u.id,
         targetId: best.id,

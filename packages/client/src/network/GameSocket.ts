@@ -12,6 +12,10 @@ export interface GameSocketCallbacks {
   onError: (error: string) => void;
   /** Called when all reconnect attempts fail — caller should fall back to Firebase */
   onFallback?: () => void;
+  /** Server broadcasting validated commands from all players */
+  onCommands?: (commands: Array<{team: number; orders: any[]; tick: number}>) => void;
+  /** Periodic full state snapshot for drift detection */
+  onSnapshot?: (state: any, checksum: number) => void;
 }
 
 export class GameSocket {
@@ -66,6 +70,12 @@ export class GameSocket {
             break;
           case 'error':
             this.callbacks.onError(msg.message || 'Server error');
+            break;
+          case 'commands':
+            this.callbacks.onCommands?.(msg.commands || []);
+            break;
+          case 'snapshot':
+            this.callbacks.onSnapshot?.(msg.state, msg.checksum);
             break;
         }
       } catch (err) {

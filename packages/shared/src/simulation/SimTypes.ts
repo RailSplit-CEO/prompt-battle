@@ -391,6 +391,14 @@ export interface HordeSyncState {
   groupWorkflows?: Record<string, any>;
   groupModifiers?: Record<string, any>;
   freeGnomeTimer?: number;
+  shrine?: { active: boolean; owner: number; captureProgress: { 1: number; 2: number }; trickleTimer: number; x: number; y: number };
+  bountyCamps?: Array<{ campId: string; cleared: boolean; respawnTimer: number }>;
+  activeSweeps?: Record<string, { team: number; subject: string; targets: string[]; currentIdx: number }>;
+  activePlans?: Array<{ team: number; subject: string; phases: any[]; currentPhase: number; completed: boolean }>;
+  isNight?: boolean;
+  nightCount?: number;
+  isBloodMoon?: boolean;
+  freeSnakeTimer?: number;
 }
 
 // ─── Scene Init Data ─────────────────────────────────────────
@@ -487,6 +495,7 @@ export interface SimState {
   gameTime: number;
   lastDeltaMs: number;
   freeGnomeTimer: number;
+  freeSnakeTimer: number;
   carrotSpawnTimer: number;
   aiTimer: number;
   eventCycleTimer: number;

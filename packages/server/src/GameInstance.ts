@@ -2,16 +2,21 @@ import { getDb } from './FirebaseAdmin';
 import type { GameSimulation } from '../../shared/src/simulation/GameSimulation';
 import type { GameWebSocketServer } from './WebSocketServer';
 
+const SNAPSHOT_INTERVAL = 45; // ticks (~3s at 15Hz)
+
 export class GameInstance {
   private static MAX_GAME_DURATION_MS = 60 * 60 * 1000; // 1 hour max
   private gameId: string;
   private sim: GameSimulation;
-  private syncCounter = 0;
+
   private player1Id: string;
   private player2Id: string;
   private wsServer: GameWebSocketServer | null;
   private createdAt = Date.now();
   public finished = false;
+
+  private snapshotCounter = 0;
+  private commandBuffer: Array<{ team: 1 | 2; orders: any[] }> = [];
 
   constructor(
     gameId: string,
@@ -41,12 +46,18 @@ export class GameInstance {
       this.onGameOver();
       return;
     }
+
     this.sim.tick(deltaMs);
-    this.syncCounter++;
-    // Push sync every 2 ticks (~130ms at 15Hz)
-    if (this.syncCounter % 2 === 0) {
-      this.pushSync();
+    this.snapshotCounter++;
+
+    // Broadcast buffered commands to opponent
+    if (this.commandBuffer.length > 0) {
+      this.broadcastCommands();
     }
+
+    // Send full state sync every tick (15Hz) — client is render-only for online
+    this.pushSnapshot();
+
     if (this.sim.isGameOver()) {
       this.onGameOver();
     }
@@ -55,14 +66,36 @@ export class GameInstance {
   /** Handle a command from a player (via WebSocket) */
   handleCommand(team: 1 | 2, orders: any[]): void {
     this.sim.processCommand(team, orders);
+    this.commandBuffer.push({ team, orders });
   }
 
-  private pushSync(): void {
+  private broadcastCommands(): void {
+    try {
+      const msg = {
+        type: 'commands' as const,
+        commands: this.commandBuffer,
+        tick: this.snapshotCounter,
+      };
+      if (this.wsServer) {
+        this.wsServer.broadcastToGame(this.gameId, msg);
+      }
+      this.commandBuffer = [];
+    } catch (err) {
+      console.error(`[Game ${this.gameId}] Command broadcast failed:`, err);
+    }
+  }
+
+  private pushSnapshot(): void {
     try {
       const state = this.sim.buildSyncState();
+      const checksum = this.computeChecksum(state);
       if (this.wsServer) {
-        // WebSocket: broadcast directly to connected clients
-        this.wsServer.broadcastToGame(this.gameId, { type: 'sync', state });
+        this.wsServer.broadcastToGame(this.gameId, {
+          type: 'snapshot',
+          state,
+          checksum,
+          tick: this.snapshotCounter,
+        });
       } else {
         // Fallback: push to Firebase RTDB (legacy)
         // JSON round-trip strips any remaining undefined values Firebase rejects
@@ -71,8 +104,21 @@ export class GameInstance {
         });
       }
     } catch (err) {
-      console.error(`[Game ${this.gameId}] Sync push failed:`, err);
+      console.error(`[Game ${this.gameId}] Snapshot push failed:`, err);
     }
+  }
+
+  private computeChecksum(state: any): number {
+    let h = 0;
+    h += state.units?.length || 0;
+    h += Math.round(state.gameTime / 1000);
+    h += (state.baseStockpile?.[1]?.carrot || 0) + (state.baseStockpile?.[2]?.carrot || 0);
+    if (state.units) {
+      for (const u of state.units) {
+        h += Math.round(u.x) + Math.round(u.y) + Math.round(u.hp);
+      }
+    }
+    return h;
   }
 
   private async onGameOver(): Promise<void> {
@@ -83,8 +129,8 @@ export class GameInstance {
         status: 'finished',
         winner: this.sim.winner,
       });
-      // Push final sync
-      this.pushSync();
+      // Push final snapshot
+      this.pushSnapshot();
       // Notify clients via WebSocket
       if (this.wsServer) {
         this.wsServer.broadcastToGame(this.gameId, {

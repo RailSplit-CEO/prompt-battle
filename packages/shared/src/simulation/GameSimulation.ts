@@ -102,6 +102,7 @@ export class GameSimulation implements SimState {
   gameTime = 0;
   lastDeltaMs = 0;
   freeGnomeTimer = 0;
+  freeSnakeTimer = 0;
   carrotSpawnTimer = 0;
   aiTimer = 0;
   eventCycleTimer = 0;
@@ -149,6 +150,12 @@ export class GameSimulation implements SimState {
     } as Record<1 | 2, Record<ResourceType, number>>,
     peakArmySize: { 1: 0, 2: 0 } as Record<1 | 2, number>,
   };
+
+  // ─── Shrine / Sweep / Plan State ────────────────────────────
+  shrine: { active: boolean; owner: 0|1|2; captureProgress: { 1: number; 2: number }; trickleTimer: number; x: number; y: number } = { active: false, owner: 0, captureProgress: { 1: 0, 2: 0 }, trickleTimer: 0, x: 1600, y: 1600 };
+  bountyCamps: Array<{ campId: string; cleared: boolean; respawnTimer: number }> = [];
+  activeSweeps: Record<string, { team: 1|2; subject: string; targets: string[]; currentIdx: number }> = {};
+  activePlans: Array<{ team: 1|2; subject: string; phases: any[]; currentPhase: number; completed: boolean }> = [];
 
   // ─── Map Events ─────────────────────────────────────────────
   lastEventType: string | null = null;
@@ -232,16 +239,8 @@ export class GameSimulation implements SimState {
       this.initCampsFromMap(mapDef, mapSeed);
     }
 
-    // Spawn starting gnomes (3 per team)
-    for (const team of [1, 2] as const) {
-      const b = team === 1 ? P1_BASE : P2_BASE;
-      for (let i = 0; i < 3; i++) {
-        this.spawnUnit('gnome', team, b.x + (i - 1) * 30, b.y + 40);
-      }
-    }
-
-    // Pre-capture T1 camps (gnome + turtle) for each team
-    for (const animalType of ['gnome', 'turtle']) {
+    // Pre-capture T1 camps (gnome + snake) for each team
+    for (const animalType of ['gnome', 'snake']) {
       const campsOfType = this.camps.filter(c => c.animalType === animalType);
       const p1Camp = campsOfType.slice().sort((a, b) => pdist2(a, P1_BASE) - pdist2(b, P1_BASE))[0];
       const p2Camp = campsOfType.filter(c => c !== p1Camp).sort((a, b) => pdist2(a, P2_BASE) - pdist2(b, P2_BASE))[0];
@@ -252,6 +251,68 @@ export class GameSimulation implements SimState {
       if (p2Camp) {
         p2Camp.owner = 2;
         this.units = this.units.filter(u => u.campId !== p2Camp.id);
+      }
+    }
+
+    // Starting units: 3 gnomes + 2 snakes per team (matches HordeScene)
+    for (let i = 0; i < 3; i++) {
+      this.spawnUnit('gnome', 1, P1_BASE.x + 50 + i * 20, P1_BASE.y - 50);
+      this.spawnUnit('gnome', 2, P2_BASE.x - 50 - i * 20, P2_BASE.y + 50);
+    }
+    for (let i = 0; i < 2; i++) {
+      this.spawnUnit('snake', 1, P1_BASE.x + 30 + i * 20, P1_BASE.y - 80);
+      this.spawnUnit('snake', 2, P2_BASE.x - 30 - i * 20, P2_BASE.y + 80);
+    }
+
+    // Initialize towers from mapDef
+    if (mapDef?.towerSlots) {
+      for (const slot of mapDef.towerSlots) {
+        this.towers.push({
+          id: `tower_1_${this.towers.length}`,
+          team: 1,
+          x: slot.bluePos.x, y: slot.bluePos.y + 5,
+          hp: TOWER_HP, maxHp: TOWER_HP,
+          damage: TOWER_DAMAGE,
+          range: TOWER_RANGE,
+          splashRange: TOWER_SPLASH,
+          attackCooldown: TOWER_COOLDOWN,
+          attackTimer: 0,
+          alive: true,
+          projSpeed: TOWER_PROJ_SPEED,
+        });
+        this.towers.push({
+          id: `tower_2_${this.towers.length}`,
+          team: 2,
+          x: slot.redPos.x, y: slot.redPos.y + 5,
+          hp: TOWER_HP, maxHp: TOWER_HP,
+          damage: TOWER_DAMAGE,
+          range: TOWER_RANGE,
+          splashRange: TOWER_SPLASH,
+          attackCooldown: TOWER_COOLDOWN,
+          attackTimer: 0,
+          alive: true,
+          projSpeed: TOWER_PROJ_SPEED,
+        });
+      }
+    }
+
+    // Initialize armories from mapDef
+    if (mapDef?.armorySlots) {
+      const eqTypesList: EquipmentType[] = ['pickaxe', 'sword', 'shield', 'boots', 'banner'];
+      for (let i = 0; i < mapDef.armorySlots.length; i++) {
+        const slot = mapDef.armorySlots[i];
+        const eqType = (slot as any).equipmentType || eqTypesList[i % eqTypesList.length];
+        this.armories.push({ x: slot.bluePos.x, y: slot.bluePos.y, team: 1, equipmentType: eqType });
+        this.armories.push({ x: slot.redPos.x, y: slot.redPos.y, team: 2, equipmentType: eqType });
+      }
+    }
+
+    // Initialize mines from mapDef
+    if (mapDef?.mineSlots) {
+      let mineIdx = 0;
+      for (const slot of mapDef.mineSlots) {
+        this.mineNodes.push({ id: `mine_${mineIdx++}`, x: slot.bluePos.x, y: slot.bluePos.y });
+        this.mineNodes.push({ id: `mine_${mineIdx++}`, x: slot.redPos.x, y: slot.redPos.y });
       }
     }
   }
@@ -441,9 +502,7 @@ export class GameSimulation implements SimState {
       }
     }
 
-    // Spawn wild animals and elite prey
-    this.spawnWildAnimals(['skull', 'spider', 'hyena', 'rogue'], WILD_ANIMAL_COUNT);
-    this.spawnElitePreyBatch();
+    // Wild animals and elite prey are now spawned by era progression (Era 2+)
   }
 
   private spawnCampDefenders(camp: SimCamp): void {
@@ -630,7 +689,7 @@ export class GameSimulation implements SimState {
       this.units.push({
         id: this.nextId++, type, team: 0,
         hp: def.hp, maxHp: def.hp,
-        attack: def.attack, speed: def.speed * (0.4 + Math.random() * 0.3),
+        attack: def.attack, speed: def.speed * 0.4,
         x: safe.x, y: safe.y,
         targetX: safe.x + Math.random() * 100 - 50,
         targetY: safe.y + Math.random() * 100 - 50,
@@ -650,11 +709,7 @@ export class GameSimulation implements SimState {
   }
 
   spawnElitePreyBatch(): void {
-    const eliteTypes = ['minotaur', 'shaman'];
     for (let i = 0; i < ELITE_PREY_COUNT; i++) {
-      const type = eliteTypes[i % eliteTypes.length];
-      const def = ANIMALS[type];
-      if (!def) continue;
       let x: number, y: number;
       let tries = 0;
       do {
@@ -667,9 +722,9 @@ export class GameSimulation implements SimState {
       ));
       const safe = this.findWalkableSpawn(x, y);
       this.units.push({
-        id: this.nextId++, type, team: 0,
-        hp: Math.round(def.hp * 2), maxHp: Math.round(def.hp * 2),
-        attack: Math.round(def.attack * 1.5), speed: def.speed * 0.4,
+        id: this.nextId++, type: 'minotaur', team: 0,
+        hp: 2000, maxHp: 2000,
+        attack: 150, speed: 90,
         x: safe.x, y: safe.y,
         targetX: safe.x, targetY: safe.y,
         attackTimer: 0, dead: false, animState: 'idle' as const,
@@ -930,6 +985,18 @@ export class GameSimulation implements SimState {
     // Map events
     MapEvents.updateMapEvents(deltaMs, this);
 
+    // Shrine capture & trickle
+    this.updateShrine(deltaMs);
+
+    // Free snake spawning
+    CampLogic.updateFreeSnakes(deltaMs, this);
+
+    // Sweep tracking
+    this.updateSweeps();
+
+    // Advanced plan tracking
+    this.updateAdvancedPlans();
+
     // AI (solo mode only)
     if (this.isSolo) BotAI.updateAI(deltaMs, this);
 
@@ -1047,7 +1114,18 @@ export class GameSimulation implements SimState {
       }
       found = true;
 
-    } else if (cmd.targetType === 'query' || cmd.targetType === 'advanced_plan') {
+    } else if (cmd.targetType === 'advanced_plan') {
+      if ((cmd as any).plan) {
+        this.activePlans.push({
+          team, subject,
+          phases: (cmd as any).plan.phases || [],
+          currentPhase: 0,
+          completed: false,
+        });
+      }
+      return;
+
+    } else if (cmd.targetType === 'query') {
       return;
     }
 
@@ -1160,6 +1238,123 @@ export class GameSimulation implements SimState {
     }
   }
 
+  // ─── Shrine Capture & Trickle ──────────────────────────────────
+
+  private updateShrine(deltaMs: number): void {
+    const SHRINE_ACTIVATE_TIME = 90000; // 1.5 min
+    const CAPTURE_RATE = 0.001;
+    const DECAY_RATE = 0.0005;
+    const TRICKLE_INTERVAL = 10000;
+    const TRICKLE_AMOUNT = 1;
+    const CAPTURE_THRESHOLD = 1.0;
+
+    if (!this.shrine.active && this.gameTime >= SHRINE_ACTIVATE_TIME) {
+      this.shrine.active = true;
+    }
+    if (!this.shrine.active) return;
+
+    // Count nearby units per team
+    const nearby = getNearbyFromGrid(this._spatialGrid, this.shrine.x, this.shrine.y, 200, this._spatialCellSize);
+    let count1 = 0, count2 = 0;
+    for (const u of nearby) {
+      if (u.dead || u.team === 0) continue;
+      if (u.team === 1) count1++;
+      else if (u.team === 2) count2++;
+    }
+
+    // Update capture progress
+    for (const team of [1, 2] as const) {
+      const myCount = team === 1 ? count1 : count2;
+      const enemyCount = team === 1 ? count2 : count1;
+      if (myCount > 0 && enemyCount === 0) {
+        this.shrine.captureProgress[team] = Math.min(CAPTURE_THRESHOLD, this.shrine.captureProgress[team] + CAPTURE_RATE * deltaMs);
+      } else if (myCount === 0) {
+        this.shrine.captureProgress[team] = Math.max(0, this.shrine.captureProgress[team] - DECAY_RATE * deltaMs);
+      }
+
+      if (this.shrine.captureProgress[team] >= CAPTURE_THRESHOLD && this.shrine.owner !== team) {
+        this.shrine.owner = team;
+        this.shrine.captureProgress[team === 1 ? 2 : 1] = 0;
+      }
+    }
+
+    // Trickle resources to owner
+    if (this.shrine.owner !== 0) {
+      this.shrine.trickleTimer += deltaMs;
+      if (this.shrine.trickleTimer >= TRICKLE_INTERVAL) {
+        this.shrine.trickleTimer -= TRICKLE_INTERVAL;
+        const team = this.shrine.owner as 1 | 2;
+        this.baseStockpile[team].crystal = (this.baseStockpile[team].crystal || 0) + TRICKLE_AMOUNT;
+        this.baseStockpile[team].metal = (this.baseStockpile[team].metal || 0) + TRICKLE_AMOUNT;
+      }
+    }
+  }
+
+  // ─── Sweep Tracking ────────────────────────────────────────────
+
+  private updateSweeps(): void {
+    for (const [key, sweep] of Object.entries(this.activeSweeps)) {
+      if (sweep.currentIdx >= sweep.targets.length) {
+        delete this.activeSweeps[key];
+        continue;
+      }
+      const targetCampId = sweep.targets[sweep.currentIdx];
+      const camp = this.camps.find(c => c.id === targetCampId);
+      if (camp && camp.owner === sweep.team) {
+        // Camp already captured, advance to next
+        sweep.currentIdx++;
+        if (sweep.currentIdx < sweep.targets.length) {
+          // Assign workflow to go to next camp
+          const nextCamp = this.camps.find(c => c.id === sweep.targets[sweep.currentIdx]);
+          if (nextCamp) {
+            const campIdx = this.camps.indexOf(nextCamp);
+            this.assignWorkflow(
+              { steps: [{ action: 'attack_camp', campIndex: campIdx, targetAnimal: nextCamp.animalType }], currentStep: 0, label: 'Sweep', loopFrom: 0, playedOnce: false, voiceCommand: '' },
+              sweep.subject, sweep.team,
+            );
+          }
+        }
+      }
+    }
+  }
+
+  // ─── Advanced Plan Tracking ────────────────────────────────────
+
+  private updateAdvancedPlans(): void {
+    for (let i = this.activePlans.length - 1; i >= 0; i--) {
+      const plan = this.activePlans[i];
+      if (plan.completed) { this.activePlans.splice(i, 1); continue; }
+
+      const phase = plan.phases[plan.currentPhase];
+      if (!phase) { plan.completed = true; continue; }
+
+      // Check phase completion conditions
+      let phaseComplete = false;
+      if (phase.type === 'gather' && phase.resource && phase.amount) {
+        const current = this.baseStockpile[plan.team as 1|2]?.[phase.resource as ResourceType] || 0;
+        if (current >= phase.amount) phaseComplete = true;
+      } else if (phase.type === 'unlock_equipment' && phase.equipType) {
+        const level = this.unlockedEquipment[plan.team as 1|2]?.get(phase.equipType as EquipmentType) || 0;
+        if (level >= (phase.level || 1)) phaseComplete = true;
+      }
+
+      if (phaseComplete) {
+        // Execute phase completion action
+        if (phase.onComplete === 'unlock' && phase.equipType) {
+          this.unlockEquipment(plan.team as 1|2, phase.equipType as EquipmentType);
+        }
+        plan.currentPhase++;
+        if (plan.currentPhase >= plan.phases.length) {
+          plan.completed = true;
+          // Apply final workflow if specified
+          if (plan.phases[plan.phases.length - 1]?.workflow) {
+            this.assignWorkflow(plan.phases[plan.phases.length - 1].workflow, plan.subject, plan.team as 1|2);
+          }
+        }
+      }
+    }
+  }
+
   private findNearestCamp(team: 1 | 2, animal?: string, qualifier?: string, _subject?: string): { x: number; y: number; campIndex: number } | null {
     const base = team === 1 ? P1_BASE : P2_BASE;
     let candidates = this.camps.slice();
@@ -1256,6 +1451,14 @@ export class GameSimulation implements SimState {
         2: Object.fromEntries(this.unlockedEquipment[2]),
       },
       matchStats: this.matchStats,
+      shrine: this.shrine,
+      bountyCamps: this.bountyCamps,
+      activeSweeps: this.activeSweeps,
+      activePlans: this.activePlans,
+      isNight: this.isNight,
+      nightCount: this.nightCount,
+      isBloodMoon: this.isBloodMoon,
+      freeSnakeTimer: this.freeSnakeTimer,
       mapEvents: this.mapEvents.map(e => ({
         id: e.id, type: e.type, x: e.x, y: e.y,
         timer: e.timer, duration: e.duration, state: e.state,

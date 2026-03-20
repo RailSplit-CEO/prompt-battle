@@ -1101,6 +1101,11 @@ export class HordeScene extends Phaser.Scene {
   private ttsService: TtsService | null = null;
   private scribeService: ScribeService | null = null;
   private voiceOrb: VoiceOrb | null = null;
+
+  // Speech buffering — accumulate final transcript segments and wait for silence
+  private speechBuffer: string[] = [];
+  private speechBufferTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly SPEECH_SILENCE_MS = 1800; // wait 1.8s of silence before committing
   private talkingPortrait: TalkingPortrait | null = null;
 
   private isDragging = false;
@@ -1816,8 +1821,7 @@ export class HordeScene extends Phaser.Scene {
     this.input.setDefaultCursor(`url(assets/ui/cursors/${cursorFile}) 0 0, auto`);
 
     // Pre-capture T1 camps (gnome + snake) for each team at game start
-    // Skip when server-authoritative — server handles initial setup, first sync will have correct state
-    if (!this.serverAuthoritative && (!this.isOnline || this.isHost)) {
+    if (!this.isOnline || this.isHost || this.serverAuthoritative) {
       for (const animalType of ['gnome', 'snake']) {
         const campsOfType = this.camps.filter(c => c.animalType === animalType);
         const p1Camp = campsOfType.slice().sort((a, b) => pdist2(a, P1_BASE) - pdist2(b, P1_BASE))[0];
@@ -1879,6 +1883,23 @@ export class HordeScene extends Phaser.Scene {
         },
         onError: (err) => {
           console.warn('[HordeScene] WebSocket error:', err);
+        },
+        onCommands: (commands) => {
+          // Execute opponent commands on local sim
+          for (const cmd of commands) {
+            if (cmd.team !== this.myTeam) {
+              // Apply opponent's command to our local simulation
+              this.processServerCommand(cmd.team as 1 | 2, cmd.orders);
+            }
+          }
+        },
+        onSnapshot: (state, checksum) => {
+          // Check for drift
+          const localChecksum = this.computeLocalChecksum();
+          if (localChecksum !== checksum) {
+            console.warn('[Sync] Checksum mismatch — local:', localChecksum, 'server:', checksum, '— resyncing');
+            this.applyGuestSync(state);
+          }
         },
         onFallback: () => {
           // WebSocket unreachable — fall back to Firebase sync (server still pushes state to Firebase)
@@ -2890,7 +2911,7 @@ export class HordeScene extends Phaser.Scene {
 
       // Spawn defenders only for camps whose tier is unlocked by the current era
       // +2 so higher-tier camps (e.g. troll T5) spawn defenders earlier (Era 3)
-      if (!this.serverAuthoritative && (!this.isOnline || this.isHost)) {
+      if (!this.isOnline || this.isHost || this.serverAuthoritative) {
         if (animalDef.tier <= this.eraMaxTier() + 2) {
           this.spawnCampDefenders(camp);
         }
@@ -3517,9 +3538,10 @@ export class HordeScene extends Phaser.Scene {
 
   /** Recalculates camera viewport to fill entire browser window. */
   private updateLayout() {
+    const cam = this.cameras?.main;
+    if (!cam) return;
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    const cam = this.cameras.main;
     cam.setViewport(0, 0, vw, vh);
   }
 
@@ -3839,7 +3861,7 @@ export class HordeScene extends Phaser.Scene {
       onFinalTranscript: (text) => {
         if (text.trim()) {
           this.voiceOrb?.setPartialTranscript('');
-          this.issueCommand(text.trim());
+          this.bufferSpeech(text.trim());
         }
       },
       onStateChange: (state) => {
@@ -3928,7 +3950,7 @@ export class HordeScene extends Phaser.Scene {
       this.voiceOrb?.setPartialTranscript(text);
       if (lastResult.isFinal && text.trim()) {
         this.voiceOrb?.setPartialTranscript('');
-        this.issueCommand(text.trim());
+        this.bufferSpeech(text.trim());
       }
     };
     rec.onerror = () => this.restartVoice();
@@ -5621,41 +5643,53 @@ export class HordeScene extends Phaser.Scene {
       return;
     }
 
-    if (this.serverAuthoritative || (this.isOnline && !this.isHost)) {
-      // Server-authoritative: render only — server runs simulation, state arrives via WebSocket/Firebase
+    // Server-authoritative online: render only, server owns simulation
+    if (this.serverAuthoritative && this.isOnline) {
       this._frameCount++;
+
+      // Notifications (era banners, intro veil)
+      this.updateNotifications();
+
+      // Ground items: create sprites for synced items, despawn old ones
+      this.updateGroundItems(delta);
+
+      // Unit sprites: position, animation, equipment visuals
       this.updateUnitSprites();
+
+      // Structure visuals
       if (this._frameCount % 2 === 0) {
         this.updateCampVisuals();
         this.updateMineVisuals();
         this.updateArmoryVisuals();
       }
-      if (this._frameCount % 4 === 0) this.drawNexusBars();
+      if (this._frameCount % 4 === 0) {
+        this.drawNexusBars();
+        this.drawTowerBars();
+        if (this.debugUnit) this.updateDebugOverlay();
+      }
+
+      // Fog of war
       this.updateFog();
       this.updateFogVisibility();
+
+      // HUD, panels, thought bubbles
       if (this._frameCount % 20 === 0) this.updateHUD();
+      if (this._frameCount % 30 === 0) this.updateUpgradePanel();
       this.updateThoughtBubbles(delta);
 
-      // Guest needs these for visual parity with host:
-      // 1) Ground item sprites (carrots, meat, crystals on the map)
-      this.updateGroundItemSprites();
-      // 2) Trigger intro banners + notifications (game start overlay, era banners)
-      if (!this.gameStartBannerShown) {
-        this.gameStartBannerShown = true;
-        this.notifQueue.push({ type: 'game_start', priority: 4, data: {} });
-        this.showEraBanner(1);
+      // Day/night visual overlay from synced state
+      if (this.nightOverlay) {
+        const targetAlpha = this.isNight ? (this.isBloodMoon ? 0.35 : 0.25) : 0;
+        this.dayNightAlpha += (targetAlpha - this.dayNightAlpha) * 0.02;
+        this.nightOverlay.setAlpha(this.dayNightAlpha);
+        if (this.isBloodMoon) this.nightOverlay.setFillStyle(0x220000, this.dayNightAlpha);
+        else if (this.isNight) this.nightOverlay.setFillStyle(0x000022, this.dayNightAlpha);
+        else this.nightOverlay.setFillStyle(0x000022, 0);
       }
-      // 3) Process notification queue so overlays display and can be dismissed
-      this.updateNotifications();
-      // 4) Day/night visual overlay (visual only — no shadow beast spawning)
-      this.updateDayNightVisuals(delta);
-      // 5) Equipment/upgrade panel (reads synced stockpile + equipment state)
-      if (this._frameCount % 30 === 0) this.updateUpgradePanel();
-
       return;
     }
 
-    // Host (or solo): run full simulation
+    // Full simulation for solo/offline/host modes
     const _perfT0 = performance.now();
     this._frameCount++;
 
@@ -11164,6 +11198,19 @@ export class HordeScene extends Phaser.Scene {
 
   // ─── MULTIPLAYER SYNC ──────────────────────────────────────
 
+  /** Buffer a final transcript segment and wait for silence before issuing */
+  private bufferSpeech(text: string) {
+    this.speechBuffer.push(text);
+    // Reset the silence timer every time new speech arrives
+    if (this.speechBufferTimer) clearTimeout(this.speechBufferTimer);
+    this.speechBufferTimer = setTimeout(() => {
+      const full = this.speechBuffer.join(' ').trim();
+      this.speechBuffer = [];
+      this.speechBufferTimer = null;
+      if (full) this.issueCommand(full);
+    }, HordeScene.SPEECH_SILENCE_MS);
+  }
+
   /** Called when the local player issues a voice/text command */
   private issueCommand(text: string) {
     this.voiceOrb?.setState('processing');
@@ -11369,6 +11416,15 @@ export class HordeScene extends Phaser.Scene {
     if (state.freeGnomeTimer !== undefined) this.freeGnomeTimer = state.freeGnomeTimer;
     if (state.freeSnakeTimer !== undefined) this.freeSnakeTimer = state.freeSnakeTimer;
 
+    // Sync new server-authoritative fields
+    if ((state as any).isNight !== undefined) this.isNight = (state as any).isNight;
+    if ((state as any).nightCount !== undefined) this.nightCount = (state as any).nightCount;
+    if ((state as any).isBloodMoon !== undefined) this.isBloodMoon = (state as any).isBloodMoon;
+    if ((state as any).shrine) this.shrine = (state as any).shrine as any;
+    if ((state as any).bountyCamps) this.bountyCamps = (state as any).bountyCamps as any;
+    if ((state as any).activeSweeps) this.activeSweeps = (state as any).activeSweeps as any;
+    if ((state as any).activePlans) this.activePlans = (state as any).activePlans as any;
+
     // Sync nexuses
     for (const sn of syncNexuses) {
       const n = this.nexuses.find(nx => nx.team === sn.team);
@@ -11496,6 +11552,30 @@ export class HordeScene extends Phaser.Scene {
     }
   }
 
+  /** Execute a validated server command on the local simulation (used for opponent commands in hybrid sync) */
+  private processServerCommand(team: 1 | 2, orders: any[]): void {
+    for (const order of orders) {
+      const parsed = order.order?.parsed || order.parsed;
+      const selectedHoard = order.order?.selectedHoard || order.selectedHoard || 'all';
+      if (!parsed || !Array.isArray(parsed)) continue;
+      for (const cmd of parsed) {
+        this.executeGeminiCommand(cmd, team);
+      }
+    }
+  }
+
+  /** Compute a lightweight checksum of local game state for drift detection */
+  private computeLocalChecksum(): number {
+    let h = 0;
+    h += this.units.filter(u => !u.dead).length;
+    h += Math.round(this.gameTime / 1000);
+    h += (this.baseStockpile[1]?.carrot || 0) + (this.baseStockpile[2]?.carrot || 0);
+    for (const u of this.units) {
+      if (!u.dead) h += Math.round(u.x) + Math.round(u.y) + Math.round(u.hp);
+    }
+    return h;
+  }
+
   // ─── COMMAND PARSING ─────────────────────────────────────────
 
   private async handleCommand(text: string, team: 1 | 2) {
@@ -11616,8 +11696,12 @@ export class HordeScene extends Phaser.Scene {
         const gCmd = validateAndFixWorkflow(geminiResult[0]);
         console.log('[Gemini] Validated command:', JSON.stringify(gCmd));
 
-        // Online mode: send parsed command to server via WebSocket (or Firebase fallback)
+        // Online mode: execute locally for immediate feedback, then send to server
         if (this.isOnline && this.gameId) {
+          // Hybrid sync: always execute own commands locally first (immediate feedback)
+          this.executeGeminiCommand(gCmd, team);
+
+          // Then send to server for validation and broadcast to opponent
           if (this.gameSocket?.isConnected()) {
             this.gameSocket.sendCommand([{
               parsed: [gCmd],
@@ -11630,12 +11714,6 @@ export class HordeScene extends Phaser.Scene {
               heroId: '',
               order: { parsed: [gCmd], team, selectedHoard: this.selectedHoard } as any,
             }]);
-          } else if (this.serverAuthoritative) {
-            // Server-authoritative but WebSocket down — can't execute locally
-            this.showFeedback('Reconnecting to server...', '#FFD93D');
-          } else {
-            // Offline fallback: host executes locally
-            this.executeGeminiCommand(gCmd, team);
           }
           this.showFeedback('Command sent!', '#6CC4FF');
           if (gCmd.narration) {
@@ -13857,7 +13935,6 @@ export class HordeScene extends Phaser.Scene {
 
   private updateMapEvents(delta: number) {
     if (this.gameOver) return;
-    if (this.serverAuthoritative || (this.isOnline && !this.isHost)) return;
 
     // DEBUG: spawn all 6 events immediately, respawn when expired
     if (this.isDebug) {
@@ -14681,6 +14758,8 @@ export class HordeScene extends Phaser.Scene {
     this.voiceOrb?.destroy(); this.voiceOrb = null;
     this.talkingPortrait?.destroy(); this.talkingPortrait = null;
     this.scribeService?.destroy(); this.scribeService = null;
+    if (this.speechBufferTimer) { clearTimeout(this.speechBufferTimer); this.speechBufferTimer = null; }
+    this.speechBuffer = [];
     this.ttsService?.destroy(); this.ttsService = null;
     this.introVeilEl?.remove(); this.introVeilEl = null;
     this.music?.stop(); this.music = null;
@@ -15121,7 +15200,6 @@ export class HordeScene extends Phaser.Scene {
 
   private updateShrine(delta: number) {
     if (this.gameOver) return;
-    if (this.serverAuthoritative || (this.isOnline && !this.isHost)) return;
 
     // Not active until SHRINE_ACTIVATE_TIME
     if (this.gameTime < SHRINE_ACTIVATE_TIME) {
@@ -15235,8 +15313,8 @@ export class HordeScene extends Phaser.Scene {
       };
       this.bountyCamps.push(camp);
     }
-    // Spawn initial defenders if host or solo (skip when server-authoritative)
-    if (!this.serverAuthoritative && (!this.isOnline || this.isHost)) {
+    // Spawn initial defenders for host, solo, or hybrid server-authoritative mode
+    if (!this.isOnline || this.isHost || this.serverAuthoritative) {
       for (const camp of this.bountyCamps) {
         this.spawnBountyDefenders(camp);
       }
@@ -15295,7 +15373,6 @@ export class HordeScene extends Phaser.Scene {
 
   private updateBountyCamps(delta: number) {
     if (this.gameOver) return;
-    if (this.serverAuthoritative || (this.isOnline && !this.isHost)) return;
 
     for (const camp of this.bountyCamps) {
       // Check if defenders are dead

@@ -78,6 +78,21 @@ export function updateFreeGnomes(delta: number, state: SimState): void {
   }
 }
 
+// ─── Free Snake Spawning ─────────────────────────────────────
+
+export function updateFreeSnakes(deltaMs: number, state: SimState): void {
+  const FREE_SNAKE_MS = 60000; // 60 seconds
+  state.freeSnakeTimer = (state.freeSnakeTimer || 0) + deltaMs;
+  if (state.freeSnakeTimer >= FREE_SNAKE_MS) {
+    state.freeSnakeTimer -= FREE_SNAKE_MS;
+    // Spawn 1 snake per team at their base
+    for (const team of [1, 2] as const) {
+      const base = team === 1 ? P1_BASE : P2_BASE;
+      state.spawnUnit('snake', team, base.x + (Math.random() - 0.5) * 100, base.y + (Math.random() - 0.5) * 100);
+    }
+  }
+}
+
 // ─── Spawn Camp Defenders ─────────────────────────────────────
 
 export function spawnCampDefenders(camp: SimCamp, state: SimState): void {
@@ -102,7 +117,7 @@ export function spawnCampDefenders(camp: SimCamp, state: SimState): void {
       attackTimer: 0, dead: false, animState: 'idle' as const,
       campId: camp.id, lungeX: 0, lungeY: 0,
       gnomeShield: camp.animalType === 'gnome' ? 1 : 0,
-      hasRebirth: camp.animalType === 'skull',
+      hasRebirth: camp.animalType === 'skull' || camp.animalType === 'snake',
       diveReady: false,
       diveTimer: 0,
       lastAttackTarget: -1, attackFaceX: null,
