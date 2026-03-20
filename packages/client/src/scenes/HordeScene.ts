@@ -6,6 +6,7 @@ import { MapDef, MapCampSlot, MapZoneDef, MapTowerSlot, MapBushZone, MapRockDef,
 import { resolveGrid, ResolvedTile } from '../map/AutoTileResolver';
 import { getTileSourceRect, getCliffSourceRect, WATER_COLOR_HEX, getTilesetFilename } from '../map/TilesetAtlas';
 import { SoundManager } from '../audio/SoundManager';
+import { MusicManager } from '../audio/MusicManager';
 import { buildSpatialGrid, getNearbyFromGrid, SPATIAL_KEY_STRIDE } from './horde-utils';
 import { QuestManager, QState } from './QuestDefs';
 import { ElevenLabsVoiceAgent } from '../systems/ElevenLabsVoiceAgent';
@@ -1171,6 +1172,7 @@ export class HordeScene extends Phaser.Scene {
 
   // ─── SOUND ──────────────────────────────────────────────────
   private sfx!: SoundManager;
+  private music: MusicManager | null = null;
 
   // ─── MAP EVENTS ──────────────────────────────────────────────
   private mapEvents: MapEvent[] = [];
@@ -1632,6 +1634,10 @@ export class HordeScene extends Phaser.Scene {
     this.sfx = new SoundManager(this);
     this.sfx.init();
 
+    // Start background music (Matthew Pablo — CC-BY 3.0)
+    this.music = new MusicManager();
+    this.music.start();
+
     this.units = [];
     this.camps = [];
     this.nexuses = [];
@@ -1673,12 +1679,42 @@ export class HordeScene extends Phaser.Scene {
     this.dayNightAlpha = 0;
     this.gameStartBannerShown = false;
     this.introComplete = false;
-    // Create persistent dark veil that stays until intro is done
+    // Create persistent dark veil that stays until intro is done — lighter so game is visible
     const veil = document.createElement('div');
     veil.id = 'horde-intro-veil';
-    veil.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:9998;background:rgba(0,0,0,0.88);pointer-events:none;';
+    veil.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:9998;background:rgba(0,0,0,0.55);pointer-events:auto;cursor:pointer;transition:opacity 800ms ease;';
     (document.getElementById('game-container') ?? document.body).appendChild(veil);
     this.introVeilEl = veil;
+    // Click anywhere on veil to dismiss intro immediately
+    veil.addEventListener('click', () => {
+      if (this.introComplete) return;
+      this.introComplete = true;
+      // Dismiss any active intro banners
+      for (const n of this.activeNotifs) {
+        if (n.type === 'game_start' || n.type === 'game_start_controls') {
+          n.el.remove();
+        }
+      }
+      this.activeNotifs = this.activeNotifs.filter(n => n.type !== 'game_start' && n.type !== 'game_start_controls');
+      this.eraBannerActive = false;
+      // Remove any queued intro items
+      this.notifQueue = this.notifQueue.filter(n => n.type !== 'game_start' && n.type !== 'game_start_controls');
+      // Fade out veil
+      if (this.introVeilEl) {
+        this.introVeilEl.style.opacity = '0';
+        this.introVeilEl.style.pointerEvents = 'none';
+        setTimeout(() => { this.introVeilEl?.remove(); this.introVeilEl = null; }, 800);
+      }
+    });
+    // Safety: auto-dismiss veil after 8 seconds if intro flow somehow gets stuck
+    setTimeout(() => {
+      if (!this.introComplete && this.introVeilEl) {
+        this.introComplete = true;
+        this.introVeilEl.style.opacity = '0';
+        this.introVeilEl.style.pointerEvents = 'none';
+        setTimeout(() => { this.introVeilEl?.remove(); this.introVeilEl = null; }, 800);
+      }
+    }, 8000);
     this.baseStockpile = {
       1: { carrot: 0, meat: 0, crystal: 0, metal: 0 },
       2: { carrot: 0, meat: 0, crystal: 0, metal: 0 },
@@ -1854,6 +1890,15 @@ export class HordeScene extends Phaser.Scene {
         },
       });
       this.gameSocket.connect();
+
+      // Online multiplayer: skip intro banners — jump straight into game
+      this.gameStartBannerShown = true;
+      this.introComplete = true;
+      if (this.introVeilEl) {
+        this.introVeilEl.style.opacity = '0';
+        this.introVeilEl.style.pointerEvents = 'none';
+        setTimeout(() => { this.introVeilEl?.remove(); this.introVeilEl = null; }, 800);
+      }
     }
   }
 
@@ -2840,7 +2885,7 @@ export class HordeScene extends Phaser.Scene {
       const campSide = (Math.sqrt((def.x - P1_BASE.x) ** 2 + (def.y - P1_BASE.y) ** 2) <
                         Math.sqrt((def.x - P2_BASE.x) ** 2 + (def.y - P2_BASE.y) ** 2)) ? 'blue' : 'red';
       const campBuilding = this.add.image(def.x, campFootY, `ts_house${buildingVariant}_${campSide}`)
-        .setScale(campScale).setOrigin(0.5, 1.0).setDepth(10 + Math.round(campFootY * 0.01));
+        .setScale(campScale).setOrigin(0.5, 1.0).setDepth(51 + Math.round(campFootY * 0.01));
       (camp as any).buildingSprite = campBuilding;
 
       // Spawn defenders only for camps whose tier is unlocked by the current era
@@ -3090,7 +3135,7 @@ export class HordeScene extends Phaser.Scene {
       const base = team === 1 ? P1_BASE : P2_BASE;
       // Shadow at ground level, separate from container
       const nexFootY = base.y + 5;
-      const c = this.add.container(base.x, nexFootY).setDepth(10 + Math.round(nexFootY * 0.01));
+      const c = this.add.container(base.x, nexFootY).setDepth(51 + Math.round(nexFootY * 0.01));
       const castleKey = team === 1 ? 'ts_castle_blue' : 'ts_castle_red';
       const castle = this.add.image(0, 0, castleKey).setScale(1.5).setOrigin(0.5, 1.0);
       // Apply building theme tint
@@ -3161,7 +3206,7 @@ export class HordeScene extends Phaser.Scene {
       const sprite = this.add.image(pos.x, towerFootY, key)
         .setScale(1.8)
         .setOrigin(0.5, 1.0)
-        .setDepth(10 + Math.round(towerFootY * 0.01));
+        .setDepth(51 + Math.round(towerFootY * 0.01));
       // Apply building theme tint to tower
       const tIsOwn = pos.team === this.myTeam;
       const tTheme = 'default'; // building themes removed
@@ -5590,6 +5635,23 @@ export class HordeScene extends Phaser.Scene {
       this.updateFogVisibility();
       if (this._frameCount % 20 === 0) this.updateHUD();
       this.updateThoughtBubbles(delta);
+
+      // Guest needs these for visual parity with host:
+      // 1) Ground item sprites (carrots, meat, crystals on the map)
+      this.updateGroundItemSprites();
+      // 2) Trigger intro banners + notifications (game start overlay, era banners)
+      if (!this.gameStartBannerShown) {
+        this.gameStartBannerShown = true;
+        this.notifQueue.push({ type: 'game_start', priority: 4, data: {} });
+        this.showEraBanner(1);
+      }
+      // 3) Process notification queue so overlays display and can be dismissed
+      this.updateNotifications();
+      // 4) Day/night visual overlay (visual only — no shadow beast spawning)
+      this.updateDayNightVisuals(delta);
+      // 5) Equipment/upgrade panel (reads synced stockpile + equipment state)
+      if (this._frameCount % 30 === 0) this.updateUpgradePanel();
+
       return;
     }
 
@@ -6248,7 +6310,7 @@ export class HordeScene extends Phaser.Scene {
         const teamColor = arm.team === this.myTeam ? 'purple' : 'red';
         const texKey = `ts_${building}_${teamColor}`;
         const armFootY = arm.y + 5;
-        arm.sprite = this.add.image(arm.x, armFootY, texKey).setScale(0.8).setOrigin(0.5, 1.0).setDepth(10 + Math.round(armFootY * 0.01));
+        arm.sprite = this.add.image(arm.x, armFootY, texKey).setScale(0.8).setOrigin(0.5, 1.0).setDepth(51 + Math.round(armFootY * 0.01));
         arm.label = this.add.text(arm.x, armFootY + 50, name, {
           fontSize: '14px', color: arm.team === 1 ? '#4499FF' : '#FF5555',
           fontFamily: '"Nunito", sans-serif', fontStyle: 'bold',
@@ -8703,7 +8765,7 @@ export class HordeScene extends Phaser.Scene {
     for (const mine of this.mineNodes) {
       if (!mine.sprite) {
         const idx = this.mineNodes.indexOf(mine);
-        const baseDepth = 10 + Math.round(mine.y * 0.01);
+        const baseDepth = 51 + Math.round(mine.y * 0.01);
         // Massive pile of gold stones scattered across the mine area
         const pileOffsets = [
           // Center cluster (big)
@@ -8999,17 +9061,27 @@ export class HordeScene extends Phaser.Scene {
   }
 
   /** Returns the carrot zone closest to the team's base (their "home" jungle). */
-  private getHomeCarrotZone(team: 1 | 2): { x: number; y: number; w: number; h: number } | null {
+  private getHomeCarrotZone(team: 1 | 2): { x: number; y: number; w: number; h: number } {
     const zones = this.mapDef?.carrotZones;
-    if (!zones || zones.length === 0) return null;
-    const base = team === 1 ? P1_BASE : P2_BASE;
-    let best = zones[0], bestD = Infinity;
-    for (const z of zones) {
-      const cx = z.x + z.w / 2, cy = z.y + z.h / 2;
-      const d = (cx - base.x) ** 2 + (cy - base.y) ** 2;
-      if (d < bestD) { bestD = d; best = z; }
+    if (zones && zones.length > 0) {
+      const base = team === 1 ? P1_BASE : P2_BASE;
+      let best = zones[0], bestD = Infinity;
+      for (const z of zones) {
+        const cx = z.x + z.w / 2, cy = z.y + z.h / 2;
+        const d = (cx - base.x) ** 2 + (cy - base.y) ** 2;
+        if (d < bestD) { bestD = d; best = z; }
+      }
+      return best;
     }
-    return best;
+    // No map carrot zones — return synthetic zone matching where carrots actually spawn
+    const M = 100, half = WORLD_W / 2;
+    if (team === 1) {
+      // P1: bottom-left half (where updateCarrotSpawning puts them)
+      return { x: M, y: half, w: half - M, h: half - M };
+    } else {
+      // P2: top-right half (mirrored)
+      return { x: half, y: M, w: half - M, h: half - M };
+    }
   }
 
   private updateGroundItems(delta: number) {
@@ -9033,6 +9105,40 @@ export class HordeScene extends Phaser.Scene {
       if (remaining < 10000 && item.sprite) item.sprite.setAlpha(remaining / 10000);
     }
     // 4d: In-place compaction instead of filter() (avoids new array allocation)
+    let writeIdx = 0;
+    for (let readIdx = 0; readIdx < this.groundItems.length; readIdx++) {
+      const i = this.groundItems[readIdx];
+      if (i.dead) {
+        if (i.sprite) { i.sprite.destroy(); i.sprite = null; }
+      } else {
+        this.groundItems[writeIdx++] = i;
+      }
+    }
+    this.groundItems.length = writeIdx;
+  }
+
+  /** Guest-only: create/destroy sprites for synced ground items without aging/despawning (host controls lifecycle via sync) */
+  private updateGroundItemSprites() {
+    for (const item of this.groundItems) {
+      if (item.dead) {
+        if (item.sprite) { item.sprite.destroy(); item.sprite = null; }
+        continue;
+      }
+      if (!item.sprite) {
+        if (item.type === 'meat') {
+          item.sprite = this.add.image(item.x, item.y, 'ts_meat').setScale(0.9).setDepth(15).setOrigin(0.5);
+        } else if (item.type === 'crystal') {
+          item.sprite = this.add.image(item.x, item.y, 'ts_gold').setScale(0.65).setDepth(15).setOrigin(0.5).setTint(0xCC88FF);
+        } else {
+          item.sprite = this.add.text(item.x, item.y, RESOURCE_EMOJI[item.type], { fontSize: '48px' }).setOrigin(0.5).setDepth(15) as any;
+        }
+        this.tweens.add({ targets: item.sprite, y: item.y - 5, duration: 1200, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+      } else {
+        // Update position for synced items that moved
+        item.sprite.setPosition(item.x, item.y);
+      }
+    }
+    // Clean up dead items
     let writeIdx = 0;
     for (let readIdx = 0; readIdx < this.groundItems.length; readIdx++) {
       const i = this.groundItems[readIdx];
@@ -9304,12 +9410,8 @@ export class HordeScene extends Phaser.Scene {
             if (claimJustLost || pdist(u, { x: u.targetX, y: u.targetY }) < 30) {
               if (step.resourceType === 'carrot') {
                 const zone = this.getHomeCarrotZone(team);
-                if (zone) {
-                  u.targetX = zone.x + Math.random() * zone.w;
-                  u.targetY = zone.y + Math.random() * zone.h;
-                } else {
-                  this.spreadOut(u);
-                }
+                u.targetX = zone.x + Math.random() * zone.w;
+                u.targetY = zone.y + Math.random() * zone.h;
               } else {
                 this.spreadOut(u);
               }
@@ -10147,6 +10249,31 @@ export class HordeScene extends Phaser.Scene {
     }
 
     // Update HUD (every few frames for performance)
+    if (this._frameCount % 6 === 0) this.updateDayNightHUD();
+  }
+
+  /** Guest-only: update day/night overlay visuals from synced gameTime without spawning shadow beasts */
+  private updateDayNightVisuals(delta: number) {
+    // Derive day/night timer from synced gameTime
+    this.dayNightTimer = this.gameTime;
+    const cyclePos = this.dayNightTimer % CYCLE_TOTAL;
+    this.isNight = cyclePos >= DAY_DURATION;
+    // Derive night count and blood moon from total elapsed cycles
+    this.nightCount = Math.floor(this.gameTime / CYCLE_TOTAL) + (this.isNight ? 1 : 0);
+    this.isBloodMoon = this.isNight && this.nightCount > 0 && this.nightCount % BLOOD_MOON_INTERVAL === 0;
+
+    const lerpSpeed = 0.002 * delta;
+    let targetAlpha: number;
+    if (!this.isNight) {
+      targetAlpha = cyclePos > DAY_DURATION - DUSK_WARNING ? 0.3 : 0;
+    } else {
+      targetAlpha = this.isBloodMoon ? 0.75 : 0.6;
+    }
+    this.dayNightAlpha += (targetAlpha - this.dayNightAlpha) * Math.min(1, lerpSpeed);
+    if (this.nightOverlay) {
+      this.nightOverlay.setAlpha(this.dayNightAlpha);
+      this.nightOverlay.setFillStyle(this.isBloodMoon ? 0x220000 : 0x000022, 1);
+    }
     if (this._frameCount % 6 === 0) this.updateDayNightHUD();
   }
 
@@ -11184,7 +11311,14 @@ export class HordeScene extends Phaser.Scene {
 
     // Sync resources, era, buffs
     if (state.baseStockpile) this.baseStockpile = state.baseStockpile as any;
-    if (state.currentEra !== undefined) this.currentEra = state.currentEra;
+    if (state.currentEra !== undefined && state.currentEra !== this.currentEra) {
+      const oldEra = this.currentEra;
+      this.currentEra = state.currentEra;
+      // Show era banner on guest when host advances era
+      if (state.currentEra > oldEra && this.introComplete) {
+        this.showEraBanner(state.currentEra);
+      }
+    }
     if (state.teamBuffs) {
       this.teamBuffs = (Array.isArray(state.teamBuffs) ? state.teamBuffs : Object.values(state.teamBuffs)).map((b: any) => ({
         team: b.team as 1 | 2, stat: b.stat as 'speed' | 'attack', amount: b.amount, remaining: b.remaining,
@@ -14549,6 +14683,7 @@ export class HordeScene extends Phaser.Scene {
     this.scribeService?.destroy(); this.scribeService = null;
     this.ttsService?.destroy(); this.ttsService = null;
     this.introVeilEl?.remove(); this.introVeilEl = null;
+    this.music?.stop(); this.music = null;
     this.selectionLabel = null;
     this.sidebarEl?.remove(); this.sidebarEl = null;
     this.hoardBarEl?.remove(); this.hoardBarEl = null;
@@ -14960,7 +15095,7 @@ export class HordeScene extends Phaser.Scene {
 
   private setupShrine() {
     const footY = SHRINE_Y + 40;
-    const depth = 10 + Math.round(footY * 0.01);
+    const depth = 51 + Math.round(footY * 0.01);
 
     // Decorative ground ring
     const glowCircle = this.add.circle(SHRINE_X, SHRINE_Y, 80, 0xFFFFFF, 0.08)
