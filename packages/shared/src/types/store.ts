@@ -70,20 +70,6 @@ export interface CrownPackage {
   icon: string;                     // emoji or asset key
 }
 
-// ─── Bundles (real-money or crown purchases) ────────────────────
-
-export interface BundleDef {
-  id: string;
-  name: string;
-  description: string;
-  priceUSD?: number;                // real-money bundle (Square/itch)
-  priceCrowns?: number;             // crown-priced bundle
-  items: string[];                  // item IDs included
-  crownsIncluded: number;           // bonus crowns in bundle
-  oneTimePurchase: boolean;
-  icon: string;
-}
-
 // ─── Wallet ─────────────────────────────────────────────────────
 
 export interface Wallet {
@@ -149,7 +135,6 @@ export type TransactionType =
   | 'itch_redeem'      // redeemed itch.io key
   | 'glory_earn'       // earned glory from gameplay
   | 'battle_pass'      // bought battle pass
-  | 'bundle_purchase'  // bought a bundle
   | 'crate_open';      // opened a loot crate
 
 export interface TransactionRecord {

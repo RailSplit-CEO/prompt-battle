@@ -6,12 +6,12 @@ import { WalletManager } from '../store/WalletManager';
 import { InventoryManager } from '../store/InventoryManager';
 import type { CatalogItem, Rarity, ItemCategory, CrownPackage } from '@prompt-battle/shared';
 
-type StoreTab = 'featured' | 'skins' | 'portraits' | 'voices' | 'effects' | 'emotes' | 'profile' | 'themes' | 'equipment' | 'gems' | 'bundles';
+type StoreTab = 'featured' | 'skins' | 'portraits' | 'voices' | 'effects' | 'emotes' | 'profile' | 'themes' | 'equipment' | 'gems';
 
 interface TabDef {
   key: StoreTab;
   label: string;
-  categories: ItemCategory[] | null; // null = special (gems/bundles)
+  categories: ItemCategory[] | null; // null = special (gems)
 }
 
 const TABS: TabDef[] = [
@@ -25,7 +25,6 @@ const TABS: TabDef[] = [
   // themes tab removed (building_theme, map_theme, ui_theme no longer exist)
   { key: 'equipment', label: 'Equipment', categories: ['equipment_cosmetic'] },
   { key: 'gems',      label: 'Gems',      categories: null },
-  { key: 'bundles',   label: 'Bundles',   categories: null },
 ];
 
 const RARITY_BORDER: Record<string, string> = {
@@ -145,7 +144,7 @@ export class StoreScene extends Phaser.Scene {
       const { InventoryManager } = require('../store/InventoryManager');
       const inv = InventoryManager.getInstance();
       this.invUnsub = inv.onInventoryChange(() => {
-        if (this.activeTab !== 'gems' && this.activeTab !== 'bundles') this.renderTab(this.activeTab);
+        if (this.activeTab !== 'gems') this.renderTab(this.activeTab);
       });
     } catch {}
   }
@@ -278,7 +277,6 @@ export class StoreScene extends Phaser.Scene {
     const el = this.contentEl;
 
     if (tab === 'gems') { this.renderGems(); return; }
-    if (tab === 'bundles') { this.renderBundles(); return; }
 
     // Load services
     let catalog: any, inv: any;
@@ -388,29 +386,6 @@ export class StoreScene extends Phaser.Scene {
     });
   }
 
-  private async renderBundles() {
-    const el = this.contentEl!;
-    let catalog: any;
-    try { catalog = (await import('../store/CatalogService')).CatalogService.getInstance(); }
-    catch { el.innerHTML = '<div style="text-align:center;color:#7a6e56;padding:20px;">Could not load bundles.</div>'; return; }
-
-    const bundles = catalog.getBundles();
-    el.innerHTML = `
-      <div class="store-section-title">BUNDLES</div>
-      <div class="store-grid" style="grid-template-columns:repeat(auto-fill,minmax(180px,1fr));">
-        ${bundles.map((b: any) => `
-          <div class="store-card" style="border-left:3px solid rgba(170,68,255,0.5);">
-            <div style="font-size:28px;margin-bottom:6px;">🎁</div>
-            <div class="store-card-name">${this.esc(b.name)}</div>
-            <div style="font-size:11px;color:#a89870;margin-bottom:6px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${this.esc(b.description || '')}</div>
-            <div style="font-size:10px;color:#7a6e56;margin-bottom:8px;">${b.items?.length || 0} items + ${b.crownsIncluded || 0} Crowns</div>
-            <div style="font-size:16px;font-weight:700;color:#d4c8a0;">$${Math.round(b.priceUSD || 0)}</div>
-          </div>
-        `).join('')}
-      </div>
-    `;
-  }
-
   // ── Purchase Handlers ──────────────────────────────────────────
 
   private async handleItemClick(itemId: string) {
@@ -465,7 +440,13 @@ export class StoreScene extends Phaser.Scene {
       const platform = ps.getPlatform();
 
       if (platform === 'test') {
-        alert(`[DEV] Would purchase package: ${packageId}`);
+        // Dev mode: grant crowns via admin endpoint
+        const catalog = (await import('../store/CatalogService')).CatalogService.getInstance();
+        const pkg = catalog.getCrownPackages().find((p: any) => p.id === packageId);
+        if (pkg) {
+          try { await (window as any).__devAddCrowns?.(pkg.crowns); } catch {}
+          this.updateCurrency();
+        }
       } else if (platform === 'itch') {
         const { ItchRedeemModal } = await import('../ui/ItchRedeemModal');
         new ItchRedeemModal().show({

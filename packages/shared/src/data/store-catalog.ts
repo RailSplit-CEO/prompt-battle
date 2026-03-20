@@ -4,7 +4,6 @@
 import {
   CatalogItem,
   CrownPackage,
-  BundleDef,
   HordeUnitType,
   Rarity,
 } from '../types/store';
@@ -982,102 +981,6 @@ for (const b of BOOSTERS) {
 // ─────────────────────────────────────────────────────────────────
 
 export const STORE_CATALOG: CatalogItem[] = catalog;
-
-// ─────────────────────────────────────────────────────────────────
-//  Store Bundles
-// ─────────────────────────────────────────────────────────────────
-
-export const STORE_BUNDLES: BundleDef[] = [
-  {
-    id: 'recruit_pack',
-    name: 'Recruit Pack',
-    description: 'A starter bundle for new horde masters — crowns, a random rare skin, and a portrait frame to kick things off.',
-    priceUSD: 3,
-    items: [
-      'skin_gnome_golden',  // 1 random rare skin (representative pick)
-      'frame_wooden',       // 1 portrait frame
-    ],
-    crownsIncluded: 300,
-    oneTimePurchase: true,
-    icon: '🎒',
-  },
-  {
-    id: 'warrior_pack',
-    name: 'Warrior Pack',
-    description: 'Gear up with crowns, two rare skins, a voice pack, and a death effect — ready for real battles.',
-    priceUSD: 10,
-    items: [
-      'skin_skull_jade',
-      'skin_hyena_war_paint',
-      'voice_gnome_energetic',
-      'death_immolation',
-    ],
-    crownsIncluded: 1500,
-    oneTimePurchase: true,
-    icon: '⚔️',
-  },
-  {
-    id: 'commander_pack',
-    name: 'Commander Pack',
-    description: 'A hefty war fund plus epic skins, a map theme, and a legendary portrait — command respect.',
-    priceUSD: 25,
-    items: [
-      'skin_rogue_phantom',
-      'skin_minotaur_titan',
-      'map_eternal_night',
-      'portrait_dragon_lord',
-      'frame_dragon',
-    ],
-    crownsIncluded: 4000,
-    oneTimePurchase: true,
-    icon: '🏰',
-  },
-  {
-    id: 'grand_marshal',
-    name: 'Grand Marshal Pack',
-    description: 'A massive crown stockpile, legendary skins, a building theme, UI theme, and exclusive voice effect.',
-    priceUSD: 50,
-    items: [
-      'skin_panda_divine_emperor',
-      'skin_shaman_arch_druid',
-      'skin_troll_mountain_king',
-      'building_crystal_palace',
-      'ui_royal_purple',
-      'voice_fx_ethereal',
-      'trail_lightning',
-    ],
-    crownsIncluded: 10000,
-    oneTimePurchase: true,
-    icon: '👑',
-  },
-  {
-    id: 'ultimate_patron',
-    name: 'Ultimate Patron Pack',
-    description: 'The definitive collection — a king\'s ransom in crowns, legendary items from every category, and eternal bragging rights.',
-    priceUSD: 100,
-    items: [
-      'skin_gnome_celestial',
-      'skin_turtle_ancient_guardian',
-      'skin_spider_queen_broodmother',
-      'skin_minotaur_worldbreaker',
-      'skin_troll_mountain_king',
-      'portrait_phoenix_knight',
-      'portrait_shadow_queen',
-      'frame_celestial',
-      'frame_void',
-      'building_celestial_spire',
-      'map_volcanic_depths',
-      'death_flower_burst',
-      'victory_aurora',
-      'bg_crystal_cave',
-      'title_the_eternal',
-      'voice_fx_ethereal',
-    ],
-    crownsIncluded: 20000,
-    oneTimePurchase: true,
-    icon: '💎',
-  },
-];
 
 // ─────────────────────────────────────────────────────────────────
 //  Helper Functions

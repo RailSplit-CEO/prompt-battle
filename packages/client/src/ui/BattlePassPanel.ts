@@ -14,14 +14,14 @@ import { showToast } from './Toast';
 import { CurrencyDisplay } from './CurrencyDisplay';
 import { playCurrencyFly, prefreezeElement, unfreezeElement } from './CurrencyFlyAnimation';
 import { SpritePreview } from './SpritePreview';
-import { getSkinDef } from '@prompt-battle/shared';
+import { getSkinDef, getCatalogItem } from '@prompt-battle/shared';
 
 // ── Reward display helpers ──────────────────────────────────────
 
 function rewardLabel(r: BattlePassReward): string {
   if (r.type === 'crowns') return `${r.amount ?? 0}`;
   if (r.type === 'glory') return `${r.amount ?? 0}`;
-  return formatItemId(r.itemId ?? 'item');
+  return getRewardDisplayName(r.itemId ?? 'item');
 }
 
 function rewardEmoji(r: BattlePassReward): string {
@@ -42,10 +42,18 @@ function formatItemId(id: string): string {
   return id.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
+function getRewardDisplayName(itemId: string): string {
+  const skin = getSkinDef(itemId);
+  if (skin) return skin.name;
+  const catalog = getCatalogItem(itemId);
+  if (catalog) return catalog.name;
+  return formatItemId(itemId);
+}
+
 function rewardToastText(r: BattlePassReward): string {
   if (r.type === 'crowns') return `Claimed ${r.amount ?? 0} Crowns`;
   if (r.type === 'glory') return `Claimed ${r.amount ?? 0} Glory`;
-  return `Claimed ${formatItemId(r.itemId ?? 'reward')}`;
+  return `Claimed ${getRewardDisplayName(r.itemId ?? 'reward')}`;
 }
 
 // ── Live player state from Firebase ──────────────────────────────

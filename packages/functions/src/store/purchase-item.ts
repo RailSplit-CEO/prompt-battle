@@ -20,12 +20,13 @@ export const purchaseItem = functions.https.onRequest(async (req, res) => {
     uid = token.uid;
   } catch { res.status(401).json({ error: 'Invalid token' }); return; }
 
-  const { itemId, currency } = req.body; // currency: 'crowns' | 'glory'
+  const { itemId, currency } = req.body || {}; // currency: 'crowns' | 'glory'
+  console.error('[purchaseItem] uid:', uid, 'body:', JSON.stringify(req.body), 'itemId:', itemId, 'currency:', currency);
   if (!itemId || !currency) { res.status(400).json({ error: 'Missing itemId or currency' }); return; }
 
   // Validate item exists
   const item = getCatalogItem(itemId);
-  if (!item) { res.status(400).json({ error: 'Invalid item' }); return; }
+  if (!item) { console.error('[purchaseItem] Invalid item:', itemId); res.status(400).json({ error: 'Invalid item' }); return; }
 
   // Check if already owned
   if (await hasItem(uid, itemId)) { res.status(400).json({ error: 'Already owned' }); return; }

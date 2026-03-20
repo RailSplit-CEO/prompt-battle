@@ -65,7 +65,8 @@ export class GameInstance {
         this.wsServer.broadcastToGame(this.gameId, { type: 'sync', state });
       } else {
         // Fallback: push to Firebase RTDB (legacy)
-        getDb().ref(`games/${this.gameId}/sync`).set(state).catch((err: any) => {
+        // JSON round-trip strips any remaining undefined values Firebase rejects
+        getDb().ref(`games/${this.gameId}/sync`).set(JSON.parse(JSON.stringify(state))).catch((err: any) => {
           console.error(`[Game ${this.gameId}] Firebase sync push failed:`, err);
         });
       }

@@ -1260,13 +1260,13 @@ export class GameSimulation implements SimState {
         id: e.id, type: e.type, x: e.x, y: e.y,
         timer: e.timer, duration: e.duration, state: e.state,
         progress: e.progress, claimedBy: e.claimedBy,
-        data: {
+        data: GameSimulation.stripUndefined({
           hp: e.data.hp, maxHp: e.data.maxHp, kills: e.data.kills,
           deliveries: e.data.deliveries, sacrifices: e.data.sacrifices,
           fedAmount: e.data.fedAmount, bearSize: e.data.bearSize,
           targetType: e.data.targetType, targetCount: e.data.targetCount,
           cost: e.data.cost, sacrificesNeeded: e.data.sacrificesNeeded,
-        },
+        }),
       })),
     });
   }

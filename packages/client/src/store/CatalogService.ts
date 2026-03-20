@@ -1,7 +1,6 @@
 import {
   STORE_CATALOG,
   CROWN_PACKAGES,
-  STORE_BUNDLES,
   getCatalogItem,
   getCatalogByCategory,
   getCrownPackage,
@@ -9,7 +8,6 @@ import {
 import type {
   CatalogItem,
   CrownPackage,
-  BundleDef,
   ItemCategory,
   Rarity,
   HordeUnitType,
@@ -73,7 +71,7 @@ export class CatalogService {
     );
   }
 
-  // ── Crown packages & bundles ────────────────────────────────────
+  // ── Crown packages ─────────────────────────────────────────────
 
   getCrownPackages(): CrownPackage[] {
     return CROWN_PACKAGES;
@@ -81,10 +79,6 @@ export class CatalogService {
 
   getCrownPackage(id: string): CrownPackage | undefined {
     return getCrownPackage(id);
-  }
-
-  getBundles(): BundleDef[] {
-    return STORE_BUNDLES;
   }
 
   // ── Daily deals ─────────────────────────────────────────────────

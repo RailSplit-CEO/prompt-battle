@@ -1,6 +1,6 @@
 // ─── StorePanel — DOM overlay for the in-game store ─────────────
 // Dark glassmorphism panel matching SettingsPanel / FriendsPanel style.
-// Categories, item grid, crown packages, and bundles.
+// Categories, item grid, crown packages, and crates.
 
 import { C } from './UIColors';
 import { CurrencyDisplay } from './CurrencyDisplay';
@@ -34,7 +34,6 @@ const TABS: StoreTab[] = [
   { id: 'stars',      label: '\u2605 Stars',              categories: null },
   { id: 'crates',     label: '\uD83D\uDCE6 Crates',      categories: null },
   { id: 'battlepass', label: '\uD83C\uDFC6 Horde Pass',  categories: null },
-  { id: 'bundles',    label: '\uD83C\uDF81 Bundles',      categories: null },
 ];
 
 // ── Rarity border colours ───────────────────────────────────────
@@ -362,12 +361,6 @@ export class StorePanel {
       return;
     }
 
-    // Special tab: Bundles
-    if (this.activeCategory === 'bundles') {
-      this.renderBundles(container);
-      return;
-    }
-
     // Special tab: Battle Pass
     if (this.activeCategory === 'battlepass') {
       this.renderBattlePass(container);
@@ -645,10 +638,10 @@ export class StorePanel {
       }
       const platform = PaymentService.getInstance().getPlatform();
       if (platform === 'test') {
-        // Dev mode: grant crowns directly
-        PaymentService.getInstance().purchaseItem(pkg.id, 'crowns').catch(() => {});
-        // Or use dev tools
-        (window as any).__devAddCrowns?.(pkg.crowns);
+        // Dev mode: grant crowns via admin endpoint
+        try {
+          await (window as any).__devAddCrowns?.(pkg.crowns);
+        } catch { /* admin endpoint may not be available */ }
         // Fly animation
         const crownsTarget = this.currencyDisplay?.getCrownsEl();
         if (crownsTarget) {
@@ -708,7 +701,7 @@ export class StorePanel {
   }
 
   // ────────────────────────────────────────────────────────────────
-  //  Bundles tab
+  //  Battle Pass tab
   // ────────────────────────────────────────────────────────────────
 
   private renderBattlePass(container: HTMLDivElement): void {
@@ -1063,134 +1056,6 @@ export class StorePanel {
           }
         }
       };
-
-      grid.appendChild(card);
-    }
-
-    container.appendChild(grid);
-  }
-
-  // ────────────────────────────────────────────────────────────────
-  //  Bundles tab
-  // ────────────────────────────────────────────────────────────────
-
-  private renderBundles(container: HTMLDivElement): void {
-    const bundles = this.catalog.getBundles();
-
-    if (bundles.length === 0) {
-      this.renderEmpty(container, 'No bundles available');
-      return;
-    }
-
-    const grid = document.createElement('div');
-    grid.style.cssText = `
-      display:grid;
-      grid-template-columns:repeat(auto-fill, minmax(160px, 1fr));
-      gap:12px;
-    `;
-
-    for (const bundle of bundles) {
-      const card = document.createElement('div');
-      card.style.cssText = `
-        background:${C.surface};
-        border:2px solid rgba(255,217,61,0.4);
-        border-radius:12px;
-        padding:14px 10px 12px;
-        display:flex;flex-direction:column;align-items:center;gap:6px;
-        cursor:pointer;transition:all 0.15s;
-      `;
-      card.onmouseenter = () => {
-        card.style.background = C.surfaceActive;
-        card.style.transform = 'translateY(-2px)';
-        card.style.borderColor = C.gold;
-        card.style.boxShadow = '0 4px 12px rgba(255,217,61,0.15)';
-      };
-      card.onmouseleave = () => {
-        card.style.background = C.surface;
-        card.style.transform = 'translateY(0)';
-        card.style.borderColor = 'rgba(255,217,61,0.4)';
-        card.style.boxShadow = 'none';
-      };
-      card.onclick = () => {
-        console.log('Open bundle detail:', bundle.id);
-      };
-
-      // ── Icon ──
-      const icon = document.createElement('div');
-      icon.textContent = bundle.icon;
-      icon.style.cssText = 'font-size:32px;line-height:1;';
-      card.appendChild(icon);
-
-      // ── Name ──
-      const name = document.createElement('div');
-      name.textContent = bundle.name;
-      name.style.cssText = `
-        font-size:13px;font-weight:700;color:${C.textPrimary};
-        font-family:"Nunito",sans-serif;text-align:center;
-      `;
-      card.appendChild(name);
-
-      // ── Description ──
-      const desc = document.createElement('div');
-      desc.textContent = bundle.description;
-      desc.style.cssText = `
-        font-size:10px;color:${C.textSecondary};text-align:center;
-        font-family:"Nunito",sans-serif;line-height:1.3;
-        display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
-      `;
-      card.appendChild(desc);
-
-      // ── Items count + crowns included ──
-      const meta = document.createElement('div');
-      meta.style.cssText = `
-        font-size:10px;color:${C.textMuted};text-align:center;
-        font-family:"Nunito",sans-serif;
-      `;
-      meta.textContent = `${bundle.items.length} items + ${bundle.crownsIncluded.toLocaleString()} Crowns`;
-      card.appendChild(meta);
-
-      // ── Price ──
-      const priceLine = document.createElement('div');
-      priceLine.style.cssText = `
-        font-size:12px;font-weight:700;
-        font-family:"Nunito",sans-serif;
-        display:flex;align-items:center;gap:6px;justify-content:center;
-      `;
-      if (bundle.priceUSD != null) {
-        const usd = document.createElement('span');
-        usd.textContent = `$${Math.round(bundle.priceUSD)}`;
-        usd.style.cssText = `color:${C.textPrimary};`;
-        priceLine.appendChild(usd);
-      }
-      if (bundle.priceCrowns != null) {
-        const crowns = document.createElement('span');
-        crowns.style.cssText = `color:${C.gold};`;
-        crowns.textContent = `\u{1F451} ${bundle.priceCrowns}`;
-        priceLine.appendChild(crowns);
-      }
-      card.appendChild(priceLine);
-
-      // ── BUY button ──
-      const buyBtn = document.createElement('button');
-      buyBtn.textContent = 'BUY';
-      buyBtn.style.cssText = `
-        width:100%;padding:7px 0;border-radius:8px;font-size:12px;font-weight:700;
-        font-family:"Fredoka",sans-serif;cursor:pointer;transition:all 0.15s;
-        background:${C.gold};border:none;color:${C.textDark};
-        letter-spacing:1px;
-        box-shadow:0 2px 8px rgba(255,217,61,0.2);
-      `;
-      buyBtn.onmouseenter = () => { buyBtn.style.background = C.goldDark; };
-      buyBtn.onmouseleave = () => { buyBtn.style.background = C.gold; };
-      buyBtn.onclick = (e) => {
-        e.stopPropagation();
-        if (AuthManager.getInstance().isGuest) {
-          showGuestLoginPrompt('buy bundles');
-          return;
-        }
-        console.log('Buy bundle:', bundle.id);
-      };
-      card.appendChild(buyBtn);
 
       grid.appendChild(card);
     }
